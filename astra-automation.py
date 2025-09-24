@@ -47,12 +47,16 @@ class RepoChecker(object):
         self.working_repos = []
         self.broken_repos = []
     
-    def backup_sources_list(self):
+    def backup_sources_list(self, dry_run=False):
         """Создание backup файла репозиториев"""
         try:
             if os.path.exists(self.sources_list):
-                shutil.copy2(self.sources_list, self.backup_file)
-                print("✅ Backup создан: %s" % self.backup_file)
+                if dry_run:
+                    print("⚠️ РЕЖИМ ТЕСТИРОВАНИЯ: backup НЕ создан (только симуляция)")
+                    print("✅ Backup будет создан: %s" % self.backup_file)
+                else:
+                    shutil.copy2(self.sources_list, self.backup_file)
+                    print("✅ Backup создан: %s" % self.backup_file)
                 return True
             else:
                 print("❌ Файл sources.list не найден: %s" % self.sources_list)
@@ -183,17 +187,27 @@ class RepoChecker(object):
             'broken_repos': self.broken_repos
         }
     
-    def apply_changes(self, temp_file):
+    def apply_changes(self, temp_file, dry_run=False):
         """Применение изменений к sources.list"""
         try:
-            shutil.copy2(temp_file, self.sources_list)
-            print("\\n✅ Изменения применены к sources.list")
-            
-            print("\\nАктивированные репозитории:")
-            with open(self.sources_list, 'r') as f:
-                for line in f:
-                    if line.strip().startswith('deb '):
-                        print("   • %s" % line.strip())
+            if dry_run:
+                print("\\n⚠️ РЕЖИМ ТЕСТИРОВАНИЯ: изменения НЕ применены к sources.list")
+                print("✅ Изменения будут применены к sources.list")
+                
+                print("\\nАктивированные репозитории (будут активированы):")
+                with open(temp_file, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith('deb '):
+                            print("   • %s" % line.strip())
+            else:
+                shutil.copy2(temp_file, self.sources_list)
+                print("\\n✅ Изменения применены к sources.list")
+                
+                print("\\nАктивированные репозитории:")
+                with open(self.sources_list, 'r') as f:
+                    for line in f:
+                        if line.strip().startswith('deb '):
+                            print("   • %s" % line.strip())
             
             return True
         except Exception as e:
@@ -202,8 +216,16 @@ class RepoChecker(object):
 
 def main():
     """Основная функция для тестирования"""
+    # Проверяем аргументы командной строки
+    dry_run = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
+        dry_run = True
+    
     print("==================================================")
-    print("Тест модуля проверки репозиториев")
+    if dry_run:
+        print("Тест модуля проверки репозиториев (РЕЖИМ ТЕСТИРОВАНИЯ)")
+    else:
+        print("Тест модуля проверки репозиториев")
     print("==================================================")
     
     checker = RepoChecker()
@@ -215,7 +237,7 @@ def main():
         sys.exit(1)
     
     # Создаем backup
-    if not checker.backup_sources_list():
+    if not checker.backup_sources_list(dry_run):
         sys.exit(1)
     
     # Обрабатываем репозитории
@@ -232,8 +254,11 @@ def main():
     print("   • Деактивировано: %d нерабочих" % stats['deactivated'])
     
     # Применяем изменения
-    if checker.apply_changes(temp_file):
-        print("\\n✅ Тест завершен успешно!")
+    if checker.apply_changes(temp_file, dry_run):
+        if dry_run:
+            print("\\n✅ Тест завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        else:
+            print("\\n✅ Тест завершен успешно!")
     else:
         print("\\n❌ Ошибка применения изменений")
     
@@ -603,7 +628,7 @@ def check_system_requirements():
     print("✅ Все требования выполнены")
     return True
 
-def run_repo_checker(temp_dir):
+def run_repo_checker(temp_dir, dry_run=False):
     """Запуск модуля проверки репозиториев"""
     print("\n🚀 Запуск автоматизации проверки репозиториев...")
     
@@ -622,16 +647,25 @@ def run_repo_checker(temp_dir):
         return False
     
     print("   ✅ Модуль найден, запускаем...")
-    print("   Команда: %s %s" % (sys.executable, repo_checker_path))
+    
+    # Формируем команду с учетом dry_run
+    cmd = [sys.executable, repo_checker_path]
+    if dry_run:
+        cmd.append('--dry-run')
+    
+    print("   Команда: %s" % ' '.join(cmd))
     
     try:
         # Запускаем модуль проверки репозиториев
-        result = subprocess.call([sys.executable, repo_checker_path])
+        result = subprocess.call(cmd)
         
         print("   Код возврата: %d" % result)
         
         if result == 0:
-            print("✅ Автоматизация завершена успешно!")
+            if dry_run:
+                print("✅ Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+            else:
+                print("✅ Автоматизация завершена успешно!")
             return True
         else:
             print("❌ Ошибка выполнения автоматизации (код: %d)" % result)
@@ -641,7 +675,7 @@ def run_repo_checker(temp_dir):
         print("❌ Ошибка запуска: %s" % str(e))
         return False
 
-def run_system_stats(temp_dir):
+def run_system_stats(temp_dir, dry_run=False):
     """Запуск модуля статистики системы"""
     print("\n📊 Запуск анализа статистики системы...")
     
@@ -653,16 +687,25 @@ def run_system_stats(temp_dir):
         return False
     
     print("   ✅ Модуль найден, запускаем...")
-    print("   Команда: %s %s" % (sys.executable, system_stats_path))
+    
+    # Формируем команду с учетом dry_run
+    cmd = [sys.executable, system_stats_path]
+    if dry_run:
+        cmd.append('--dry-run')
+    
+    print("   Команда: %s" % ' '.join(cmd))
     
     try:
         # Запускаем модуль статистики системы
-        result = subprocess.call([sys.executable, system_stats_path])
+        result = subprocess.call(cmd)
         
         print("   Код возврата: %d" % result)
         
         if result == 0:
-            print("✅ Анализ статистики завершен успешно!")
+            if dry_run:
+                print("✅ Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+            else:
+                print("✅ Анализ статистики завершен успешно!")
             return True
         else:
             print("❌ Ошибка анализа статистики (код: %d)" % result)
@@ -682,8 +725,16 @@ def cleanup_temp_files(temp_dir):
 
 def main():
     """Основная функция"""
+    # Проверяем аргументы командной строки
+    dry_run = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
+        dry_run = True
+    
     print("=" * 60)
-    print("FSA-AstraInstall Automation")
+    if dry_run:
+        print("FSA-AstraInstall Automation (РЕЖИМ ТЕСТИРОВАНИЯ)")
+    else:
+        print("FSA-AstraInstall Automation")
     print("Автоматизация установки Astra.IDE")
     print("=" * 60)
     
@@ -698,13 +749,22 @@ def main():
         temp_dir = extract_embedded_files()
         
         # Запускаем автоматизацию репозиториев
-        repo_success = run_repo_checker(temp_dir)
+        repo_success = run_repo_checker(temp_dir, dry_run)
         
         # Запускаем анализ статистики
-        stats_success = run_system_stats(temp_dir)
+        stats_success = run_system_stats(temp_dir, dry_run)
         
         if repo_success and stats_success:
-            print("\n🎉 Автоматизация завершена успешно!")
+            if dry_run:
+                print("\n🎉 Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+                print("\n📋 РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
+                print("=============================")
+                print("✅ Все проверки пройдены успешно")
+                print("✅ Система готова к автоматизации")
+                print("⚠️ Никаких изменений в системе НЕ внесено")
+                print("🚀 Для реальной установки запустите без --dry-run")
+            else:
+                print("\n🎉 Автоматизация завершена успешно!")
         else:
             print("\n💥 Автоматизация завершена с ошибками")
             if not repo_success:
