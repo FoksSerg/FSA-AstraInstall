@@ -191,36 +191,24 @@ class RepoChecker(object):
             print("❌ Ошибка применения изменений: %s" % str(e))
             return False
 
-def main():
+def main(dry_run=False):
     """Основная функция для тестирования"""
-    # Проверяем аргументы командной строки
-    dry_run = False
-    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
-        dry_run = True
-    
-    print("==================================================")
-    if dry_run:
-        print("Тест модуля проверки репозиториев (РЕЖИМ ТЕСТИРОВАНИЯ)")
-    else:
-        print("Тест модуля проверки репозиториев")
-    print("==================================================")
-    
     checker = RepoChecker()
     
     # Проверяем права доступа
     if os.geteuid() != 0:
         print("❌ Требуются права root для работы с /etc/apt/sources.list")
         print("Запустите: sudo python repo_checker.py")
-        sys.exit(1)
+        return False
     
     # Создаем backup
     if not checker.backup_sources_list(dry_run):
-        sys.exit(1)
+        return False
     
     # Обрабатываем репозитории
     temp_file = checker.process_all_repos()
     if not temp_file:
-        sys.exit(1)
+        return False
     
     # Показываем статистику
     stats = checker.get_statistics()
@@ -238,12 +226,30 @@ def main():
             print("\n✅ Тест завершен успешно!")
     else:
         print("\n❌ Ошибка применения изменений")
+        return False
     
     # Очистка
     try:
         os.unlink(temp_file)
     except:
         pass
+    
+    return True
 
 if __name__ == '__main__':
-    main()
+    # Проверяем аргументы командной строки
+    dry_run = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
+        dry_run = True
+    
+    print("==================================================")
+    if dry_run:
+        print("Тест модуля проверки репозиториев (РЕЖИМ ТЕСТИРОВАНИЯ)")
+    else:
+        print("Тест модуля проверки репозиториев")
+    print("==================================================")
+    
+    success = main(dry_run)
+    
+    if not success:
+        sys.exit(1)

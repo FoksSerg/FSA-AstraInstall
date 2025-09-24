@@ -199,19 +199,15 @@ class SystemStats(object):
             'updatable_list': self.updatable_list
         }
 
-def main():
+def main(dry_run=False):
     """Основная функция для тестирования"""
-    print("=" * 60)
-    print("Тест модуля статистики системы")
-    print("=" * 60)
-    
     stats = SystemStats()
     
     # Проверяем права доступа
     if os.geteuid() != 0:
         print("❌ Требуются права root для работы с системными пакетами")
         print("Запустите: sudo python system_stats.py")
-        sys.exit(1)
+        return False
     
     # Анализируем обновления
     if not stats.get_updatable_packages():
@@ -228,7 +224,17 @@ def main():
     # Показываем статистику
     stats.display_statistics()
     
-    print("\n✅ Тест модуля статистики завершен!")
+    return True
 
 if __name__ == '__main__':
-    main()
+    print("=" * 60)
+    print("Тест модуля статистики системы")
+    print("=" * 60)
+    
+    success = main()
+    
+    if success:
+        print("\n✅ Тест модуля статистики завершен!")
+    else:
+        print("\n❌ Ошибка теста модуля статистики")
+        sys.exit(1)

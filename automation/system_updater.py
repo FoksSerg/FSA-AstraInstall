@@ -188,27 +188,15 @@ class SystemUpdater(object):
         
         print("\n✅ Симуляция завершена")
 
-def main():
+def main(dry_run=False):
     """Основная функция для тестирования"""
-    # Проверяем аргументы командной строки
-    dry_run = False
-    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
-        dry_run = True
-    
-    print("=" * 60)
-    if dry_run:
-        print("Тест модуля обновления системы (РЕЖИМ ТЕСТИРОВАНИЯ)")
-    else:
-        print("Тест модуля обновления системы")
-    print("=" * 60)
-    
     updater = SystemUpdater()
     
     # Проверяем права доступа
     if os.geteuid() != 0:
         print("❌ Требуются права root для работы с системными пакетами")
         print("Запустите: sudo python system_updater.py")
-        sys.exit(1)
+        return False
     
     # Симулируем сценарии обновления
     updater.simulate_update_scenarios()
@@ -226,10 +214,28 @@ def main():
         print("\n⚠️ РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется")
         updater.update_system(dry_run)
     
-    if dry_run:
-        print("\n✅ Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-    else:
-        print("\n✅ Тест модуля завершен!")
+    return True
 
 if __name__ == '__main__':
-    main()
+    # Проверяем аргументы командной строки
+    dry_run = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
+        dry_run = True
+    
+    print("=" * 60)
+    if dry_run:
+        print("Тест модуля обновления системы (РЕЖИМ ТЕСТИРОВАНИЯ)")
+    else:
+        print("Тест модуля обновления системы")
+    print("=" * 60)
+    
+    success = main(dry_run)
+    
+    if success:
+        if dry_run:
+            print("\n✅ Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        else:
+            print("\n✅ Тест модуля завершен!")
+    else:
+        print("\n❌ Ошибка теста модуля")
+        sys.exit(1)

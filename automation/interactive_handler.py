@@ -161,27 +161,15 @@ class InteractiveHandler(object):
         
         print("\n✅ Симуляция завершена")
 
-def main():
+def main(dry_run=False):
     """Основная функция для тестирования"""
-    # Проверяем аргументы командной строки
-    dry_run = False
-    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
-        dry_run = True
-    
-    print("=" * 60)
-    if dry_run:
-        print("Тест модуля перехвата интерактивных запросов (РЕЖИМ ТЕСТИРОВАНИЯ)")
-    else:
-        print("Тест модуля перехвата интерактивных запросов")
-    print("=" * 60)
-    
     handler = InteractiveHandler()
     
     # Проверяем права доступа
     if os.geteuid() != 0:
         print("❌ Требуются права root для работы с системными командами")
         print("Запустите: sudo python interactive_handler.py")
-        sys.exit(1)
+        return False
     
     # Симулируем интерактивные сценарии
     handler.simulate_interactive_scenarios()
@@ -200,10 +188,28 @@ def main():
     else:
         print("\n⚠️ РЕЖИМ ТЕСТИРОВАНИЯ: реальные команды не выполняются")
     
-    if dry_run:
-        print("\n✅ Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-    else:
-        print("\n✅ Тест модуля завершен!")
+    return True
 
 if __name__ == '__main__':
-    main()
+    # Проверяем аргументы командной строки
+    dry_run = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
+        dry_run = True
+    
+    print("=" * 60)
+    if dry_run:
+        print("Тест модуля перехвата интерактивных запросов (РЕЖИМ ТЕСТИРОВАНИЯ)")
+    else:
+        print("Тест модуля перехвата интерактивных запросов")
+    print("=" * 60)
+    
+    success = main(dry_run)
+    
+    if success:
+        if dry_run:
+            print("\n✅ Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        else:
+            print("\n✅ Тест модуля завершен!")
+    else:
+        print("\n❌ Ошибка теста модуля")
+        sys.exit(1)

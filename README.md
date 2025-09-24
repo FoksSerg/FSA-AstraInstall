@@ -50,9 +50,15 @@ FSA-AstraInstall/
 ### Использование
 
 ```bash
-# Запуск автоматизированной установки
-python automation/gui_monitor.py
+# Запуск GUI автоматизации (по умолчанию)
+sudo python astra-automation.py
 
-# Только автоматизация astra-setup.sh
-python automation/astra_setup_automation.py
+# Запуск GUI в режиме тестирования
+sudo python astra-automation.py --dry-run
+
+# Консольный режим (без GUI)
+sudo python astra-automation.py --console
+
+# Консольный режим с тестированием
+sudo python astra-automation.py --console --dry-run
 ```
