@@ -1,0 +1,13 @@
+{
+    "description": "Правила автоматических ответов на интерактивные запросы системы",
+    "rules": {
+        "openssl.cnf": "N",
+        "keyboard-configuration": "Y", 
+        "default": "N"
+    },
+    "interactive_patterns": {
+        "dpkg_config": "\\*\\*\\* .* \\(Y/I/N/O/D/Z\\) \\[.*\\] \\?",
+        "apt_config": "Настройка пакета",
+        "keyboard_config": "Выберите подходящую раскладку клавиатуры"
+    }
+}
