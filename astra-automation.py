@@ -506,54 +506,21 @@ if __name__ == '__main__':
 '''
 
 def create_embedded_data():
-    """Создание встроенных данных из файлов проекта"""
-    print("🔍 Поиск файлов проекта...")
-    embedded_data = {}
+    """Создание встроенных данных - всегда используем встроенные версии"""
+    print("📦 Загрузка встроенных компонентов...")
     
-    # Читаем файлы проекта
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    print("   Текущая папка: %s" % project_root)
+    embedded_data = {
+        'automation/repo_checker.py': get_embedded_repo_checker(),
+        'automation/system_stats.py': get_embedded_system_stats(),
+        'config/auto_responses.json': get_embedded_config()
+    }
     
-    # automation/repo_checker.py
-    repo_checker_path = os.path.join(project_root, 'automation', 'repo_checker.py')
-    print("   Ищем: %s" % repo_checker_path)
-    if os.path.exists(repo_checker_path):
-        print("   ✅ Найден файл проекта, читаем...")
-        with open(repo_checker_path, 'r') as f:
-            embedded_data['automation/repo_checker.py'] = f.read()
-        print("   ✅ Файл прочитан (%d символов)" % len(embedded_data['automation/repo_checker.py']))
-    else:
-        print("   ❌ Файл не найден, используем встроенную версию")
-        embedded_data['automation/repo_checker.py'] = get_embedded_repo_checker()
-        print("   ✅ Встроенная версия загружена (%d символов)" % len(embedded_data['automation/repo_checker.py']))
-    
-    # automation/system_stats.py
-    system_stats_path = os.path.join(project_root, 'automation', 'system_stats.py')
-    print("   Ищем: %s" % system_stats_path)
-    if os.path.exists(system_stats_path):
-        print("   ✅ Найден файл проекта, читаем...")
-        with open(system_stats_path, 'r') as f:
-            embedded_data['automation/system_stats.py'] = f.read()
-        print("   ✅ Файл прочитан (%d символов)" % len(embedded_data['automation/system_stats.py']))
-    else:
-        print("   ❌ Файл не найден, используем встроенную версию")
-        embedded_data['automation/system_stats.py'] = get_embedded_system_stats()
-        print("   ✅ Встроенная версия загружена (%d символов)" % len(embedded_data['automation/system_stats.py']))
-    
-    # config/auto_responses.json
-    config_path = os.path.join(project_root, 'config', 'auto_responses.json')
-    print("   Ищем: %s" % config_path)
-    if os.path.exists(config_path):
-        print("   ✅ Найден файл проекта, читаем...")
-        with open(config_path, 'r') as f:
-            embedded_data['config/auto_responses.json'] = f.read()
-        print("   ✅ Файл прочитан (%d символов)" % len(embedded_data['config/auto_responses.json']))
-    else:
-        print("   ❌ Файл не найден, используем встроенную версию")
-        embedded_data['config/auto_responses.json'] = get_embedded_config()
-        print("   ✅ Встроенная версия загружена (%d символов)" % len(embedded_data['config/auto_responses.json']))
-    
+    print("✅ Все компоненты загружены из встроенных данных:")
+    print("   • automation/repo_checker.py (%d символов)" % len(embedded_data['automation/repo_checker.py']))
+    print("   • automation/system_stats.py (%d символов)" % len(embedded_data['automation/system_stats.py']))
+    print("   • config/auto_responses.json (%d символов)" % len(embedded_data['config/auto_responses.json']))
     print("📋 Итого подготовлено файлов: %d" % len(embedded_data))
+    
     return embedded_data
 
 def extract_embedded_files():
