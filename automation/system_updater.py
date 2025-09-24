@@ -114,7 +114,7 @@ class SystemUpdater(object):
         
         if dry_run:
             print("⚠️ РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-            print("✅ Будет выполнено: apt-get update && apt-get dist-upgrade -y")
+            print("✅ Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
             return True
         
         # Сначала обновляем списки пакетов
@@ -133,6 +133,17 @@ class SystemUpdater(object):
         
         if result == 0:
             print("✅ Система успешно обновлена")
+            
+            # Автоматическая очистка ненужных пакетов
+            print("\n🧹 Автоматическая очистка ненужных пакетов...")
+            autoremove_cmd = ['apt-get', 'autoremove', '-y']
+            autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run)
+            
+            if autoremove_result == 0:
+                print("✅ Ненужные пакеты успешно удалены")
+            else:
+                print("⚠️ Предупреждение: не удалось удалить ненужные пакеты")
+            
             return True
         else:
             print("❌ Ошибка обновления системы")
