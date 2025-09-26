@@ -326,14 +326,14 @@ def install_gui_dependencies():
         try:
             # Устанавливаем python-tk
             result = subprocess.call(['apt-get', 'install', '-y', 'python-tk'], 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             if result == 0:
                 print("✅ python-tk успешно установлен")
-                return True
-            else:
+                        return True
+                else:
                 print("❌ Не удалось установить python-tk")
-                return False
+            return False
                 
         except Exception as e:
             print("❌ Ошибка установки python-tk: %s" % str(e))
