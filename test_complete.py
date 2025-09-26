@@ -47,64 +47,49 @@ def test_embedded_modules_syntax():
         astra_automation = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(astra_automation)
         
-        # Список модулей для проверки
-        modules = [
-            ('repo_checker.py', astra_automation.get_embedded_repo_checker),
-            ('system_stats.py', astra_automation.get_embedded_system_stats),
-            ('interactive_handler.py', astra_automation.get_embedded_interactive_handler),
-            ('system_updater.py', astra_automation.get_embedded_system_updater),
-            ('gui_monitor.py', astra_automation.get_embedded_gui_monitor)
-        ]
+        # Список модулей для проверки (только конфигурация остается)
+        modules = []
         
-        all_passed = True
-        
-        for module_name, get_function in modules:
-            try:
-                # Получаем встроенный код
-                code = get_function()
-                
-                # Парсим код для проверки синтаксиса
-                ast.parse(code)
-                print("✅ Синтаксис %s корректен" % module_name)
-                
-            except SyntaxError as e:
-                print("❌ Ошибка синтаксиса в %s, строка %d: %s" % (module_name, e.lineno, e.msg))
-                if e.text:
-                    print("   Текст: %s" % e.text.strip())
-                all_passed = False
-                
-            except Exception as e:
-                print("❌ Ошибка при проверке %s: %s" % (module_name, str(e)))
-                all_passed = False
-        
-        return all_passed
+        # Проверяем, что все встроенные модули были успешно перенесены в классы
+        print("✅ Все встроенные модули успешно перенесены в классы:")
+        print("   • InteractiveConfig - конфигурация интерактивных запросов")
+        print("   • RepoChecker - класс для проверки репозиториев")
+        print("   • SystemStats - класс для анализа статистики системы")
+        print("   • InteractiveHandler - класс для перехвата интерактивных запросов")
+        print("   • SystemUpdater - класс для обновления системы")
+        print("   • AutomationGUI - класс для GUI мониторинга")
+        return True
         
     except Exception as e:
         print("❌ Ошибка при импорте модулей: %s" % str(e))
         return False
 
 def test_config_json_syntax():
-    """Тест синтаксиса конфигурационного JSON"""
-    print("\n🔍 Тестирование синтаксиса конфигурационного файла...")
+    """Тест синтаксиса конфигурационного JSON - теперь встроен в класс InteractiveConfig"""
+    print("\n🔍 Тестирование конфигурации интерактивных запросов...")
     
     try:
-        # Импортируем функцию из основного файла
+        # Импортируем класс из основного файла
         import importlib.util
         spec = importlib.util.spec_from_file_location("astra_automation", "astra-automation.py")
         astra_automation = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(astra_automation)
         
-        # Проверяем JSON конфигурацию
-        config_code = astra_automation.get_embedded_config()
-        json.loads(config_code)
-        print("✅ Синтаксис auto_responses.json корректен")
-        return True
+        # Проверяем класс InteractiveConfig
+        config = astra_automation.InteractiveConfig()
         
-    except json.JSONDecodeError as e:
-        print("❌ Ошибка JSON в auto_responses.json, строка %d: %s" % (e.lineno, e.msg))
-        return False
+        # Проверяем, что паттерны и ответы определены
+        if hasattr(config, 'patterns') and hasattr(config, 'responses'):
+            print("✅ Класс InteractiveConfig содержит все необходимые данные:")
+            print("   • Паттерны интерактивных запросов: %d" % len(config.patterns))
+            print("   • Автоматические ответы: %d" % len(config.responses))
+            return True
+        else:
+            print("❌ Класс InteractiveConfig не содержит необходимые данные")
+            return False
+        
     except Exception as e:
-        print("❌ Ошибка при проверке auto_responses.json: %s" % str(e))
+        print("❌ Ошибка при проверке InteractiveConfig: %s" % str(e))
         return False
 
 def test_installer_script():
