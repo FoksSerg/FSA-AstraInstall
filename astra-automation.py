@@ -351,8 +351,10 @@ if not install_gui_dependencies():
 # Теперь импортируем tkinter (совместимость Python 2/3)
 if sys.version_info[0] == 2:
     import Tkinter as tk
+    import ttk
 else:
     import tkinter as tk
+    from tkinter import ttk
 
 class AutomationGUI(object):
     """GUI для мониторинга автоматизации установки Astra.IDE"""
@@ -360,7 +362,7 @@ class AutomationGUI(object):
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("FSA-AstraInstall Automation")
-        self.root.geometry("1000x700")
+        self.root.geometry("1000x600")
         
         # Переменные состояния
         self.is_running = False
@@ -373,8 +375,28 @@ class AutomationGUI(object):
     def create_widgets(self):
         """Создание элементов интерфейса"""
         
+        # Создаем вкладки
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Основная вкладка
+        self.main_frame = tk.Frame(self.notebook)
+        self.notebook.add(self.main_frame, text="Управление")
+        
+        # Терминальная вкладка
+        self.terminal_frame = tk.Frame(self.notebook)
+        self.notebook.add(self.terminal_frame, text="Терминал")
+        
+        # Создаем элементы основной вкладки
+        self.create_main_tab()
+        
+        # Создаем элементы терминальной вкладки
+        self.create_terminal_tab()
+        
+    def create_main_tab(self):
+        """Создание основной вкладки"""
         # Панель управления
-        control_frame = tk.LabelFrame(self.root, text="Управление")
+        control_frame = tk.LabelFrame(self.main_frame, text="Управление")
         control_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # Чекбокс для dry-run
@@ -394,36 +416,33 @@ class AutomationGUI(object):
                                      command=self.stop_automation, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=2)
         
-        # Прогресс
-        progress_frame = tk.LabelFrame(self.root, text="Прогресс")
-        progress_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Кнопка переключения вкладок
+        self.terminal_button = tk.Button(button_frame, text="Системный терминал", 
+                                         command=self.toggle_terminal)
+        self.terminal_button.pack(side=tk.LEFT, padx=2)
         
-        self.progress_label = tk.Label(progress_frame, text="Готов к запуску", 
-                                      relief=tk.SUNKEN, anchor=tk.W)
-        self.progress_label.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Статус
-        status_frame = tk.LabelFrame(self.root, text="Статус")
-        status_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        self.status_label = tk.Label(status_frame, text="Готов к запуску")
-        self.status_label.pack(padx=5, pady=5)
-        
-        # Лог выполнения
-        log_frame = tk.LabelFrame(self.root, text="Лог выполнения")
+        # Лог выполнения (на основной вкладке)
+        log_frame = tk.LabelFrame(self.main_frame, text="Лог выполнения")
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Создаем Text с прокруткой (увеличиваем высоту)
-        self.log_text = tk.Text(log_frame, height=20, wrap=tk.WORD)
+        # Создаем Text с прокруткой
+        self.log_text = tk.Text(log_frame, height=12, wrap=tk.WORD)
         scrollbar = tk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
         
-        # Статистика
-        stats_frame = tk.LabelFrame(self.root, text="Статистика")
-        stats_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Статус
+        status_frame = tk.LabelFrame(self.main_frame, text="Статус")
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.status_label = tk.Label(status_frame, text="Готов к запуску")
+        self.status_label.pack(padx=5, pady=5)
+        
+        # Статистика (зафиксирована внизу)
+        stats_frame = tk.LabelFrame(self.main_frame, text="Статистика")
+        stats_frame.pack(fill=tk.X, padx=10, pady=5, side=tk.BOTTOM)
         
         stats_inner = tk.Frame(stats_frame)
         stats_inner.pack(fill=tk.X, padx=5, pady=5)
@@ -444,6 +463,29 @@ class AutomationGUI(object):
         tk.Label(stats_inner, text="Статус:").grid(row=1, column=2, sticky=tk.W)
         self.status_detail_label = tk.Label(stats_inner, text="Ожидание")
         self.status_detail_label.grid(row=1, column=3, sticky=tk.W, padx=(5, 20))
+        
+    def create_terminal_tab(self):
+        """Создание терминальной вкладки с встроенным терминалом"""
+        # Встроенный терминал
+        terminal_frame = tk.LabelFrame(self.terminal_frame, text="Системный терминал")
+        terminal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем Text виджет для терминала
+        self.terminal_text = tk.Text(terminal_frame, height=20, wrap=tk.WORD, 
+                                   font=('Courier', 10), bg='black', fg='white')
+        terminal_scrollbar = tk.Scrollbar(terminal_frame, orient=tk.VERTICAL, 
+                                        command=self.terminal_text.yview)
+        self.terminal_text.configure(yscrollcommand=terminal_scrollbar.set)
+        
+        self.terminal_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        terminal_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
+        
+        # Добавляем приветственное сообщение
+        self.terminal_text.insert(tk.END, "Системный терминал готов к работе\\n")
+        self.terminal_text.insert(tk.END, "Здесь будет отображаться вывод системных команд\\n\\n")
+        
+        # Запускаем мониторинг системного вывода
+        self.start_terminal_monitoring()
         
     def log_message(self, message):
         """Добавление сообщения в лог"""
@@ -468,6 +510,28 @@ class AutomationGUI(object):
             self.package_label.config(text=packages)
         self.root.update_idletasks()
         
+    def start_terminal_monitoring(self):
+        """Запуск мониторинга системного вывода"""
+        try:
+            # Добавляем информацию в лог
+            self.log_message("[INFO] Мониторинг системного вывода запущен")
+            
+            # Добавляем сообщение в терминал
+            self.terminal_text.insert(tk.END, "[INFO] Мониторинг системного вывода запущен\\n")
+            self.terminal_text.see(tk.END)
+            
+        except Exception as e:
+            self.log_message("[WARNING] Ошибка запуска мониторинга: %s" % str(e))
+    
+    def add_terminal_output(self, message):
+        """Добавление сообщения в системный терминал"""
+        try:
+            self.terminal_text.insert(tk.END, message + "\\n")
+            self.terminal_text.see(tk.END)
+            self.root.update_idletasks()
+        except Exception as e:
+            pass  # Игнорируем ошибки если терминал не готов
+        
     def start_automation(self):
         """Запуск автоматизации"""
         if self.is_running:
@@ -476,7 +540,6 @@ class AutomationGUI(object):
         self.is_running = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
-        self.progress_label.config(text="Выполняется...", bg="lightblue")
         
         # Очищаем лог
         self.log_text.delete(1.0, tk.END)
@@ -491,8 +554,11 @@ class AutomationGUI(object):
         self.is_running = False
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
-        self.progress_label.config(text="Завершено", bg="lightgreen")
         self.update_status("Остановлено пользователем")
+        
+    def toggle_terminal(self):
+        """Переключение на вкладку терминала"""
+        self.notebook.select(1)  # Переключаемся на вкладку "Терминал"
         
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
@@ -524,6 +590,10 @@ class AutomationGUI(object):
             import system_stats
             import interactive_handler
             import system_updater
+            
+            # Передаем экземпляр GUI в модули для вывода в терминал
+            import sys
+            sys._gui_instance = self
             
             # Запускаем модули по очереди
             self.log_message("[INFO] Проверка системных требований...")
@@ -591,7 +661,6 @@ class AutomationGUI(object):
             self.is_running = False
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
-            self.progress_label.config(text="Завершено", bg="lightgreen")
             
     def parse_status_from_output(self, line):
         """Парсинг статуса из вывода"""
@@ -665,6 +734,15 @@ import sys
 import subprocess
 import re
 
+def add_to_terminal(message):
+    """Добавление сообщения в терминал GUI"""
+    try:
+        import sys
+        if hasattr(sys, '_gui_instance') and sys._gui_instance:
+            sys._gui_instance.add_terminal_output(message)
+    except:
+        pass
+
 class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
@@ -728,6 +806,7 @@ class SystemUpdater(object):
                 
                 # Выводим строку
                 print("   %s" % line.rstrip())
+                add_to_terminal("   %s" % line.rstrip())
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
@@ -755,6 +834,13 @@ class SystemUpdater(object):
                 print("   [OK] Команда выполнена успешно")
             else:
                 print("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
+                # Проверяем на ошибки dpkg
+                if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
+                    print("   [TOOL] Обнаружена ошибка dpkg, запускаем автоматическое исправление...")
+                    if self.auto_fix_dpkg_errors():
+                        print("   [OK] Ошибки dpkg исправлены автоматически")
+                    else:
+                        print("   [WARNING] Не удалось автоматически исправить ошибки dpkg")
             
             return return_code
             
@@ -801,6 +887,64 @@ class SystemUpdater(object):
             return True
         else:
             print("[ERROR] Ошибка обновления системы")
+            # Пробуем автоматически исправить ошибки dpkg
+            if self.auto_fix_dpkg_errors():
+                print("[TOOL] Ошибки dpkg исправлены, повторяем обновление...")
+                # Повторяем обновление после исправления
+                result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run)
+                if result == 0:
+                    print("[OK] Система успешно обновлена после исправления")
+                    return True
+                else:
+                    print("[ERROR] Ошибка обновления системы даже после исправления")
+                    return False
+            else:
+                print("[ERROR] Не удалось автоматически исправить ошибки dpkg")
+                return False
+    
+    def auto_fix_dpkg_errors(self):
+        """Автоматическое исправление ошибок dpkg"""
+        print("[TOOL] Автоматическое исправление ошибок dpkg...")
+        
+        try:
+            # 1. Исправляем конфигурацию dpkg
+            print("   [TOOL] Запускаем dpkg --configure -a...")
+            configure_cmd = ['dpkg', '--configure', '-a']
+            result = self.run_command_with_interactive_handling(configure_cmd, False)
+            
+            if result == 0:
+                print("   [OK] dpkg --configure -a выполнен успешно")
+            else:
+                print("   [WARNING] dpkg --configure -a завершился с ошибкой")
+            
+            # 2. Исправляем сломанные зависимости
+            print("   [TOOL] Запускаем apt --fix-broken install...")
+            fix_cmd = ['apt', '--fix-broken', 'install', '-y']
+            result = self.run_command_with_interactive_handling(fix_cmd, False)
+            
+            if result == 0:
+                print("   [OK] apt --fix-broken install выполнен успешно")
+                return True
+            else:
+                print("   [WARNING] apt --fix-broken install завершился с ошибкой")
+                
+                # 3. Принудительное удаление проблемных пакетов
+                print("   [TOOL] Пробуем принудительное удаление проблемных пакетов...")
+                force_remove_cmd = ['dpkg', '--remove', '--force-remove-reinstreq', 'python-tk', 'python-qt4']
+                result = self.run_command_with_interactive_handling(force_remove_cmd, False)
+                
+                if result == 0:
+                    print("   [OK] Проблемные пакеты удалены принудительно")
+                    # Повторяем исправление зависимостей
+                    result = self.run_command_with_interactive_handling(fix_cmd, False)
+                    if result == 0:
+                        print("   [OK] Зависимости исправлены после принудительного удаления")
+                        return True
+                
+                return False
+                
+        except Exception as e:
+            print("   [ERROR] Ошибка автоматического исправления: %s" % str(e))
             return False
     
     def simulate_update_scenarios(self):
@@ -912,6 +1056,15 @@ import threading
 import time
 import re
 
+def add_to_terminal(message):
+    """Добавление сообщения в терминал GUI"""
+    try:
+        import sys
+        if hasattr(sys, '_gui_instance') and sys._gui_instance:
+            sys._gui_instance.add_terminal_output(message)
+    except:
+        pass
+
 class InteractiveHandler(object):
     """Класс для перехвата и автоматических ответов на интерактивные запросы"""
     
@@ -973,6 +1126,7 @@ class InteractiveHandler(object):
                 
                 # Выводим строку
                 print("   %s" % line.rstrip())
+                add_to_terminal("   %s" % line.rstrip())
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
