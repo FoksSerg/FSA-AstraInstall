@@ -25,6 +25,15 @@ fi
 python3 --version 2>/dev/null && echo "   ✅ Python 3 найден" || echo "   ❌ Python 3 не найден"
 python --version 2>/dev/null && echo "   ✅ Python 2 найден" || echo "   ❌ Python 2 не найден"
 
+# Проверяем нужно ли устанавливать Python 3
+if ! python3 --version >/dev/null 2>&1; then
+    echo "   ❌ Python 3 не найден, устанавливаем..."
+    PYTHON3_NEEDED=true
+else
+    echo "   ✅ Python 3 уже установлен, проверяем компоненты..."
+    PYTHON3_NEEDED=false
+fi
+
 echo ""
 echo "🔧 Настраиваем репозитории Astra Linux..."
 
@@ -57,13 +66,17 @@ echo "   📋 Доступные пакеты Python:"
 apt-cache search python3 | grep -E "python3[0-9]" | head -10
 
 echo ""
-echo "📦 Устанавливаем Python 3..."
+echo "📦 Устанавливаем Python компоненты..."
 
-# Пробуем установить Python 3
-if apt-get install -y python3; then
-    echo "   ✅ Python 3 установлен"
+if [ "$PYTHON3_NEEDED" = true ]; then
+    echo "   📥 Устанавливаем Python 3..."
+    if apt-get install -y python3; then
+        echo "     ✅ Python 3 установлен"
+    else
+        echo "     ❌ Ошибка установки Python 3"
+    fi
 else
-    echo "   ❌ Ошибка установки Python 3"
+    echo "   ✅ Python 3 уже установлен, пропускаем"
 fi
 
 # Устанавливаем дополнительные компоненты
@@ -118,6 +131,9 @@ fi
 
 echo ""
 echo "🎉 Установка завершена!"
+echo ""
+echo "💡 Теперь можно запустить основную программу:"
+echo "   sudo python3 astra-automation.py"
 echo ""
 echo "💡 Дополнительные команды:"
 echo "   • Проверить Python: python3 --version"

@@ -1,10 +1,17 @@
 # БЫСТРАЯ ИНСТРУКЦИЯ
 
-## Установка Python на Astra Linux
+## Обновление Python для GUI
 
-1. Скопируйте папку FINAL_SOLUTION на Linux машину
+1. Скопируйте папку FINAL_SOLUTION на Astra Linux машину
 2. Запустите: `sudo bash install_python.sh`
 3. Проверьте: `python3 --version`
+
+## Запуск основной программы
+
+После обновления Python:
+```bash
+sudo python astra-automation.py
+```
 
 ## Если не работает
 
@@ -18,8 +25,9 @@
 python3 -c "import tkinter; print('OK')"
 ```
 
-## Установка пакетов
+## Назначение
 
-```bash
-pip3 install package_name
-```
+Этот пакет подготавливает Python для работы основной программы автоматизации, которая:
+- Обновляет Astra Linux из репозиториев
+- Устанавливает Wine и Astra.IDE
+- Автоматически подтверждает все запросы
