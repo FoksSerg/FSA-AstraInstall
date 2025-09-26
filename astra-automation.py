@@ -265,12 +265,12 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
         dry_run = True
     
-    print("==================================================")
+    add_to_terminal("==================================================")
     if dry_run:
-        print("Тест модуля проверки репозиториев (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        add_to_terminal("Тест модуля проверки репозиториев (РЕЖИМ ТЕСТИРОВАНИЯ)")
     else:
-        print("Тест модуля проверки репозиториев")
-    print("==================================================")
+        add_to_terminal("Тест модуля проверки репозиториев")
+    add_to_terminal("==================================================")
     
     success = main(dry_run)
     
@@ -482,7 +482,11 @@ class AutomationGUI(object):
         
         # Добавляем приветственное сообщение
         self.terminal_text.insert(tk.END, "Системный терминал готов к работе\\n")
-        self.terminal_text.insert(tk.END, "Здесь будет отображаться вывод системных команд\\n\\n")
+        self.terminal_text.insert(tk.END, "Здесь будет отображаться вывод системных команд\\n")
+        self.terminal_text.insert(tk.END, "Для ввода команд используйте кнопки управления\\n\\n")
+        
+        # Делаем терминал только для чтения (команды запускаются через GUI)
+        self.terminal_text.config(state=tk.DISABLED)
         
         # Запускаем мониторинг системного вывода
         self.start_terminal_monitoring()
@@ -526,8 +530,12 @@ class AutomationGUI(object):
     def add_terminal_output(self, message):
         """Добавление сообщения в системный терминал"""
         try:
+            # Временно разблокируем терминал для записи
+            self.terminal_text.config(state=tk.NORMAL)
             self.terminal_text.insert(tk.END, message + "\\n")
             self.terminal_text.see(tk.END)
+            # Снова блокируем терминал
+            self.terminal_text.config(state=tk.DISABLED)
             self.root.update_idletasks()
         except Exception as e:
             pass  # Игнорируем ошибки если терминал не готов
@@ -776,15 +784,15 @@ class SystemUpdater(object):
         """Получение автоматического ответа для типа запроса"""
         return self.responses.get(prompt_type, 'Y')  # По умолчанию всегда "Y"
     
-    def run_command_with_interactive_handling(self, cmd, dry_run=False):
+    def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
         if dry_run:
-            print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
-            print("   Команда: %s" % ' '.join(cmd))
+            add_to_terminal("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
+            add_to_terminal("   Команда: %s" % ' '.join(cmd))
             return 0
         
-        print("[START] Выполнение команды с автоматическими ответами...")
-        print("   Команда: %s" % ' '.join(cmd))
+        add_to_terminal("[START] Выполнение команды с автоматическими ответами...")
+        add_to_terminal("   Команда: %s" % ' '.join(cmd))
         
         try:
             # Запускаем процесс
@@ -805,7 +813,6 @@ class SystemUpdater(object):
                     break
                 
                 # Выводим строку
-                print("   %s" % line.rstrip())
                 add_to_terminal("   %s" % line.rstrip())
                 
                 # Добавляем в буфер для анализа
@@ -816,9 +823,9 @@ class SystemUpdater(object):
                 if prompt_type:
                     response = self.get_auto_response(prompt_type)
                     if response == '':
-                        print("   [AUTO] Автоматический ответ: Enter (пустой ответ) для %s" % prompt_type)
+                        add_to_terminal("   [AUTO] Автоматический ответ: Enter (пустой ответ) для %s" % prompt_type)
                     else:
-                        print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
+                        add_to_terminal("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
                     
                     # Отправляем ответ
                     process.stdin.write(response + '\\n')
@@ -831,128 +838,128 @@ class SystemUpdater(object):
             return_code = process.wait()
             
             if return_code == 0:
-                print("   [OK] Команда выполнена успешно")
+                add_to_terminal("   [OK] Команда выполнена успешно")
             else:
-                print("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
+                add_to_terminal("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
                 # Проверяем на ошибки dpkg
                 if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
-                    print("   [TOOL] Обнаружена ошибка dpkg, запускаем автоматическое исправление...")
+                    add_to_terminal("   [TOOL] Обнаружена ошибка dpkg, запускаем автоматическое исправление...")
                     if self.auto_fix_dpkg_errors():
-                        print("   [OK] Ошибки dpkg исправлены автоматически")
+                        add_to_terminal("   [OK] Ошибки dpkg исправлены автоматически")
                     else:
-                        print("   [WARNING] Не удалось автоматически исправить ошибки dpkg")
+                        add_to_terminal("   [WARNING] Не удалось автоматически исправить ошибки dpkg")
             
             return return_code
             
         except Exception as e:
-            print("   [ERROR] Ошибка выполнения команды: %s" % str(e))
+            add_to_terminal("   [ERROR] Ошибка выполнения команды: %s" % str(e))
             return 1
     
     def update_system(self, dry_run=False):
         """Обновление системы"""
-        print("[PACKAGE] Обновление системы...")
+        add_to_terminal("[PACKAGE] Обновление системы...")
         
         if dry_run:
-            print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-            print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
+            add_to_terminal("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
+            add_to_terminal("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
             return True
         
         # Сначала обновляем списки пакетов
-        print("\\n[PROCESS] Обновление списков пакетов...")
+        add_to_terminal("\\n[PROCESS] Обновление списков пакетов...")
         update_cmd = ['apt-get', 'update']
-        result = self.run_command_with_interactive_handling(update_cmd, dry_run)
+        result = self.run_command_with_interactive_handling(update_cmd, dry_run, gui_terminal=True)
         
         if result != 0:
-            print("[ERROR] Ошибка обновления списков пакетов")
+            add_to_terminal("[ERROR] Ошибка обновления списков пакетов")
             return False
         
         # Затем обновляем систему
-        print("\\n[START] Обновление системы...")
+        add_to_terminal("\\n[START] Обновление системы...")
         upgrade_cmd = ['apt-get', 'dist-upgrade', '-y']
-        result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run)
+        result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
         
         if result == 0:
-            print("[OK] Система успешно обновлена")
+            add_to_terminal("[OK] Система успешно обновлена")
             
             # Автоматическая очистка ненужных пакетов
-            print("\\n[CLEANUP] Автоматическая очистка ненужных пакетов...")
+            add_to_terminal("\\n[CLEANUP] Автоматическая очистка ненужных пакетов...")
             autoremove_cmd = ['apt-get', 'autoremove', '-y']
-            autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run)
+            autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run, gui_terminal=True)
             
             if autoremove_result == 0:
-                print("[OK] Ненужные пакеты успешно удалены")
+                add_to_terminal("[OK] Ненужные пакеты успешно удалены")
             else:
-                print("[WARNING] Предупреждение: не удалось удалить ненужные пакеты")
+                add_to_terminal("[WARNING] Предупреждение: не удалось удалить ненужные пакеты")
             
             return True
         else:
-            print("[ERROR] Ошибка обновления системы")
+            add_to_terminal("[ERROR] Ошибка обновления системы")
             # Пробуем автоматически исправить ошибки dpkg
             if self.auto_fix_dpkg_errors():
-                print("[TOOL] Ошибки dpkg исправлены, повторяем обновление...")
+                add_to_terminal("[TOOL] Ошибки dpkg исправлены, повторяем обновление...")
                 # Повторяем обновление после исправления
-                result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run)
+                result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
                 if result == 0:
-                    print("[OK] Система успешно обновлена после исправления")
+                    add_to_terminal("[OK] Система успешно обновлена после исправления")
                     return True
                 else:
-                    print("[ERROR] Ошибка обновления системы даже после исправления")
+                    add_to_terminal("[ERROR] Ошибка обновления системы даже после исправления")
                     return False
             else:
-                print("[ERROR] Не удалось автоматически исправить ошибки dpkg")
+                add_to_terminal("[ERROR] Не удалось автоматически исправить ошибки dpkg")
                 return False
     
     def auto_fix_dpkg_errors(self):
         """Автоматическое исправление ошибок dpkg"""
-        print("[TOOL] Автоматическое исправление ошибок dpkg...")
+        add_to_terminal("[TOOL] Автоматическое исправление ошибок dpkg...")
         
         try:
             # 1. Исправляем конфигурацию dpkg
-            print("   [TOOL] Запускаем dpkg --configure -a...")
+            add_to_terminal("   [TOOL] Запускаем dpkg --configure -a...")
             configure_cmd = ['dpkg', '--configure', '-a']
-            result = self.run_command_with_interactive_handling(configure_cmd, False)
+            result = self.run_command_with_interactive_handling(configure_cmd, False, gui_terminal=True)
             
             if result == 0:
-                print("   [OK] dpkg --configure -a выполнен успешно")
+                add_to_terminal("   [OK] dpkg --configure -a выполнен успешно")
             else:
-                print("   [WARNING] dpkg --configure -a завершился с ошибкой")
+                add_to_terminal("   [WARNING] dpkg --configure -a завершился с ошибкой")
             
             # 2. Исправляем сломанные зависимости
-            print("   [TOOL] Запускаем apt --fix-broken install...")
+            add_to_terminal("   [TOOL] Запускаем apt --fix-broken install...")
             fix_cmd = ['apt', '--fix-broken', 'install', '-y']
-            result = self.run_command_with_interactive_handling(fix_cmd, False)
+            result = self.run_command_with_interactive_handling(fix_cmd, False, gui_terminal=True)
             
             if result == 0:
-                print("   [OK] apt --fix-broken install выполнен успешно")
+                add_to_terminal("   [OK] apt --fix-broken install выполнен успешно")
                 return True
             else:
-                print("   [WARNING] apt --fix-broken install завершился с ошибкой")
+                add_to_terminal("   [WARNING] apt --fix-broken install завершился с ошибкой")
                 
                 # 3. Принудительное удаление проблемных пакетов
-                print("   [TOOL] Пробуем принудительное удаление проблемных пакетов...")
+                add_to_terminal("   [TOOL] Пробуем принудительное удаление проблемных пакетов...")
                 force_remove_cmd = ['dpkg', '--remove', '--force-remove-reinstreq', 'python-tk', 'python-qt4']
-                result = self.run_command_with_interactive_handling(force_remove_cmd, False)
+                result = self.run_command_with_interactive_handling(force_remove_cmd, False, gui_terminal=True)
                 
                 if result == 0:
-                    print("   [OK] Проблемные пакеты удалены принудительно")
+                    add_to_terminal("   [OK] Проблемные пакеты удалены принудительно")
                     # Повторяем исправление зависимостей
-                    result = self.run_command_with_interactive_handling(fix_cmd, False)
+                    result = self.run_command_with_interactive_handling(fix_cmd, False, gui_terminal=True)
                     if result == 0:
-                        print("   [OK] Зависимости исправлены после принудительного удаления")
+                        add_to_terminal("   [OK] Зависимости исправлены после принудительного удаления")
                         return True
                 
                 return False
                 
         except Exception as e:
-            print("   [ERROR] Ошибка автоматического исправления: %s" % str(e))
+            add_to_terminal("   [ERROR] Ошибка автоматического исправления: %s" % str(e))
             return False
     
     def simulate_update_scenarios(self):
         """Симуляция различных сценариев обновления"""
-        print("[PROCESS] Симуляция сценариев обновления...")
+        add_to_terminal("[PROCESS] Симуляция сценариев обновления...")
         
         # Тест 1: dpkg конфигурационный файл
-        print("\\n[LIST] Тест 1: dpkg конфигурационный файл")
+        add_to_terminal("\\n[LIST] Тест 1: dpkg конфигурационный файл")
         test_output = """Файл настройки «/etc/ssl/openssl.cnf»
 ==> Изменён с момента установки (вами или сценарием).
 ==> Автор пакета предоставил обновлённую версию.
@@ -961,30 +968,30 @@ class SystemUpdater(object):
         prompt_type = self.detect_interactive_prompt(test_output)
         if prompt_type:
             response = self.get_auto_response(prompt_type)
-            print("   [OK] Обнаружен запрос: %s" % prompt_type)
+            add_to_terminal("   [OK] Обнаружен запрос: %s" % prompt_type)
             if response == '':
-                print("   [OK] Автоматический ответ: Enter (пустой ответ)")
+                add_to_terminal("   [OK] Автоматический ответ: Enter (пустой ответ)")
             else:
-                print("   [OK] Автоматический ответ: %s" % response)
+                add_to_terminal("   [OK] Автоматический ответ: %s" % response)
         else:
-            print("   [ERROR] Запрос не обнаружен")
+            add_to_terminal("   [ERROR] Запрос не обнаружен")
         
         # Тест 2: перезапуск служб
-        print("\\n[PROCESS] Тест 2: перезапуск служб")
+        add_to_terminal("\\n[PROCESS] Тест 2: перезапуск служб")
         test_output = """Перезапустить службы во время пакетных операций? [Y/n]"""
         
         prompt_type = self.detect_interactive_prompt(test_output)
         if prompt_type:
             response = self.get_auto_response(prompt_type)
-            print("   [OK] Обнаружен запрос: %s" % prompt_type)
+            add_to_terminal("   [OK] Обнаружен запрос: %s" % prompt_type)
             if response == '':
-                print("   [OK] Автоматический ответ: Enter (пустой ответ)")
+                add_to_terminal("   [OK] Автоматический ответ: Enter (пустой ответ)")
             else:
-                print("   [OK] Автоматический ответ: %s" % response)
+                add_to_terminal("   [OK] Автоматический ответ: %s" % response)
         else:
-            print("   [ERROR] Запрос не обнаружен")
+            add_to_terminal("   [ERROR] Запрос не обнаружен")
         
-        print("\\n[OK] Симуляция завершена")
+        add_to_terminal("\\n[OK] Симуляция завершена")
 
 def main(dry_run=False):
     """Основная функция для тестирования"""
@@ -992,8 +999,8 @@ def main(dry_run=False):
     
     # Проверяем права доступа
     if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными пакетами")
-        print("Запустите: sudo python system_updater.py")
+        add_to_terminal("[ERROR] Требуются права root для работы с системными пакетами")
+        add_to_terminal("Запустите: sudo python system_updater.py")
         return False
     
     # Симулируем сценарии обновления
@@ -1001,15 +1008,15 @@ def main(dry_run=False):
     
     # Тестируем обновление системы
     if not dry_run:
-        print("\\n[TOOL] Тест реального обновления системы...")
+        add_to_terminal("\\n[TOOL] Тест реального обновления системы...")
         success = updater.update_system(dry_run)
         
         if success:
-            print("[OK] Обновление системы завершено успешно")
+            add_to_terminal("[OK] Обновление системы завершено успешно")
         else:
-            print("[ERROR] Обновление системы завершено с ошибкой")
+            add_to_terminal("[ERROR] Обновление системы завершено с ошибкой")
     else:
-        print("\\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется")
+        add_to_terminal("\\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется")
         updater.update_system(dry_run)
     
     return True
@@ -1020,22 +1027,22 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
         dry_run = True
     
-    print("=" * 60)
+    add_to_terminal("=" * 60)
     if dry_run:
-        print("Тест модуля обновления системы (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        add_to_terminal("Тест модуля обновления системы (РЕЖИМ ТЕСТИРОВАНИЯ)")
     else:
-        print("Тест модуля обновления системы")
-    print("=" * 60)
+        add_to_terminal("Тест модуля обновления системы")
+    add_to_terminal("=" * 60)
     
     success = main(dry_run)
     
     if success:
         if dry_run:
-            print("\\n[OK] Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+            add_to_terminal("\\n[OK] Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
         else:
-            print("\\n[OK] Тест модуля завершен!")
+            add_to_terminal("\\n[OK] Тест модуля завершен!")
     else:
-        print("\\n[ERROR] Ошибка теста модуля")
+        add_to_terminal("\\n[ERROR] Ошибка теста модуля")
         sys.exit(1)
 '''
 
@@ -1096,15 +1103,15 @@ class InteractiveHandler(object):
         """Получение автоматического ответа для типа запроса"""
         return self.responses.get(prompt_type, 'Y')  # По умолчанию всегда "Y"
     
-    def run_command_with_interactive_handling(self, cmd, dry_run=False):
+    def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
         if dry_run:
-            print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
-            print("   Команда: %s" % ' '.join(cmd))
+            add_to_terminal("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
+            add_to_terminal("   Команда: %s" % ' '.join(cmd))
             return 0
         
-        print("[START] Выполнение команды с автоматическими ответами...")
-        print("   Команда: %s" % ' '.join(cmd))
+        add_to_terminal("[START] Выполнение команды с автоматическими ответами...")
+        add_to_terminal("   Команда: %s" % ' '.join(cmd))
         
         try:
             # Запускаем процесс
@@ -1125,7 +1132,6 @@ class InteractiveHandler(object):
                     break
                 
                 # Выводим строку
-                print("   %s" % line.rstrip())
                 add_to_terminal("   %s" % line.rstrip())
                 
                 # Добавляем в буфер для анализа
@@ -1135,7 +1141,7 @@ class InteractiveHandler(object):
                 prompt_type = self.detect_interactive_prompt(output_buffer)
                 if prompt_type:
                     response = self.get_auto_response(prompt_type)
-                    print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
+                    add_to_terminal("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
                     
                     # Отправляем ответ
                     process.stdin.write(response + '\\n')
@@ -1148,22 +1154,22 @@ class InteractiveHandler(object):
             return_code = process.wait()
             
             if return_code == 0:
-                print("   [OK] Команда выполнена успешно")
+                add_to_terminal("   [OK] Команда выполнена успешно")
             else:
-                print("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
+                add_to_terminal("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
             
             return return_code
             
         except Exception as e:
-            print("   [ERROR] Ошибка выполнения команды: %s" % str(e))
+            add_to_terminal("   [ERROR] Ошибка выполнения команды: %s" % str(e))
             return 1
     
     def simulate_interactive_scenarios(self):
         """Симуляция различных интерактивных сценариев для тестирования"""
-        print("[PROCESS] Симуляция интерактивных сценариев...")
+        add_to_terminal("[PROCESS] Симуляция интерактивных сценариев...")
         
         # Тест 1: dpkg конфигурационный файл
-        print("\\n[LIST] Тест 1: dpkg конфигурационный файл")
+        add_to_terminal("\\n[LIST] Тест 1: dpkg конфигурационный файл")
         test_output = """Файл настройки «/etc/ssl/openssl.cnf»
 ==> Изменён с момента установки (вами или сценарием).
 ==> Автор пакета предоставил обновлённую версию.
@@ -1172,16 +1178,16 @@ class InteractiveHandler(object):
         prompt_type = self.detect_interactive_prompt(test_output)
         if prompt_type:
             response = self.get_auto_response(prompt_type)
-            print("   [OK] Обнаружен запрос: %s" % prompt_type)
+            add_to_terminal("   [OK] Обнаружен запрос: %s" % prompt_type)
             if response == '':
-                print("   [OK] Автоматический ответ: Enter (пустой ответ)")
+                add_to_terminal("   [OK] Автоматический ответ: Enter (пустой ответ)")
             else:
-                print("   [OK] Автоматический ответ: %s" % response)
+                add_to_terminal("   [OK] Автоматический ответ: %s" % response)
         else:
-            print("   [ERROR] Запрос не обнаружен")
+            add_to_terminal("   [ERROR] Запрос не обнаружен")
         
         # Тест 2: настройка клавиатуры
-        print("\\n[KEYBOARD] Тест 2: настройка клавиатуры")
+        add_to_terminal("\\n[KEYBOARD] Тест 2: настройка клавиатуры")
         test_output = """Настройка пакета
 Настраивается keyboard-configuration
 Выберите подходящую раскладку клавиатуры."""
@@ -1189,30 +1195,30 @@ class InteractiveHandler(object):
         prompt_type = self.detect_interactive_prompt(test_output)
         if prompt_type:
             response = self.get_auto_response(prompt_type)
-            print("   [OK] Обнаружен запрос: %s" % prompt_type)
+            add_to_terminal("   [OK] Обнаружен запрос: %s" % prompt_type)
             if response == '':
-                print("   [OK] Автоматический ответ: Enter (пустой ответ)")
+                add_to_terminal("   [OK] Автоматический ответ: Enter (пустой ответ)")
             else:
-                print("   [OK] Автоматический ответ: %s" % response)
+                add_to_terminal("   [OK] Автоматический ответ: %s" % response)
         else:
-            print("   [ERROR] Запрос не обнаружен")
+            add_to_terminal("   [ERROR] Запрос не обнаружен")
         
         # Тест 3: способ переключения клавиатуры
-        print("\\n[PROCESS] Тест 3: способ переключения клавиатуры")
+        add_to_terminal("\\n[PROCESS] Тест 3: способ переключения клавиатуры")
         test_output = """Вам нужно указать способ переключения клавиатуры между национальной раскладкой и стандартной латинской раскладкой."""
         
         prompt_type = self.detect_interactive_prompt(test_output)
         if prompt_type:
             response = self.get_auto_response(prompt_type)
-            print("   [OK] Обнаружен запрос: %s" % prompt_type)
+            add_to_terminal("   [OK] Обнаружен запрос: %s" % prompt_type)
             if response == '':
-                print("   [OK] Автоматический ответ: Enter (пустой ответ)")
+                add_to_terminal("   [OK] Автоматический ответ: Enter (пустой ответ)")
             else:
-                print("   [OK] Автоматический ответ: %s" % response)
+                add_to_terminal("   [OK] Автоматический ответ: %s" % response)
         else:
-            print("   [ERROR] Запрос не обнаружен")
+            add_to_terminal("   [ERROR] Запрос не обнаружен")
         
-        print("\\n[OK] Симуляция завершена")
+        add_to_terminal("\\n[OK] Симуляция завершена")
 
 def main(dry_run=False):
     """Основная функция для тестирования"""
@@ -1220,8 +1226,8 @@ def main(dry_run=False):
     
     # Проверяем права доступа
     if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными командами")
-        print("Запустите: sudo python interactive_handler.py")
+        add_to_terminal("[ERROR] Требуются права root для работы с системными командами")
+        add_to_terminal("Запустите: sudo python interactive_handler.py")
         return False
     
     # Симулируем интерактивные сценарии
@@ -1229,17 +1235,17 @@ def main(dry_run=False):
     
     # Тестируем реальную команду (если не dry-run)
     if not dry_run:
-        print("\\n[TOOL] Тест реальной команды...")
+        add_to_terminal("\\n[TOOL] Тест реальной команды...")
         # Пример команды, которая может вызвать интерактивные запросы
         test_cmd = ['apt-get', 'install', '--simulate', 'openssl']
-        result = handler.run_command_with_interactive_handling(test_cmd, dry_run)
+        result = handler.run_command_with_interactive_handling(test_cmd, dry_run, gui_terminal=True)
         
         if result == 0:
-            print("[OK] Тест реальной команды завершен успешно")
+            add_to_terminal("[OK] Тест реальной команды завершен успешно")
         else:
-            print("[ERROR] Тест реальной команды завершен с ошибкой")
+            add_to_terminal("[ERROR] Тест реальной команды завершен с ошибкой")
     else:
-        print("\\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальные команды не выполняются")
+        add_to_terminal("\\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальные команды не выполняются")
     
     return True
 
@@ -1249,22 +1255,22 @@ if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--dry-run':
         dry_run = True
     
-    print("=" * 60)
+    add_to_terminal("=" * 60)
     if dry_run:
-        print("Тест модуля перехвата интерактивных запросов (РЕЖИМ ТЕСТИРОВАНИЯ)")
+        add_to_terminal("Тест модуля перехвата интерактивных запросов (РЕЖИМ ТЕСТИРОВАНИЯ)")
     else:
-        print("Тест модуля перехвата интерактивных запросов")
-    print("=" * 60)
+        add_to_terminal("Тест модуля перехвата интерактивных запросов")
+    add_to_terminal("=" * 60)
     
     success = main(dry_run)
     
     if success:
         if dry_run:
-            print("\\n[OK] Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+            add_to_terminal("\\n[OK] Тест модуля завершен! (РЕЖИМ ТЕСТИРОВАНИЯ)")
         else:
-            print("\\n[OK] Тест модуля завершен!")
+            add_to_terminal("\\n[OK] Тест модуля завершен!")
     else:
-        print("\\n[ERROR] Ошибка теста модуля")
+        add_to_terminal("\\n[ERROR] Ошибка теста модуля")
         sys.exit(1)
 '''
 
@@ -1300,7 +1306,7 @@ class SystemStats(object):
     
     def get_updatable_packages(self):
         """Анализ доступных обновлений"""
-        print("[PACKAGE] Анализ доступных обновлений...")
+        add_to_terminal("[PACKAGE] Анализ доступных обновлений...")
         
         try:
             # Получаем список обновляемых пакетов
@@ -1321,19 +1327,19 @@ class SystemStats(object):
                 # Сохраняем первые несколько пакетов для показа
                 self.updatable_list = lines[1:6] if len(lines) > 1 else []
                 
-                print("   [OK] Найдено %d пакетов для обновления" % self.packages_to_update)
+                add_to_terminal("   [OK] Найдено %d пакетов для обновления" % self.packages_to_update)
                 return True
             else:
-                print("   [ERROR] Ошибка получения списка обновлений: %s" % stderr.strip())
+                add_to_terminal("   [ERROR] Ошибка получения списка обновлений: %s" % stderr.strip())
                 return False
                 
         except Exception as e:
-            print("   [ERROR] Ошибка анализа обновлений: %s" % str(e))
+            add_to_terminal("   [ERROR] Ошибка анализа обновлений: %s" % str(e))
             return False
     
     def get_autoremove_packages(self):
         """Анализ пакетов для автоудаления"""
-        print("[CLEANUP] Анализ пакетов для автоудаления...")
+        add_to_terminal("[CLEANUP] Анализ пакетов для автоудаления...")
         
         try:
             # Симулируем автоудаление
@@ -1364,19 +1370,19 @@ class SystemStats(object):
                         self.packages_to_remove = int(match.group(1))
                         break
                 
-                print("   [OK] Найдено %d пакетов для удаления" % self.packages_to_remove)
+                add_to_terminal("   [OK] Найдено %d пакетов для удаления" % self.packages_to_remove)
                 return True
             else:
-                print("   [ERROR] Ошибка симуляции автоудаления: %s" % stderr.strip())
+                add_to_terminal("   [ERROR] Ошибка симуляции автоудаления: %s" % stderr.strip())
                 return False
                 
         except Exception as e:
-            print("   [ERROR] Ошибка анализа автоудаления: %s" % str(e))
+            add_to_terminal("   [ERROR] Ошибка анализа автоудаления: %s" % str(e))
             return False
     
     def calculate_install_stats(self):
         """Подсчет пакетов для установки"""
-        print("[LIST] Подсчет пакетов для установки...")
+        add_to_terminal("[LIST] Подсчет пакетов для установки...")
         
         # Python и зависимости
         python_packages = ['python3', 'python3-pip', 'python3-apt', 'python3-venv']
@@ -1399,10 +1405,10 @@ class SystemStats(object):
             'total': python_count + utility_count + wine_count
         }
         
-        print("   [OK] Python: %d пакетов" % python_count)
-        print("   [OK] Утилиты: %d пакетов" % utility_count)
-        print("   [OK] Wine: %d пакетов" % wine_count)
-        print("   [OK] Итого: %d пакетов" % self.packages_to_install['total'])
+        add_to_terminal("   [OK] Python: %d пакетов" % python_count)
+        add_to_terminal("   [OK] Утилиты: %d пакетов" % utility_count)
+        add_to_terminal("   [OK] Wine: %d пакетов" % wine_count)
+        add_to_terminal("   [OK] Итого: %d пакетов" % self.packages_to_install['total'])
         
         return True
     
@@ -1432,38 +1438,38 @@ class SystemStats(object):
     
     def display_statistics(self, repo_stats=None):
         """Отображение статистики операций"""
-        print("\\nСТАТИСТИКА ОПЕРАЦИЙ:")
-        print("====================")
+        add_to_terminal("\\nСТАТИСТИКА ОПЕРАЦИЙ:")
+        add_to_terminal("====================")
         
         # Репозитории
-        print("[LIST] Репозитории:")
+        add_to_terminal("[LIST] Репозитории:")
         if repo_stats:
-            print("   • Активировано: %d рабочих" % repo_stats.get('activated', 0))
-            print("   • Деактивировано: %d нерабочих" % repo_stats.get('deactivated', 0))
+            add_to_terminal("   • Активировано: %d рабочих" % repo_stats.get('activated', 0))
+            add_to_terminal("   • Деактивировано: %d нерабочих" % repo_stats.get('deactivated', 0))
         else:
-            print("   • Активировано: [будет заполнено из repo_checker]")
-            print("   • Деактивировано: [будет заполнено из repo_checker]")
+            add_to_terminal("   • Активировано: [будет заполнено из repo_checker]")
+            add_to_terminal("   • Деактивировано: [будет заполнено из repo_checker]")
         
         # Обновление системы
-        print("\\n[PACKAGE] Обновление системы:")
-        print("   • Пакетов для обновления: %d" % self.packages_to_update)
+        add_to_terminal("\\n[PACKAGE] Обновление системы:")
+        add_to_terminal("   • Пакетов для обновления: %d" % self.packages_to_update)
         
         if self.packages_to_update > 0 and self.updatable_list:
-            print("   • Первые пакеты:")
+            add_to_terminal("   • Первые пакеты:")
             for package in self.updatable_list:
                 if package.strip():
-                    print("     - %s" % package.strip())
+                    add_to_terminal("     - %s" % package.strip())
         
         # Очистка системы
-        print("\\n[CLEANUP] Очистка системы:")
-        print("   • Пакетов для удаления: %d" % self.packages_to_remove)
+        add_to_terminal("\\n[CLEANUP] Очистка системы:")
+        add_to_terminal("   • Пакетов для удаления: %d" % self.packages_to_remove)
         
         # Установка новых пакетов
-        print("\\n[PACKAGE] Установка новых пакетов:")
-        print("   • Python и зависимости: %d пакетов" % self.packages_to_install['python'])
-        print("   • Системные утилиты: %d пакетов" % self.packages_to_install['utilities'])
-        print("   • Wine и компоненты: %d пакетов" % self.packages_to_install['wine'])
-        print("   • ИТОГО: %d пакетов" % self.packages_to_install['total'])
+        add_to_terminal("\\n[PACKAGE] Установка новых пакетов:")
+        add_to_terminal("   • Python и зависимости: %d пакетов" % self.packages_to_install['python'])
+        add_to_terminal("   • Системные утилиты: %d пакетов" % self.packages_to_install['utilities'])
+        add_to_terminal("   • Wine и компоненты: %d пакетов" % self.packages_to_install['wine'])
+        add_to_terminal("   • ИТОГО: %d пакетов" % self.packages_to_install['total'])
     
     def get_full_statistics(self):
         """Получение полной статистики"""
@@ -1481,21 +1487,21 @@ def main(dry_run=False):
     
     # Проверяем права доступа
     if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными пакетами")
-        print("Запустите: sudo python system_stats.py")
+        add_to_terminal("[ERROR] Требуются права root для работы с системными пакетами")
+        add_to_terminal("Запустите: sudo python system_stats.py")
         return False
     
     # Анализируем обновления
     if not stats.get_updatable_packages():
-        print("[WARNING] Предупреждение: не удалось получить список обновлений")
+        add_to_terminal("[WARNING] Предупреждение: не удалось получить список обновлений")
     
     # Анализируем автоудаление
     if not stats.get_autoremove_packages():
-        print("[WARNING] Предупреждение: не удалось проанализировать автоудаление")
+        add_to_terminal("[WARNING] Предупреждение: не удалось проанализировать автоудаление")
     
     # Подсчитываем пакеты для установки
     if not stats.calculate_install_stats():
-        print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки")
+        add_to_terminal("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки")
     
     # Показываем статистику
     stats.display_statistics()
@@ -1503,16 +1509,16 @@ def main(dry_run=False):
     return True
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("Тест модуля статистики системы")
-    print("=" * 60)
+    add_to_terminal("=" * 60)
+    add_to_terminal("Тест модуля статистики системы")
+    add_to_terminal("=" * 60)
     
     success = main()
     
     if success:
-        print("\\n[OK] Тест модуля статистики завершен!")
+        add_to_terminal("\\n[OK] Тест модуля статистики завершен!")
     else:
-        print("\\n[ERROR] Ошибка теста модуля статистики")
+        add_to_terminal("\\n[ERROR] Ошибка теста модуля статистики")
         sys.exit(1)
 '''
 
