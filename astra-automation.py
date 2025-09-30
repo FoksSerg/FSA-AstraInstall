@@ -633,7 +633,18 @@ class WineComponentsChecker(object):
         self.wine_astraregul_path = "/opt/wine-astraregul/bin/wine"
         self.wine_9_path = "/opt/wine-9.0/bin/wine"
         self.ptrace_scope_path = "/proc/sys/kernel/yama/ptrace_scope"
-        self.home = os.path.expanduser("~")
+        
+        # Определяем домашнюю директорию РЕАЛЬНОГО пользователя (не root)
+        # Если запущено через sudo, берём SUDO_USER, иначе текущего пользователя
+        real_user = os.environ.get('SUDO_USER')
+        if real_user and real_user != 'root':
+            # Запущено через sudo - используем домашнюю директорию реального пользователя
+            import pwd
+            self.home = pwd.getpwnam(real_user).pw_dir
+        else:
+            # Запущено напрямую
+            self.home = os.path.expanduser("~")
+        
         self.wineprefix = os.path.join(self.home, ".wine-astraregul")
         self.start_script = os.path.join(self.home, "start-astraide.sh")
         self.desktop_shortcut = os.path.join(self.home, "Desktop", "AstraRegul.desktop")
@@ -644,6 +655,12 @@ class WineComponentsChecker(object):
             'wine_9': False,
             'ptrace_scope': False,
             'wineprefix': False,
+            'dotnet48': False,
+            'vcrun2013': False,
+            'vcrun2022': False,
+            'd3dcompiler_43': False,
+            'd3dcompiler_47': False,
+            'dxvk': False,
             'astra_ide': False,
             'start_script': False,
             'desktop_shortcut': False
@@ -736,17 +753,54 @@ class WineComponentsChecker(object):
             print("   [ERR] WINEPREFIX не найден, невозможно проверить установку")
             return False
         
-        # Ищем директорию Astra.IDE
-        astra_base = os.path.join(self.wineprefix, "drive_c", "Program Files", "AstraRegul")
+        # Проверяем наличие drive_c
+        drive_c = os.path.join(self.wineprefix, "drive_c")
+        if not os.path.isdir(drive_c):
+            print("   [ERR] drive_c не существует - WINEPREFIX не инициализирован")
+            return False
         
-        if not os.path.isdir(astra_base):
-            print("   [ERR] Директория AstraRegul не найдена: %s" % astra_base)
+        # Ищем директорию AstraRegul в обеих возможных Program Files
+        program_files = os.path.join(drive_c, "Program Files")
+        program_files_x86 = os.path.join(drive_c, "Program Files (x86)")
+        
+        astra_base = None
+        for base_dir in [program_files, program_files_x86]:
+            test_path = os.path.join(base_dir, "AstraRegul")
+            if os.path.isdir(test_path):
+                astra_base = test_path
+                break
+        
+        # Если не нашли стандартным способом, пробуем глобальный поиск
+        if not astra_base:
+            try:
+                import glob
+                search_pattern = os.path.join(self.wineprefix, "drive_c", "**", "Astra.IDE.exe")
+                matches = glob.glob(search_pattern, recursive=True)
+                
+                if matches:
+                    # Извлекаем базовую директорию из найденного пути
+                    found_exe = matches[0]
+                    parts = found_exe.split(os.sep)
+                    for i, part in enumerate(parts):
+                        if 'astraregul' in part.lower() and 'wine-astraregul' not in part.lower():
+                            astra_base = os.sep.join(parts[:i+1])
+                            break
+                else:
+                    print("   [ERR] Astra.IDE не найдена")
+                    return False
+            except Exception as e:
+                print("   [ERR] Ошибка поиска Astra.IDE: %s" % str(e))
+                return False
+        
+        if not astra_base:
+            print("   [ERR] Директория AstraRegul не найдена")
             return False
         
         # Ищем папку Astra.IDE_64_*
         try:
             import glob
-            astra_dirs = glob.glob(os.path.join(astra_base, "Astra.IDE_64_*"))
+            search_pattern = os.path.join(astra_base, "Astra.IDE_64_*")
+            astra_dirs = glob.glob(search_pattern)
             
             if not astra_dirs:
                 print("   [ERR] Директория Astra.IDE_64_* не найдена")
@@ -796,6 +850,74 @@ class WineComponentsChecker(object):
             print("   [ERR] Ярлык не найден: %s" % self.desktop_shortcut)
             return False
     
+    def check_winetricks_component(self, component_name, check_paths):
+        """
+        Проверка установленного компонента winetricks
+        
+        Args:
+            component_name: Имя компонента (dotnet48, vcrun2013 и т.д.)
+            check_paths: Список путей для проверки относительно WINEPREFIX
+        
+        Returns:
+            bool: True если компонент установлен
+        """
+        if not self.checks['wineprefix']:
+            return False
+        
+        # Проверяем наличие хотя бы одного из путей
+        for path in check_paths:
+            full_path = os.path.join(self.wineprefix, path)
+            if os.path.exists(full_path):
+                return True
+        
+        return False
+    
+    def check_winetricks_components(self):
+        """Проверка всех компонентов winetricks"""
+        print("[CHECK] Проверка компонентов winetricks...")
+        
+        if not self.checks['wineprefix']:
+            print("   [SKIP] WINEPREFIX не найден, пропускаем проверку")
+            return
+        
+        # Определения компонентов и их характерных файлов/директорий
+        components = {
+            'dotnet48': [
+                'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319',
+                'drive_c/windows/Microsoft.NET/Framework/v4.0.30319'
+            ],
+            'vcrun2013': [
+                'drive_c/windows/system32/msvcp120.dll',
+                'drive_c/windows/syswow64/msvcp120.dll'
+            ],
+            'vcrun2022': [
+                'drive_c/windows/system32/msvcp140.dll',
+                'drive_c/windows/system32/vcruntime140.dll'
+            ],
+            'd3dcompiler_43': [
+                'drive_c/windows/system32/d3dcompiler_43.dll',
+                'drive_c/windows/syswow64/d3dcompiler_43.dll'
+            ],
+            'd3dcompiler_47': [
+                'drive_c/windows/system32/d3dcompiler_47.dll',
+                'drive_c/windows/syswow64/d3dcompiler_47.dll'
+            ],
+            'dxvk': [
+                'drive_c/windows/system32/d3d11.dll',
+                'drive_c/windows/system32/dxgi.dll'
+            ]
+        }
+        
+        # Проверяем каждый компонент
+        for component, paths in components.items():
+            is_installed = self.check_winetricks_component(component, paths)
+            self.checks[component] = is_installed
+            
+            if is_installed:
+                print("   [OK] %s установлен" % component)
+            else:
+                print("   [ERR] %s не установлен" % component)
+    
     def check_all_components(self):
         """Выполнить все проверки"""
         print("\n[WINE] Проверка всех Wine компонентов и Astra.IDE...")
@@ -806,6 +928,7 @@ class WineComponentsChecker(object):
         self.check_wine_9()
         self.check_ptrace_scope()
         self.check_wineprefix()
+        self.check_winetricks_components()  # Новая проверка!
         self.check_astra_ide_installation()
         self.check_start_script()
         self.check_desktop_shortcut()
@@ -884,12 +1007,250 @@ class WineComponentsChecker(object):
         return missing
 
 # ============================================================================
+# КЛАСС МОНИТОРИНГА УСТАНОВКИ
+# ============================================================================
+class InstallationMonitor(object):
+    """Класс для мониторинга процесса установки Wine и Astra.IDE"""
+    
+    def __init__(self, wineprefix, callback=None):
+        """
+        Инициализация монитора
+        
+        Args:
+            wineprefix: Путь к WINEPREFIX директории
+            callback: Функция обратного вызова для обновления GUI
+        """
+        self.wineprefix = wineprefix
+        self.callback = callback
+        self.start_time = None
+        self.is_monitoring = False
+        self.monitoring_thread = None
+        
+        # Для мониторинга CPU
+        self.last_cpu_stats = self._read_cpu_stats()
+        self.last_cpu_time = datetime.datetime.now()
+        
+        # Для мониторинга сети
+        self.last_net_bytes = self._get_network_bytes()
+        self.last_net_time = datetime.datetime.now()
+        
+    def start_monitoring(self):
+        """Запустить мониторинг"""
+        import threading
+        self.start_time = datetime.datetime.now()
+        self.is_monitoring = True
+        self.monitoring_thread = threading.Thread(target=self._monitor_loop)
+        self.monitoring_thread.daemon = True
+        self.monitoring_thread.start()
+    
+    def stop_monitoring(self):
+        """Остановить мониторинг"""
+        self.is_monitoring = False
+        if self.monitoring_thread:
+            self.monitoring_thread.join(timeout=2)
+    
+    def _monitor_loop(self):
+        """Основной цикл мониторинга (в отдельном потоке)"""
+        import time
+        
+        while self.is_monitoring:
+            try:
+                # Собираем данные
+                data = self.get_status()
+                
+                # Отправляем в callback если есть
+                if self.callback:
+                    self.callback(data)
+                
+                # Ждем 1 секунду
+                time.sleep(1)
+                
+            except Exception as e:
+                # Игнорируем ошибки мониторинга
+                pass
+    
+    def _read_cpu_stats(self):
+        """Прочитать текущие статистики CPU из /proc/stat"""
+        try:
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()
+                # cpu  user nice system idle iowait irq softirq steal
+                parts = line.split()
+                if parts[0] == 'cpu':
+                    # Берем все доступные поля (обычно 8-10 полей)
+                    stats = [int(x) for x in parts[1:] if x.isdigit()]
+                    return stats
+        except:
+            pass
+        return [0, 0, 0, 0]  # user, nice, system, idle
+    
+    def _get_cpu_usage(self):
+        """Получить загрузку CPU в процентах (по всем ядрам)"""
+        try:
+            # Читаем текущие статистики
+            current_stats = self._read_cpu_stats()
+            current_time = datetime.datetime.now()
+            
+            # Проверяем минимальный интервал
+            time_diff = (current_time - self.last_cpu_time).total_seconds()
+            if time_diff < 0.1:  # Минимум 100ms между замерами
+                return 0
+            
+            # Вычисляем разницу
+            if len(self.last_cpu_stats) >= 4 and len(current_stats) >= 4:
+                # Суммируем все поля (total time)
+                prev_total = sum(self.last_cpu_stats)
+                curr_total = sum(current_stats)
+                
+                # idle - это 4-е поле (индекс 3)
+                prev_idle = self.last_cpu_stats[3]
+                curr_idle = current_stats[3]
+                
+                total_diff = curr_total - prev_total
+                idle_diff = curr_idle - prev_idle
+                
+                if total_diff > 0:
+                    usage = int(((total_diff - idle_diff) / total_diff) * 100)
+                    
+                    # Обновляем для следующего замера
+                    self.last_cpu_stats = current_stats
+                    self.last_cpu_time = current_time
+                    
+                    return max(0, min(100, usage))  # Ограничиваем 0-100%
+            
+            # Обновляем даже если не смогли вычислить
+            self.last_cpu_stats = current_stats
+            self.last_cpu_time = current_time
+            return 0
+        except:
+            return 0
+    
+    def _get_network_bytes(self):
+        """Получить общее количество принятых байтов по сети"""
+        try:
+            total_bytes = 0
+            with open('/proc/net/dev', 'r') as f:
+                lines = f.readlines()[2:]  # Пропускаем заголовки
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        # Второй столбец - принятые байты
+                        total_bytes += int(parts[1])
+            return total_bytes
+        except:
+            return 0
+    
+    def _get_network_speed(self):
+        """Получить скорость сети в MB/s"""
+        try:
+            current_bytes = self._get_network_bytes()
+            current_time = datetime.datetime.now()
+            
+            time_diff = (current_time - self.last_net_time).total_seconds()
+            if time_diff > 0:
+                bytes_diff = current_bytes - self.last_net_bytes
+                speed_mbps = (bytes_diff / time_diff) / (1024 * 1024)  # MB/s
+                
+                # Обновляем для следующего замера
+                self.last_net_bytes = current_bytes
+                self.last_net_time = current_time
+                
+                return max(0, speed_mbps)  # Не может быть отрицательной
+            return 0
+        except:
+            return 0
+    
+    def get_status(self):
+        """
+        Получить текущий статус установки
+        
+        Returns:
+            dict: Словарь со статусом {
+                'elapsed_time': секунд с начала,
+                'wine_processes': список процессов Wine,
+                'wineprefix_size': размер в MB,
+                'active': True если Wine процессы активны,
+                'cpu_usage': процент загрузки CPU,
+                'network_speed': скорость сети в MB/s
+            }
+        """
+        status = {
+            'elapsed_time': 0,
+            'wine_processes': [],
+            'wineprefix_size': 0,
+            'active': False,
+            'cpu_usage': 0,
+            'network_speed': 0.0
+        }
+        
+        # Время выполнения
+        if self.start_time:
+            elapsed = datetime.datetime.now() - self.start_time
+            status['elapsed_time'] = int(elapsed.total_seconds())
+        
+        # Процессы Wine
+        try:
+            import subprocess
+            result = subprocess.run(
+                ['ps', 'aux'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                wine_procs = []
+                for line in result.stdout.split('\n'):
+                    if 'wine' in line.lower() and 'grep' not in line:
+                        # Извлекаем имя процесса
+                        parts = line.split()
+                        if len(parts) > 10:
+                            proc_name = parts[10]
+                            if proc_name not in wine_procs:
+                                wine_procs.append(proc_name)
+                
+                status['wine_processes'] = wine_procs
+                status['active'] = len(wine_procs) > 0
+        except:
+            pass
+        
+        # Размер WINEPREFIX
+        try:
+            if os.path.exists(self.wineprefix):
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(self.wineprefix):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        try:
+                            total_size += os.path.getsize(fp)
+                        except:
+                            pass
+                
+                # Переводим в MB
+                status['wineprefix_size'] = int(total_size / (1024 * 1024))
+        except:
+            pass
+        
+        # CPU и сеть
+        status['cpu_usage'] = self._get_cpu_usage()
+        status['network_speed'] = self._get_network_speed()
+        
+        return status
+    
+    def format_time(self, seconds):
+        """Форматировать время в читаемый вид"""
+        minutes = seconds // 60
+        secs = seconds % 60
+        return "%d мин %d сек" % (minutes, secs)
+
+# ============================================================================
 # КЛАСС УСТАНОВКИ WINE КОМПОНЕНТОВ
 # ============================================================================
 class WineInstaller(object):
     """Класс для установки Wine компонентов и Astra.IDE"""
     
-    def __init__(self, logger=None, callback=None, install_wine=True, install_winetricks=True, install_ide=True):
+    def __init__(self, logger=None, callback=None, install_wine=True, install_winetricks=True, install_ide=True, winetricks_components=None):
         """
         Инициализация установщика
         
@@ -899,6 +1260,7 @@ class WineInstaller(object):
             install_wine: Устанавливать Wine пакеты (по умолчанию True)
             install_winetricks: Устанавливать winetricks компоненты (по умолчанию True)
             install_ide: Устанавливать Astra.IDE (по умолчанию True)
+            winetricks_components: Список компонентов winetricks для установки (если None - устанавливаем все)
         """
         self.logger = logger
         self.callback = callback
@@ -908,11 +1270,37 @@ class WineInstaller(object):
         self.install_winetricks = install_winetricks
         self.install_ide = install_ide
         
+        # Список компонентов winetricks (если None - устанавливаем все по умолчанию)
+        if winetricks_components is None:
+            self.winetricks_components = ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+        else:
+            self.winetricks_components = winetricks_components if winetricks_components else []
+        
         # Получаем абсолютный путь к директории скрипта
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Используем sys.argv[0] вместо __file__ для корректной работы при запуске через bash
+        import sys
+        if os.path.isabs(sys.argv[0]):
+            # Если передан абсолютный путь
+            script_path = sys.argv[0]
+        else:
+            # Если относительный путь - преобразуем в абсолютный относительно текущей директории
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        
+        script_dir = os.path.dirname(os.path.abspath(script_path))
         self.astrapack_dir = os.path.join(script_dir, "AstraPack")
         
-        self.home = os.path.expanduser("~")
+        # Определяем домашнюю директорию РЕАЛЬНОГО пользователя (не root)
+        real_user = os.environ.get('SUDO_USER')
+        if real_user and real_user != 'root':
+            # Запущено через sudo - устанавливаем для реального пользователя
+            import pwd
+            self.home = pwd.getpwnam(real_user).pw_dir
+            self._log("[INFO] Установка для пользователя %s (домашняя директория: %s)" % (real_user, self.home))
+        else:
+            # Запущено напрямую
+            self.home = os.path.expanduser("~")
+            self._log("[INFO] Установка для текущего пользователя (домашняя директория: %s)" % self.home)
+        
         self.wineprefix = os.path.join(self.home, ".wine-astraregul")
         
         # Пути к компонентам
@@ -1222,6 +1610,16 @@ class WineInstaller(object):
             os.makedirs(cache_winetricks, exist_ok=True)
             self._log("Созданы директории кэша")
             
+            # Если запущено через sudo - устанавливаем правильного владельца для директорий
+            real_user = os.environ.get('SUDO_USER')
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                import pwd
+                uid = pwd.getpwnam(real_user).pw_uid
+                gid = pwd.getpwnam(real_user).pw_gid
+                os.chown(cache_wine, uid, gid)
+                os.chown(cache_winetricks, uid, gid)
+                self._log("Установлен владелец директорий: %s" % real_user)
+            
             # Копируем wine-gecko
             self._log("Копирование wine-gecko компонентов...")
             if os.path.exists(self.wine_gecko_dir):
@@ -1231,6 +1629,9 @@ class WineInstaller(object):
                     dst = os.path.join(cache_wine, item)
                     if os.path.isfile(src):
                         shutil.copy2(src, dst)
+                        # Устанавливаем владельца если через sudo
+                        if os.geteuid() == 0 and real_user and real_user != 'root':
+                            os.chown(dst, uid, gid)
                         self._log("  Скопирован: %s" % item)
                 self._log("wine-gecko компоненты скопированы")
             
@@ -1244,9 +1645,18 @@ class WineInstaller(object):
                         if os.path.exists(dst):
                             shutil.rmtree(dst)
                         shutil.copytree(src, dst)
+                        # Устанавливаем владельца рекурсивно если через sudo
+                        if os.geteuid() == 0 and real_user and real_user != 'root':
+                            for root_dir, dirs, files in os.walk(dst):
+                                os.chown(root_dir, uid, gid)
+                                for fname in files:
+                                    os.chown(os.path.join(root_dir, fname), uid, gid)
                         self._log("  Скопирована папка: %s" % item)
                     else:
                         shutil.copy2(src, dst)
+                        # Устанавливаем владельца если через sudo
+                        if os.geteuid() == 0 and real_user and real_user != 'root':
+                            os.chown(dst, uid, gid)
                         self._log("  Скопирован файл: %s" % item)
                 self._log("winetricks кэш скопирован")
             
@@ -1260,6 +1670,96 @@ class WineInstaller(object):
         except Exception as e:
             self._log("Ошибка настройки окружения: %s" % str(e), "ERROR")
             return False
+    
+    def install_winetricks_components_original(self):
+        """
+        Установка компонентов через winetricks - ОРИГИНАЛЬНЫЙ МЕТОД
+        Точная копия логики из install-astraregul.sh для отладки
+        """
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 4: УСТАНОВКА КОМПОНЕНТОВ WINETRICKS (ОРИГИНАЛЬНЫЙ МЕТОД)")
+        self._log("=" * 60)
+        
+        # Используем список компонентов из конфигурации
+        components = self.winetricks_components
+        
+        if not components:
+            self._log("Нет компонентов для установки")
+            return True
+        
+        self._log("Установка компонентов: %s" % ", ".join(components))
+        self._log("Путь к winetricks: %s" % self.winetricks)
+        self._log("Директория AstraPack: %s" % self.astrapack_dir)
+        
+        # КЛЮЧЕВОЕ ОТЛИЧИЕ: переходим в директорию AstraPack
+        original_dir = os.getcwd()
+        
+        try:
+            os.chdir(self.astrapack_dir)
+            self._log("Перешли в директорию: %s" % os.getcwd())
+            
+            # Настраиваем переменные окружения КАК В ОРИГИНАЛЕ
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINEDEBUG'] = '-all'
+            env['WINE'] = '/opt/wine-9.0/bin/wine'
+            
+            self._log("WINEPREFIX: %s" % self.wineprefix)
+            self._log("WINE: %s" % env['WINE'])
+            self._log("Это может занять несколько минут...")
+            
+            # Запускаем winetricks ОТНОСИТЕЛЬНЫМ ПУТЕМ как в оригинале
+            result = subprocess.run(
+                ['./winetricks', '-q', '-f'] + components,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                errors='replace',
+                check=False
+            )
+            
+            self._log("Код возврата winetricks: %d" % result.returncode)
+            
+            if result.stdout and result.stdout.strip():
+                self._log("=== STDOUT winetricks ===")
+                for line in result.stdout.split('\n')[:30]:  # Первые 30 строк
+                    if line.strip():
+                        self._log("  %s" % line)
+            
+            if result.stderr and result.stderr.strip():
+                self._log("=== STDERR winetricks ===")
+                for line in result.stderr.split('\n')[:30]:  # Первые 30 строк
+                    if line.strip():
+                        self._log("  %s" % line)
+            
+            if result.returncode != 0:
+                self._log("ОШИБКА: winetricks завершился с ошибкой!", "ERROR")
+                return False
+            
+            self._log("Компоненты winetricks успешно установлены")
+            
+            # Останавливаем wine server
+            self._log("Остановка wine server...")
+            subprocess.run(
+                [env['WINE'] + 'server', '-k'],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            import time
+            time.sleep(2)
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка установки компонентов: %s" % str(e), "ERROR")
+            return False
+        finally:
+            # Возвращаемся в исходную директорию
+            os.chdir(original_dir)
     
     def install_winetricks_components(self):
         """Установка компонентов через winetricks"""
@@ -1285,17 +1785,63 @@ class WineInstaller(object):
         self._log("WINE: /opt/wine-9.0/bin/wine")
         self._log("WINEDLLOVERRIDES: winemenubuilder.exe=d;rundll32.exe=d;mshtml=d (отключены GUI диалоги)")
         
-        # Компоненты для установки
-        components = ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+        # Используем список компонентов из конфигурации
+        components = self.winetricks_components
+        
+        if not components:
+            self._log("Нет компонентов для установки")
+            return True
         
         self._log("Установка компонентов: %s" % ", ".join(components))
         self._log("Это может занять несколько минут...")
         
+        # КЛЮЧЕВОЙ МОМЕНТ: переходим в директорию AstraPack
+        # Winetricks использует относительные пути к своим ресурсам!
+        original_dir = os.getcwd()
+        
         try:
-            # Запускаем winetricks
-            result = subprocess.run(
-                [self.winetricks, '-q', '-f'] + components,
-                env=env,
+            # Если запущено от root - нужно переключиться на обычного пользователя
+            # winetricks НЕЛЬЗЯ запускать от root!
+            real_user = os.environ.get('SUDO_USER')
+            
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                # Запускаем через su от имени обычного пользователя
+                self._log("Запуск настройки окружения и winetricks от пользователя: %s" % real_user)
+                
+                # Формируем полную команду как в оригинальном скрипте:
+                # 1. Создаём директории кэша
+                # 2. Копируем файлы
+                # 3. Запускаем winetricks
+                cmd_string = '''cd %s && \
+mkdir -p "$HOME"/.cache/wine && \
+mkdir -p "$HOME"/.cache/winetricks && \
+cp -r wine-gecko/* "$HOME"/.cache/wine/ 2>/dev/null || true && \
+cp -r winetricks-cache/* "$HOME"/.cache/winetricks/ 2>/dev/null || true && \
+export WINEPREFIX="$HOME"/.wine-astraregul && \
+export WINEDEBUG="-all" && \
+export WINE=/opt/wine-9.0/bin/wine && \
+./winetricks -q -f %s''' % (
+                    self.astrapack_dir,
+                    ' '.join(components)
+                )
+                
+                # Запускаем через su -c от имени пользователя
+                result = subprocess.run(
+                    ['su', real_user, '-c', cmd_string],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    errors='replace',
+                    check=False
+                )
+            else:
+                # Уже не root или нет SUDO_USER - запускаем напрямую
+                os.chdir(self.astrapack_dir)
+                self._log("Перешли в директорию: %s" % os.getcwd())
+                
+                result = subprocess.run(
+                    ['./winetricks', '-q', '-f'] + components,
+                    env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
@@ -1303,11 +1849,30 @@ class WineInstaller(object):
                 check=False
             )
             
-            if result.returncode == 0:
-                self._log("Компоненты winetricks успешно установлены")
-            else:
-                self._log("Предупреждение: winetricks завершился с кодом %d" % result.returncode)
-                self._log("Продолжаем установку...")
+            # Проверяем код возврата
+            if result.returncode != 0:
+                self._log("ОШИБКА: winetricks завершился с кодом %d" % result.returncode, "ERROR")
+                
+                # Выводим stderr для диагностики ошибки
+                if result.stderr and result.stderr.strip():
+                    self._log("Вывод ошибок:", "ERROR")
+                    for line in result.stderr.split('\n')[:20]:  # Первые 20 строк
+                        if line.strip():
+                            self._log("  %s" % line, "ERROR")
+                
+                # Останавливаем wine server перед выходом
+                self._log("Остановка wine server...")
+                subprocess.run(
+                    [env['WINE'] + 'server', '-k'],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                
+                return False
+            
+            self._log("Компоненты winetricks успешно установлены")
             
             # Останавливаем wine server
             self._log("Остановка wine server...")
@@ -1322,11 +1887,40 @@ class WineInstaller(object):
             import time
             time.sleep(2)
             
+            # Проверяем что компоненты действительно установились
+            self._log("Проверка установленных компонентов...")
+            checker = WineComponentsChecker()
+            checker.check_winetricks_components()
+            
+            # Подсчитываем сколько компонентов установилось
+            installed_count = 0
+            failed_components = []
+            for component in components:
+                if checker.checks.get(component, False):
+                    installed_count += 1
+                    self._log("  [OK] %s установлен" % component)
+                else:
+                    failed_components.append(component)
+                    self._log("  [ERR] %s НЕ установлен" % component, "WARNING")
+            
+            # Если ничего не установилось - это ошибка
+            if installed_count == 0:
+                self._log("ОШИБКА: Ни один компонент не был установлен!", "ERROR")
+                return False
+            
+            # Если установились не все - предупреждение, но продолжаем
+            if failed_components:
+                self._log("ВНИМАНИЕ: Не установлены компоненты: %s" % ", ".join(failed_components), "WARNING")
+                self._log("Некоторые функции могут работать некорректно", "WARNING")
+            
             return True
         
         except Exception as e:
             self._log("Ошибка установки компонентов: %s" % str(e), "ERROR")
             return False
+        finally:
+            # Возвращаемся в исходную директорию
+            os.chdir(original_dir)
     
     def create_launch_scripts(self):
         """Создание скриптов запуска"""
@@ -1382,6 +1976,8 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
         self._log("WINEDLLOVERRIDES: отключены GUI диалоги Wine")
         
         try:
+            # Запускаем Wine напрямую (как раньше)
+            # WINEPREFIX в env указывает куда устанавливать
             result = subprocess.run(
                 [env['WINE'], self.astra_ide_exe],
                 env=env,
@@ -1497,13 +2093,10 @@ Type=Application
             self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка настройки ptrace_scope", "ERROR")
             return False
         
-        # Настройка окружения
-        if self.install_winetricks or self.install_ide:
-            if not self.setup_wine_environment():
-                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка настройки окружения", "ERROR")
-                return False
-        
         # Установка компонентов winetricks
+        # Примечание: setup_wine_environment() больше не вызывается отдельно!
+        # Настройка окружения (копирование кэша) происходит внутри install_winetricks_components()
+        # через su от имени пользователя, чтобы избежать проблем с правами
         if self.install_winetricks:
             if not self.install_winetricks_components():
                 self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка установки компонентов", "ERROR")
@@ -1542,6 +2135,365 @@ Type=Application
         self._log("\nДля запуска Astra.IDE используйте:")
         self._log("  - Ярлык на рабочем столе 'Astra IDE (Wine)'")
         self._log("  - Или команду: ~/start-astraide.sh")
+        self._log("=" * 60)
+        
+        return True
+
+# ============================================================================
+# КЛАСС УДАЛЕНИЯ WINE КОМПОНЕНТОВ
+# ============================================================================
+class WineUninstaller(object):
+    """Класс для удаления Wine компонентов и Astra.IDE"""
+    
+    def __init__(self, logger=None, callback=None, remove_wine=True, remove_wineprefix=True, remove_ide=True, winetricks_components=None):
+        """
+        Инициализация деинсталлятора
+        
+        Args:
+            logger: Экземпляр класса Logger для логирования
+            callback: Функция для обновления статуса в GUI (опционально)
+            remove_wine: Удалять Wine пакеты (по умолчанию True)
+            remove_wineprefix: Удалять WINEPREFIX директорию (по умолчанию True)
+            remove_ide: Удалять Astra.IDE (по умолчанию True)
+            winetricks_components: Список компонентов winetricks для удаления (если None - удаляем WINEPREFIX целиком)
+        """
+        self.logger = logger
+        self.callback = callback
+        
+        # Флаги удаления компонентов
+        self.remove_wine = remove_wine
+        self.remove_wineprefix = remove_wineprefix
+        self.remove_ide = remove_ide
+        self.winetricks_components = winetricks_components if winetricks_components else []
+        
+        # Определяем домашнюю директорию РЕАЛЬНОГО пользователя (не root)
+        real_user = os.environ.get('SUDO_USER')
+        if real_user and real_user != 'root':
+            # Запущено через sudo - используем домашнюю директорию реального пользователя
+            import pwd
+            self.home = pwd.getpwnam(real_user).pw_dir
+        else:
+            # Запущено напрямую
+            self.home = os.path.expanduser("~")
+        
+        self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+        self.launch_script = os.path.join(self.home, "start-astraide.sh")
+        self.desktop_shortcut = os.path.join(self.home, "Desktop", "Astra-IDE.desktop")
+        # Альтернативное имя ярлыка
+        self.desktop_shortcut_alt = os.path.join(self.home, "Desktop", "AstraRegul.desktop")
+        
+    def _log(self, message, level="INFO"):
+        """Логирование с поддержкой callback"""
+        if self.logger:
+            if level == "ERROR":
+                self.logger.log_error(message)
+            elif level == "WARNING":
+                self.logger.log_warning(message)
+            else:
+                self.logger.log_info(message)
+        
+        if self.callback:
+            self.callback(message)
+    
+    def remove_wine_packages(self):
+        """Удаление Wine пакетов"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 1: УДАЛЕНИЕ WINE ПАКЕТОВ")
+        self._log("=" * 60)
+        
+        packages = ['wine-astraregul', 'wine-9.0', 'wine', 'wine-stable']
+        
+        self._log("Удаление Wine пакетов: %s" % ", ".join(packages))
+        
+        try:
+            # Останавливаем Wine процессы перед удалением
+            self._log("Остановка Wine процессов...")
+            subprocess.run(['pkill', '-9', 'wine'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            subprocess.run(['pkill', '-9', 'wineserver'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            subprocess.run(['pkill', '-9', 'wineboot'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            
+            import time
+            time.sleep(1)
+            
+            # Настраиваем переменные окружения для автоматического удаления
+            env = os.environ.copy()
+            env['DEBIAN_FRONTEND'] = 'noninteractive'
+            
+            # Используем purge вместо remove для полного удаления с конфигами
+            self._log("Удаление пакетов через apt-get purge...")
+            result = subprocess.run(
+                ['apt-get', 'purge', '-y'] + packages,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                errors='replace',
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self._log("Wine пакеты успешно удалены")
+            else:
+                self._log("Предупреждение: некоторые пакеты не удалены (код: %d)" % result.returncode)
+                # Не прерываем - продолжаем удалять вручную
+            
+            # Удаляем директории Wine вручную (apt не всегда их удаляет)
+            wine_dirs = [
+                '/opt/wine-astraregul',
+                '/opt/wine-9.0',
+                '/opt/wine-stable',
+                '/usr/share/wine'
+            ]
+            
+            self._log("\nУдаление директорий Wine...")
+            import shutil
+            for wine_dir in wine_dirs:
+                if os.path.exists(wine_dir):
+                    try:
+                        shutil.rmtree(wine_dir)
+                        self._log("  Удалена: %s" % wine_dir)
+                    except Exception as e:
+                        self._log("  Ошибка удаления %s: %s" % (wine_dir, str(e)), "ERROR")
+                else:
+                    self._log("  Не найдена: %s" % wine_dir)
+            
+            # Очистка зависимостей
+            self._log("\nОчистка неиспользуемых зависимостей...")
+            subprocess.run(
+                ['apt-get', 'autoremove', '-y'],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            self._log("Wine пакеты и директории полностью удалены")
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка удаления Wine пакетов: %s" % str(e), "ERROR")
+            return False
+    
+    def remove_wineprefix_dir(self):
+        """Удаление WINEPREFIX директории"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 2: УДАЛЕНИЕ WINEPREFIX ДИРЕКТОРИИ")
+        self._log("=" * 60)
+        
+        if not os.path.exists(self.wineprefix):
+            self._log("WINEPREFIX не существует: %s" % self.wineprefix)
+            return True
+        
+        try:
+            # Останавливаем Wine процессы
+            self._log("Остановка Wine процессов...")
+            subprocess.run(
+                ['pkill', '-9', 'wine'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            subprocess.run(
+                ['pkill', '-9', 'wineserver'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            import time
+            time.sleep(2)
+            
+            # Удаляем директорию
+            self._log("Удаление директории: %s" % self.wineprefix)
+            import shutil
+            shutil.rmtree(self.wineprefix)
+            self._log("WINEPREFIX директория удалена")
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка удаления WINEPREFIX: %s" % str(e), "ERROR")
+            return False
+    
+    def remove_winetricks_components(self):
+        """Удаление отдельных компонентов winetricks (без полного удаления WINEPREFIX)"""
+        if not self.winetricks_components:
+            self._log("Нет компонентов для удаления")
+            return True
+        
+        self._log("\n" + "=" * 60)
+        self._log("УДАЛЕНИЕ КОМПОНЕНТОВ WINETRICKS")
+        self._log("=" * 60)
+        self._log("Компоненты для удаления: %s" % ", ".join(self.winetricks_components))
+        
+        if not os.path.exists(self.wineprefix):
+            self._log("WINEPREFIX не существует: %s" % self.wineprefix)
+            return True
+        
+        try:
+            # Настраиваем переменные окружения
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINEDEBUG'] = '-all'
+            env['WINE'] = '/opt/wine-9.0/bin/wine'
+            
+            # Получаем путь к winetricks
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            winetricks_path = os.path.join(script_dir, "AstraPack", "winetricks")
+            
+            if not os.path.exists(winetricks_path):
+                self._log("ПРЕДУПРЕЖДЕНИЕ: winetricks не найден, не можем удалить компоненты", "WARNING")
+                self._log("Для полного удаления используйте удаление WINEPREFIX целиком", "WARNING")
+                return False
+            
+            # Удаляем каждый компонент
+            for component in self.winetricks_components:
+                self._log("Удаление компонента: %s" % component)
+                
+                # winetricks поддерживает удаление через uninstaller
+                result = subprocess.run(
+                    [winetricks_path, 'uninstaller'],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    errors='replace',
+                    check=False
+                )
+                
+                # Примечание: winetricks не имеет прямого способа удаления компонентов
+                # Лучший способ - удалить файлы компонента вручную
+                self._log("ВНИМАНИЕ: winetricks не поддерживает автоматическое удаление компонентов")
+                self._log("Для полного удаления компонентов используйте удаление WINEPREFIX целиком")
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка удаления компонентов: %s" % str(e), "ERROR")
+            return False
+    
+    def remove_astra_ide_only(self):
+        """Удаление только Astra.IDE из WINEPREFIX (без удаления всего WINEPREFIX)"""
+        self._log("\n" + "=" * 60)
+        self._log("УДАЛЕНИЕ ASTRA.IDE ИЗ WINEPREFIX")
+        self._log("=" * 60)
+        
+        if not os.path.exists(self.wineprefix):
+            self._log("WINEPREFIX не существует: %s" % self.wineprefix)
+            return True
+        
+        try:
+            # Ищем и удаляем директорию AstraRegul
+            import glob
+            astra_regul_paths = [
+                os.path.join(self.wineprefix, "drive_c", "Program Files", "AstraRegul"),
+                os.path.join(self.wineprefix, "drive_c", "Program Files (x86)", "AstraRegul")
+            ]
+            
+            removed_something = False
+            for astra_path in astra_regul_paths:
+                if os.path.exists(astra_path):
+                    try:
+                        self._log("Удаление: %s" % astra_path)
+                        import shutil
+                        shutil.rmtree(astra_path)
+                        self._log("Astra.IDE удалена из WINEPREFIX")
+                        removed_something = True
+                    except Exception as e:
+                        self._log("Ошибка удаления %s: %s" % (astra_path, str(e)), "ERROR")
+            
+            if not removed_something:
+                self._log("Astra.IDE не найдена в WINEPREFIX")
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка удаления Astra.IDE: %s" % str(e), "ERROR")
+            return False
+    
+    def remove_scripts_and_shortcuts(self):
+        """Удаление скриптов запуска и ярлыков"""
+        self._log("\n" + "=" * 60)
+        self._log("УДАЛЕНИЕ СКРИПТОВ И ЯРЛЫКОВ")
+        self._log("=" * 60)
+        
+        files_to_remove = [
+            self.launch_script,
+            self.desktop_shortcut,
+            self.desktop_shortcut_alt,
+            os.path.join(self.home, ".local", "share", "applications", "Astra-IDE.desktop"),
+            os.path.join(self.home, ".local", "share", "applications", "AstraRegul.desktop")
+        ]
+        
+        for filepath in files_to_remove:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    self._log("Удален: %s" % filepath)
+                except Exception as e:
+                    self._log("Ошибка удаления %s: %s" % (filepath, str(e)), "ERROR")
+            else:
+                self._log("Не найден: %s" % filepath)
+        
+        return True
+    
+    def uninstall_all(self):
+        """Полное удаление всех компонентов"""
+        self._log("\n" + "=" * 60)
+        self._log("НАЧАЛО УДАЛЕНИЯ WINE И ASTRA.IDE")
+        self._log("=" * 60)
+        self._log("Время начала: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self._log("")
+        self._log("Компоненты для удаления:")
+        self._log("  - Wine пакеты: %s" % ("ДА" if self.remove_wine else "НЕТ"))
+        self._log("  - WINEPREFIX: %s" % ("ДА" if self.remove_wineprefix else "НЕТ"))
+        self._log("  - Скрипты/ярлыки: %s" % ("ДА" if self.remove_ide else "НЕТ"))
+        self._log("=" * 60)
+        
+        start_time = datetime.datetime.now()
+        
+        # Удаление Astra.IDE из WINEPREFIX (если выбрана IDE, но НЕ весь WINEPREFIX)
+        if self.remove_ide and not self.remove_wineprefix:
+            self._log("\nУдаляется только Astra.IDE (WINEPREFIX сохраняется)")
+            if not self.remove_astra_ide_only():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка удаления Astra.IDE (не критично)")
+        
+        # Удаление скриптов и ярлыков
+        if self.remove_ide:
+            if not self.remove_scripts_and_shortcuts():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка удаления скриптов (не критично)")
+        else:
+            self._log("\nШаг: Пропущено (скрипты/ярлыки не выбраны)")
+        
+        # Удаление отдельных winetricks компонентов (если указаны, но НЕ весь WINEPREFIX)
+        if self.winetricks_components and not self.remove_wineprefix:
+            self._log("\nУдаление выбранных компонентов winetricks (WINEPREFIX сохраняется)")
+            if not self.remove_winetricks_components():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка удаления winetricks компонентов (не критично)")
+        
+        # Удаление WINEPREFIX (удалит и Astra.IDE внутри него, и все winetricks компоненты)
+        if self.remove_wineprefix:
+            if not self.remove_wineprefix_dir():
+                self._log("\nУДАЛЕНИЕ ПРЕРВАНО: Ошибка удаления WINEPREFIX", "ERROR")
+                return False
+        else:
+            self._log("\nШаг: Пропущено (WINEPREFIX не выбран)")
+        
+        # Удаление Wine пакетов
+        if self.remove_wine:
+            if not self.remove_wine_packages():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка удаления Wine пакетов (не критично)")
+        else:
+            self._log("\nШаг: Пропущено (Wine пакеты не выбраны)")
+        
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        self._log("\n" + "=" * 60)
+        self._log("УДАЛЕНИЕ УСПЕШНО ЗАВЕРШЕНО!")
+        self._log("=" * 60)
+        self._log("Время завершения: %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
+        self._log("Длительность удаления: %d мин %d сек" % (duration // 60, duration % 60))
         self._log("=" * 60)
         
         return True
@@ -1586,11 +2538,23 @@ class AutomationGUI(object):
         # Лог-файл (будет установлен позже из main)
         self.main_log_file = None
         
+        # Глобальный монитор системы для постоянного мониторинга CPU/NET
+        self.system_monitor = None
+        self.last_cpu_usage = 0
+        self.last_net_speed = 0.0
+        
         # Создаем интерфейс
         self.create_widgets()
         
+        # Перенаправляем stdout и stderr на встроенный терминал GUI
+        if not console_mode:
+            self._redirect_output_to_terminal()
+        
         # Запускаем обработку очереди терминала
         self.process_terminal_queue()
+        
+        # Запускаем постоянный мониторинг CPU/NET
+        self.start_system_monitoring()
     
     def _install_gui_dependencies(self):
         """Установка зависимостей для GUI"""
@@ -1619,6 +2583,111 @@ class AutomationGUI(object):
             except Exception as e:
                 print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
                 return False
+    
+    def _redirect_output_to_terminal(self):
+        """Перенаправление stdout и stderr на встроенный терминал GUI"""
+        class TerminalRedirector:
+            """Класс для перенаправления вывода в GUI терминал"""
+            def __init__(self, terminal_queue, stream_name):
+                self.terminal_queue = terminal_queue
+                self.stream_name = stream_name
+                self.original_stream = sys.stdout if stream_name == "stdout" else sys.stderr
+            
+            def write(self, message):
+                if message.strip():  # Пропускаем пустые строки
+                    # Добавляем префикс для stderr
+                    if self.stream_name == "stderr":
+                        message = "[STDERR] " + message
+                    self.terminal_queue.put(message)
+                # Также пишем в оригинальный поток (для отладки)
+                # self.original_stream.write(message)
+            
+            def flush(self):
+                pass  # GUI не требует flush
+        
+        # Перенаправляем stdout и stderr
+        sys.stdout = TerminalRedirector(self.terminal_queue, "stdout")
+        sys.stderr = TerminalRedirector(self.terminal_queue, "stderr")
+        
+        # Логируем перенаправление
+        self.add_terminal_output("[SYSTEM] Вывод перенаправлен на встроенный терминал GUI")
+        self.add_terminal_output("[SYSTEM] Родительский терминал можно безопасно закрыть")
+    
+    def start_system_monitoring(self):
+        """Запуск постоянного фонового мониторинга CPU и сети"""
+        # Создаем монитор с пустым WINEPREFIX (не важен для общего мониторинга)
+        home = os.path.expanduser("~")
+        wineprefix = os.path.join(home, ".wine-astraregul")
+        
+        # Callback для обновления GUI
+        def update_system_stats(data):
+            # Сохраняем последние значения
+            self.last_cpu_usage = data.get('cpu_usage', 0)
+            self.last_net_speed = data.get('network_speed', 0.0)
+        
+        self.system_monitor = InstallationMonitor(wineprefix, callback=update_system_stats)
+        self.system_monitor.start_monitoring()
+        
+        # Запускаем периодическое обновление GUI
+        self._update_system_display()
+    
+    def _update_system_display(self):
+        """Периодическое обновление отображения CPU/NET в GUI"""
+        try:
+            # Обновляем CPU
+            cpu_bar = self._create_progress_bar(self.last_cpu_usage, 100, 10)
+            self.wine_cpu_label.config(text=cpu_bar)
+            
+            # Обновляем Сеть
+            net_percent = min(100, int((self.last_net_speed / 10.0) * 100))
+            net_bar = self._create_progress_bar(net_percent, 100, 10)
+            self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, self.last_net_speed))
+            
+        except Exception as e:
+            pass  # Игнорируем ошибки обновления
+        
+        # Повторяем каждые 1000ms (1 секунда)
+        self.root.after(1000, self._update_system_display)
+    
+    def _add_copy_menu(self, text_widget):
+        """Добавление контекстного меню для копирования текста"""
+        # Создаем контекстное меню
+        context_menu = self.tk.Menu(text_widget, tearoff=0)
+        context_menu.add_command(label="Копировать", command=lambda: self._copy_text(text_widget))
+        context_menu.add_command(label="Выделить всё", command=lambda: self._select_all(text_widget))
+        
+        # Привязываем правую кнопку мыши
+        def show_menu(event):
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+        
+        text_widget.bind("<Button-3>", show_menu)
+        
+        # Привязываем Ctrl+C для копирования
+        text_widget.bind("<Control-c>", lambda event: self._copy_text(text_widget))
+        text_widget.bind("<Control-C>", lambda event: self._copy_text(text_widget))
+        
+        # Привязываем Ctrl+A для выделения всего
+        text_widget.bind("<Control-a>", lambda event: self._select_all(text_widget))
+        text_widget.bind("<Control-A>", lambda event: self._select_all(text_widget))
+    
+    def _copy_text(self, text_widget):
+        """Копирование выделенного текста в буфер обмена"""
+        try:
+            selected_text = text_widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(selected_text)
+        except:
+            pass  # Ничего не выделено
+    
+    def _select_all(self, text_widget):
+        """Выделение всего текста"""
+        text_widget.tag_add(self.tk.SEL, "1.0", self.tk.END)
+        text_widget.mark_set(self.tk.INSERT, "1.0")
+        text_widget.see(self.tk.INSERT)
+        return 'break'  # Предотвращаем стандартное поведение
         
     def create_widgets(self):
         """Создание элементов интерфейса"""
@@ -1694,6 +2763,9 @@ class AutomationGUI(object):
         
         self.log_text.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
+        
+        # Добавляем контекстное меню для копирования
+        self._add_copy_menu(self.log_text)
         
         # Статус
         status_frame = self.tk.LabelFrame(self.main_frame, text="Статус")
@@ -1857,10 +2929,14 @@ class AutomationGUI(object):
         self.terminal_text.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         terminal_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
         
+        # Добавляем контекстное меню для копирования
+        self._add_copy_menu(self.terminal_text)
+        
         # Добавляем приветственное сообщение
         self.terminal_text.insert(self.tk.END, "Системный терминал готов к работе\n")
         self.terminal_text.insert(self.tk.END, "Здесь будет отображаться вывод системных команд\n")
-        self.terminal_text.insert(self.tk.END, "Для ввода команд используйте кнопки управления\n\n")
+        self.terminal_text.insert(self.tk.END, "Для ввода команд используйте кнопки управления\n")
+        self.terminal_text.insert(self.tk.END, "Для копирования текста: выделите мышью и нажмите Ctrl+C или правую кнопку мыши\n\n")
         
         # Делаем терминал только для чтения (команды запускаются через GUI)
         self.terminal_text.config(state=self.tk.DISABLED)
@@ -1875,36 +2951,9 @@ class AutomationGUI(object):
         title_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
         info_label = self.tk.Label(title_frame, 
-                                   text="Проверка наличия и статуса установленных Wine компонентов и Astra.IDE",
+                                   text="Отметьте компоненты в таблице и выберите действие",
                                    font=('Arial', 10))
         info_label.pack(padx=10, pady=5)
-        
-        # Выбор компонентов для установки
-        select_frame = self.tk.LabelFrame(self.wine_frame, text="Выбор компонентов для установки")
-        select_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        select_inner = self.tk.Frame(select_frame)
-        select_inner.pack(fill=self.tk.X, padx=5, pady=5)
-        
-        # Чекбоксы для компонентов
-        self.install_wine_packages_var = self.tk.BooleanVar(value=True)
-        self.install_winetricks_var = self.tk.BooleanVar(value=True)
-        self.install_astra_ide_var = self.tk.BooleanVar(value=True)
-        
-        self.tk.Checkbutton(select_inner, 
-                           text="Wine пакеты (wine-9.0, wine-astraregul)",
-                           variable=self.install_wine_packages_var,
-                           font=('Arial', 9)).grid(row=0, column=0, sticky=self.tk.W, padx=5)
-        
-        self.tk.Checkbutton(select_inner, 
-                           text="Winetricks компоненты (dotnet48, vcrun, dxvk и др.)",
-                           variable=self.install_winetricks_var,
-                           font=('Arial', 9)).grid(row=1, column=0, sticky=self.tk.W, padx=5)
-        
-        self.tk.Checkbutton(select_inner, 
-                           text="Astra.IDE",
-                           variable=self.install_astra_ide_var,
-                           font=('Arial', 9)).grid(row=2, column=0, sticky=self.tk.W, padx=5)
         
         # Кнопки управления
         button_frame = self.tk.Frame(self.wine_frame)
@@ -1919,13 +2968,22 @@ class AutomationGUI(object):
         self.check_wine_button.pack(side=self.tk.LEFT, padx=5)
         
         self.install_wine_button = self.tk.Button(button_frame, 
-                                                  text="Установить компоненты", 
+                                                  text="Установить выбранные", 
                                                   command=self.run_wine_install,
                                                   font=('Arial', 10, 'bold'),
                                                   bg='#2196F3',
                                                   fg='white',
                                                   state=self.tk.DISABLED)
         self.install_wine_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.uninstall_wine_button = self.tk.Button(button_frame, 
+                                                    text="Удалить выбранные", 
+                                                    command=self.run_wine_uninstall,
+                                                    font=('Arial', 10, 'bold'),
+                                                    bg='#F44336',
+                                                    fg='white',
+                                                    state=self.tk.DISABLED)
+        self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
         
         self.check_repos_button = self.tk.Button(button_frame, 
                                                  text="Проверить репозитории", 
@@ -1948,22 +3006,89 @@ class AutomationGUI(object):
                                                font=('Arial', 9))
         self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
         
+        # Панель прогресса установки
+        progress_frame = self.tk.LabelFrame(self.wine_frame, text="Прогресс установки")
+        progress_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Прогресс-бар
+        self.wine_progress = self.ttk.Progressbar(progress_frame, 
+                                                  length=600, 
+                                                  mode='determinate')
+        self.wine_progress.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Информационная панель (3 колонки)
+        info_panel = self.tk.Frame(progress_frame)
+        info_panel.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Колонка 1: Время
+        time_col = self.tk.Frame(info_panel)
+        time_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(time_col, text="Время:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_time_label = self.tk.Label(time_col, text="0 мин 0 сек", font=('Arial', 9))
+        self.wine_time_label.pack(anchor=self.tk.W)
+        
+        # Колонка 2: Размер
+        size_col = self.tk.Frame(info_panel)
+        size_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(size_col, text="Установлено:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_size_label = self.tk.Label(size_col, text="0 MB", font=('Arial', 9))
+        self.wine_size_label.pack(anchor=self.tk.W)
+        
+        # Колонка 3: CPU
+        cpu_col = self.tk.Frame(info_panel)
+        cpu_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(cpu_col, text="CPU:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_cpu_label = self.tk.Label(cpu_col, text="░░░░░░░░░░ 0%", font=('Courier', 9))
+        self.wine_cpu_label.pack(anchor=self.tk.W)
+        
+        # Колонка 4: Сеть
+        net_col = self.tk.Frame(info_panel)
+        net_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(net_col, text="Сеть:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_net_label = self.tk.Label(net_col, text="░░░░░░░░░░ 0.0 MB/s", font=('Courier', 9))
+        self.wine_net_label.pack(anchor=self.tk.W)
+        
+        # Колонка 5: Процессы
+        proc_col = self.tk.Frame(info_panel)
+        proc_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(proc_col, text="Процессы Wine:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_proc_label = self.tk.Label(proc_col, text="неактивны", font=('Arial', 9))
+        self.wine_proc_label.pack(anchor=self.tk.W)
+        
+        # Текущий этап
+        stage_frame = self.tk.Frame(progress_frame)
+        stage_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(stage_frame, text="Этап:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_stage_label = self.tk.Label(stage_frame, text="Ожидание...", font=('Arial', 9), fg='gray')
+        self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Инициализируем монитор как None
+        self.install_monitor = None
+        
         # Область статуса компонентов
-        status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов")
+        status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов (кликните для выбора)")
         status_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Создаем таблицу статусов
-        columns = ('component', 'status', 'path')
+        # Создаем таблицу статусов с чекбоксами
+        columns = ('selected', 'component', 'status', 'path')
         self.wine_tree = self.ttk.Treeview(status_frame, columns=columns, show='headings', height=8)
         
         # Настраиваем колонки
+        self.wine_tree.heading('selected', text='☐', command=self.toggle_all_wine_components)
         self.wine_tree.heading('component', text='Компонент')
         self.wine_tree.heading('status', text='Статус')
         self.wine_tree.heading('path', text='Путь/Детали')
         
+        self.wine_tree.column('selected', width=40, anchor='center')
         self.wine_tree.column('component', width=200)
         self.wine_tree.column('status', width=100)
-        self.wine_tree.column('path', width=500)
+        self.wine_tree.column('path', width=450)
+        
+        # Словарь для хранения состояния чекбоксов (item_id -> True/False)
+        self.wine_checkboxes = {}
+        
+        # Привязываем клик к переключению чекбокса
+        self.wine_tree.bind('<Button-1>', self.on_wine_tree_click)
         
         # Добавляем скроллбар
         wine_scrollbar = self.tk.Scrollbar(status_frame, orient=self.tk.VERTICAL, 
@@ -1987,18 +3112,49 @@ class AutomationGUI(object):
     
     def populate_wine_status_initial(self):
         """Заполнение начальными данными (без проверки)"""
-        initial_components = [
-            ('Wine Astraregul', 'Не проверено', '/opt/wine-astraregul/bin/wine'),
-            ('Wine 9.0', 'Не проверено', '/opt/wine-9.0/bin/wine'),
-            ('ptrace_scope', 'Не проверено', '/proc/sys/kernel/yama/ptrace_scope'),
-            ('WINEPREFIX', 'Не проверено', '~/.wine-astraregul'),
-            ('Astra.IDE', 'Не проверено', 'WINEPREFIX/drive_c/Program Files/AstraRegul'),
-            ('Скрипт запуска', 'Не проверено', '~/start-astraide.sh'),
-            ('Ярлык рабочего стола', 'Не проверено', '~/Desktop/AstraRegul.desktop')
+        # Основные компоненты с галочками
+        main_components = [
+            ('Wine Astraregul', 'Не проверено', '/opt/wine-astraregul/bin/wine', True),
+            ('Wine 9.0', 'Не проверено', '/opt/wine-9.0/bin/wine', True),
+            ('ptrace_scope', 'Не проверено', '/proc/sys/kernel/yama/ptrace_scope', True),
+            ('WINEPREFIX', 'Не проверено', '~/.wine-astraregul', True),
         ]
         
-        for component, status, path in initial_components:
-            self.wine_tree.insert('', self.tk.END, values=(component, status, path))
+        # Компоненты winetricks (только информация, БЕЗ галочек)
+        winetricks_info = [
+            ('  ├─ .NET Framework 4.8', 'Не проверено', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
+            ('  ├─ Visual C++ 2013', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
+            ('  ├─ Visual C++ 2022', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
+            ('  ├─ DirectX d3dcompiler_43', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
+            ('  ├─ DirectX d3dcompiler_47', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
+            ('  └─ DXVK', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
+        ]
+        
+        # Остальные компоненты
+        other_components = [
+            ('Astra.IDE', 'Не проверено', 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common', True),
+            ('Скрипт запуска', 'Не проверено', '~/start-astraide.sh', True),
+            ('Ярлык рабочего стола', 'Не проверено', '~/Desktop/AstraRegul.desktop', True)
+        ]
+        
+        # Добавляем основные компоненты
+        for component, status, path, has_checkbox in main_components:
+            checkbox = '☐' if has_checkbox else ' '
+            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
+            if has_checkbox:
+                self.wine_checkboxes[item_id] = False
+        
+        # Добавляем winetricks компоненты (только информация)
+        for component, status, path, has_checkbox in winetricks_info:
+            item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component, status, path))
+            # НЕ добавляем в wine_checkboxes - их нельзя выбрать
+        
+        # Добавляем остальные компоненты
+        for component, status, path, has_checkbox in other_components:
+            checkbox = '☐' if has_checkbox else ' '
+            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
+            if has_checkbox:
+                self.wine_checkboxes[item_id] = False
         
         # Начальное сообщение в сводке
         self.wine_summary_text.config(state=self.tk.NORMAL)
@@ -2040,31 +3196,88 @@ class AutomationGUI(object):
         if not self.wine_checker:
             return
         
-        # Очищаем таблицу
+        # Очищаем таблицу и чекбоксы
         for item in self.wine_tree.get_children():
             self.wine_tree.delete(item)
+        self.wine_checkboxes.clear()
         
-        # Обновляем статусы компонентов
-        components_info = [
-            ('Wine Astraregul', 'wine_astraregul', self.wine_checker.wine_astraregul_path),
-            ('Wine 9.0', 'wine_9', self.wine_checker.wine_9_path),
-            ('ptrace_scope', 'ptrace_scope', self.wine_checker.ptrace_scope_path),
-            ('WINEPREFIX', 'wineprefix', self.wine_checker.wineprefix),
-            ('Astra.IDE', 'astra_ide', 'WINEPREFIX/drive_c/Program Files/AstraRegul'),
-            ('Скрипт запуска', 'start_script', self.wine_checker.start_script),
-            ('Ярлык рабочего стола', 'desktop_shortcut', self.wine_checker.desktop_shortcut)
+        # Получаем реальный путь к Astra.IDE если установлена
+        astra_ide_path = 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common'
+        if self.wine_checker.checks['astra_ide']:
+            try:
+                import glob
+                astra_base = os.path.join(self.wine_checker.wineprefix, "drive_c", "Program Files", "AstraRegul")
+                astra_dirs = glob.glob(os.path.join(astra_base, "Astra.IDE_64_*"))
+                if astra_dirs:
+                    # Показываем полный путь к .exe
+                    astra_ide_path = os.path.join(astra_dirs[0], "Astra.IDE", "Common", "Astra.IDE.exe")
+            except:
+                pass
+        
+        # Основные компоненты (с галочками)
+        main_components = [
+            ('Wine Astraregul', 'wine_astraregul', self.wine_checker.wine_astraregul_path, True),
+            ('Wine 9.0', 'wine_9', self.wine_checker.wine_9_path, True),
+            ('ptrace_scope', 'ptrace_scope', self.wine_checker.ptrace_scope_path, True),
+            ('WINEPREFIX', 'wineprefix', self.wine_checker.wineprefix, True),
         ]
         
-        for component_name, check_key, path in components_info:
+        # Winetricks компоненты (только информация, БЕЗ галочек)
+        winetricks_info = [
+            ('  ├─ .NET Framework 4.8', 'dotnet48', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
+            ('  ├─ Visual C++ 2013', 'vcrun2013', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
+            ('  ├─ Visual C++ 2022', 'vcrun2022', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
+            ('  ├─ DirectX d3dcompiler_43', 'd3dcompiler_43', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
+            ('  ├─ DirectX d3dcompiler_47', 'd3dcompiler_47', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
+            ('  └─ DXVK', 'dxvk', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
+        ]
+        
+        # Остальные компоненты (с галочками)
+        other_components = [
+            ('Astra.IDE', 'astra_ide', astra_ide_path, True),
+            ('Скрипт запуска', 'start_script', self.wine_checker.start_script, True),
+            ('Ярлык рабочего стола', 'desktop_shortcut', self.wine_checker.desktop_shortcut, True)
+        ]
+        
+        # Добавляем основные компоненты
+        for component_name, check_key, path, has_checkbox in main_components:
             status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
-            # Добавляем с цветовым тегом
-            item = self.wine_tree.insert('', self.tk.END, values=(component_name, status, path))
+            checkbox = '☐' if has_checkbox else ' '
+            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
+            if has_checkbox:
+                self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
             if self.wine_checker.checks[check_key]:
-                self.wine_tree.item(item, tags=('ok',))
+                self.wine_tree.item(item_id, tags=('ok',))
             else:
-                self.wine_tree.item(item, tags=('error',))
+                self.wine_tree.item(item_id, tags=('error',))
+        
+        # Добавляем winetricks компоненты (только информация)
+        for component_name, check_key, path, has_checkbox in winetricks_info:
+            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component_name, status, path))
+            # НЕ добавляем в wine_checkboxes
+            
+            # Цветовое выделение
+            if self.wine_checker.checks[check_key]:
+                self.wine_tree.item(item_id, tags=('ok',))
+            else:
+                self.wine_tree.item(item_id, tags=('error',))
+        
+        # Добавляем остальные компоненты
+        for component_name, check_key, path, has_checkbox in other_components:
+            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            checkbox = '☐' if has_checkbox else ' '
+            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
+            if has_checkbox:
+                self.wine_checkboxes[item_id] = False
+            
+            # Цветовое выделение
+            if self.wine_checker.checks[check_key]:
+                self.wine_tree.item(item_id, tags=('ok',))
+            else:
+                self.wine_tree.item(item_id, tags=('error',))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
@@ -2138,36 +3351,148 @@ class AutomationGUI(object):
             if hasattr(self, 'main_log_file') and self.main_log_file:
                 logger = Logger(self.main_log_file)
             
-            # Получаем выбранные компоненты
-            install_wine = self.install_wine_packages_var.get()
-            install_winetricks = self.install_winetricks_var.get()
-            install_ide = self.install_astra_ide_var.get()
+            # Получаем выбранные компоненты из таблицы
+            selected = self.get_selected_wine_components()
             
-            # Создаем экземпляр установщика с выбранными компонентами
+            # Логируем выбранные компоненты
+            self.root.after(0, lambda: self.log_message("[INFO] Выбранные компоненты: %s" % ', '.join(selected) if selected else "НЕТ"))
+            
+            # Определяем что устанавливать на основе выбранных компонентов
+            install_wine = any(c in selected for c in ['Wine Astraregul', 'Wine 9.0'])
+            install_winetricks = 'WINEPREFIX' in selected  # Всегда устанавливаем ВСЕ компоненты
+            install_ide = 'Astra.IDE' in selected
+            
+            # Логируем план установки
+            self.root.after(0, lambda: self.log_message("[INFO] План установки:"))
+            self.root.after(0, lambda: self.log_message("[INFO]   - Wine пакеты: %s" % ("ДА" if install_wine else "НЕТ")))
+            self.root.after(0, lambda: self.log_message("[INFO]   - WINEPREFIX (все компоненты winetricks): %s" % ("ДА" if install_winetricks else "НЕТ")))
+            self.root.after(0, lambda: self.log_message("[INFO]   - Astra.IDE: %s" % ("ДА" if install_ide else "НЕТ")))
+            
+            # Проверяем что хоть что-то выбрано
+            if not install_wine and not install_winetricks and not install_ide:
+                self.root.after(0, lambda: self.log_message("[WARNING] Ничего не выбрано для установки!"))
+                self.root.after(0, lambda: self.log_message("[INFO] Отметьте нужные компоненты галочками в таблице"))
+                self.root.after(0, lambda: self.wine_status_label.config(text="Ничего не выбрано", fg='orange'))
+                self.root.after(0, lambda: self.install_wine_button.config(state=self.tk.NORMAL))
+                self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+                return
+            
+            # Создаем экземпляр установщика (winetricks_components=None означает установить все)
             installer = WineInstaller(logger=logger, callback=update_callback,
                                     install_wine=install_wine,
                                     install_winetricks=install_winetricks,
-                                    install_ide=install_ide)
+                                    install_ide=install_ide,
+                                    winetricks_components=None)
+            
+            # Создаем монитор установки
+            wineprefix = os.path.join(os.path.expanduser("~"), ".wine-astraregul")
+            
+            def monitor_callback(data):
+                self.root.after(0, lambda d=data: self._update_install_progress(d))
+            
+            self.install_monitor = InstallationMonitor(wineprefix, callback=monitor_callback)
+            self.install_monitor.start_monitoring()
             
             # Запускаем установку
             self.root.after(0, lambda: self.log_message("[INSTALL] Начало установки Wine и Astra.IDE"))
+            self.root.after(0, lambda: self._reset_progress_panel())
             success = installer.install_all()
+            
+            # Останавливаем монитор
+            if self.install_monitor:
+                self.install_monitor.stop_monitoring()
             
             # Обновляем GUI после установки
             self.root.after(0, lambda: self._wine_install_completed(success))
             
         except Exception as e:
             error_msg = "Ошибка установки: %s" % str(e)
+            
+            # Останавливаем монитор при ошибке
+            if hasattr(self, 'install_monitor') and self.install_monitor:
+                self.install_monitor.stop_monitoring()
+            
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
             self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
             self.root.after(0, lambda: self.install_wine_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+    
+    def _reset_progress_panel(self):
+        """Сброс панели прогресса перед началом установки"""
+        self.wine_progress['value'] = 0
+        self.wine_time_label.config(text="0 мин 0 сек")
+        self.wine_size_label.config(text="0 MB")
+        self.wine_proc_label.config(text="неактивны", fg='gray')
+        self.wine_stage_label.config(text="Подготовка...", fg='blue')
+    
+    def _create_progress_bar(self, value, max_value=100, width=10):
+        """Создать текстовый прогресс-бар"""
+        filled = int(width * value / max_value)
+        bar = '█' * filled + '░' * (width - filled)
+        return "%s %d%%" % (bar, value)
+    
+    def _update_install_progress(self, data):
+        """Обновление прогресса установки из монитора (вызывается из главного потока)"""
+        # Обновляем время
+        minutes = data['elapsed_time'] // 60
+        seconds = data['elapsed_time'] % 60
+        self.wine_time_label.config(text="%d мин %d сек" % (minutes, seconds))
+        
+        # Обновляем размер
+        size_mb = data['wineprefix_size']
+        self.wine_size_label.config(text="%d MB" % size_mb)
+        
+        # Обновляем процессы
+        if data['wine_processes']:
+            procs_text = ", ".join(data['wine_processes'][:3])  # Первые 3
+            if len(data['wine_processes']) > 3:
+                procs_text += "..."
+            self.wine_proc_label.config(text=procs_text, fg='green')
+        else:
+            self.wine_proc_label.config(text="неактивны", fg='gray')
+        
+        # Обновляем CPU с прогресс-баром
+        cpu_usage = data.get('cpu_usage', 0)
+        cpu_bar = self._create_progress_bar(cpu_usage, 100, 10)
+        self.wine_cpu_label.config(text=cpu_bar)
+        
+        # Обновляем Сеть с прогресс-баром
+        net_speed = data.get('network_speed', 0.0)
+        # Масштабируем до 10 MB/s для прогресс-бара
+        net_percent = min(100, int((net_speed / 10.0) * 100))
+        net_bar = self._create_progress_bar(net_percent, 100, 10)
+        self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, net_speed))
+        
+        # Обновляем прогресс-бар (примерная оценка на основе размера и времени)
+        # Wine packages: ~100MB, winetricks: ~500MB, Astra.IDE: ~1500MB
+        # Общий примерный размер: ~2100MB
+        estimated_total = 2100
+        progress_percent = min(100, int((size_mb / estimated_total) * 100))
+        self.wine_progress['value'] = progress_percent
     
     def _update_install_status(self, message):
         """Обновление статуса установки в GUI (вызывается из главного потока)"""
         # Обновляем статус-метку (только первые 80 символов)
         short_msg = message[:80] + "..." if len(message) > 80 else message
         self.wine_status_label.config(text=short_msg, fg='blue')
+        
+        # Определяем текущий этап по сообщению
+        if "ШАГ 1" in message or "WINE ПАКЕТОВ" in message:
+            self.wine_stage_label.config(text="Установка Wine пакетов", fg='blue')
+        elif "ШАГ 2" in message or "ptrace_scope" in message:
+            self.wine_stage_label.config(text="Настройка безопасности", fg='blue')
+        elif "ШАГ 3" in message or "ОКРУЖЕНИЯ WINE" in message:
+            self.wine_stage_label.config(text="Настройка окружения Wine", fg='blue')
+        elif "ШАГ 4" in message or "WINETRICKS" in message:
+            self.wine_stage_label.config(text="Установка компонентов winetricks", fg='blue')
+        elif "ШАГ 5" in message or "СКРИПТОВ" in message:
+            self.wine_stage_label.config(text="Создание скриптов запуска", fg='blue')
+        elif "ШАГ 6" in message or "ASTRA.IDE" in message:
+            self.wine_stage_label.config(text="Установка Astra.IDE", fg='blue')
+        elif "УСПЕШНО" in message:
+            self.wine_stage_label.config(text="Установка завершена!", fg='green')
+        elif "ОШИБКА" in message or "ПРЕРВАНА" in message:
+            self.wine_stage_label.config(text="Ошибка установки", fg='red')
         
         # Добавляем в лог
         self.log_message(message)
@@ -2180,13 +3505,180 @@ class AutomationGUI(object):
         """Обработка завершения установки (вызывается из главного потока)"""
         if success:
             self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
+            self.wine_stage_label.config(text="Установка завершена!", fg='green')
+            self.wine_progress['value'] = 100
             self.log_message("[SUCCESS] Установка Wine и Astra.IDE завершена успешно")
             
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
             self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
+            self.wine_stage_label.config(text="Ошибка установки", fg='red')
             self.log_message("[ERROR] Установка Wine и Astra.IDE прервана")
+        
+        # Включаем кнопки обратно
+        self.check_wine_button.config(state=self.tk.NORMAL)
+    
+    def on_wine_tree_click(self, event):
+        """Обработка клика по таблице Wine компонентов"""
+        region = self.wine_tree.identify('region', event.x, event.y)
+        if region == 'heading':
+            return  # Заголовок обрабатывается отдельно
+        
+        item = self.wine_tree.identify_row(event.y)
+        column = self.wine_tree.identify_column(event.x)
+        
+        if item and column == '#1':  # Колонка с чекбоксом
+            # Переключаем состояние
+            current_state = self.wine_checkboxes.get(item, False)
+            new_state = not current_state
+            self.wine_checkboxes[item] = new_state
+            
+            # Обновляем отображение
+            values = list(self.wine_tree.item(item, 'values'))
+            values[0] = '☑' if new_state else '☐'
+            self.wine_tree.item(item, values=values)
+            
+            # Обновляем кнопки
+            self._update_wine_buttons()
+    
+    def toggle_all_wine_components(self):
+        """Переключить все чекбоксы (клик по заголовку)"""
+        # Проверяем сколько выбрано
+        selected_count = sum(1 for checked in self.wine_checkboxes.values() if checked)
+        total_count = len(self.wine_checkboxes)
+        
+        # Если все выбраны - снимаем все, иначе - выбираем все
+        new_state = not (selected_count == total_count)
+        
+        for item in self.wine_checkboxes:
+            self.wine_checkboxes[item] = new_state
+            values = list(self.wine_tree.item(item, 'values'))
+            values[0] = '☑' if new_state else '☐'
+            self.wine_tree.item(item, values=values)
+        
+        # Обновляем заголовок
+        self.wine_tree.heading('selected', text='☑' if new_state else '☐')
+        
+        # Обновляем кнопки
+        self._update_wine_buttons()
+    
+    def _update_wine_buttons(self):
+        """Обновление состояния кнопок установки/удаления"""
+        selected_count = sum(1 for checked in self.wine_checkboxes.values() if checked)
+        
+        if selected_count > 0:
+            self.install_wine_button.config(state=self.tk.NORMAL)
+            self.uninstall_wine_button.config(state=self.tk.NORMAL)
+        else:
+            self.install_wine_button.config(state=self.tk.DISABLED)
+            self.uninstall_wine_button.config(state=self.tk.DISABLED)
+    
+    def get_selected_wine_components(self):
+        """Получить список выбранных компонентов"""
+        selected = []
+        for item, checked in self.wine_checkboxes.items():
+            if checked:
+                values = self.wine_tree.item(item, 'values')
+                component_name = values[1]  # Вторая колонка - название компонента
+                selected.append(component_name)
+        return selected
+    
+    def run_wine_uninstall(self):
+        """Запуск удаления Wine компонентов"""
+        # Проверяем права root
+        if os.geteuid() != 0:
+            self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
+            self.log_message("[ERROR] Для удаления Wine требуются права root")
+            return
+        
+        # Получаем список выбранных компонентов
+        selected = self.get_selected_wine_components()
+        if not selected:
+            self.wine_status_label.config(text="Выберите компоненты для удаления", fg='orange')
+            return
+        
+        # Подтверждение удаления
+        import tkinter.messagebox as messagebox
+        message = "Вы уверены что хотите удалить следующие компоненты?\n\n" + "\n".join(selected)
+        if not messagebox.askyesno("Подтверждение удаления", message):
+            return
+        
+        self.wine_status_label.config(text="Удаление запущено...", fg='blue')
+        self.uninstall_wine_button.config(state=self.tk.DISABLED)
+        self.install_wine_button.config(state=self.tk.DISABLED)
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем удаление в отдельном потоке
+        import threading
+        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
+        uninstall_thread.daemon = True
+        uninstall_thread.start()
+    
+    def _perform_wine_uninstall(self, selected_components):
+        """Выполнение удаления Wine компонентов (в отдельном потоке)"""
+        try:
+            # Создаем callback для обновления статуса
+            def update_callback(message):
+                self.root.after(0, lambda: self._update_install_status(message))
+            
+            # Получаем logger из main_log_file
+            logger = None
+            if hasattr(self, 'main_log_file') and self.main_log_file:
+                logger = Logger(self.main_log_file)
+            
+            # Определяем что удалять на основе выбранных компонентов
+            remove_wine = any(c in selected_components for c in ['Wine Astraregul', 'Wine 9.0'])
+            remove_wineprefix = 'WINEPREFIX' in selected_components  # Удаляет весь WINEPREFIX со всеми компонентами
+            remove_ide = any(c in selected_components for c in ['Astra.IDE', 'Скрипт запуска', 'Ярлык рабочего стола'])
+            
+            # Учитываем зависимости:
+            # 1. Если удаляется Wine → нужно удалить WINEPREFIX и Astra.IDE (они зависят от Wine)
+            if remove_wine:
+                if not remove_wineprefix:
+                    self.root.after(0, lambda: self.log_message("[INFO] Wine удаляется → автоматически удаляется WINEPREFIX"))
+                    remove_wineprefix = True
+                if not remove_ide:
+                    self.root.after(0, lambda: self.log_message("[INFO] Wine удаляется → автоматически удаляется Astra.IDE"))
+                    remove_ide = True
+            
+            # 2. Если удаляется WINEPREFIX → нужно удалить Astra.IDE (она установлена в WINEPREFIX)
+            if remove_wineprefix and not remove_ide:
+                self.root.after(0, lambda: self.log_message("[INFO] WINEPREFIX удаляется → автоматически удаляется Astra.IDE"))
+                remove_ide = True
+            
+            # Создаем экземпляр деинсталлятора
+            uninstaller = WineUninstaller(logger=logger, callback=update_callback,
+                                        remove_wine=remove_wine,
+                                        remove_wineprefix=remove_wineprefix,
+                                        remove_ide=remove_ide,
+                                        winetricks_components=None)
+            
+            # Запускаем удаление
+            self.root.after(0, lambda: self.log_message("[UNINSTALL] Начало удаления Wine и Astra.IDE"))
+            success = uninstaller.uninstall_all()
+            
+            # Обновляем GUI после удаления
+            self.root.after(0, lambda: self._wine_uninstall_completed(success))
+            
+        except Exception as e:
+            error_msg = "Ошибка удаления: %s" % str(e)
+            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
+            self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
+            self.root.after(0, lambda: self.uninstall_wine_button.config(state=self.tk.NORMAL))
+            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+    
+    def _wine_uninstall_completed(self, success):
+        """Обработка завершения удаления (вызывается из главного потока)"""
+        if success:
+            self.wine_status_label.config(text="Удаление завершено успешно!", fg='green')
+            self.log_message("[SUCCESS] Удаление Wine и Astra.IDE завершено успешно")
+            
+            # Автоматически запускаем проверку
+            self.root.after(2000, self.run_wine_check)
+        else:
+            self.wine_status_label.config(text="Удаление прервано (см. лог)", fg='red')
+            self.log_message("[ERROR] Удаление Wine и Astra.IDE прервано")
         
         # Включаем кнопки обратно
         self.check_wine_button.config(state=self.tk.NORMAL)
