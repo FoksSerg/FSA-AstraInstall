@@ -2504,7 +2504,7 @@ class WineUninstaller(object):
 class AutomationGUI(object):
     """GUI для мониторинга автоматизации установки Astra.IDE"""
     
-    def __init__(self, console_mode=False):
+    def __init__(self, console_mode=False, close_terminal_pid=None):
         # Проверяем и устанавливаем зависимости для GUI только если не консольный режим
         if not console_mode:
             self._install_gui_dependencies()
@@ -2529,6 +2529,9 @@ class AutomationGUI(object):
         self.dry_run = tk.BooleanVar()
         self.process_thread = None
         
+        # PID терминала для автозакрытия
+        self.close_terminal_pid = close_terminal_pid
+        
         # Очередь для потокобезопасного обновления терминала
         self.terminal_queue = queue.Queue()
         
@@ -2552,6 +2555,10 @@ class AutomationGUI(object):
         
         # Запускаем обработку очереди терминала
         self.process_terminal_queue()
+        
+        # Закрываем родительский терминал после полного запуска GUI
+        if self.close_terminal_pid:
+            self.root.after(2000, self._close_parent_terminal)
         
         # Запускаем постоянный мониторинг CPU/NET
         self.start_system_monitoring()
@@ -2583,6 +2590,47 @@ class AutomationGUI(object):
             except Exception as e:
                 print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
                 return False
+    
+    def _close_parent_terminal(self):
+        """Закрытие родительского терминала после полного запуска GUI"""
+        if not self.close_terminal_pid:
+            return
+        
+        try:
+            import signal
+            pid = int(self.close_terminal_pid)
+            
+            # Проверяем что процесс существует
+            try:
+                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+            except OSError:
+                # Процесс уже не существует
+                return
+            
+            # Сначала мягкое завершение
+            try:
+                os.kill(pid, signal.SIGTERM)
+                self.log_message("[INFO] Отправлен SIGTERM терминалу (PID: %d)" % pid)
+                
+                # Даем время на завершение
+                import time
+                time.sleep(0.5)
+                
+                # Проверяем что процесс завершился
+                try:
+                    os.kill(pid, 0)
+                    # Процесс еще жив - отправляем SIGKILL
+                    os.kill(pid, signal.SIGKILL)
+                    self.log_message("[INFO] Отправлен SIGKILL терминалу (PID: %d)" % pid)
+                except OSError:
+                    # Процесс уже завершился
+                    self.log_message("[INFO] Родительский терминал успешно закрыт (PID: %d)" % pid)
+                    
+            except Exception as e:
+                self.log_message("[WARNING] Не удалось закрыть терминал: %s" % str(e))
+                
+        except Exception as e:
+            self.log_message("[ERROR] Ошибка закрытия родительского терминала: %s" % str(e))
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -5626,14 +5674,14 @@ def run_system_updater(temp_dir, dry_run=False):
         print("[ERROR] Ошибка обновления системы: %s" % str(e))
         return False
 
-def run_gui_monitor(temp_dir, dry_run=False):
+def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
     """Запуск GUI мониторинга через класс AutomationGUI"""
     print("\n[GUI] Запуск GUI мониторинга...")
     
     try:
         # Создаем экземпляр класса AutomationGUI напрямую
         print("   [OK] Создаем экземпляр AutomationGUI...")
-        gui = AutomationGUI(console_mode=False)  # Всегда GUI режим для этой функции
+        gui = AutomationGUI(console_mode=False, close_terminal_pid=close_terminal_pid)
         
         # Устанавливаем лог-файл для GUI
         logger = get_logger()
@@ -5676,15 +5724,25 @@ def main():
         # Проверяем аргументы командной строки
         dry_run = False
         console_mode = False
+        close_terminal_pid = None
         
         if len(sys.argv) > 1:
-            for arg in sys.argv[1:]:
+            i = 1
+            while i < len(sys.argv):
+                arg = sys.argv[i]
                 if arg == '--dry-run':
                     dry_run = True
                     logger.log_info("Включен режим тестирования (dry-run)")
                 elif arg == '--console':
                     console_mode = True
                     logger.log_info("Включен консольный режим")
+                elif arg == '--close-terminal':
+                    # Следующий аргумент - PID терминала
+                    if i + 1 < len(sys.argv):
+                        close_terminal_pid = sys.argv[i + 1]
+                        logger.log_info("Терминал будет закрыт после запуска GUI (PID: %s)" % close_terminal_pid)
+                        i += 1  # Пропускаем следующий аргумент
+                i += 1
             
             logger.log_info("Начинаем выполнение основной программы")
         
@@ -5701,7 +5759,7 @@ def main():
             logger.log_info("Запускаем GUI мониторинг")
             
             try:
-                gui_success = run_gui_monitor(None, dry_run)
+                gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
                 if gui_success:
                     print("[OK] GUI мониторинг завершен")
                     logger.log_info("GUI мониторинг завершен успешно")
