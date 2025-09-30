@@ -623,6 +623,930 @@ def test_system_stats(dry_run=False):
     return True
 
 # ============================================================================
+# КЛАСС ПРОВЕРКИ WINE КОМПОНЕНТОВ
+# ============================================================================
+class WineComponentsChecker(object):
+    """Класс для проверки наличия установленных Wine компонентов и Astra.IDE"""
+    
+    def __init__(self):
+        """Инициализация проверки компонентов"""
+        self.wine_astraregul_path = "/opt/wine-astraregul/bin/wine"
+        self.wine_9_path = "/opt/wine-9.0/bin/wine"
+        self.ptrace_scope_path = "/proc/sys/kernel/yama/ptrace_scope"
+        self.home = os.path.expanduser("~")
+        self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+        self.start_script = os.path.join(self.home, "start-astraide.sh")
+        self.desktop_shortcut = os.path.join(self.home, "Desktop", "AstraRegul.desktop")
+        
+        # Результаты проверок
+        self.checks = {
+            'wine_astraregul': False,
+            'wine_9': False,
+            'ptrace_scope': False,
+            'wineprefix': False,
+            'astra_ide': False,
+            'start_script': False,
+            'desktop_shortcut': False
+        }
+    
+    def check_wine_astraregul(self):
+        """Проверка наличия Wine Astraregul"""
+        print("[CHECK] Проверка Wine Astraregul...")
+        
+        if os.path.isfile(self.wine_astraregul_path):
+            try:
+                # Проверяем что файл исполняемый
+                if os.access(self.wine_astraregul_path, os.X_OK):
+                    print("   [OK] Wine Astraregul найден: %s" % self.wine_astraregul_path)
+                    self.checks['wine_astraregul'] = True
+                    return True
+                else:
+                    print("   [ERR] Wine Astraregul найден, но не исполняемый")
+                    return False
+            except Exception as e:
+                print("   [ERR] Ошибка проверки Wine Astraregul: %s" % str(e))
+                return False
+        else:
+            print("   [ERR] Wine Astraregul не найден: %s" % self.wine_astraregul_path)
+            return False
+    
+    def check_wine_9(self):
+        """Проверка наличия Wine 9.0"""
+        print("[CHECK] Проверка Wine 9.0...")
+        
+        if os.path.isfile(self.wine_9_path):
+            try:
+                if os.access(self.wine_9_path, os.X_OK):
+                    print("   [OK] Wine 9.0 найден: %s" % self.wine_9_path)
+                    self.checks['wine_9'] = True
+                    return True
+                else:
+                    print("   [ERR] Wine 9.0 найден, но не исполняемый")
+                    return False
+            except Exception as e:
+                print("   [ERR] Ошибка проверки Wine 9.0: %s" % str(e))
+                return False
+        else:
+            print("   [ERR] Wine 9.0 не найден: %s" % self.wine_9_path)
+            return False
+    
+    def check_ptrace_scope(self):
+        """Проверка настройки ptrace_scope (должно быть != 3)"""
+        print("[CHECK] Проверка ptrace_scope...")
+        
+        try:
+            if os.path.isfile(self.ptrace_scope_path):
+                with open(self.ptrace_scope_path, 'r') as f:
+                    value = f.read().strip()
+                
+                if value == '3':
+                    print("   [ERR] ptrace_scope = 3 (заблокирован)")
+                    print("   [!] Для работы Wine необходимо отключить блокировку ptrace")
+                    print("   [!] Выполните: sudo sysctl -w kernel.yama.ptrace_scope=0")
+                    return False
+                else:
+                    print("   [OK] ptrace_scope = %s (разрешен)" % value)
+                    self.checks['ptrace_scope'] = True
+                    return True
+            else:
+                print("   [!] Файл ptrace_scope не найден (возможно, не требуется)")
+                self.checks['ptrace_scope'] = True
+                return True
+        except Exception as e:
+            print("   [ERR] Ошибка проверки ptrace_scope: %s" % str(e))
+            return False
+    
+    def check_wineprefix(self):
+        """Проверка наличия WINEPREFIX"""
+        print("[CHECK] Проверка WINEPREFIX...")
+        
+        if os.path.isdir(self.wineprefix):
+            print("   [OK] WINEPREFIX найден: %s" % self.wineprefix)
+            self.checks['wineprefix'] = True
+            return True
+        else:
+            print("   [ERR] WINEPREFIX не найден: %s" % self.wineprefix)
+            return False
+    
+    def check_astra_ide_installation(self):
+        """Проверка установленной Astra.IDE"""
+        print("[CHECK] Проверка установки Astra.IDE...")
+        
+        if not self.checks['wineprefix']:
+            print("   [ERR] WINEPREFIX не найден, невозможно проверить установку")
+            return False
+        
+        # Ищем директорию Astra.IDE
+        astra_base = os.path.join(self.wineprefix, "drive_c", "Program Files", "AstraRegul")
+        
+        if not os.path.isdir(astra_base):
+            print("   [ERR] Директория AstraRegul не найдена: %s" % astra_base)
+            return False
+        
+        # Ищем папку Astra.IDE_64_*
+        try:
+            import glob
+            astra_dirs = glob.glob(os.path.join(astra_base, "Astra.IDE_64_*"))
+            
+            if not astra_dirs:
+                print("   [ERR] Директория Astra.IDE_64_* не найдена")
+                return False
+            
+            # Проверяем наличие исполняемого файла
+            astra_exe = os.path.join(astra_dirs[0], "Astra.IDE", "Common", "Astra.IDE.exe")
+            
+            if os.path.isfile(astra_exe):
+                print("   [OK] Astra.IDE установлена: %s" % astra_dirs[0])
+                self.checks['astra_ide'] = True
+                return True
+            else:
+                print("   [ERR] Astra.IDE.exe не найден: %s" % astra_exe)
+                return False
+                
+        except Exception as e:
+            print("   [ERR] Ошибка проверки Astra.IDE: %s" % str(e))
+            return False
+    
+    def check_start_script(self):
+        """Проверка скрипта запуска"""
+        print("[CHECK] Проверка скрипта запуска...")
+        
+        if os.path.isfile(self.start_script):
+            if os.access(self.start_script, os.X_OK):
+                print("   [OK] Скрипт запуска найден: %s" % self.start_script)
+                self.checks['start_script'] = True
+                return True
+            else:
+                print("   [!] Скрипт запуска найден, но не исполняемый")
+                self.checks['start_script'] = True
+                return True
+        else:
+            print("   [ERR] Скрипт запуска не найден: %s" % self.start_script)
+            return False
+    
+    def check_desktop_shortcut(self):
+        """Проверка ярлыка на рабочем столе"""
+        print("[CHECK] Проверка ярлыка на рабочем столе...")
+        
+        if os.path.isfile(self.desktop_shortcut):
+            print("   [OK] Ярлык найден: %s" % self.desktop_shortcut)
+            self.checks['desktop_shortcut'] = True
+            return True
+        else:
+            print("   [ERR] Ярлык не найден: %s" % self.desktop_shortcut)
+            return False
+    
+    def check_all_components(self):
+        """Выполнить все проверки"""
+        print("\n[WINE] Проверка всех Wine компонентов и Astra.IDE...")
+        print("=" * 60)
+        
+        # Выполняем проверки в правильном порядке
+        self.check_wine_astraregul()
+        self.check_wine_9()
+        self.check_ptrace_scope()
+        self.check_wineprefix()
+        self.check_astra_ide_installation()
+        self.check_start_script()
+        self.check_desktop_shortcut()
+        
+        print("\n" + "=" * 60)
+        self.display_summary()
+        
+        return self.is_fully_installed()
+    
+    def is_fully_installed(self):
+        """Проверка что всё установлено полностью"""
+        return all(self.checks.values())
+    
+    def is_wine_installed(self):
+        """Проверка что Wine пакеты установлены"""
+        return self.checks['wine_astraregul'] and self.checks['wine_9'] and self.checks['ptrace_scope']
+    
+    def is_astra_ide_installed(self):
+        """Проверка что Astra.IDE установлена"""
+        return self.checks['astra_ide']
+    
+    def display_summary(self):
+        """Отображение итоговой сводки"""
+        print("\n[SUMMARY] Итоговая сводка проверки:")
+        print("-" * 60)
+        
+        status_map = {
+            'wine_astraregul': 'Wine Astraregul',
+            'wine_9': 'Wine 9.0',
+            'ptrace_scope': 'ptrace_scope (разрешен)',
+            'wineprefix': 'WINEPREFIX',
+            'astra_ide': 'Astra.IDE установлена',
+            'start_script': 'Скрипт запуска',
+            'desktop_shortcut': 'Ярлык рабочего стола'
+        }
+        
+        for key, label in status_map.items():
+            status = "[OK]" if self.checks[key] else "[ERR]"
+            print("   %s %s" % (status, label))
+        
+        print("-" * 60)
+        
+        if self.is_fully_installed():
+            print("[OK] Все компоненты установлены и готовы к работе!")
+            return True
+        elif self.is_wine_installed() and not self.is_astra_ide_installed():
+            print("[!] Wine установлен, но Astra.IDE не установлена")
+            print("[!] Требуется установка Astra.IDE")
+            return False
+        elif not self.is_wine_installed():
+            print("[ERR] Wine не установлен или настроен неправильно")
+            print("[ERR] Требуется установка Wine пакетов")
+            return False
+        else:
+            print("[!] Некоторые компоненты отсутствуют")
+            return False
+    
+    def get_missing_components(self):
+        """Получить список отсутствующих компонентов"""
+        missing = []
+        
+        status_map = {
+            'wine_astraregul': 'Wine Astraregul',
+            'wine_9': 'Wine 9.0',
+            'ptrace_scope': 'ptrace_scope',
+            'wineprefix': 'WINEPREFIX',
+            'astra_ide': 'Astra.IDE',
+            'start_script': 'Скрипт запуска',
+            'desktop_shortcut': 'Ярлык рабочего стола'
+        }
+        
+        for key, label in status_map.items():
+            if not self.checks[key]:
+                missing.append(label)
+        
+        return missing
+
+# ============================================================================
+# КЛАСС УСТАНОВКИ WINE КОМПОНЕНТОВ
+# ============================================================================
+class WineInstaller(object):
+    """Класс для установки Wine компонентов и Astra.IDE"""
+    
+    def __init__(self, logger=None, callback=None, install_wine=True, install_winetricks=True, install_ide=True):
+        """
+        Инициализация установщика
+        
+        Args:
+            logger: Экземпляр класса Logger для логирования
+            callback: Функция для обновления статуса в GUI (опционально)
+            install_wine: Устанавливать Wine пакеты (по умолчанию True)
+            install_winetricks: Устанавливать winetricks компоненты (по умолчанию True)
+            install_ide: Устанавливать Astra.IDE (по умолчанию True)
+        """
+        self.logger = logger
+        self.callback = callback
+        
+        # Флаги установки компонентов
+        self.install_wine = install_wine
+        self.install_winetricks = install_winetricks
+        self.install_ide = install_ide
+        
+        # Получаем абсолютный путь к директории скрипта
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.astrapack_dir = os.path.join(script_dir, "AstraPack")
+        
+        self.home = os.path.expanduser("~")
+        self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+        
+        # Пути к компонентам
+        self.wine_9_deb = os.path.join(self.astrapack_dir, "wine_9.0-1_amd64.deb")
+        self.wine_astraregul_deb = os.path.join(self.astrapack_dir, "wine-astraregul_10.0-rc6-3_amd64.deb")
+        self.astra_ide_exe = os.path.join(self.astrapack_dir, "Astra.IDE_64_1.7.2.1.exe")
+        self.winetricks = os.path.join(self.astrapack_dir, "winetricks")
+        self.wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
+        self.winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
+    
+    def _log(self, message, level="INFO"):
+        """Логирование с выводом в консоль и callback"""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        log_msg = "[%s] [%s] %s" % (timestamp, level, message)
+        
+        print(log_msg)
+        
+        if self.logger:
+            if level == "ERROR":
+                self.logger.log_error(message)
+            else:
+                self.logger.log_info(message)
+        
+        if self.callback:
+            self.callback(message)
+    
+    def _run_command(self, cmd, description="", sudo=False):
+        """Выполнение команды с логированием"""
+        self._log("Выполнение: %s" % description if description else " ".join(cmd))
+        
+        try:
+            if sudo and os.geteuid() != 0:
+                self._log("Требуются права root для: %s" % description, "ERROR")
+                return False
+            
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self._log("Успешно: %s" % description)
+                if result.stdout:
+                    for line in result.stdout.strip().split('\n'):
+                        if line.strip():
+                            self._log("  > %s" % line)
+                return True
+            else:
+                self._log("Ошибка: %s (код %d)" % (description, result.returncode), "ERROR")
+                if result.stderr:
+                    for line in result.stderr.strip().split('\n'):
+                        if line.strip():
+                            self._log("  ! %s" % line, "ERROR")
+                return False
+        
+        except Exception as e:
+            self._log("Исключение при выполнении %s: %s" % (description, str(e)), "ERROR")
+            return False
+    
+    def check_prerequisites(self):
+        """Проверка наличия всех необходимых файлов"""
+        self._log("=" * 60)
+        self._log("ПРОВЕРКА ПРЕДВАРИТЕЛЬНЫХ УСЛОВИЙ")
+        self._log("=" * 60)
+        
+        # Логируем директорию AstraPack
+        self._log("Директория AstraPack: %s" % self.astrapack_dir)
+        
+        if not os.path.exists(self.astrapack_dir):
+            self._log("ОШИБКА: Директория AstraPack не найдена!", "ERROR")
+            self._log("Создайте папку и поместите в нее все необходимые файлы", "ERROR")
+            return False
+        
+        missing_files = []
+        
+        # Проверяем наличие файлов
+        files_to_check = [
+            (self.wine_9_deb, "Wine 9.0 .deb"),
+            (self.wine_astraregul_deb, "Wine Astraregul .deb"),
+            (self.astra_ide_exe, "Astra.IDE установщик"),
+            (self.winetricks, "winetricks"),
+            (self.wine_gecko_dir, "wine-gecko компоненты"),
+            (self.winetricks_cache_dir, "winetricks кэш")
+        ]
+        
+        for file_path, description in files_to_check:
+            if os.path.exists(file_path):
+                self._log("[OK] Найден: %s" % description)
+            else:
+                self._log("[ERR] Отсутствует: %s (%s)" % (description, file_path), "ERROR")
+                missing_files.append(description)
+        
+        if missing_files:
+            self._log("=" * 60, "ERROR")
+            self._log("ОШИБКА: Отсутствуют необходимые файлы:", "ERROR")
+            for f in missing_files:
+                self._log("  - %s" % f, "ERROR")
+            self._log("Поместите все файлы в папку: %s" % self.astrapack_dir, "ERROR")
+            return False
+        
+        # Проверяем права root
+        if os.geteuid() != 0:
+            self._log("ОШИБКА: Требуются права root для установки", "ERROR")
+            return False
+        
+        self._log("=" * 60)
+        self._log("ВСЕ ПРЕДВАРИТЕЛЬНЫЕ УСЛОВИЯ ВЫПОЛНЕНЫ")
+        self._log("=" * 60)
+        return True
+    
+    def install_wine_packages(self):
+        """Установка Wine пакетов"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 1: УСТАНОВКА WINE ПАКЕТОВ")
+        self._log("=" * 60)
+        
+        # Проверяем существование файлов
+        self._log("Проверка пакетов...")
+        self._log("  Wine 9.0: %s" % self.wine_9_deb)
+        self._log("  Wine Astraregul: %s" % self.wine_astraregul_deb)
+        
+        if not os.path.exists(self.wine_9_deb):
+            self._log("ОШИБКА: Файл не найден: %s" % self.wine_9_deb, "ERROR")
+            return False
+        
+        if not os.path.exists(self.wine_astraregul_deb):
+            self._log("ОШИБКА: Файл не найден: %s" % self.wine_astraregul_deb, "ERROR")
+            return False
+        
+        # Шаг 1: Очистка возможных сломанных пакетов
+        self._log("Очистка системы от возможных сломанных пакетов...")
+        
+        # Удаляем возможные предыдущие установки Wine
+        self._log("Удаление предыдущих версий Wine (если есть)...")
+        subprocess.run(
+            ['apt-get', 'remove', '-y', 'wine', 'wine-stable', 'wine-9.0', 'wine-astraregul'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+        
+        # Очищаем dpkg от сломанных пакетов
+        self._log("Очистка dpkg...")
+        subprocess.run(
+            ['dpkg', '--configure', '-a'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+        
+        # Исправляем сломанные зависимости
+        self._log("Исправление сломанных зависимостей...")
+        subprocess.run(
+            ['apt-get', '-f', '-y', 'install'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+        
+        # Обновляем списки пакетов
+        self._log("Обновление списков пакетов...")
+        subprocess.run(
+            ['apt-get', 'update'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False
+        )
+        
+        # Шаг 2: Установка Wine пакетов через apt (как в оригинальном скрипте)
+        # ВАЖНО: apt умеет устанавливать локальные .deb и сразу разрешать зависимости
+        self._log("\nУстановка Wine пакетов (как в оригинальном скрипте)...")
+        
+        # Переходим в директорию с пакетами для использования относительных путей
+        original_cwd = os.getcwd()
+        os.chdir(self.astrapack_dir)
+        self._log("Рабочая директория: %s" % self.astrapack_dir)
+        
+        try:
+            # Настраиваем переменные окружения для автоматической установки
+            env = os.environ.copy()
+            env['DEBIAN_FRONTEND'] = 'noninteractive'
+            env['DEBIAN_PRIORITY'] = 'critical'
+            
+            # Используем apt install с относительным путем ./wine*.deb
+            # Это ТОЧНО как в оригинальном скрипте: apt -y install ./wine*.deb
+            
+            # Находим все wine*.deb файлы в текущей директории
+            import glob as glob_module
+            wine_debs = sorted(glob_module.glob('./wine*.deb'))
+            
+            if not wine_debs:
+                self._log("ОШИБКА: Не найдены файлы wine*.deb в директории!", "ERROR")
+                return False
+            
+            self._log("Найдено %d wine*.deb файлов:" % len(wine_debs))
+            for deb in wine_debs:
+                self._log("  - %s" % deb)
+            
+            self._log("\nВыполнение: apt install -y %s" % ' '.join(wine_debs))
+            self._log("Это автоматически установит ВСЕ зависимости из репозиториев")
+            
+            # Формируем команду с явными файлами (apt не поддерживает маски напрямую)
+            cmd = ['apt', 'install', '-y',
+                   '-o', 'Dpkg::Options::=--force-confdef',
+                   '-o', 'Dpkg::Options::=--force-confold'] + wine_debs
+            
+            result = subprocess.run(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            # Логируем вывод
+            if result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        self._log("  > %s" % line)
+            
+            if result.returncode != 0:
+                self._log("ОШИБКА: apt install завершился с ошибкой", "ERROR")
+                if result.stderr:
+                    for line in result.stderr.strip().split('\n'):
+                        if line.strip():
+                            self._log("  ! %s" % line, "ERROR")
+                return False
+            
+            self._log("apt install успешно завершен")
+            
+        finally:
+            # Возвращаемся в исходную директорию
+            os.chdir(original_cwd)
+        
+        # Шаг 4: Проверяем установку
+        self._log("\nПроверка установки...")
+        
+        if os.path.exists('/opt/wine-9.0/bin/wine'):
+            self._log("  [OK] Wine 9.0 установлен: /opt/wine-9.0/bin/wine")
+        else:
+            self._log("  [ERR] Wine 9.0 не найден", "ERROR")
+            return False
+        
+        if os.path.exists('/opt/wine-astraregul/bin/wine'):
+            self._log("  [OK] Wine Astraregul установлен: /opt/wine-astraregul/bin/wine")
+        else:
+            self._log("  [ERR] Wine Astraregul не найден", "ERROR")
+            return False
+        
+        self._log("\nWine пакеты успешно установлены!")
+        return True
+    
+    def configure_ptrace_scope(self):
+        """Настройка ptrace_scope"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 2: НАСТРОЙКА PTRACE_SCOPE")
+        self._log("=" * 60)
+        
+        ptrace_path = "/proc/sys/kernel/yama/ptrace_scope"
+        
+        if not os.path.exists(ptrace_path):
+            self._log("ptrace_scope не найден (возможно, не требуется)")
+            return True
+        
+        try:
+            with open(ptrace_path, 'r') as f:
+                current_value = f.read().strip()
+            
+            self._log("Текущее значение ptrace_scope: %s" % current_value)
+            
+            if current_value == '3':
+                self._log("Отключение блокировки ptrace...")
+                if self._run_command(
+                    ['sysctl', '-w', 'kernel.yama.ptrace_scope=0'],
+                    "Отключение ptrace блокировки",
+                    sudo=True
+                ):
+                    self._log("ptrace_scope успешно настроен")
+                    return True
+                else:
+                    self._log("Не удалось настроить ptrace_scope", "ERROR")
+                    return False
+            else:
+                self._log("ptrace_scope уже настроен правильно")
+                return True
+        
+        except Exception as e:
+            self._log("Ошибка настройки ptrace_scope: %s" % str(e), "ERROR")
+            return False
+    
+    def setup_wine_environment(self):
+        """Настройка окружения Wine"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 3: НАСТРОЙКА ОКРУЖЕНИЯ WINE")
+        self._log("=" * 60)
+        
+        # Создаем директории
+        cache_wine = os.path.join(self.home, ".cache", "wine")
+        cache_winetricks = os.path.join(self.home, ".cache", "winetricks")
+        
+        try:
+            os.makedirs(cache_wine, exist_ok=True)
+            os.makedirs(cache_winetricks, exist_ok=True)
+            self._log("Созданы директории кэша")
+            
+            # Копируем wine-gecko
+            self._log("Копирование wine-gecko компонентов...")
+            if os.path.exists(self.wine_gecko_dir):
+                import shutil
+                for item in os.listdir(self.wine_gecko_dir):
+                    src = os.path.join(self.wine_gecko_dir, item)
+                    dst = os.path.join(cache_wine, item)
+                    if os.path.isfile(src):
+                        shutil.copy2(src, dst)
+                        self._log("  Скопирован: %s" % item)
+                self._log("wine-gecko компоненты скопированы")
+            
+            # Копируем winetricks-cache
+            self._log("Копирование winetricks кэша...")
+            if os.path.exists(self.winetricks_cache_dir):
+                for item in os.listdir(self.winetricks_cache_dir):
+                    src = os.path.join(self.winetricks_cache_dir, item)
+                    dst = os.path.join(cache_winetricks, item)
+                    if os.path.isdir(src):
+                        if os.path.exists(dst):
+                            shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                        self._log("  Скопирована папка: %s" % item)
+                    else:
+                        shutil.copy2(src, dst)
+                        self._log("  Скопирован файл: %s" % item)
+                self._log("winetricks кэш скопирован")
+            
+            # Делаем winetricks исполняемым
+            if os.path.exists(self.winetricks):
+                os.chmod(self.winetricks, 0o755)
+                self._log("winetricks сделан исполняемым")
+            
+            return True
+        
+        except Exception as e:
+            self._log("Ошибка настройки окружения: %s" % str(e), "ERROR")
+            return False
+    
+    def install_winetricks_components(self):
+        """Установка компонентов через winetricks"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 4: УСТАНОВКА КОМПОНЕНТОВ WINETRICKS")
+        self._log("=" * 60)
+        
+        # Настраиваем переменные окружения
+        env = os.environ.copy()
+        env['WINEPREFIX'] = self.wineprefix
+        env['WINEDEBUG'] = '-all'
+        env['WINE'] = '/opt/wine-9.0/bin/wine'
+        
+        # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
+        env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d'
+        env['WINEARCH'] = 'win64'
+        env['DISPLAY'] = ':0'
+        
+        # Дополнительные параметры для подавления диалогов
+        env['WINEDLLPATH'] = '/opt/wine-9.0/lib64/wine'
+        
+        self._log("WINEPREFIX: %s" % self.wineprefix)
+        self._log("WINE: /opt/wine-9.0/bin/wine")
+        self._log("WINEDLLOVERRIDES: winemenubuilder.exe=d;rundll32.exe=d;mshtml=d (отключены GUI диалоги)")
+        
+        # Компоненты для установки
+        components = ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+        
+        self._log("Установка компонентов: %s" % ", ".join(components))
+        self._log("Это может занять несколько минут...")
+        
+        try:
+            # Запускаем winetricks
+            result = subprocess.run(
+                [self.winetricks, '-q', '-f'] + components,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                errors='replace',  # Безопасная обработка non-UTF8 символов
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self._log("Компоненты winetricks успешно установлены")
+            else:
+                self._log("Предупреждение: winetricks завершился с кодом %d" % result.returncode)
+                self._log("Продолжаем установку...")
+            
+            # Останавливаем wine server
+            self._log("Остановка wine server...")
+            subprocess.run(
+                [env['WINE'] + 'server', '-k'],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            import time
+            time.sleep(2)
+            
+            return True
+        
+        except Exception as e:
+            self._log("Ошибка установки компонентов: %s" % str(e), "ERROR")
+            return False
+    
+    def create_launch_scripts(self):
+        """Создание скриптов запуска"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 5: СОЗДАНИЕ СКРИПТОВ ЗАПУСКА")
+        self._log("=" * 60)
+        
+        start_script = os.path.join(self.home, "start-astraide.sh")
+        
+        script_content = """#!/bin/bash
+
+export WINEPREFIX="${HOME}"/.wine-astraregul
+export WINE=/opt/wine-astraregul/bin/wine
+export WINEDEBUG="-all"
+
+cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common
+"${WINE}" Astra.IDE.exe
+"""
+        
+        try:
+            with open(start_script, 'w') as f:
+                f.write(script_content)
+            
+            os.chmod(start_script, 0o755)
+            self._log("Создан скрипт запуска: %s" % start_script)
+            
+            return True
+        
+        except Exception as e:
+            self._log("Ошибка создания скрипта: %s" % str(e), "ERROR")
+            return False
+    
+    def install_astra_ide(self):
+        """Установка Astra.IDE"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 6: УСТАНОВКА ASTRA.IDE")
+        self._log("=" * 60)
+        
+        # Настраиваем переменные окружения
+        env = os.environ.copy()
+        env['WINEPREFIX'] = self.wineprefix
+        env['WINEDEBUG'] = '-all'
+        env['WINE'] = '/opt/wine-astraregul/bin/wine'
+        
+        # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
+        env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d'
+        env['WINEARCH'] = 'win64'
+        env['DISPLAY'] = ':0'
+        
+        self._log("Запуск установщика Astra.IDE...")
+        self._log("Путь к установщику: %s" % self.astra_ide_exe)
+        self._log("ВНИМАНИЕ: Установка может занять 5-10 минут")
+        self._log("WINEDLLOVERRIDES: отключены GUI диалоги Wine")
+        
+        try:
+            result = subprocess.run(
+                [env['WINE'], self.astra_ide_exe],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                errors='replace',  # Безопасная обработка non-UTF8 символов
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self._log("Установщик Astra.IDE завершен успешно")
+            else:
+                self._log("Установщик завершился с кодом: %d" % result.returncode)
+            
+            # Даем время на завершение установки
+            import time
+            time.sleep(3)
+            
+            return True
+        
+        except Exception as e:
+            self._log("Ошибка установки Astra.IDE: %s" % str(e), "ERROR")
+            return False
+    
+    def create_desktop_shortcut(self):
+        """Создание ярлыка на рабочем столе"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 7: СОЗДАНИЕ ЯРЛЫКА НА РАБОЧЕМ СТОЛЕ")
+        self._log("=" * 60)
+        
+        # Проверяем/создаем симлинк Desktop
+        desktop_dir = os.path.join(self.home, "Desktop")
+        desktop1_dir = os.path.join(self.home, "Desktops", "Desktop1")
+        
+        try:
+            if not os.path.exists(desktop_dir) and not os.path.islink(desktop_dir):
+                if os.path.exists(desktop1_dir):
+                    os.symlink(desktop1_dir, desktop_dir)
+                    self._log("Создан симлинк Desktop -> Desktop1")
+            
+            # Создаем ярлык
+            desktop_file = os.path.join(desktop_dir, "AstraRegul.desktop")
+            
+            desktop_content = """[Desktop Entry]
+Comment=
+Exec=%s/start-astraide.sh
+Icon=
+Name=Astra IDE (Wine)
+Path=
+StartupNotify=true
+Terminal=false
+Type=Application
+""" % self.home
+            
+            with open(desktop_file, 'w') as f:
+                f.write(desktop_content)
+            
+            self._log("Создан ярлык: %s" % desktop_file)
+            
+            # Удаляем лишние ярлыки созданные установщиком
+            unwanted_shortcuts = [
+                os.path.join(desktop_dir, "Astra.IDE 1.7.2.0.lnk"),
+                os.path.join(desktop_dir, "Astra.IDE 1.7.2.1.lnk"),
+                os.path.join(desktop_dir, "IDE Selector.lnk"),
+                os.path.join(desktop_dir, "IDE Selector.desktop")
+            ]
+            
+            import time
+            time.sleep(2)
+            
+            for shortcut in unwanted_shortcuts:
+                if os.path.exists(shortcut):
+                    os.remove(shortcut)
+                    self._log("Удален лишний ярлык: %s" % os.path.basename(shortcut))
+            
+            return True
+        
+        except Exception as e:
+            self._log("Ошибка создания ярлыка: %s" % str(e), "ERROR")
+            return False
+    
+    def install_all(self):
+        """Полная установка всех компонентов"""
+        self._log("\n" + "=" * 60)
+        self._log("НАЧАЛО УСТАНОВКИ WINE И ASTRA.IDE")
+        self._log("=" * 60)
+        self._log("Время начала: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self._log("")
+        self._log("Выбранные компоненты:")
+        self._log("  - Wine пакеты: %s" % ("ДА" if self.install_wine else "НЕТ"))
+        self._log("  - Winetricks: %s" % ("ДА" if self.install_winetricks else "НЕТ"))
+        self._log("  - Astra.IDE: %s" % ("ДА" if self.install_ide else "НЕТ"))
+        self._log("=" * 60)
+        
+        start_time = datetime.datetime.now()
+        
+        # Проверка предварительных условий
+        if not self.check_prerequisites():
+            self._log("\nУСТАНОВКА ПРЕРВАНА: Не выполнены предварительные условия", "ERROR")
+            return False
+        
+        # Установка Wine пакетов
+        if self.install_wine:
+            if not self.install_wine_packages():
+                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка установки Wine пакетов", "ERROR")
+                return False
+        else:
+            self._log("\nШаг 1: Пропущено (Wine пакеты не выбраны)")
+        
+        # Настройка ptrace_scope
+        if not self.configure_ptrace_scope():
+            self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка настройки ptrace_scope", "ERROR")
+            return False
+        
+        # Настройка окружения
+        if self.install_winetricks or self.install_ide:
+            if not self.setup_wine_environment():
+                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка настройки окружения", "ERROR")
+                return False
+        
+        # Установка компонентов winetricks
+        if self.install_winetricks:
+            if not self.install_winetricks_components():
+                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка установки компонентов", "ERROR")
+                return False
+        else:
+            self._log("\nШаг 4: Пропущено (Winetricks компоненты не выбраны)")
+        
+        # Создание скриптов запуска
+        if self.install_ide:
+            if not self.create_launch_scripts():
+                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка создания скриптов", "ERROR")
+                return False
+        
+        # Установка Astra.IDE
+        if self.install_ide:
+            if not self.install_astra_ide():
+                self._log("\nУСТАНОВКА ПРЕРВАНА: Ошибка установки Astra.IDE", "ERROR")
+                return False
+        else:
+            self._log("\nШаг 6: Пропущено (Astra.IDE не выбрана)")
+        
+        # Создание ярлыка
+        if self.install_ide:
+            if not self.create_desktop_shortcut():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка создания ярлыка (не критично)")
+        
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        self._log("\n" + "=" * 60)
+        self._log("УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!")
+        self._log("=" * 60)
+        self._log("Время завершения: %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
+        self._log("Длительность установки: %d мин %d сек" % (duration // 60, duration % 60))
+        self._log("=" * 60)
+        self._log("\nДля запуска Astra.IDE используйте:")
+        self._log("  - Ярлык на рабочем столе 'Astra IDE (Wine)'")
+        self._log("  - Или команду: ~/start-astraide.sh")
+        self._log("=" * 60)
+        
+        return True
+
+# ============================================================================
 # GUI КЛАСС АВТОМАТИЗАЦИИ
 # ============================================================================
 class AutomationGUI(object):
@@ -655,6 +1579,12 @@ class AutomationGUI(object):
         
         # Очередь для потокобезопасного обновления терминала
         self.terminal_queue = queue.Queue()
+        
+        # Экземпляр проверщика Wine компонентов
+        self.wine_checker = None
+        
+        # Лог-файл (будет установлен позже из main)
+        self.main_log_file = None
         
         # Создаем интерфейс
         self.create_widgets()
@@ -699,14 +1629,28 @@ class AutomationGUI(object):
         
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.main_frame, text="Управление")
+        self.notebook.add(self.main_frame, text=" Управление ")
+        
+        # Вкладка Wine & Astra.IDE
+        self.wine_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.wine_frame, text=" Wine & Astra.IDE ")
+        
+        # Вкладка Репозитории
+        self.repos_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.repos_frame, text=" Репозитории ")
         
         # Терминальная вкладка
         self.terminal_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.terminal_frame, text="Терминал")
+        self.notebook.add(self.terminal_frame, text=" Терминал ")
         
         # Создаем элементы основной вкладки
         self.create_main_tab()
+        
+        # Создаем элементы вкладки Wine
+        self.create_wine_tab()
+        
+        # Создаем элементы вкладки Репозитории
+        self.create_repos_tab()
         
         # Создаем элементы терминальной вкладки
         self.create_terminal_tab()
@@ -796,6 +1740,106 @@ class AutomationGUI(object):
         self.tk.Label(stats_inner, text="Статус:").grid(row=1, column=2, sticky=self.tk.W)
         self.status_detail_label = self.tk.Label(stats_inner, text="Ожидание")
         self.status_detail_label.grid(row=1, column=3, sticky=self.tk.W, padx=(5, 20))
+    
+    def create_repos_tab(self):
+        """Создание вкладки управления репозиториями"""
+        # Заголовок
+        title_frame = self.tk.LabelFrame(self.repos_frame, text="Управление репозиториями APT")
+        title_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        info_label = self.tk.Label(title_frame, 
+                                   text="Просмотр, проверка и управление репозиториями системы",
+                                   font=('Arial', 10))
+        info_label.pack(padx=10, pady=5)
+        
+        # Кнопки управления
+        button_frame = self.tk.Frame(self.repos_frame)
+        button_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        self.load_repos_button = self.tk.Button(button_frame, 
+                                                text="Загрузить репозитории", 
+                                                command=self.load_repositories,
+                                                font=('Arial', 10, 'bold'),
+                                                bg='#4CAF50',
+                                                fg='white')
+        self.load_repos_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.check_repos_button2 = self.tk.Button(button_frame, 
+                                                  text="Проверить доступность", 
+                                                  command=self.check_repositories_availability,
+                                                  font=('Arial', 10, 'bold'),
+                                                  bg='#2196F3',
+                                                  fg='white')
+        self.check_repos_button2.pack(side=self.tk.LEFT, padx=5)
+        
+        self.update_repos_button = self.tk.Button(button_frame, 
+                                                  text="Обновить списки (apt update)", 
+                                                  command=self.run_apt_update,
+                                                  font=('Arial', 10, 'bold'),
+                                                  bg='#FF9800',
+                                                  fg='white')
+        self.update_repos_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.repos_status_label = self.tk.Label(button_frame, 
+                                               text="Нажмите 'Загрузить репозитории' для начала",
+                                               font=('Arial', 9))
+        self.repos_status_label.pack(side=self.tk.LEFT, padx=10)
+        
+        # Список репозиториев
+        repos_list_frame = self.tk.LabelFrame(self.repos_frame, text="Список репозиториев")
+        repos_list_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем таблицу репозиториев
+        columns = ('status', 'type', 'uri', 'distribution', 'components')
+        self.repos_tree = self.ttk.Treeview(repos_list_frame, columns=columns, show='headings', height=12)
+        
+        # Настраиваем колонки
+        self.repos_tree.heading('status', text='Статус')
+        self.repos_tree.heading('type', text='Тип')
+        self.repos_tree.heading('uri', text='URI')
+        self.repos_tree.heading('distribution', text='Дистрибутив')
+        self.repos_tree.heading('components', text='Компоненты')
+        
+        self.repos_tree.column('status', width=80)
+        self.repos_tree.column('type', width=60)
+        self.repos_tree.column('uri', width=300)
+        self.repos_tree.column('distribution', width=150)
+        self.repos_tree.column('components', width=200)
+        
+        # Добавляем скроллбар
+        repos_scrollbar = self.tk.Scrollbar(repos_list_frame, orient=self.tk.VERTICAL, 
+                                           command=self.repos_tree.yview)
+        self.repos_tree.configure(yscrollcommand=repos_scrollbar.set)
+        
+        self.repos_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+        repos_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
+        
+        # Контекстное меню для репозиториев
+        self.repos_tree.bind('<Button-3>', self.show_repo_context_menu)
+        self.repos_tree.bind('<Double-1>', self.show_repo_details)
+        
+        # Статистика
+        stats_frame = self.tk.LabelFrame(self.repos_frame, text="Статистика")
+        stats_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        stats_inner = self.tk.Frame(stats_frame)
+        stats_inner.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        self.tk.Label(stats_inner, text="Всего репозиториев:").grid(row=0, column=0, sticky=self.tk.W)
+        self.repos_total_label = self.tk.Label(stats_inner, text="0")
+        self.repos_total_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 20))
+        
+        self.tk.Label(stats_inner, text="Активных:").grid(row=0, column=2, sticky=self.tk.W)
+        self.repos_active_label = self.tk.Label(stats_inner, text="0", fg='green')
+        self.repos_active_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 20))
+        
+        self.tk.Label(stats_inner, text="Отключенных:").grid(row=0, column=4, sticky=self.tk.W)
+        self.repos_disabled_label = self.tk.Label(stats_inner, text="0", fg='red')
+        self.repos_disabled_label.grid(row=0, column=5, sticky=self.tk.W, padx=(5, 20))
+        
+        self.tk.Label(stats_inner, text="Файл:").grid(row=1, column=0, sticky=self.tk.W)
+        self.repos_file_label = self.tk.Label(stats_inner, text="/etc/apt/sources.list")
+        self.repos_file_label.grid(row=1, column=1, columnspan=5, sticky=self.tk.W, padx=(5, 20))
         
     def create_terminal_tab(self):
         """Создание терминальной вкладки с встроенным терминалом"""
@@ -823,6 +1867,762 @@ class AutomationGUI(object):
         
         # Запускаем мониторинг системного вывода
         self.start_terminal_monitoring()
+    
+    def create_wine_tab(self):
+        """Создание вкладки проверки Wine компонентов"""
+        # Заголовок
+        title_frame = self.tk.LabelFrame(self.wine_frame, text="Статус установки Wine и Astra.IDE")
+        title_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        info_label = self.tk.Label(title_frame, 
+                                   text="Проверка наличия и статуса установленных Wine компонентов и Astra.IDE",
+                                   font=('Arial', 10))
+        info_label.pack(padx=10, pady=5)
+        
+        # Выбор компонентов для установки
+        select_frame = self.tk.LabelFrame(self.wine_frame, text="Выбор компонентов для установки")
+        select_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        select_inner = self.tk.Frame(select_frame)
+        select_inner.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        # Чекбоксы для компонентов
+        self.install_wine_packages_var = self.tk.BooleanVar(value=True)
+        self.install_winetricks_var = self.tk.BooleanVar(value=True)
+        self.install_astra_ide_var = self.tk.BooleanVar(value=True)
+        
+        self.tk.Checkbutton(select_inner, 
+                           text="Wine пакеты (wine-9.0, wine-astraregul)",
+                           variable=self.install_wine_packages_var,
+                           font=('Arial', 9)).grid(row=0, column=0, sticky=self.tk.W, padx=5)
+        
+        self.tk.Checkbutton(select_inner, 
+                           text="Winetricks компоненты (dotnet48, vcrun, dxvk и др.)",
+                           variable=self.install_winetricks_var,
+                           font=('Arial', 9)).grid(row=1, column=0, sticky=self.tk.W, padx=5)
+        
+        self.tk.Checkbutton(select_inner, 
+                           text="Astra.IDE",
+                           variable=self.install_astra_ide_var,
+                           font=('Arial', 9)).grid(row=2, column=0, sticky=self.tk.W, padx=5)
+        
+        # Кнопки управления
+        button_frame = self.tk.Frame(self.wine_frame)
+        button_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        self.check_wine_button = self.tk.Button(button_frame, 
+                                                text="Проверить компоненты", 
+                                                command=self.run_wine_check,
+                                                font=('Arial', 10, 'bold'),
+                                                bg='#4CAF50',
+                                                fg='white')
+        self.check_wine_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.install_wine_button = self.tk.Button(button_frame, 
+                                                  text="Установить компоненты", 
+                                                  command=self.run_wine_install,
+                                                  font=('Arial', 10, 'bold'),
+                                                  bg='#2196F3',
+                                                  fg='white',
+                                                  state=self.tk.DISABLED)
+        self.install_wine_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.check_repos_button = self.tk.Button(button_frame, 
+                                                 text="Проверить репозитории", 
+                                                 command=self.run_repos_check,
+                                                 font=('Arial', 10, 'bold'),
+                                                 bg='#FF9800',
+                                                 fg='white')
+        self.check_repos_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.sysmon_button = self.tk.Button(button_frame, 
+                                            text="Системный монитор", 
+                                            command=self.open_system_monitor,
+                                            font=('Arial', 10, 'bold'),
+                                            bg='#9C27B0',
+                                            fg='white')
+        self.sysmon_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.wine_status_label = self.tk.Label(button_frame, 
+                                               text="Нажмите кнопку для проверки",
+                                               font=('Arial', 9))
+        self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
+        
+        # Область статуса компонентов
+        status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов")
+        status_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем таблицу статусов
+        columns = ('component', 'status', 'path')
+        self.wine_tree = self.ttk.Treeview(status_frame, columns=columns, show='headings', height=8)
+        
+        # Настраиваем колонки
+        self.wine_tree.heading('component', text='Компонент')
+        self.wine_tree.heading('status', text='Статус')
+        self.wine_tree.heading('path', text='Путь/Детали')
+        
+        self.wine_tree.column('component', width=200)
+        self.wine_tree.column('status', width=100)
+        self.wine_tree.column('path', width=500)
+        
+        # Добавляем скроллбар
+        wine_scrollbar = self.tk.Scrollbar(status_frame, orient=self.tk.VERTICAL, 
+                                          command=self.wine_tree.yview)
+        self.wine_tree.configure(yscrollcommand=wine_scrollbar.set)
+        
+        self.wine_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+        wine_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
+        
+        # Итоговая сводка
+        summary_frame = self.tk.LabelFrame(self.wine_frame, text="Итоговая сводка")
+        summary_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        self.wine_summary_text = self.tk.Text(summary_frame, height=4, wrap=self.tk.WORD,
+                                             font=('Courier', 9))
+        self.wine_summary_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+        self.wine_summary_text.config(state=self.tk.DISABLED)
+        
+        # Заполняем начальными данными
+        self.populate_wine_status_initial()
+    
+    def populate_wine_status_initial(self):
+        """Заполнение начальными данными (без проверки)"""
+        initial_components = [
+            ('Wine Astraregul', 'Не проверено', '/opt/wine-astraregul/bin/wine'),
+            ('Wine 9.0', 'Не проверено', '/opt/wine-9.0/bin/wine'),
+            ('ptrace_scope', 'Не проверено', '/proc/sys/kernel/yama/ptrace_scope'),
+            ('WINEPREFIX', 'Не проверено', '~/.wine-astraregul'),
+            ('Astra.IDE', 'Не проверено', 'WINEPREFIX/drive_c/Program Files/AstraRegul'),
+            ('Скрипт запуска', 'Не проверено', '~/start-astraide.sh'),
+            ('Ярлык рабочего стола', 'Не проверено', '~/Desktop/AstraRegul.desktop')
+        ]
+        
+        for component, status, path in initial_components:
+            self.wine_tree.insert('', self.tk.END, values=(component, status, path))
+        
+        # Начальное сообщение в сводке
+        self.wine_summary_text.config(state=self.tk.NORMAL)
+        self.wine_summary_text.delete('1.0', self.tk.END)
+        self.wine_summary_text.insert(self.tk.END, "Нажмите кнопку 'Проверить компоненты' для запуска проверки\n")
+        self.wine_summary_text.insert(self.tk.END, "Проверка покажет какие компоненты установлены и готовы к работе")
+        self.wine_summary_text.config(state=self.tk.DISABLED)
+    
+    def run_wine_check(self):
+        """Запуск проверки Wine компонентов"""
+        self.wine_status_label.config(text="Проверка...")
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем проверку в отдельном потоке
+        import threading
+        check_thread = threading.Thread(target=self._perform_wine_check)
+        check_thread.daemon = True
+        check_thread.start()
+    
+    def _perform_wine_check(self):
+        """Выполнение проверки Wine компонентов (в отдельном потоке)"""
+        try:
+            # Создаем экземпляр проверщика
+            self.wine_checker = WineComponentsChecker()
+            
+            # Выполняем все проверки
+            self.wine_checker.check_all_components()
+            
+            # Обновляем GUI в главном потоке
+            self.root.after(0, self._update_wine_status)
+            
+        except Exception as e:
+            error_msg = "Ошибка проверки: %s" % str(e)
+            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg))
+            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+    
+    def _update_wine_status(self):
+        """Обновление статуса в GUI (вызывается из главного потока)"""
+        if not self.wine_checker:
+            return
+        
+        # Очищаем таблицу
+        for item in self.wine_tree.get_children():
+            self.wine_tree.delete(item)
+        
+        # Обновляем статусы компонентов
+        components_info = [
+            ('Wine Astraregul', 'wine_astraregul', self.wine_checker.wine_astraregul_path),
+            ('Wine 9.0', 'wine_9', self.wine_checker.wine_9_path),
+            ('ptrace_scope', 'ptrace_scope', self.wine_checker.ptrace_scope_path),
+            ('WINEPREFIX', 'wineprefix', self.wine_checker.wineprefix),
+            ('Astra.IDE', 'astra_ide', 'WINEPREFIX/drive_c/Program Files/AstraRegul'),
+            ('Скрипт запуска', 'start_script', self.wine_checker.start_script),
+            ('Ярлык рабочего стола', 'desktop_shortcut', self.wine_checker.desktop_shortcut)
+        ]
+        
+        for component_name, check_key, path in components_info:
+            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            # Добавляем с цветовым тегом
+            item = self.wine_tree.insert('', self.tk.END, values=(component_name, status, path))
+            
+            # Цветовое выделение
+            if self.wine_checker.checks[check_key]:
+                self.wine_tree.item(item, tags=('ok',))
+            else:
+                self.wine_tree.item(item, tags=('error',))
+        
+        # Настраиваем цвета тегов
+        self.wine_tree.tag_configure('ok', foreground='green')
+        self.wine_tree.tag_configure('error', foreground='red')
+        
+        # Обновляем сводку
+        self.wine_summary_text.config(state=self.tk.NORMAL)
+        self.wine_summary_text.delete('1.0', self.tk.END)
+        
+        if self.wine_checker.is_fully_installed():
+            self.wine_summary_text.insert(self.tk.END, "[OK] Все компоненты установлены и готовы к работе!\n", 'ok_tag')
+            self.wine_status_label.config(text="Все компоненты установлены", fg='green')
+        elif self.wine_checker.is_wine_installed() and not self.wine_checker.is_astra_ide_installed():
+            self.wine_summary_text.insert(self.tk.END, "[!] Wine установлен, но Astra.IDE не установлена\n", 'warn_tag')
+            self.wine_summary_text.insert(self.tk.END, "    Требуется установка Astra.IDE\n")
+            self.wine_status_label.config(text="Требуется установка Astra.IDE", fg='orange')
+        elif not self.wine_checker.is_wine_installed():
+            self.wine_summary_text.insert(self.tk.END, "[ERR] Wine не установлен или настроен неправильно\n", 'error_tag')
+            self.wine_summary_text.insert(self.tk.END, "      Требуется установка Wine пакетов\n")
+            self.wine_status_label.config(text="Требуется установка Wine", fg='red')
+        else:
+            missing = self.wine_checker.get_missing_components()
+            self.wine_summary_text.insert(self.tk.END, "[!] Некоторые компоненты отсутствуют:\n", 'warn_tag')
+            for comp in missing:
+                self.wine_summary_text.insert(self.tk.END, "    - %s\n" % comp)
+            self.wine_status_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
+        
+        # Настраиваем цветовые теги
+        self.wine_summary_text.tag_configure('ok_tag', foreground='green', font=('Courier', 9, 'bold'))
+        self.wine_summary_text.tag_configure('warn_tag', foreground='orange', font=('Courier', 9, 'bold'))
+        self.wine_summary_text.tag_configure('error_tag', foreground='red', font=('Courier', 9, 'bold'))
+        
+        self.wine_summary_text.config(state=self.tk.DISABLED)
+        
+        # Управляем доступностью кнопок
+        self.check_wine_button.config(state=self.tk.NORMAL)
+        
+        # Активируем кнопку установки если компоненты не установлены
+        if not self.wine_checker.is_fully_installed():
+            self.install_wine_button.config(state=self.tk.NORMAL)
+        else:
+            self.install_wine_button.config(state=self.tk.DISABLED)
+    
+    def run_wine_install(self):
+        """Запуск установки Wine компонентов"""
+        # Проверяем права root
+        if os.geteuid() != 0:
+            self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
+            self.log_message("[ERROR] Для установки Wine требуются права root")
+            return
+        
+        self.wine_status_label.config(text="Установка запущена...", fg='blue')
+        self.install_wine_button.config(state=self.tk.DISABLED)
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем установку в отдельном потоке
+        import threading
+        install_thread = threading.Thread(target=self._perform_wine_install)
+        install_thread.daemon = True
+        install_thread.start()
+    
+    def _perform_wine_install(self):
+        """Выполнение установки Wine компонентов (в отдельном потоке)"""
+        try:
+            # Создаем callback для обновления статуса
+            def update_callback(message):
+                self.root.after(0, lambda: self._update_install_status(message))
+            
+            # Получаем logger из main_log_file
+            logger = None
+            if hasattr(self, 'main_log_file') and self.main_log_file:
+                logger = Logger(self.main_log_file)
+            
+            # Получаем выбранные компоненты
+            install_wine = self.install_wine_packages_var.get()
+            install_winetricks = self.install_winetricks_var.get()
+            install_ide = self.install_astra_ide_var.get()
+            
+            # Создаем экземпляр установщика с выбранными компонентами
+            installer = WineInstaller(logger=logger, callback=update_callback,
+                                    install_wine=install_wine,
+                                    install_winetricks=install_winetricks,
+                                    install_ide=install_ide)
+            
+            # Запускаем установку
+            self.root.after(0, lambda: self.log_message("[INSTALL] Начало установки Wine и Astra.IDE"))
+            success = installer.install_all()
+            
+            # Обновляем GUI после установки
+            self.root.after(0, lambda: self._wine_install_completed(success))
+            
+        except Exception as e:
+            error_msg = "Ошибка установки: %s" % str(e)
+            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
+            self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
+            self.root.after(0, lambda: self.install_wine_button.config(state=self.tk.NORMAL))
+            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+    
+    def _update_install_status(self, message):
+        """Обновление статуса установки в GUI (вызывается из главного потока)"""
+        # Обновляем статус-метку (только первые 80 символов)
+        short_msg = message[:80] + "..." if len(message) > 80 else message
+        self.wine_status_label.config(text=short_msg, fg='blue')
+        
+        # Добавляем в лог
+        self.log_message(message)
+        
+        # Также добавляем в терминал если сообщение важное
+        if any(keyword in message for keyword in ['ШАГ', 'УСТАНОВКА', 'УСПЕШНО', 'ОШИБКА']):
+            self.add_terminal_output(message)
+    
+    def _wine_install_completed(self, success):
+        """Обработка завершения установки (вызывается из главного потока)"""
+        if success:
+            self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
+            self.log_message("[SUCCESS] Установка Wine и Astra.IDE завершена успешно")
+            
+            # Автоматически запускаем проверку
+            self.root.after(2000, self.run_wine_check)
+        else:
+            self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
+            self.log_message("[ERROR] Установка Wine и Astra.IDE прервана")
+        
+        # Включаем кнопки обратно
+        self.check_wine_button.config(state=self.tk.NORMAL)
+    
+    def run_repos_check(self):
+        """Запуск проверки репозиториев"""
+        self.wine_status_label.config(text="Проверка репозиториев...", fg='blue')
+        self.check_repos_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем проверку в отдельном потоке
+        import threading
+        check_thread = threading.Thread(target=self._perform_repos_check)
+        check_thread.daemon = True
+        check_thread.start()
+    
+    def _perform_repos_check(self):
+        """Выполнение проверки репозиториев (в отдельном потоке)"""
+        try:
+            self.root.after(0, lambda: self.log_message("\n" + "=" * 60))
+            self.root.after(0, lambda: self.log_message("[REPOS] ДИАГНОСТИКА РЕПОЗИТОРИЕВ"))
+            self.root.after(0, lambda: self.log_message("=" * 60))
+            
+            # 1. Проверка прав доступа к sources.list
+            sources_file = "/etc/apt/sources.list"
+            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка файла репозиториев..."))
+            self.root.after(0, lambda: self.log_message("Файл: %s" % sources_file))
+            
+            if not os.path.exists(sources_file):
+                self.root.after(0, lambda: self.log_message("[ERR] Файл не существует!", ))
+                self.root.after(0, lambda: self._repos_check_completed(False))
+                return
+            
+            # Проверяем права на чтение
+            try:
+                with open(sources_file, 'r') as f:
+                    content = f.read()
+                self.root.after(0, lambda: self.log_message("[OK] Файл доступен для чтения"))
+                self.root.after(0, lambda: self.log_message("Размер файла: %d байт" % len(content)))
+            except PermissionError:
+                self.root.after(0, lambda: self.log_message("[ERR] Нет прав на чтение файла!"))
+                self.root.after(0, lambda: self.log_message("[INFO] Требуются права root"))
+                content = None
+            except Exception as e:
+                self.root.after(0, lambda: self.log_message("[ERR] Ошибка чтения: %s" % str(e)))
+                content = None
+            
+            # 2. Вывод содержимого sources.list
+            if content:
+                self.root.after(0, lambda: self.log_message("\n[INFO] Содержимое /etc/apt/sources.list:"))
+                self.root.after(0, lambda: self.log_message("-" * 60))
+                
+                lines = content.split('\n')
+                active_repos = []
+                disabled_repos = []
+                
+                for i, line in enumerate(lines, 1):
+                    line_stripped = line.strip()
+                    if not line_stripped or line_stripped.startswith('#'):
+                        # Комментарий или пустая строка
+                        if line_stripped.startswith('#') and 'deb' in line_stripped:
+                            disabled_repos.append(line_stripped)
+                    elif line_stripped.startswith('deb'):
+                        # Активный репозиторий
+                        active_repos.append(line_stripped)
+                        self.root.after(0, lambda l=line_stripped: self.log_message("  [ACTIVE] %s" % l))
+                
+                self.root.after(0, lambda: self.log_message("-" * 60))
+                self.root.after(0, lambda: self.log_message("Активных репозиториев: %d" % len(active_repos)))
+                self.root.after(0, lambda: self.log_message("Отключенных репозиториев: %d" % len(disabled_repos)))
+                
+                if len(active_repos) == 0:
+                    self.root.after(0, lambda: self.log_message("[WARNING] НЕТ АКТИВНЫХ РЕПОЗИТОРИЕВ!"))
+                    self.root.after(0, lambda: self.log_message("[WARNING] Это объясняет ошибки установки пакетов"))
+            
+            # 3. Проверка доступности репозиториев
+            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка доступности репозиториев..."))
+            self.root.after(0, lambda: self.log_message("Выполнение: apt-get update (это может занять время)"))
+            
+            result = subprocess.run(
+                ['apt-get', 'update'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self.root.after(0, lambda: self.log_message("[OK] apt-get update выполнен успешно"))
+            else:
+                self.root.after(0, lambda: self.log_message("[ERR] apt-get update завершился с ошибкой (код %d)" % result.returncode))
+                
+                if result.stderr:
+                    self.root.after(0, lambda: self.log_message("\nОшибки:"))
+                    for line in result.stderr.strip().split('\n')[:20]:  # Первые 20 строк
+                        if line.strip():
+                            self.root.after(0, lambda l=line: self.log_message("  ! %s" % l))
+            
+            # 4. Проверка политики apt
+            self.root.after(0, lambda: self.log_message("\n[CHECK] Политика APT..."))
+            
+            result = subprocess.run(
+                ['apt-cache', 'policy'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                lines = result.stdout.strip().split('\n')[:15]  # Первые 15 строк
+                for line in lines:
+                    if line.strip():
+                        self.root.after(0, lambda l=line: self.log_message("  %s" % l))
+            
+            # 5. Проверка наличия нужных пакетов в репозиториях
+            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка доступности пакетов-зависимостей..."))
+            
+            required_packages = ['ia32-libs', 'winetricks', 'libc6:i386']
+            
+            for pkg in required_packages:
+                result = subprocess.run(
+                    ['apt-cache', 'show', pkg],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    check=False
+                )
+                
+                if result.returncode == 0:
+                    self.root.after(0, lambda p=pkg: self.log_message("  [OK] Пакет '%s' найден в репозиториях" % p))
+                else:
+                    self.root.after(0, lambda p=pkg: self.log_message("  [ERR] Пакет '%s' НЕ найден в репозиториях!" % p))
+            
+            # Завершение
+            self.root.after(0, lambda: self.log_message("\n" + "=" * 60))
+            self.root.after(0, lambda: self.log_message("[REPOS] ДИАГНОСТИКА ЗАВЕРШЕНА"))
+            self.root.after(0, lambda: self.log_message("=" * 60))
+            
+            self.root.after(0, lambda: self._repos_check_completed(True))
+            
+        except Exception as e:
+            error_msg = "Ошибка проверки репозиториев: %s" % str(e)
+            self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
+            self.root.after(0, lambda: self._repos_check_completed(False))
+    
+    def _repos_check_completed(self, success):
+        """Обработка завершения проверки репозиториев"""
+        if success:
+            self.wine_status_label.config(text="Диагностика репозиториев завершена (см. лог)", fg='green')
+        else:
+            self.wine_status_label.config(text="Ошибка проверки репозиториев", fg='red')
+        
+        self.check_repos_button.config(state=self.tk.NORMAL)
+    
+    # ========================================================================
+    # МЕТОДЫ ДЛЯ ВКЛАДКИ РЕПОЗИТОРИЕВ
+    # ========================================================================
+    
+    def load_repositories(self):
+        """Загрузка списка репозиториев из sources.list"""
+        self.repos_status_label.config(text="Загрузка репозиториев...", fg='blue')
+        self.load_repos_button.config(state=self.tk.DISABLED)
+        
+        try:
+            sources_file = "/etc/apt/sources.list"
+            
+            # Очищаем таблицу
+            for item in self.repos_tree.get_children():
+                self.repos_tree.delete(item)
+            
+            # Читаем файл
+            try:
+                with open(sources_file, 'r') as f:
+                    lines = f.readlines()
+            except PermissionError:
+                self.repos_status_label.config(text="Ошибка: нет прав на чтение", fg='red')
+                self.log_message("[ERROR] Нет прав на чтение %s" % sources_file)
+                self.load_repos_button.config(state=self.tk.NORMAL)
+                return
+            
+            active_count = 0
+            disabled_count = 0
+            total_count = 0
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Пропускаем пустые строки и комментарии (кроме закомментированных deb)
+                if not line:
+                    continue
+                
+                is_disabled = line.startswith('#')
+                
+                if is_disabled:
+                    # Убираем комментарий для парсинга
+                    line_clean = line.lstrip('#').strip()
+                else:
+                    line_clean = line
+                
+                # Парсим строку репозитория
+                if line_clean.startswith('deb'):
+                    parts = line_clean.split()
+                    if len(parts) >= 3:
+                        repo_type = parts[0]  # deb или deb-src
+                        uri = parts[1]
+                        distribution = parts[2] if len(parts) > 2 else ''
+                        components = ' '.join(parts[3:]) if len(parts) > 3 else ''
+                        
+                        status = 'Отключен' if is_disabled else 'Активен'
+                        
+                        # Добавляем в таблицу
+                        item = self.repos_tree.insert('', self.tk.END, 
+                                                     values=(status, repo_type, uri, distribution, components))
+                        
+                        # Цветовое выделение
+                        if is_disabled:
+                            self.repos_tree.item(item, tags=('disabled',))
+                            disabled_count += 1
+                        else:
+                            self.repos_tree.item(item, tags=('active',))
+                            active_count += 1
+                        
+                        total_count += 1
+            
+            # Настраиваем цвета
+            self.repos_tree.tag_configure('active', foreground='green')
+            self.repos_tree.tag_configure('disabled', foreground='red')
+            
+            # Обновляем статистику
+            self.repos_total_label.config(text=str(total_count))
+            self.repos_active_label.config(text=str(active_count))
+            self.repos_disabled_label.config(text=str(disabled_count))
+            
+            self.repos_status_label.config(
+                text="Загружено: %d (активных: %d, отключенных: %d)" % (total_count, active_count, disabled_count),
+                fg='green'
+            )
+            
+            self.log_message("[REPOS] Загружено %d репозиториев (%d активных, %d отключенных)" % 
+                           (total_count, active_count, disabled_count))
+            
+        except Exception as e:
+            self.repos_status_label.config(text="Ошибка загрузки: %s" % str(e), fg='red')
+            self.log_message("[ERROR] Ошибка загрузки репозиториев: %s" % str(e))
+        
+        finally:
+            self.load_repos_button.config(state=self.tk.NORMAL)
+    
+    def check_repositories_availability(self):
+        """Проверка доступности репозиториев"""
+        self.repos_status_label.config(text="Проверка доступности...", fg='blue')
+        self.check_repos_button2.config(state=self.tk.DISABLED)
+        
+        # Запускаем в отдельном потоке
+        import threading
+        check_thread = threading.Thread(target=self._check_repos_availability_thread)
+        check_thread.daemon = True
+        check_thread.start()
+    
+    def _check_repos_availability_thread(self):
+        """Проверка доступности репозиториев (в потоке)"""
+        try:
+            self.root.after(0, lambda: self.log_message("\n[REPOS] Проверка доступности репозиториев..."))
+            
+            # Выполняем apt-get update для проверки
+            result = subprocess.run(
+                ['apt-get', 'update'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self.root.after(0, lambda: self.log_message("[OK] Все репозитории доступны"))
+                self.root.after(0, lambda: self.repos_status_label.config(text="Все репозитории доступны", fg='green'))
+            else:
+                self.root.after(0, lambda: self.log_message("[ERR] Некоторые репозитории недоступны"))
+                self.root.after(0, lambda: self.repos_status_label.config(text="Есть недоступные репозитории", fg='orange'))
+                
+                if result.stderr:
+                    for line in result.stderr.strip().split('\n')[:10]:
+                        if line.strip():
+                            self.root.after(0, lambda l=line: self.log_message("  ! %s" % l))
+        
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message("[ERROR] Ошибка проверки: %s" % str(e)))
+            self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка проверки", fg='red'))
+        
+        finally:
+            self.root.after(0, lambda: self.check_repos_button2.config(state=self.tk.NORMAL))
+    
+    def run_apt_update(self):
+        """Выполнение apt-get update"""
+        self.repos_status_label.config(text="Обновление списков пакетов...", fg='blue')
+        self.update_repos_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем в отдельном потоке
+        import threading
+        update_thread = threading.Thread(target=self._run_apt_update_thread)
+        update_thread.daemon = True
+        update_thread.start()
+    
+    def _run_apt_update_thread(self):
+        """Выполнение apt-get update (в потоке)"""
+        try:
+            self.root.after(0, lambda: self.log_message("\n[REPOS] Выполнение apt-get update..."))
+            self.root.after(0, lambda: self.log_message("Это может занять некоторое время..."))
+            
+            result = subprocess.run(
+                ['apt-get', 'update'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            # Логируем вывод
+            if result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        self.root.after(0, lambda l=line: self.log_message("  > %s" % l))
+            
+            if result.returncode == 0:
+                self.root.after(0, lambda: self.log_message("[OK] apt-get update завершен успешно"))
+                self.root.after(0, lambda: self.repos_status_label.config(text="Списки пакетов обновлены", fg='green'))
+            else:
+                self.root.after(0, lambda: self.log_message("[ERR] apt-get update завершился с ошибкой"))
+                self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
+                
+                if result.stderr:
+                    for line in result.stderr.strip().split('\n')[:20]:
+                        if line.strip():
+                            self.root.after(0, lambda l=line: self.log_message("  ! %s" % l))
+        
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message("[ERROR] Ошибка: %s" % str(e)))
+            self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка выполнения", fg='red'))
+        
+        finally:
+            self.root.after(0, lambda: self.update_repos_button.config(state=self.tk.NORMAL))
+    
+    def show_repo_context_menu(self, event):
+        """Показать контекстное меню для репозитория"""
+        # Создаем контекстное меню
+        menu = self.tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Показать детали", command=lambda: self.show_repo_details(None))
+        menu.add_separator()
+        menu.add_command(label="Копировать URI", command=self.copy_repo_uri)
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+    
+    def show_repo_details(self, event):
+        """Показать детали выбранного репозитория"""
+        selection = self.repos_tree.selection()
+        if not selection:
+            return
+        
+        item = selection[0]
+        values = self.repos_tree.item(item, 'values')
+        
+        if values:
+            details = "Статус: %s\nТип: %s\nURI: %s\nДистрибутив: %s\nКомпоненты: %s" % values
+            
+            # Создаем окно с деталями
+            detail_window = self.tk.Toplevel(self.root)
+            detail_window.title("Детали репозитория")
+            detail_window.geometry("600x200")
+            
+            text_widget = self.tk.Text(detail_window, wrap=self.tk.WORD)
+            text_widget.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
+            text_widget.insert('1.0', details)
+            text_widget.config(state=self.tk.DISABLED)
+            
+            self.log_message("[REPOS] Просмотр деталей: %s" % values[2])
+    
+    def copy_repo_uri(self):
+        """Копировать URI репозитория в буфер обмена"""
+        selection = self.repos_tree.selection()
+        if not selection:
+            return
+        
+        item = selection[0]
+        values = self.repos_tree.item(item, 'values')
+        
+        if values and len(values) > 2:
+            uri = values[2]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(uri)
+            self.log_message("[REPOS] URI скопирован в буфер обмена: %s" % uri)
+            self.repos_status_label.config(text="URI скопирован в буфер обмена", fg='green')
+    
+    def open_system_monitor(self):
+        """Открыть системный монитор"""
+        try:
+            # Пытаемся открыть системный монитор (разные варианты для разных систем)
+            monitors = [
+                'gnome-system-monitor',  # GNOME
+                'mate-system-monitor',   # MATE
+                'ksysguard',            # KDE
+                'xfce4-taskmanager',    # XFCE
+                'lxtask',               # LXDE
+                'htop',                 # Консольный вариант
+            ]
+            
+            for monitor in monitors:
+                try:
+                    # Проверяем наличие команды
+                    result = subprocess.run(
+                        ['which', monitor],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False
+                    )
+                    
+                    if result.returncode == 0:
+                        # Запускаем монитор в фоновом режиме
+                        subprocess.Popen([monitor], 
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                        self.log_message("[SYSTEM] Запущен системный монитор: %s" % monitor)
+                        self.wine_status_label.config(text="Системный монитор запущен", fg='green')
+                        return
+                except:
+                    continue
+            
+            # Если ничего не нашли
+            self.log_message("[WARNING] Системный монитор не найден в системе")
+            self.wine_status_label.config(text="Системный монитор не найден", fg='orange')
+            
+        except Exception as e:
+            self.log_message("[ERROR] Ошибка запуска системного монитора: %s" % str(e))
+            self.wine_status_label.config(text="Ошибка запуска монитора", fg='red')
         
     def log_message(self, message):
         """Добавление сообщения в лог"""
@@ -2342,6 +4142,10 @@ def run_gui_monitor(temp_dir, dry_run=False):
         # Создаем экземпляр класса AutomationGUI напрямую
         print("   [OK] Создаем экземпляр AutomationGUI...")
         gui = AutomationGUI(console_mode=False)  # Всегда GUI режим для этой функции
+        
+        # Устанавливаем лог-файл для GUI
+        logger = get_logger()
+        gui.main_log_file = logger.log_file
         
         print("   [OK] GUI создан успешно, запускаем...")
         

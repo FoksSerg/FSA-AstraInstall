@@ -124,3 +124,6 @@ Thumbs.db
 
 # Commit message files
 commit_message.txt
+
+# Installation packages and files
+AstraPack/
