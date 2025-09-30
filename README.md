@@ -109,10 +109,13 @@ FSA-AstraInstall/
 ```bash
 # Скопируйте проект на Astra Linux машину
 # Запустите главный скрипт - он все сделает сам!
-sudo bash astra_install.sh
+bash astra_install.sh
 ```
 
+**Примечание:** Скрипт автоматически запросит права `sudo` если нужно - не требуется запускать с `sudo` вручную!
+
 Этот скрипт:
+- ✅ Автоматически запросит права root через `sudo`
 - ✅ Проверит что нужно для GUI
 - ✅ Автоматически установит недостающие компоненты
 - ✅ Запустит графическую форму для настройки
@@ -123,17 +126,17 @@ sudo bash astra_install.sh
 
 **Консольный режим (без GUI):**
 ```bash
-sudo bash astra_install.sh --console
+bash astra_install.sh --console
 ```
 
 **Режим тестирования (dry-run):**
 ```bash
-sudo bash astra_install.sh --dry-run
+bash astra_install.sh --dry-run
 ```
 
 **Консольный режим с тестированием:**
 ```bash
-sudo bash astra_install.sh --console --dry-run
+bash astra_install.sh --console --dry-run
 ```
 
 **Тестирование синтаксиса:**

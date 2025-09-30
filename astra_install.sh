@@ -87,12 +87,13 @@ for arg in "$@"; do
     esac
 done
 
-# Проверяем права root
+# Проверяем права root и автоматически перезапускаемся через sudo если нужно
 if [ "$EUID" -ne 0 ]; then
-    echo "[ERR] Требуются права root для установки пакетов"
-    log_message "ОШИБКА: Требуются права root для установки пакетов"
-    echo "Запустите: sudo bash astra_install.sh"
-    exit 1
+    echo "[i] Требуются права root. Перезапуск через sudo..."
+    log_message "Перезапуск скрипта с правами root через sudo"
+    # Перезапускаем себя с sudo, передавая все аргументы
+    exec sudo -E bash "$0" "$@"
+    exit $?
 fi
 
 log_message "Проверка прав root: OK (запущено с правами root)"
@@ -421,23 +422,25 @@ if python3 --version >/dev/null 2>&1; then
         python3 astra-automation.py --log-file "$LOG_FILE" "$@"
         PYTHON_EXIT_CODE=$?
     else
-        # GUI режим - запускаем в фоне и детачим от терминала
+        # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
         echo "   [i] GUI запускается в фоновом режиме"
-        echo "   [i] Терминал можно закрыть - GUI продолжит работу"
+        echo "   [i] Окно терминала закроется автоматически после запуска GUI"
         log_message "GUI запускается в фоновом режиме (детачится от терминала)"
         
-        # Запускаем с nohup для детача от терминала и перенаправляем вывод
-        nohup python3 astra-automation.py --log-file "$LOG_FILE" "$@" >/dev/null 2>&1 &
+        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
+        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
+        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        log_message "PID bash скрипта: $PPID"
+        log_message "PID окна терминала: $TERM_PID"
+        
+        # Запускаем GUI с передачей PID терминала для автозакрытия
+        nohup python3 astra-automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" "$@" >/dev/null 2>&1 &
         PYTHON_PID=$!
         
         echo "   [OK] GUI запущен (PID: $PYTHON_PID)"
+        echo "   [i] Терминал закроется автоматически после полного запуска GUI"
         log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
-        
-        # Даем GUI время запуститься
-        sleep 2
-        
-        echo "   [i] Терминал закрывается автоматически через 3 секунды..."
-        sleep 3
+        log_message "GUI закроет терминал (PID: $TERM_PID) после полного запуска"
         
         PYTHON_EXIT_CODE=0
     fi
