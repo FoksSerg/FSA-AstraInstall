@@ -8,7 +8,9 @@
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="$SCRIPT_DIR/astra_automation_$TIMESTAMP.log"
+LOG_DIR="$SCRIPT_DIR/Log"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
 
 # Функция логирования
 log_message() {
@@ -94,6 +96,47 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 log_message "Проверка прав root: OK (запущено с правами root)"
+
+# Синхронизация системного времени (один раз за сеанс)
+TIME_SYNC_FLAG="/var/run/fsa-time-synced"
+
+if [ -f "$TIME_SYNC_FLAG" ]; then
+    echo "[i] Время уже синхронизировано в этом сеансе"
+    log_message "Синхронизация времени пропущена (уже выполнена в текущем сеансе)"
+else
+    echo "[~] Синхронизация системного времени..."
+    log_message "Выполняется синхронизация времени (первый запуск после загрузки)"
+    
+    # Пробуем разные методы синхронизации времени
+    TIME_SYNCED=false
+    
+    # Метод 1: timedatectl (systemd)
+    if command -v timedatectl >/dev/null 2>&1; then
+        if timedatectl set-ntp true 2>/dev/null; then
+            echo "   [OK] Время синхронизировано через NTP (timedatectl)"
+            log_message "Время синхронизировано через timedatectl"
+            TIME_SYNCED=true
+        fi
+    fi
+    
+    # Метод 2: ntpdate (если первый не сработал)
+    if [ "$TIME_SYNCED" = false ] && command -v ntpdate >/dev/null 2>&1; then
+        if ntpdate -s time.nist.gov 2>/dev/null || ntpdate -s pool.ntp.org 2>/dev/null; then
+            echo "   [OK] Время синхронизировано через NTP (ntpdate)"
+            log_message "Время синхронизировано через ntpdate"
+            TIME_SYNCED=true
+        fi
+    fi
+    
+    # Создаем флаг успешной синхронизации
+    if [ "$TIME_SYNCED" = true ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$TIME_SYNC_FLAG"
+        log_message "Флаг синхронизации создан: $TIME_SYNC_FLAG"
+    else
+        echo "   [!] Не удалось синхронизировать время (продолжаем работу)"
+        log_message "Предупреждение: синхронизация времени не выполнена"
+    fi
+fi
 
 # Настраиваем переменные окружения для автоматических ответов
 export DEBIAN_FRONTEND=noninteractive
@@ -372,13 +415,37 @@ log_message "Лог файл: $LOG_FILE"
 if python3 --version >/dev/null 2>&1; then
     echo "   [i] Используем Python 3: $(python3 --version)"
     log_message "Используем Python 3: $(python3 --version)"
-    python3 astra-automation.py --log-file "$LOG_FILE" "$@"
-    PYTHON_EXIT_CODE=$?
+    
+    if [ "$CONSOLE_MODE" = true ]; then
+        # Консольный режим - запускаем в текущем терминале
+        python3 astra-automation.py --log-file "$LOG_FILE" "$@"
+        PYTHON_EXIT_CODE=$?
+    else
+        # GUI режим - запускаем в фоне и детачим от терминала
+        echo "   [i] GUI запускается в фоновом режиме"
+        echo "   [i] Терминал можно закрыть - GUI продолжит работу"
+        log_message "GUI запускается в фоновом режиме (детачится от терминала)"
+        
+        # Запускаем с nohup для детача от терминала и перенаправляем вывод
+        nohup python3 astra-automation.py --log-file "$LOG_FILE" "$@" >/dev/null 2>&1 &
+        PYTHON_PID=$!
+        
+        echo "   [OK] GUI запущен (PID: $PYTHON_PID)"
+        log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
+        
+        # Даем GUI время запуститься
+        sleep 2
+        
+        echo "   [i] Терминал закрывается автоматически через 3 секунды..."
+        sleep 3
+        
+        PYTHON_EXIT_CODE=0
+    fi
 else
     echo "   [ERR] Python 3 не найден!"
     log_message "ОШИБКА: Python 3 не найден"
     exit 1
 fi
 
-log_message "Python скрипт завершен с кодом: $PYTHON_EXIT_CODE"
+log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"
 exit $PYTHON_EXIT_CODE
