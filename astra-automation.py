@@ -2522,7 +2522,21 @@ class AutomationGUI(object):
         
         self.root = tk.Tk()
         self.root.title("FSA-AstraInstall Automation")
-        self.root.geometry("1000x600")
+        
+        # Размер окна
+        window_width = 1000
+        window_height = 600
+        
+        # Получаем размер экрана
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Вычисляем позицию для центрирования
+        center_x = int(screen_width/2 - window_width/2)
+        center_y = int(screen_height/2 - window_height/2)
+        
+        # Устанавливаем геометрию окна с позицией по центру
+        self.root.geometry('%dx%d+%d+%d' % (window_width, window_height, center_x, center_y))
         
         # Переменные состояния
         self.is_running = False
