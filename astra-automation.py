@@ -201,23 +201,55 @@ class InteractiveConfig(object):
     
     def __init__(self):
         # Все паттерны для обнаружения интерактивных запросов
+        # Паттерны поддерживают русский и английский языки для универсальности
         self.patterns = {
-            'dpkg_config': r'\*\*\* .* \(Y/I/N/O/D/Z\) \[.*\] \?',
-            'apt_config': r'Настройка пакета',
-            'keyboard_config': r'Выберите подходящую раскладку клавиатуры',
-            'keyboard_switch': r'способ переключения клавиатуры между национальной раскладкой',
-            'language_config': r'Выберите язык системы',
-            'restart_services': r'Перезапустить службы во время пакетных операций'
+            # dpkg конфигурационные файлы (русский и английский)
+            'dpkg_config_old': r'\*\*\* .* \(Y/I/N/O/D/Z\) \[.*\] \?',
+            'dpkg_config_ru': r'Что нужно сделать\?.*Y или I.*установить версию',
+            'dpkg_config_en': r'What would you like to do about it\?.*Y or I.*install the package',
+            'dpkg_conffile_ru': r'файл настройки.*Изменён.*Автор пакета',
+            'dpkg_conffile_en': r'Configuration file.*modified.*Package distributor',
+            
+            # apt конфигурация
+            'apt_config': r'(Настройка пакета|Configuring)',
+            
+            # Клавиатура
+            'keyboard_config': r'(Выберите подходящую раскладку клавиатуры|Select.*keyboard layout)',
+            'keyboard_switch': r'(способ переключения клавиатуры|keyboard switching method)',
+            
+            # Язык системы
+            'language_config': r'(Выберите язык системы|Select system language)',
+            
+            # Перезапуск служб
+            'restart_services_ru': r'Перезапустить службы во время пакетных операций',
+            'restart_services_en': r'(Restart services during package upgrades|Services to restart)',
+            
+            # Общие yes/no запросы
+            'yes_no_ru': r'\(Y/N\)|да/нет|\[Y/n\]|\[y/N\]',
+            'yes_no_en': r'Do you want to continue\?|\(yes/no\)',
+            
+            # openssl и другие специфичные пакеты
+            'openssl_config_ru': r'По умолчанию сохраняется текущая версия файла настройки',
+            'openssl_config_en': r'The default action is to keep your current version'
         }
         
         # Все автоматические ответы
         self.responses = {
-            'dpkg_config': 'Y',      # Соглашаемся с новыми версиями
+            'dpkg_config_old': 'Y',
+            'dpkg_config_ru': 'Y',
+            'dpkg_config_en': 'Y',
+            'dpkg_conffile_ru': 'Y',
+            'dpkg_conffile_en': 'Y',
             'apt_config': '',        # Принимаем настройки по умолчанию (Enter)
             'keyboard_config': '',   # Принимаем предложенную раскладку (Enter)
             'keyboard_switch': '',   # Принимаем способ переключения (Enter)
             'language_config': '',   # Принимаем язык системы (Enter)
-            'restart_services': 'Y'  # Соглашаемся на перезапуск служб
+            'restart_services_ru': 'Y',
+            'restart_services_en': 'Y',
+            'yes_no_ru': 'Y',
+            'yes_no_en': 'Y',
+            'openssl_config_ru': 'Y',
+            'openssl_config_en': 'Y'
         }
     
     def detect_interactive_prompt(self, output):
@@ -1454,10 +1486,18 @@ class WineInstaller(object):
             check=False
         )
         
-        # Исправляем сломанные зависимости
+        # Исправляем сломанные зависимости с опциями dpkg
         self._log("Исправление сломанных зависимостей...")
+        env = os.environ.copy()
+        env['DEBIAN_FRONTEND'] = 'noninteractive'
+        env['DEBIAN_PRIORITY'] = 'critical'
+        env['APT_LISTCHANGES_FRONTEND'] = 'none'
         subprocess.run(
-            ['apt-get', '-f', '-y', 'install'],
+            ['apt-get', '-f', '-y', 'install',
+             '-o', 'Dpkg::Options::=--force-confdef',
+             '-o', 'Dpkg::Options::=--force-confold',
+             '-o', 'Dpkg::Options::=--force-confmiss'],
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False
@@ -1486,6 +1526,7 @@ class WineInstaller(object):
             env = os.environ.copy()
             env['DEBIAN_FRONTEND'] = 'noninteractive'
             env['DEBIAN_PRIORITY'] = 'critical'
+            env['APT_LISTCHANGES_FRONTEND'] = 'none'
             
             # Используем apt install с относительным путем ./wine*.deb
             # Это ТОЧНО как в оригинальном скрипте: apt -y install ./wine*.deb
@@ -1502,13 +1543,14 @@ class WineInstaller(object):
             for deb in wine_debs:
                 self._log("  - %s" % deb)
             
-            self._log("\nВыполнение: apt install -y %s" % ' '.join(wine_debs))
+            self._log("\nВыполнение: apt install -y с опциями dpkg для автоподтверждения")
             self._log("Это автоматически установит ВСЕ зависимости из репозиториев")
             
-            # Формируем команду с явными файлами (apt не поддерживает маски напрямую)
+            # Формируем команду с явными файлами и усиленными опциями dpkg
             cmd = ['apt', 'install', '-y',
                    '-o', 'Dpkg::Options::=--force-confdef',
-                   '-o', 'Dpkg::Options::=--force-confold'] + wine_debs
+                   '-o', 'Dpkg::Options::=--force-confold',
+                   '-o', 'Dpkg::Options::=--force-confmiss'] + wine_debs
             
             result = subprocess.run(
                 cmd,
@@ -5054,6 +5096,8 @@ class SystemUpdater(object):
             import os
             env = os.environ.copy()
             env['DEBIAN_FRONTEND'] = 'noninteractive'
+            env['DEBIAN_PRIORITY'] = 'critical'
+            env['APT_LISTCHANGES_FRONTEND'] = 'none'
             # Явно НЕ устанавливаем UCF_FORCE_CONF* чтобы избежать конфликтов
             env.pop('UCF_FORCE_CONFFOLD', None)
             env.pop('UCF_FORCE_CONFFNEW', None)
@@ -5070,9 +5114,12 @@ class SystemUpdater(object):
                 env=env  # Передаем очищенные переменные окружения
             )
             
-            # Читаем вывод построчно
+            # Читаем вывод построчно с увеличенным буфером для многострочных запросов
             output_buffer = ""
             full_output = ""
+            max_buffer_lines = 20  # Увеличенный буфер для распознавания многострочных запросов
+            buffer_line_count = 0
+            
             while True:
                 line = process.stdout.readline()
                 if not line:
@@ -5084,6 +5131,13 @@ class SystemUpdater(object):
                 # Добавляем в буфер для анализа
                 output_buffer += line
                 full_output += line
+                buffer_line_count += 1
+                
+                # Ограничиваем размер буфера (последние N строк)
+                if buffer_line_count > max_buffer_lines:
+                    lines = output_buffer.split('\n')
+                    output_buffer = '\n'.join(lines[-max_buffer_lines:])
+                    buffer_line_count = max_buffer_lines
                 
                 # Проверяем на интерактивные запросы
                 prompt_type = self.detect_interactive_prompt(output_buffer)
@@ -5102,6 +5156,7 @@ class SystemUpdater(object):
                     
                     # Очищаем буфер
                     output_buffer = ""
+                    buffer_line_count = 0
             
             # Ждем завершения процесса
             return_code = process.wait()
@@ -5231,9 +5286,12 @@ class SystemUpdater(object):
             print("[ERROR] Ошибка обновления списков пакетов")
             return False
         
-        # Затем обновляем систему
+        # Затем обновляем систему с опциями dpkg для автоподтверждения
         print("\n[START] Обновление системы...")
-        upgrade_cmd = ['apt-get', 'dist-upgrade', '-y']
+        upgrade_cmd = ['apt-get', 'dist-upgrade', '-y',
+                      '-o', 'Dpkg::Options::=--force-confdef',
+                      '-o', 'Dpkg::Options::=--force-confold',
+                      '-o', 'Dpkg::Options::=--force-confmiss']
         result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
         
         # Обрабатываем результат обновления
@@ -5242,7 +5300,10 @@ class SystemUpdater(object):
             
             # Автоматическая очистка ненужных пакетов
             print("\n[CLEANUP] Автоматическая очистка ненужных пакетов...")
-            autoremove_cmd = ['apt-get', 'autoremove', '-y']
+            autoremove_cmd = ['apt-get', 'autoremove', '-y',
+                            '-o', 'Dpkg::Options::=--force-confdef',
+                            '-o', 'Dpkg::Options::=--force-confold',
+                            '-o', 'Dpkg::Options::=--force-confmiss']
             autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run, gui_terminal=True)
             
             if autoremove_result == 0:

@@ -141,6 +141,8 @@ fi
 
 # Настраиваем переменные окружения для автоматических ответов
 export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_PRIORITY=critical
+export APT_LISTCHANGES_FRONTEND=none
 log_message "Настроены переменные окружения для автоматических ответов"
 
 echo "[?] Проверяем систему..."
@@ -333,10 +335,13 @@ else
             log_message "Ошибка обновления списка пакетов, но продолжаем"
         fi
         
+        # Опции dpkg для автоподтверждения конфигурационных файлов
+        DPKG_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confmiss"
+        
         if [ "$NEED_PYTHON3" = true ]; then
             echo "   [#] Устанавливаем Python 3..."
             log_message "Устанавливаем Python 3"
-            if apt-get install -y python3 2>&1 | tee -a "$LOG_FILE"; then
+            if apt-get install -y $DPKG_OPTS python3 2>&1 | tee -a "$LOG_FILE"; then
                 echo "     [OK] Python 3 установлен"
                 log_message "Python 3 установлен успешно"
             else
@@ -348,7 +353,7 @@ else
         if [ "$NEED_TKINTER" = true ]; then
             echo "   [#] Устанавливаем Tkinter..."
             log_message "Устанавливаем Tkinter"
-            if apt-get install -y python3-tk 2>&1 | tee -a "$LOG_FILE"; then
+            if apt-get install -y $DPKG_OPTS python3-tk 2>&1 | tee -a "$LOG_FILE"; then
                 echo "     [OK] python3-tk установлен"
                 log_message "python3-tk установлен успешно"
             else
@@ -360,7 +365,7 @@ else
         if [ "$NEED_PIP" = true ]; then
             echo "   [#] Устанавливаем pip3..."
             log_message "Устанавливаем pip3"
-            if apt-get install -y python3-pip 2>&1 | tee -a "$LOG_FILE"; then
+            if apt-get install -y $DPKG_OPTS python3-pip 2>&1 | tee -a "$LOG_FILE"; then
                 echo "     [OK] python3-pip установлен"
                 log_message "python3-pip установлен успешно"
             else
@@ -372,7 +377,7 @@ else
         echo ""
         echo "[*] Исправляем зависимости..."
         log_message "Исправляем зависимости (apt-get install -f)"
-        if apt-get install -f -y 2>&1 | tee -a "$LOG_FILE"; then
+        if apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"; then
             echo "   [OK] Зависимости исправлены"
             log_message "Зависимости исправлены успешно"
         else
