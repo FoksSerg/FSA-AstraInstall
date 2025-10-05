@@ -47,6 +47,98 @@ check_single_repo() {
     fi
 }
 
+# Функция проверки доступности tkinter
+check_tkinter_available() {
+    if python3 -c "import tkinter" 2>/dev/null; then
+        return 0  # tkinter доступен
+    else
+        return 1  # tkinter недоступен
+    fi
+}
+
+# Функция проверки доступности репозиториев (не-cdrom)
+check_repos_available() {
+    # Проверяем есть ли хоть один НЕ-cdrom и НЕ-закомментированный репозиторий
+    if grep -v "^#" /etc/apt/sources.list 2>/dev/null | grep -v "cdrom:" | grep "^deb" >/dev/null 2>&1; then
+        return 0  # Репозитории есть
+    else
+        return 1  # Только cdrom или пусто
+    fi
+}
+
+# Функция поиска пакета tkinter в репозиториях
+find_tkinter_package() {
+    # Список возможных названий пакетов tkinter
+    local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
+    
+    for pkg in "${TKINTER_PACKAGES[@]}"; do
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
+            echo "$pkg"  # Возвращаем первый найденный пакет
+            return 0
+        fi
+    done
+    
+    return 1  # Ни один пакет не найден в репозиториях
+}
+
+# Функция установки tkinter с проверкой
+install_tkinter_with_verification() {
+    local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
+    local INSTALLED=false
+    
+    echo ""
+    echo "[#] Установка tkinter..."
+    log_message "Начинаем установку tkinter с проверкой"
+    
+    for pkg in "${TKINTER_PACKAGES[@]}"; do
+        echo "   [TRY] Пробуем установить: $pkg"
+        log_message "Пробуем установить пакет: $pkg"
+        
+        # Проверяем что пакет существует в репозиториях
+        if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+            echo "   [SKIP] Пакет $pkg не найден в репозиториях"
+            log_message "Пакет $pkg не найден в репозиториях"
+            continue
+        fi
+        
+        echo "   [INSTALL] Устанавливаем $pkg..."
+        log_message "Устанавливаем пакет $pkg"
+        
+        # Устанавливаем с проверкой кода возврата
+        apt-get install -y $DPKG_OPTS "$pkg" 2>&1 | tee -a "$LOG_FILE"
+        local EXIT_CODE=${PIPESTATUS[0]}
+        
+        if [ $EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Пакет $pkg установлен (код возврата: 0)"
+            log_message "Пакет $pkg установлен успешно (код: 0)"
+            
+            # КРИТИЧНО: Проверяем что tkinter теперь импортируется
+            if python3 -c "import tkinter" 2>/dev/null; then
+                echo "   [OK] tkinter успешно импортируется!"
+                log_message "tkinter успешно импортируется после установки $pkg"
+                INSTALLED=true
+                break
+            else
+                echo "   [WARNING] Пакет $pkg установлен, но tkinter не импортируется"
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Пакет $pkg установлен, но tkinter не работает"
+            fi
+        else
+            echo "   [ERROR] Не удалось установить $pkg (код возврата: $EXIT_CODE)"
+            log_message "ОШИБКА: Не удалось установить $pkg (код: $EXIT_CODE)"
+        fi
+    done
+    
+    if [ "$INSTALLED" = true ]; then
+        echo "   [OK] tkinter успешно установлен и работает"
+        log_message "tkinter успешно установлен и работает"
+        return 0
+    else
+        echo "   [ERROR] Не удалось установить рабочий tkinter"
+        log_message "ОШИБКА: Не удалось установить рабочий tkinter"
+        return 1
+    fi
+}
+
 # Инициализируем лог файл
 echo "============================================================" > "$LOG_FILE"
 echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
@@ -278,128 +370,177 @@ if [ "$CONSOLE_MODE" = true ]; then
     log_message "Консольный режим готов"
     
 # ============================================================
-# БЛОК 4: GUI РЕЖИМ
+# БЛОК 4: ОПРЕДЕЛЕНИЕ РЕЖИМА ЗАПУСКА (УМНАЯ ЛОГИКА)
 # ============================================================
 
 else
     echo ""
-    echo "[*] Проверяем компоненты для GUI..."
-    log_message "Начинаем проверку компонентов для GUI"
+    echo "[*] Определяем оптимальный режим запуска..."
+    log_message "Начинаем определение режима запуска"
     
-    NEED_TKINTER=false
-    NEED_PIP=false
-    NEED_PYTHON3=false
+    # Переменная для выбора режима
+    START_MODE=""
     
-    if ! python3 --version >/dev/null 2>&1; then
-        echo "   [ERR] Python 3 не найден"
-        log_message "Python 3 не найден - требуется установка"
-        NEED_PYTHON3=true
+    # Проверка 1: Есть ли tkinter?
+    echo "   [?] Проверяем доступность tkinter..."
+    if check_tkinter_available; then
+        echo "   [OK] tkinter найден и работает"
+        log_message "tkinter доступен - можно запускать GUI"
+        START_MODE="gui_ready"
     else
-        echo "   [OK] Python 3 найден"
-        log_message "Python 3 найден - OK"
+        echo "   [!] tkinter не найден"
+        log_message "tkinter недоступен - требуется анализ"
+        
+        # Проверка 2: Есть ли рабочие репозитории?
+        echo "   [?] Проверяем доступность репозиториев..."
+        if check_repos_available; then
+            echo "   [OK] Рабочие репозитории найдены"
+            log_message "Рабочие репозитории доступны"
+            
+            # Проверка 3: Есть ли пакет tkinter в репозиториях?
+            echo "   [?] Ищем пакет tkinter в репозиториях..."
+            TKINTER_PKG=$(find_tkinter_package)
+            if [ $? -eq 0 ]; then
+                echo "   [OK] Найден пакет: $TKINTER_PKG"
+                log_message "Пакет tkinter найден в репозиториях: $TKINTER_PKG"
+                START_MODE="gui_install_first"
+            else
+                echo "   [!] Пакет tkinter не найден в репозиториях"
+                log_message "Пакет tkinter не найден - принудительный консольный режим"
+                START_MODE="console_forced"
+            fi
+        else
+            echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
+            log_message "Нет рабочих репозиториев - принудительный консольный режим"
+            START_MODE="console_forced"
+        fi
     fi
     
-    if ! python3 -c "import tkinter" >/dev/null 2>&1; then
-        echo "   [ERR] Tkinter не найден"
-        log_message "Tkinter не найден - требуется установка"
-        NEED_TKINTER=true
-    else
-        echo "   [OK] Tkinter найден"
-        log_message "Tkinter найден - OK"
-    fi
+    # Вывод итогового решения
+    echo ""
+    echo "============================================================"
+    case $START_MODE in
+        gui_ready)
+            echo "[MODE] GUI РЕЖИМ - все компоненты готовы"
+            echo "[i] tkinter доступен, запускаем графический интерфейс"
+            log_message "Режим: GUI_READY - немедленный запуск GUI"
+            ;;
+        gui_install_first)
+            echo "[MODE] GUI РЕЖИМ - установка tkinter"
+            echo "[i] Репозитории доступны, установим tkinter и запустим GUI"
+            log_message "Режим: GUI_INSTALL_FIRST - установка tkinter перед запуском"
+            ;;
+        console_forced)
+            echo "[MODE] КОНСОЛЬНЫЙ РЕЖИМ (принудительный)"
+            echo "[!] Причина: нет репозиториев или tkinter недоступен"
+            echo "[i] Система будет обновлена в консольном режиме"
+            echo "[i] GUI компоненты будут установлены ПОСЛЕ обновления"
+            echo "[i] После завершения запустите снова для GUI"
+            log_message "Режим: CONSOLE_FORCED - нет возможности запустить GUI"
+            CONSOLE_MODE=true
+            ;;
+    esac
+    echo "============================================================"
+    echo ""
     
-    if ! pip3 --version >/dev/null 2>&1; then
-        echo "   [ERR] pip3 не найден"
-        log_message "pip3 не найден - требуется установка"
-        NEED_PIP=true
-    else
-        echo "   [OK] pip3 найден"
-        log_message "pip3 найден - OK"
-    fi
-    
-    # Если что-то нужно установить
-    if [ "$NEED_PYTHON3" = true ] || [ "$NEED_TKINTER" = true ] || [ "$NEED_PIP" = true ]; then
-        echo ""
-        echo "[#] Устанавливаем недостающие компоненты..."
-        log_message "Начинаем установку недостающих компонентов"
+    # Если нужно установить tkinter - делаем это
+    if [ "$START_MODE" = "gui_install_first" ]; then
+        echo "[#] Устанавливаем компоненты для GUI..."
+        log_message "Начинаем установку GUI компонентов"
         
         echo ""
         echo "[~] Обновляем список пакетов..."
         log_message "Начинаем обновление списка пакетов (apt-get update)"
         
-        if apt-get update -y 2>&1 | tee -a "$LOG_FILE"; then
-            echo "   [OK] Список пакетов обновлен"
-            log_message "Список пакетов обновлен успешно"
+        apt-get update -y 2>&1 | tee -a "$LOG_FILE"
+        UPDATE_EXIT_CODE=${PIPESTATUS[0]}
+        
+        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Список пакетов обновлен (код: 0)"
+            log_message "Список пакетов обновлен успешно (код: 0)"
         else
-            echo "   [!] Ошибка обновления списка пакетов, но продолжаем"
-            log_message "Ошибка обновления списка пакетов, но продолжаем"
+            echo "   [ERROR] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+            log_message "ОШИБКА: Не удалось обновить списки пакетов (код: $UPDATE_EXIT_CODE)"
+            echo "   [i] Переключение на консольный режим"
+            log_message "Переключение на консольный режим из-за ошибки apt-get update"
+            START_MODE="console_forced"
+            CONSOLE_MODE=true
         fi
         
-        # Опции dpkg для автоподтверждения конфигурационных файлов
-        DPKG_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confmiss"
-        
-        if [ "$NEED_PYTHON3" = true ]; then
-            echo "   [#] Устанавливаем Python 3..."
-            log_message "Устанавливаем Python 3"
-            if apt-get install -y $DPKG_OPTS python3 2>&1 | tee -a "$LOG_FILE"; then
-                echo "     [OK] Python 3 установлен"
-                log_message "Python 3 установлен успешно"
+        # Продолжаем только если update успешен
+        if [ "$START_MODE" = "gui_install_first" ]; then
+            # Устанавливаем tkinter с проверкой
+            if install_tkinter_with_verification; then
+                echo "   [OK] tkinter установлен и работает"
+                log_message "tkinter установлен и проверен"
             else
-                echo "     [ERR] Не удалось установить Python 3"
-                log_message "ОШИБКА: Не удалось установить Python 3"
+                echo "   [ERROR] Не удалось установить рабочий tkinter"
+                echo "   [i] Переключение на консольный режим"
+                log_message "Переключение на консольный режим - tkinter не установлен"
+                START_MODE="console_forced"
+                CONSOLE_MODE=true
+            fi
+            
+            # Устанавливаем pip3 (не критично для GUI)
+            if ! pip3 --version >/dev/null 2>&1; then
+                echo ""
+                echo "   [#] Устанавливаем pip3..."
+                log_message "Устанавливаем pip3"
+                apt-get install -y $DPKG_OPTS python3-pip 2>&1 | tee -a "$LOG_FILE"
+                PIP_EXIT_CODE=${PIPESTATUS[0]}
+                if [ $PIP_EXIT_CODE -eq 0 ]; then
+                    echo "     [OK] pip3 установлен (код: 0)"
+                    log_message "pip3 установлен успешно (код: 0)"
+                else
+                    echo "     [WARNING] Не удалось установить pip3 (код: $PIP_EXIT_CODE)"
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Не удалось установить pip3 (код: $PIP_EXIT_CODE)"
+                fi
+            fi
+            
+            # Исправляем зависимости
+            echo ""
+            echo "   [*] Исправляем зависимости..."
+            log_message "Исправляем зависимости (apt-get install -f)"
+            apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
+            FIX_EXIT_CODE=${PIPESTATUS[0]}
+            if [ $FIX_EXIT_CODE -eq 0 ]; then
+                echo "   [OK] Зависимости исправлены (код: 0)"
+                log_message "Зависимости исправлены успешно (код: 0)"
+            else
+                echo "   [WARNING] Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
             fi
         fi
-        
-        if [ "$NEED_TKINTER" = true ]; then
-            echo "   [#] Устанавливаем Tkinter..."
-            log_message "Устанавливаем Tkinter"
-            if apt-get install -y $DPKG_OPTS python3-tk 2>&1 | tee -a "$LOG_FILE"; then
-                echo "     [OK] python3-tk установлен"
-                log_message "python3-tk установлен успешно"
-            else
-                echo "     [ERR] Не удалось установить python3-tk"
-                log_message "ОШИБКА: Не удалось установить python3-tk"
-            fi
-        fi
-        
-        if [ "$NEED_PIP" = true ]; then
-            echo "   [#] Устанавливаем pip3..."
-            log_message "Устанавливаем pip3"
-            if apt-get install -y $DPKG_OPTS python3-pip 2>&1 | tee -a "$LOG_FILE"; then
-                echo "     [OK] python3-pip установлен"
-                log_message "python3-pip установлен успешно"
-            else
-                echo "     [ERR] Не удалось установить python3-pip"
-                log_message "ОШИБКА: Не удалось установить python3-pip"
-            fi
-        fi
-        
+    fi
+    
+    # Финальная проверка перед запуском GUI
+    if [ "$START_MODE" = "gui_ready" ] || [ "$START_MODE" = "gui_install_first" ]; then
         echo ""
-        echo "[*] Исправляем зависимости..."
-        log_message "Исправляем зависимости (apt-get install -f)"
-        if apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"; then
-            echo "   [OK] Зависимости исправлены"
-            log_message "Зависимости исправлены успешно"
+        echo "[?] Финальная проверка перед запуском GUI..."
+        log_message "Финальная проверка компонентов перед запуском GUI"
+        
+        if ! check_tkinter_available; then
+            echo "   [ERROR] tkinter все еще недоступен!"
+            echo "   [i] Переключение на консольный режим"
+            log_message "КРИТИЧЕСКАЯ ОШИБКА: tkinter недоступен после установки"
+            START_MODE="console_forced"
+            CONSOLE_MODE=true
         else
-            echo "   [!] Ошибка исправления зависимостей, но продолжаем"
-            log_message "Ошибка исправления зависимостей, но продолжаем"
+            echo "   [OK] tkinter работает - готовы к запуску GUI"
+            log_message "Финальная проверка: tkinter работает, GUI готов"
         fi
     fi
     
     echo ""
-    echo "[?] Проверяем результат..."
-    log_message "Начинаем финальную проверку установленных компонентов"
-    
+    echo "[?] Статус компонентов:"
     echo "   [i] Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
     echo "   [i] Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
     echo "   [i] pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
-    log_message "Финальная проверка: Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
-    log_message "Финальная проверка: Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
-    log_message "Финальная проверка: pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
+    log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A'), Tkinter=$(python3 -c 'import tkinter; print("OK")' 2>/dev/null || echo 'N/A'), pip3=$(pip3 --version 2>/dev/null || echo 'N/A')"
     
     echo ""
-    echo "[+] Установка завершена!"
-    log_message "Установка компонентов завершена"
+    echo "[+] Подготовка завершена!"
+    log_message "Подготовка компонентов завершена. Режим: $START_MODE"
 fi
 
 # ============================================================
