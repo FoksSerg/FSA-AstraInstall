@@ -2057,15 +2057,37 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
         self._log("WINEDLLOVERRIDES: отключены GUI диалоги Wine")
         
         try:
-            # Запускаем Wine напрямую (как раньше)
-            # WINEPREFIX в env указывает куда устанавливать
+            # КРИТИЧЕСКИ ВАЖНО: Astra.IDE НЕ МОЖЕТ устанавливаться от root!
+            # Запускаем от имени реального пользователя через su
+            real_user = os.environ.get('SUDO_USER')
+            if not real_user or real_user == 'root':
+                self._log("ОШИБКА: Не удалось определить реального пользователя для установки Astra.IDE", "ERROR")
+                self._log("Astra.IDE не может устанавливаться от root!", "ERROR")
+                return False
+            
+            self._log("Запускаем установку Astra.IDE от пользователя: %s" % real_user)
+            
+            # Формируем команду для выполнения от имени пользователя
+            wine_cmd = [env['WINE'], self.astra_ide_exe]
+            
+            # Создаем команду su для выполнения от имени пользователя
+            su_cmd = ['su', real_user, '-c']
+            
+            # Формируем строку команды с переменными окружения
+            env_str = ' '.join(['%s="%s"' % (k, v) for k, v in env.items()])
+            cmd_str = '%s %s' % (env_str, ' '.join(wine_cmd))
+            
+            su_cmd.append(cmd_str)
+            
+            self._log("Выполняем команду: %s" % ' '.join(su_cmd))
+            
+            # Запускаем установку от имени пользователя
             result = subprocess.run(
-                [env['WINE'], self.astra_ide_exe],
-                env=env,
+                su_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                errors='replace',  # Безопасная обработка non-UTF8 символов
+                errors='replace',
                 check=False
             )
             
