@@ -306,14 +306,28 @@ class RepoChecker(object):
     def check_repo_availability(self, repo_line):
         """Проверка доступности одного репозитория"""
         try:
+            self._log("[DEBUG] Проверяем репозиторий: %s" % repo_line)
+            
+            # Автоматически отключаем компакт-диск репозитории
+            if 'cdrom:' in repo_line:
+                self._log("[WARNING] Компакт-диск репозиторий отключен: %s" % repo_line.split()[1] if len(repo_line.split()) > 1 else repo_line)
+                return False
+            
             # Создаем временный файл с одним репозиторием
             temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
-            temp_file.write(repo_line)
+            temp_file.write(repo_line + '\n')
             temp_file.close()
             
+            self._log("[DEBUG] Создан временный файл: %s" % temp_file.name)
+            
             # Проверяем доступность репозитория
-            result = subprocess.call(['apt-get', 'update', '-o', 'Dir::Etc::sourcelist=%s' % temp_file.name], 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            cmd = ['apt-get', 'update', '-o', 'Dir::Etc::sourcelist=%s' % temp_file.name, 
+                   '-o', 'Dir::Etc::sourceparts=-', '-o', 'APT::Get::List-Cleanup=0']
+            self._log("[DEBUG] Выполняем команду: %s" % ' '.join(cmd))
+            
+            result = subprocess.call(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            self._log("[DEBUG] Результат команды: код %d" % result)
             
             # Удаляем временный файл
             os.unlink(temp_file.name)
@@ -337,6 +351,14 @@ class RepoChecker(object):
         self._log("==========================")
         
         try:
+            # Выводим содержимое sources.list ДО обработки
+            self._log("\n[SOURCES.LIST] Содержимое ДО обработки:")
+            self._log("=" * 50)
+            with open(self.sources_list, 'r') as f:
+                content_before = f.read()
+                self._log(content_before)
+            self._log("=" * 50)
+            
             with open(self.sources_list, 'r') as f:
                 lines = f.readlines()
             
@@ -346,29 +368,46 @@ class RepoChecker(object):
             for line in lines:
                 line = line.strip()
                 
-                # Пропускаем пустые строки и комментарии
-                if not line or line.startswith('#'):
+                # Пропускаем только пустые строки
+                if not line:
                     temp_file.write(line + '\n')
                     continue
                 
-                # Проверяем только строки с deb
-                if line.startswith('deb '):
-                    if self.check_repo_availability(line):
+                # Проверяем строки с deb (активные и закомментированные)
+                if line.startswith('deb ') or line.startswith('#deb '):
+                    # Убираем комментарий для проверки
+                    clean_line = line.lstrip('#').strip()
+                    self._log("[DEBUG] Обрабатываем строку: '%s' -> clean: '%s'" % (line, clean_line))
+                    
+                    # Проверяем доступность репозитория
+                    if self.check_repo_availability(clean_line):
                         self.activated_count += 1
-                        self.working_repos.append(line)
-                        temp_file.write(line + '\n')
+                        self.working_repos.append(clean_line)
+                        self._log("[DEBUG] Репозиторий АКТИВИРОВАН: %s" % clean_line)
+                        # Активируем репозиторий (убираем #)
+                        temp_file.write(clean_line + '\n')
                     else:
                         self.deactivated_count += 1
-                        self.broken_repos.append(line)
-                        # Деактивируем нерабочий репозиторий
-                        temp_file.write('# ' + line + '\n')
+                        self.broken_repos.append(clean_line)
+                        self._log("[DEBUG] Репозиторий ДЕАКТИВИРОВАН: %s" % clean_line)
+                        # Деактивируем репозиторий (добавляем #)
+                        temp_file.write('# ' + clean_line + '\n')
                 else:
+                    # Копируем остальные строки как есть
                     temp_file.write(line + '\n')
             
             temp_file.close()
             
             # Удаляем дубликаты
             self._remove_duplicates(temp_file.name)
+            
+            # Выводим содержимое sources.list ПОСЛЕ обработки
+            self._log("\n[SOURCES.LIST] Содержимое ПОСЛЕ обработки:")
+            self._log("=" * 50)
+            with open(temp_file.name, 'r') as f:
+                content_after = f.read()
+                self._log(content_after)
+            self._log("=" * 50)
             
             return temp_file.name
             
@@ -5564,8 +5603,8 @@ def check_system_requirements():
     """Проверка системных требований"""
     print("[INFO] Проверка системных требований...")
     
-    # Сначала синхронизируем время
-    sync_system_time()
+    # Синхронизация времени уже выполнена в bash скрипте
+    print("[INFO] Синхронизация времени пропущена (уже выполнена в bash)")
     
     # Проверяем права root
     if os.geteuid() != 0:
@@ -5599,6 +5638,73 @@ def check_system_requirements():
     
     print("[OK] Все требования выполнены")
     return True
+
+def install_gui_components():
+    """Установка GUI компонентов (tkinter, pip3)"""
+    print("[GUI] Установка GUI компонентов...")
+    
+    try:
+        # Обновляем списки пакетов
+        print("[GUI] Обновление списков пакетов...")
+        result = subprocess.call(['apt-get', 'update'], 
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE)
+        
+        if result != 0:
+            print("[ERROR] Ошибка обновления списков пакетов")
+            return False
+        
+        print("[OK] Списки пакетов обновлены")
+        
+        # Устанавливаем GUI компоненты
+        print("[GUI] Установка python3-tk и python3-pip...")
+        
+        # Настраиваем переменные окружения для автоматических ответов
+        env = os.environ.copy()
+        env['DEBIAN_FRONTEND'] = 'noninteractive'
+        env['DEBIAN_PRIORITY'] = 'critical'
+        env['APT_LISTCHANGES_FRONTEND'] = 'none'
+        
+        # Устанавливаем пакеты с автоматическими ответами
+        cmd = ['apt-get', 'install', '-y', 
+               '-o', 'Dpkg::Options::=--force-confdef',
+               '-o', 'Dpkg::Options::=--force-confold', 
+               '-o', 'Dpkg::Options::=--force-confmiss',
+               'python3-tk', 'python3-pip']
+        
+        result = subprocess.call(cmd, env=env,
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE)
+        
+        if result != 0:
+            print("[ERROR] Ошибка установки GUI компонентов")
+            return False
+        
+        print("[OK] GUI компоненты установлены успешно")
+        
+        # Проверяем что tkinter работает
+        try:
+            subprocess.check_call(['python3', '-c', 'import tkinter'], 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE)
+            print("[OK] tkinter работает корректно")
+        except subprocess.CalledProcessError:
+            print("[WARNING] tkinter установлен, но может не работать корректно")
+        
+        # Проверяем что pip3 работает
+        try:
+            subprocess.check_call(['pip3', '--version'], 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE)
+            print("[OK] pip3 работает корректно")
+        except subprocess.CalledProcessError:
+            print("[WARNING] pip3 установлен, но может не работать корректно")
+        
+        return True
+        
+    except Exception as e:
+        print("[ERROR] Ошибка установки GUI компонентов: %s" % str(e))
+        return False
 
 def run_repo_checker(gui_terminal=None, dry_run=False):
     """Запуск проверки репозиториев через класс RepoChecker"""
@@ -5799,7 +5905,9 @@ def main():
         # Проверяем аргументы командной строки
         dry_run = False
         console_mode = False
+        setup_repos = False
         close_terminal_pid = None
+        start_mode = None
         
         if len(sys.argv) > 1:
             i = 1
@@ -5811,15 +5919,77 @@ def main():
                 elif arg == '--console':
                     console_mode = True
                     logger.log_info("Включен консольный режим")
+                elif arg == '--setup-repos':
+                    setup_repos = True
+                    logger.log_info("Режим: только настройка репозиториев")
                 elif arg == '--close-terminal':
                     # Следующий аргумент - PID терминала
                     if i + 1 < len(sys.argv):
                         close_terminal_pid = sys.argv[i + 1]
                         logger.log_info("Терминал будет закрыт после запуска GUI (PID: %s)" % close_terminal_pid)
                         i += 1  # Пропускаем следующий аргумент
+                elif arg == '--mode':
+                    # Следующий аргумент - режим запуска
+                    if i + 1 < len(sys.argv):
+                        start_mode = sys.argv[i + 1]
+                        logger.log_info("Режим запуска: %s" % start_mode)
+                        i += 1  # Пропускаем следующий аргумент
                 i += 1
+        
+        # Режим настройки репозиториев - выполнить и выйти
+        if setup_repos:
+            logger.log_info("Запуск режима настройки репозиториев")
+            print("")
+            print("="*60)
+            print("[SETUP-REPOS] Настройка репозиториев")
+            print("="*60)
             
-            logger.log_info("Начинаем выполнение основной программы")
+            repo_checker = RepoChecker()
+            
+            # Создаем backup
+            print("\n[BACKUP] Создаем резервную копию sources.list...")
+            if repo_checker.backup_sources_list(dry_run=False):
+                print("   [OK] Backup создан")
+                logger.log_info("Backup репозиториев создан успешно")
+            else:
+                print("   [ERROR] Не удалось создать backup")
+                logger.log_error("Не удалось создать backup репозиториев")
+                sys.exit(1)
+            
+            # Проверяем и настраиваем репозитории
+            print("\n[CHECK] Проверка и настройка репозиториев...")
+            temp_file = repo_checker.process_all_repos()
+            
+            if temp_file:
+                # Применяем изменения
+                try:
+                    import shutil
+                    shutil.copy2(temp_file, '/etc/apt/sources.list')
+                    os.unlink(temp_file)
+                    
+                    stats = repo_checker.get_statistics()
+                    print("\n[OK] Репозитории настроены:")
+                    print("   - Активных: %d" % stats['activated'])
+                    print("   - Деактивированных: %d" % stats['deactivated'])
+                    
+                    logger.log_info("Репозитории настроены: %d активных, %d деактивированных" % 
+                                  (stats['activated'], stats['deactivated']))
+                    
+                    print("\n="*60)
+                    print("[SUCCESS] Настройка репозиториев завершена")
+                    print("="*60)
+                    sys.exit(0)
+                    
+                except Exception as e:
+                    print("\n[ERROR] Ошибка применения настроек: %s" % str(e))
+                    logger.log_exception(e, "Ошибка применения настроек репозиториев")
+                    sys.exit(1)
+            else:
+                print("\n[ERROR] Не удалось обработать репозитории")
+                logger.log_error("Не удалось обработать репозитории")
+                sys.exit(1)
+        
+        logger.log_info("Начинаем выполнение основной программы")
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
@@ -5829,23 +5999,73 @@ def main():
                 logger.log_error("Системные требования не выполнены")
                 sys.exit(1)
             
-            # Запускаем GUI
-            print("[GUI] Запуск GUI мониторинга...")
-            logger.log_info("Запускаем GUI мониторинг")
-            
-            try:
-                gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
-                if gui_success:
-                    print("[OK] GUI мониторинг завершен")
-                    logger.log_info("GUI мониторинг завершен успешно")
+            # Умная логика выбора режима на основе start_mode от bash
+            if start_mode == "gui_ready":
+                # GUI готов - запускаем сразу
+                print("[GUI] GUI готов - запускаем интерфейс...")
+                logger.log_info("Режим: gui_ready - запускаем GUI")
+                
+                try:
+                    gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
+                    if gui_success:
+                        print("[OK] GUI мониторинг завершен")
+                        logger.log_info("GUI мониторинг завершен успешно")
+                    else:
+                        print("[ERROR] Ошибка GUI мониторинга")
+                        logger.log_error("Ошибка GUI мониторинга")
+                except Exception as gui_error:
+                    logger.log_exception(gui_error, "Критическая ошибка GUI")
+                    print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
+                    logger.cleanup_locks()
+                    
+            elif start_mode == "gui_install_first":
+                # Нужно установить GUI компоненты
+                print("[GUI] Установка GUI компонентов...")
+                logger.log_info("Режим: gui_install_first - устанавливаем GUI компоненты")
+                
+                if dry_run:
+                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка GUI компонентов НЕ выполняется")
+                    print("[OK] Будет выполнено: apt-get install -y python3-tk python3-pip")
+                    gui_install_success = True
                 else:
-                    print("[ERROR] Ошибка GUI мониторинга")
-                    logger.log_error("Ошибка GUI мониторинга")
-            except Exception as gui_error:
-                logger.log_exception(gui_error, "Критическая ошибка GUI")
-                print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                # Очищаем блокирующие файлы при ошибке GUI
-                logger.cleanup_locks()
+                    # Устанавливаем GUI компоненты
+                    gui_install_success = install_gui_components()
+                
+                if gui_install_success:
+                    print("[SUCCESS] GUI компоненты установлены успешно!")
+                    logger.log_info("GUI компоненты установлены успешно")
+                    print("[INFO] Перезапустите скрипт для запуска GUI:")
+                    print("       bash astra_install.sh")
+                    print("[INFO] Теперь доступен графический интерфейс!")
+                else:
+                    print("[ERROR] Установка GUI компонентов завершена с ошибками")
+                    logger.log_error("Установка GUI компонентов завершена с ошибками")
+                    
+            elif start_mode == "console_forced":
+                # Принудительный консольный режим - но мы в GUI режиме!
+                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме")
+                logger.log_error("Противоречие: bash выбрал console_forced, но Python в GUI режиме")
+                print("[INFO] Перезапустите с флагом --console:")
+                print("       bash astra_install.sh --console")
+                sys.exit(1)
+                
+            else:
+                # Неизвестный режим - пытаемся запустить GUI
+                print("[WARNING] Неизвестный режим: %s" % start_mode)
+                logger.log_warning("Неизвестный режим: %s - пытаемся запустить GUI" % start_mode)
+                
+                try:
+                    gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
+                    if gui_success:
+                        print("[OK] GUI мониторинг завершен")
+                        logger.log_info("GUI мониторинг завершен успешно")
+                    else:
+                        print("[ERROR] Ошибка GUI мониторинга")
+                        logger.log_error("Ошибка GUI мониторинга")
+                except Exception as gui_error:
+                    logger.log_exception(gui_error, "Критическая ошибка GUI")
+                    print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
+                    logger.cleanup_locks()
             return
     
         # Консольный режим (только если указан --console)
@@ -5867,62 +6087,58 @@ def main():
                 logger.log_error("Системные требования не выполнены")
                 sys.exit(1)
         
-            # В консольном режиме обновляем систему (репозитории уже настроены в bash скрипте)
-            logger.log_info("КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы")
-            print("\n[CONSOLE] Консольный режим - обновление системы...")
-            
-            # Обновляем систему
-            logger.log_info("Запускаем обновление системы")
-            print("\n[UPDATE] Обновление системы...")
-            updater = SystemUpdater()
-            
-            if dry_run:
-                print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-                print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
-                update_success = True
-            else:
-                # Проверяем системные ресурсы
-                if not updater.check_system_resources():
-                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-                    logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
-                    sys.exit(1)
+            # Умная логика консольного режима на основе start_mode от bash
+            if start_mode == "console_forced":
+                # Принудительный консольный режим - полное обновление системы
+                logger.log_info("КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)")
+                print("\n[CONSOLE] Консольный режим - обновление системы...")
                 
-                # Запускаем обновление
-                update_success = updater.update_system(dry_run)
-            
-            # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
-            repo_success = True
-            stats_success = True
-            interactive_success = True
-            
-            if repo_success and stats_success and interactive_success and update_success:
+                # Обновляем систему
+                logger.log_info("Запускаем обновление системы")
+                print("\n[UPDATE] Обновление системы...")
+                updater = SystemUpdater()
+                
                 if dry_run:
-                    print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                    logger.log_info("Автоматизация завершена успешно в режиме тестирования")
-                    print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
-                    print("=============================")
-                    print("[OK] Все проверки пройдены успешно")
-                    print("[OK] Система готова к автоматизации")
-                    print("[WARNING] Никаких изменений в системе НЕ внесено")
-                    print("[START] Для реальной установки запустите без --dry-run")
+                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
+                    print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
+                    update_success = True
                 else:
-                    print("\n[SUCCESS] Автоматизация завершена успешно!")
-                    logger.log_info("Автоматизация завершена успешно")
+                    # Проверяем системные ресурсы
+                    if not updater.check_system_resources():
+                        print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
+                        logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
+                        sys.exit(1)
+                    
+                    # Запускаем обновление
+                    update_success = updater.update_system(dry_run)
+                
+                # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
+                repo_success = True
+                stats_success = True
+                interactive_success = True
+                
+                if repo_success and stats_success and interactive_success and update_success:
+                    if dry_run:
+                        print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+                        logger.log_info("Автоматизация завершена успешно в режиме тестирования")
+                        print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
+                        print("=============================")
+                        print("[OK] Все проверки пройдены успешно")
+                        print("[OK] Система готова к автоматизации")
+                        print("[WARNING] Никаких изменений в системе НЕ внесено")
+                        print("[START] Для реальной установки запустите без --dry-run")
+                    else:
+                        print("\n[SUCCESS] Автоматизация завершена успешно!")
+                        logger.log_info("Автоматизация завершена успешно")
+                else:
+                    print("\n[ERROR] Автоматизация завершена с ошибками")
+                    logger.log_error("Автоматизация завершена с ошибками")
+                    
             else:
-                print("\n[ERROR] Автоматизация завершена с ошибками")
-                logger.log_error("Автоматизация завершена с ошибками")
-                if not repo_success:
-                    print("   [ERROR] Ошибка в модуле проверки репозиториев")
-                    logger.log_error("Ошибка в модуле проверки репозиториев")
-                if not stats_success:
-                    print("   [ERROR] Ошибка в модуле статистики системы")
-                    logger.log_error("Ошибка в модуле статистики системы")
-                if not interactive_success:
-                    print("   [ERROR] Ошибка в модуле перехвата интерактивных запросов")
-                    logger.log_error("Ошибка в модуле перехвата интерактивных запросов")
-                if not update_success:
-                    print("   [ERROR] Ошибка в модуле обновления системы")
-                    logger.log_error("Ошибка в модуле обновления системы")
+                # Неожиданный режим в консольном режиме
+                print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
+                logger.log_error("Неожиданный режим в консольном режиме: %s" % start_mode)
+                print("[INFO] Ожидался режим: console_forced")
                 sys.exit(1)
             
         except KeyboardInterrupt:

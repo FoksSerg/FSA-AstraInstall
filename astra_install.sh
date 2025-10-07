@@ -191,7 +191,7 @@ fi
 log_message "Проверка прав root: OK (запущено с правами root)"
 
 # Синхронизация системного времени (один раз за сеанс)
-TIME_SYNC_FLAG="/var/run/fsa-time-synced"
+TIME_SYNC_FLAG="/tmp/fsa-time-synced"
 
 if [ -f "$TIME_SYNC_FLAG" ]; then
     echo "[i] Время уже синхронизировано в этом сеансе"
@@ -256,125 +256,11 @@ echo "   [i] Python 3: $PYTHON3_VERSION"
 log_message "Python 3: $PYTHON3_VERSION"
 
 # ============================================================
-# БЛОК 3: КОНСОЛЬНЫЙ РЕЖИМ
+# БЛОК 3: ОПРЕДЕЛЕНИЕ РЕЖИМА ЗАПУСКА (УМНАЯ ЛОГИКА)
 # ============================================================
 
-if [ "$CONSOLE_MODE" = true ]; then
-    echo ""
-    echo "[*] Консольный режим - используем уже имеющийся Python 3"
-    log_message "Консольный режим - используем уже имеющийся Python 3"
-    
-    # Настраиваем репозитории
-    echo ""
-    echo "[+] Консольный режим - сначала настраиваем репозитории!"
-    log_message "Консольный режим - сначала настраиваем репозитории"
-    
-    echo "[*] Настраиваем репозитории для консольного режима..."
-    log_message "Настраиваем репозитории для консольного режима"
-    
-    echo "   [?] Проверяем существующие репозитории..."
-    log_message "Начинаем проверку существующих репозиториев"
-    
-    if [ "$DRY_RUN" = true ]; then
-        echo "   [!] РЕЖИМ ТЕСТИРОВАНИЯ: репозитории НЕ изменяются (только симуляция)"
-        log_message "РЕЖИМ ТЕСТИРОВАНИЯ: репозитории НЕ изменяются (только симуляция)"
-        
-        echo "   [i] Будет создан backup: /etc/apt/sources.list.backup"
-        echo "   [i] Будет проверена доступность всех репозиториев"
-        echo "   [i] Нерабочие репозитории будут закомментированы"
-        echo "   [i] Рабочие репозитории останутся активными"
-        
-        ACTIVATED_COUNT=0
-        DEACTIVATED_COUNT=0
-        
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^#?deb ]]; then
-                if [[ "$line" == \#* ]]; then
-                    clean_line="${line#\#}"
-                    clean_line="$(echo "$clean_line" | sed 's/^[[:space:]]*//')"
-                    if check_single_repo "$clean_line"; then
-                        ACTIVATED_COUNT=$((ACTIVATED_COUNT + 1))
-                        echo "   [OK] Будет активирован: $(echo "$clean_line" | awk '{print $2}')"
-                    else
-                        DEACTIVATED_COUNT=$((DEACTIVATED_COUNT + 1))
-                        echo "   [ERR] Останется неактивным: $(echo "$clean_line" | awk '{print $2}')"
-                    fi
-                else
-                    if check_single_repo "$line"; then
-                        ACTIVATED_COUNT=$((ACTIVATED_COUNT + 1))
-                        echo "   [OK] Останется активным: $(echo "$line" | awk '{print $2}')"
-                    else
-                        DEACTIVATED_COUNT=$((DEACTIVATED_COUNT + 1))
-                        echo "   [ERR] Будет деактивирован: $(echo "$line" | awk '{print $2}')"
-                    fi
-                fi
-            fi
-        done < /etc/apt/sources.list
-        
-        echo "   [i] Статистика (симуляция): $ACTIVATED_COUNT рабочих, $DEACTIVATED_COUNT нерабочих"
-        log_message "Статистика (симуляция): $ACTIVATED_COUNT рабочих, $DEACTIVATED_COUNT нерабочих"
-    else
-        # Реальный режим - изменяем репозитории
-        cp /etc/apt/sources.list /etc/apt/sources.list.backup
-        log_message "Создан backup репозиториев: /etc/apt/sources.list.backup"
-        
-        TEMP_FILE=$(mktemp)
-        echo "# Системные репозитории - автоматически настроены (консольный режим)" > "$TEMP_FILE"
-        
-        ACTIVATED_COUNT=0
-        DEACTIVATED_COUNT=0
-        
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^#?deb ]]; then
-                if [[ "$line" == \#* ]]; then
-                    clean_line="${line#\#}"
-                    clean_line="$(echo "$clean_line" | sed 's/^[[:space:]]*//')"
-                    if check_single_repo "$clean_line"; then
-                        echo "$clean_line" >> "$TEMP_FILE"
-                        ACTIVATED_COUNT=$((ACTIVATED_COUNT + 1))
-                        log_message "Активирован репозиторий: $(echo "$clean_line" | awk '{print $2}')"
-                    else
-                        echo "$line" >> "$TEMP_FILE"
-                        DEACTIVATED_COUNT=$((DEACTIVATED_COUNT + 1))
-                        log_message "Оставлен неактивным репозиторий: $(echo "$clean_line" | awk '{print $2}')"
-                    fi
-                else
-                    if check_single_repo "$line"; then
-                        echo "$line" >> "$TEMP_FILE"
-                        ACTIVATED_COUNT=$((ACTIVATED_COUNT + 1))
-                        log_message "Оставлен активным репозиторий: $(echo "$line" | awk '{print $2}')"
-                    else
-                        echo "# $line" >> "$TEMP_FILE"
-                        DEACTIVATED_COUNT=$((DEACTIVATED_COUNT + 1))
-                        log_message "Деактивирован репозиторий: $(echo "$line" | awk '{print $2}')"
-                    fi
-                fi
-            else
-                echo "$line" >> "$TEMP_FILE"
-            fi
-        done < /etc/apt/sources.list
-        
-        UNIQUE_TEMP_FILE=$(mktemp)
-        awk '!seen[$0]++' "$TEMP_FILE" > "$UNIQUE_TEMP_FILE"
-        mv "$UNIQUE_TEMP_FILE" "$TEMP_FILE"
-        
-        cp "$TEMP_FILE" /etc/apt/sources.list
-        rm -f "$TEMP_FILE"
-        
-        echo "   [OK] Репозитории настроены: $ACTIVATED_COUNT рабочих, $DEACTIVATED_COUNT нерабочих"
-        log_message "Репозитории настроены: $ACTIVATED_COUNT рабочих, $DEACTIVATED_COUNT нерабочих"
-    fi
-    
-    echo ""
-    echo "[+] Консольный режим готов!"
-    log_message "Консольный режим готов"
-    
-# ============================================================
-# БЛОК 4: ОПРЕДЕЛЕНИЕ РЕЖИМА ЗАПУСКА (УМНАЯ ЛОГИКА)
-# ============================================================
-
-else
-    echo ""
+if [ "$CONSOLE_MODE" = false ]; then
+echo ""
     echo "[*] Определяем оптимальный режим запуска..."
     log_message "Начинаем определение режима запуска"
     
@@ -441,8 +327,8 @@ else
             ;;
     esac
     echo "============================================================"
-    echo ""
-    
+        echo ""
+        
     # Если нужно установить tkinter - делаем это
     if [ "$START_MODE" = "gui_install_first" ]; then
         echo "[#] Устанавливаем компоненты для GUI..."
@@ -473,6 +359,10 @@ else
             if install_tkinter_with_verification; then
                 echo "   [OK] tkinter установлен и работает"
                 log_message "tkinter установлен и проверен"
+                # Меняем режим на gui_ready после успешной установки
+                START_MODE="gui_ready"
+                echo "   [i] Режим изменен на: gui_ready"
+                log_message "Режим изменен на gui_ready после установки tkinter"
             else
                 echo "   [ERROR] Не удалось установить рабочий tkinter"
                 echo "   [i] Переключение на консольный режим"
@@ -498,7 +388,7 @@ else
             fi
             
             # Исправляем зависимости
-            echo ""
+    echo ""
             echo "   [*] Исправляем зависимости..."
             log_message "Исправляем зависимости (apt-get install -f)"
             apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
@@ -515,7 +405,7 @@ else
     
     # Финальная проверка перед запуском GUI
     if [ "$START_MODE" = "gui_ready" ] || [ "$START_MODE" = "gui_install_first" ]; then
-        echo ""
+echo ""
         echo "[?] Финальная проверка перед запуском GUI..."
         log_message "Финальная проверка компонентов перед запуском GUI"
         
@@ -528,17 +418,17 @@ else
         else
             echo "   [OK] tkinter работает - готовы к запуску GUI"
             log_message "Финальная проверка: tkinter работает, GUI готов"
-        fi
     fi
-    
-    echo ""
+fi
+
+echo ""
     echo "[?] Статус компонентов:"
     echo "   [i] Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
     echo "   [i] Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
     echo "   [i] pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
     log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A'), Tkinter=$(python3 -c 'import tkinter; print("OK")' 2>/dev/null || echo 'N/A'), pip3=$(pip3 --version 2>/dev/null || echo 'N/A')"
-    
-    echo ""
+
+echo ""
     echo "[+] Подготовка завершена!"
     log_message "Подготовка компонентов завершена. Режим: $START_MODE"
 fi
@@ -549,8 +439,34 @@ fi
 
 echo ""
 if [ "$CONSOLE_MODE" = true ]; then
-    echo "[>] Запускаем консольный режим..."
+    echo "[>] Консольный режим - настройка репозиториев и обновление системы..."
     log_message "Запускаем консольный режим"
+    
+    # Сначала настраиваем репозитории через Python
+    echo ""
+    echo "[*] Шаг 1: Настройка репозиториев..."
+    log_message "Вызываем Python для настройки репозиториев"
+    
+    if python3 --version >/dev/null 2>&1; then
+        python3 astra-automation.py --setup-repos --log-file "$LOG_FILE"
+        SETUP_EXIT_CODE=$?
+        
+        if [ $SETUP_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Репозитории настроены успешно"
+            log_message "Репозитории настроены успешно (код: 0)"
+        else
+            echo "   [WARNING] Ошибка настройки репозиториев (код: $SETUP_EXIT_CODE)"
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка настройки репозиториев (код: $SETUP_EXIT_CODE)"
+        fi
+    else
+        echo "   [ERROR] Python 3 не найден!"
+        log_message "ОШИБКА: Python 3 не найден"
+        exit 1
+    fi
+    
+    echo ""
+    echo "[*] Шаг 2: Обновление системы..."
+    log_message "Переход к обновлению системы"
 else
     echo "[>] Запускаем графический интерфейс..."
     log_message "Запускаем графический интерфейс"
@@ -559,13 +475,13 @@ fi
 log_message "Передаем управление Python скрипту: astra-automation.py"
 log_message "Лог файл: $LOG_FILE"
 
-if python3 --version >/dev/null 2>&1; then
+    if python3 --version >/dev/null 2>&1; then
     echo "   [i] Используем Python 3: $(python3 --version)"
-    log_message "Используем Python 3: $(python3 --version)"
+        log_message "Используем Python 3: $(python3 --version)"
     
     if [ "$CONSOLE_MODE" = true ]; then
         # Консольный режим - запускаем в текущем терминале
-        python3 astra-automation.py --log-file "$LOG_FILE" "$@"
+        python3 astra-automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
         PYTHON_EXIT_CODE=$?
     else
         # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
@@ -580,7 +496,7 @@ if python3 --version >/dev/null 2>&1; then
         log_message "PID окна терминала: $TERM_PID"
         
         # Запускаем GUI с передачей PID терминала для автозакрытия
-        nohup python3 astra-automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" "$@" >/dev/null 2>&1 &
+        nohup python3 astra-automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
         PYTHON_PID=$!
         
         echo "   [OK] GUI запущен (PID: $PYTHON_PID)"
@@ -593,7 +509,7 @@ if python3 --version >/dev/null 2>&1; then
 else
     echo "   [ERR] Python 3 не найден!"
     log_message "ОШИБКА: Python 3 не найден"
-    exit 1
+        exit 1
 fi
 
 log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"
