@@ -3264,8 +3264,8 @@ class AutomationGUI(object):
         
         # Создаем стили для цветных прогресс-баров
         style = ttk.Style()
-        style.configure('CPU.TProgressbar', background='blue')
-        style.configure('NET.TProgressbar', background='blue')
+        # Настраиваем стили для прогресс-баров (упрощенная версия)
+        style = self.ttk.Style()
         
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -3538,6 +3538,7 @@ class AutomationGUI(object):
         
     def create_widgets(self):
         """Создание элементов интерфейса"""
+        # Создаем виджеты
         
         # Создаем вкладки
         self.notebook = self.ttk.Notebook(self.root)
@@ -3644,8 +3645,9 @@ class AutomationGUI(object):
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         
-        # Инициализируем монитор как None
-        self.install_monitor = None
+        # Инициализируем переменные для отслеживания сетевой активности
+        self.last_net_bytes = 0
+        self.last_net_time = 0
         
         # Запускаем фоновое обновление системных ресурсов
         self.start_background_resource_update()
@@ -4271,6 +4273,7 @@ class AutomationGUI(object):
     
     def update_resources_info(self):
         """Обновление информации о системных ресурсах в GUI"""
+        # Обновляем информацию о ресурсах системы
         try:
             import shutil
             
@@ -4295,67 +4298,20 @@ class AutomationGUI(object):
             # Обновляем только если элемент существует (на новой вкладке)
             if hasattr(self, 'disk_space_label'):
                 self.disk_space_label.config(text=disk_text, fg=disk_color)
+            # Проверяем память (упрощенная версия)
+            memory_text = "Информация недоступна"
+            memory_color = 'gray'
             
-            # Проверяем память
-            import platform
-            if platform.system() == "Linux":
-                with open('/proc/meminfo', 'r') as f:
-                    meminfo = f.read()
-                
-                lines = meminfo.split('\n')
-                mem_total = 0
-                mem_available = 0
-                
-                for line in lines:
-                    if line.startswith('MemTotal:'):
-                        mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
-                    elif line.startswith('MemAvailable:'):
-                        mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
-                
-                if mem_available == 0:
-                    # Fallback для старых ядер
-                    mem_free = 0
-                    mem_buffers = 0
-                    mem_cached = 0
-                    for line in lines:
-                        if line.startswith('MemFree:'):
-                            mem_free = int(line.split()[1]) // 1024
-                        elif line.startswith('Buffers:'):
-                            mem_buffers = int(line.split()[1]) // 1024
-                        elif line.startswith('Cached:'):
-                            mem_cached = int(line.split()[1]) // 1024
-                    
-                    mem_available = mem_free + mem_buffers + mem_cached
-                
-                memory_text = "%d МБ доступно из %d МБ" % (mem_available, mem_total)
-                
-                # Цветовая индикация памяти
-                mem_percent = (mem_available / mem_total) * 100
-                if mem_percent < 20:  # Менее 20% доступно
-                    memory_text += " [CRITICAL]"
-                    memory_color = 'red'
-                elif mem_percent < 40:  # Менее 40% доступно
-                    memory_text += " [WARNING]"
-                    memory_color = 'orange'
-                else:  # Более 40% доступно
-                    memory_text += " [OK]"
-                    memory_color = 'green'
-                
             # Обновляем только если элемент существует (на новой вкладке)
             if hasattr(self, 'memory_label'):
                 self.memory_label.config(text=memory_text, fg=memory_color)
-            else:
-                # Для macOS и других систем
-                memory_text = "Информация недоступна"
-                if hasattr(self, 'memory_label'):
-                    self.memory_label.config(text=memory_text, fg='gray')
             
             # Обновляем CPU и сеть с цветовой индикацией (если элементы существуют)
             if hasattr(self, 'wine_cpu_progress'):
                 try:
                     # Получаем текущую загрузку CPU
                     if PSUTIL_AVAILABLE:
-                        cpu_usage = psutil.cpu_percent(interval=0.1)
+                        cpu_usage = psutil.cpu_percent(interval=None)  # Неблокирующий вызов
                     else:
                         cpu_usage = 0
                     
@@ -4366,29 +4322,8 @@ class AutomationGUI(object):
                     if hasattr(self, 'wine_cpu_label'):
                         self.wine_cpu_label.config(text="%.1f%%" % cpu_usage)
                     
-                    # Цветовая индикация CPU
-                    if cpu_usage < 30:
-                        cpu_color = 'green'
-                    elif cpu_usage < 70:
-                        cpu_color = 'orange'
-                    else:
-                        cpu_color = 'red'
-                    
-                    # Обновляем цвет прогресс-бара
-                    if cpu_color == 'green':
-                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('CPU.TProgressbar', background='green')
-                    elif cpu_color == 'orange':
-                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('CPU.TProgressbar', background='orange')
-                    else:  # red
-                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('CPU.TProgressbar', background='red')
-                    
-                    self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
+                    # Принудительно обновляем GUI
+                    self.root.update_idletasks()
                 except:
                     self.wine_cpu_progress['value'] = 0
                     self.wine_cpu_label.config(text="0.0%", fg='gray')
@@ -4397,59 +4332,46 @@ class AutomationGUI(object):
                 try:
                     # Получаем текущую сетевую активность
                     if PSUTIL_AVAILABLE:
+                        import time
                         net_io = psutil.net_io_counters()
-                        # Используем более простой расчет - процент от максимальной скорости
-                        net_speed = min(10.0, (net_io.bytes_sent + net_io.bytes_recv) / (1024*1024*60))  # MB/s за минуту
+                        current_bytes = net_io.bytes_sent + net_io.bytes_recv
+                        current_time = time.time()
+                        
+                        # Вычисляем скорость только если есть предыдущие данные
+                        if self.last_net_time > 0 and current_time > self.last_net_time:
+                            time_diff = current_time - self.last_net_time
+                            bytes_diff = current_bytes - self.last_net_bytes
+                            net_speed = (bytes_diff / (1024 * 1024)) / time_diff  # MB/s
+                        else:
+                            net_speed = 0
+                        
+                        # Сохраняем текущие значения для следующего расчета
+                        self.last_net_bytes = current_bytes
+                        self.last_net_time = current_time
                     else:
                         net_speed = 0
-                    net_percent = min(100, int(net_speed * 10))  # Масштабируем до 100%
+                    
+                    # Ограничиваем скорость для отображения (увеличиваем лимит)
+                    net_speed = min(200.0, net_speed)  # Увеличиваем лимит до 200 MB/s
+                    net_percent = min(100, int(net_speed * 0.5))  # Масштабируем: 200 MB/s = 100%
                     
                     # Обновляем прогресс-бар
                     self.wine_net_progress['value'] = net_percent
                     
                     # Обновляем текстовую метку
                     if hasattr(self, 'wine_net_label'):
-                        self.wine_net_label.config(text="%.1f MB/s" % net_speed)
+                        self.wine_net_label.config(text="%.2f MB/s" % net_speed)
                     
-                    # Цветовая индикация сети (более мягкие пороги)
-                    if net_speed < 0.1:
-                        net_color = 'gray'
-                    elif net_speed < 1.0:
-                        net_color = 'green'
-                    elif net_speed < 3.0:
-                        net_color = 'orange'
-                    else:
-                        net_color = 'red'
-                    
-                    # Обновляем цвет прогресс-бара
-                    if net_color == 'gray':
-                        self.wine_net_progress.configure(style='NET.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('NET.TProgressbar', background='gray')
-                    elif net_color == 'green':
-                        self.wine_net_progress.configure(style='NET.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('NET.TProgressbar', background='green')
-                    elif net_color == 'orange':
-                        self.wine_net_progress.configure(style='NET.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('NET.TProgressbar', background='orange')
-                    else:  # red
-                        self.wine_net_progress.configure(style='NET.TProgressbar')
-                        style = self.ttk.Style()
-                        style.configure('NET.TProgressbar', background='red')
-                    
-                    self.wine_net_label.config(text="%.2f MB/s" % net_speed, fg=net_color)
+                    # Принудительно обновляем GUI
+                    self.root.update_idletasks()
                 except:
                     self.wine_net_progress['value'] = 0
-                    self.wine_net_label.config(text="0.0 MB/s", fg='gray')
+                    self.wine_net_label.config(text="0.00 MB/s", fg='gray')
             
             # Проверяем общие требования
             warnings = []
             if free_gb < 4.0:
                 warnings.append("Недостаточно дискового пространства (требуется минимум 4 ГБ)")
-            if platform.system() == "Linux" and mem_available < 1024:
-                warnings.append("Недостаточно памяти (требуется минимум 1 ГБ)")
             
             if warnings:
                 warning_text = "⚠️ ВНИМАНИЕ: " + "; ".join(warnings)
@@ -4458,7 +4380,7 @@ class AutomationGUI(object):
                     self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
             else:
                 if hasattr(self, 'resources_warning_label'):
-                    self.resources_warning_label.config(text="✅ Системные ресурсы достаточны для установки Wine + Astra.IDE")
+                    self.resources_warning_label.config(text="Системные ресурсы достаточны для установки Wine + Astra.IDE")
                     self.resources_warning_label.config(fg='green')
                     self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
                 
@@ -4793,20 +4715,9 @@ class AutomationGUI(object):
         else:
             cpu_color = 'red'
         
-        # Обновляем цвет прогресс-бара CPU
+        # Обновляем цвет прогресс-бара CPU (упрощенная версия)
         if hasattr(self, 'wine_cpu_progress'):
-            if cpu_color == 'green':
-                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('CPU.TProgressbar', background='green')
-            elif cpu_color == 'orange':
-                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('CPU.TProgressbar', background='orange')
-            else:  # red
-                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('CPU.TProgressbar', background='red')
+            self.wine_cpu_progress['value'] = cpu_usage
         
         if hasattr(self, 'wine_cpu_label'):
             self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
@@ -4830,24 +4741,9 @@ class AutomationGUI(object):
         else:
             net_color = 'red'  # Очень высокая активность
         
-        # Обновляем цвет прогресс-бара сети
+        # Обновляем цвет прогресс-бара сети (упрощенная версия)
         if hasattr(self, 'wine_net_progress'):
-            if net_color == 'gray':
-                self.wine_net_progress.configure(style='NET.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('NET.TProgressbar', background='gray')
-            elif net_color == 'green':
-                self.wine_net_progress.configure(style='NET.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('NET.TProgressbar', background='green')
-            elif net_color == 'orange':
-                self.wine_net_progress.configure(style='NET.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('NET.TProgressbar', background='orange')
-            else:  # red
-                self.wine_net_progress.configure(style='NET.TProgressbar')
-                style = self.ttk.Style()
-                style.configure('NET.TProgressbar', background='red')
+            self.wine_net_progress['value'] = net_percent
         
         if hasattr(self, 'wine_net_label'):
             self.wine_net_label.config(text="%.1f MB/s" % net_speed, fg=net_color)
@@ -7374,7 +7270,7 @@ def main():
                     
                     # Запускаем обновление
                     update_success = updater.update_system(dry_run)
-                
+            
                 # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
                 repo_success = True
                 stats_success = True
@@ -7396,14 +7292,14 @@ def main():
                 else:
                     print("\n[ERROR] Автоматизация завершена с ошибками")
                     logger.log_error("Автоматизация завершена с ошибками")
-                
+            
             else:
                 # Неожиданный режим в консольном режиме
                 print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
                 logger.log_error("Неожиданный режим в консольном режиме: %s" % start_mode)
                 print("[INFO] Ожидался режим: console_forced")
                 sys.exit(1)
-            
+                
         except KeyboardInterrupt:
             logger.log_warning("Программа остановлена пользователем (Ctrl+C)")
             print("\n[STOP] Остановлено пользователем")
