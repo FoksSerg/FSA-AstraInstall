@@ -17,6 +17,13 @@ import datetime
 import threading
 import traceback
 
+# Попытка импорта psutil (может быть не установлен)
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
 # ============================================================================
 # КЛАСС ПОЛНОГО ЛОГИРОВАНИЯ
 # ============================================================================
@@ -3255,6 +3262,11 @@ class AutomationGUI(object):
         self.root = tk.Tk()
         self.root.title("FSA-AstraInstall Automation")
         
+        # Создаем стили для цветных прогресс-баров
+        style = ttk.Style()
+        style.configure('CPU.TProgressbar', background='blue')
+        style.configure('NET.TProgressbar', background='blue')
+        
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
@@ -3270,8 +3282,16 @@ class AutomationGUI(object):
         center_x = int(screen_width/2 - window_width/2)
         center_y = int(screen_height/2 - window_height/2)
         
+        # Убеждаемся, что окно не выходит за границы экрана
+        center_x = max(0, center_x)
+        center_y = max(0, center_y)
+        
         # Устанавливаем геометрию окна с позицией по центру
         self.root.geometry('%dx%d+%d+%d' % (window_width, window_height, center_x, center_y))
+        
+        # Принудительно центрируем окно после создания
+        self.root.update_idletasks()
+        self._center_window()
         
         # Разрешаем изменение размера окна
         self.root.resizable(True, True)
@@ -3324,7 +3344,7 @@ class AutomationGUI(object):
         
         try:
             # Проверяем наличие tkinter
-            import tkinter as tk
+            import tkinter
             print("[OK] tkinter уже установлен")
             return True
         except ImportError:
@@ -3342,7 +3362,7 @@ class AutomationGUI(object):
                 try:
                     # Устанавливаем python3-tk
                     result = subprocess.call(['apt-get', 'install', '-y', 'python3-tk'], 
-                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     
                     if result == 0:
                         print("[OK] python3-tk успешно установлен")
@@ -3350,7 +3370,6 @@ class AutomationGUI(object):
                     else:
                         print("[ERROR] Не удалось установить python3-tk")
                         return False
-                        
                 except Exception as e:
                     print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
                     return False
@@ -3608,14 +3627,18 @@ class AutomationGUI(object):
         cpu_col = self.tk.Frame(info_panel)
         cpu_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
         self.tk.Label(cpu_col, text="CPU:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_cpu_label = self.tk.Label(cpu_col, text="░░░░░░░░░░ 0%", font=('Courier', 9))
+        self.wine_cpu_progress = self.ttk.Progressbar(cpu_col, length=100, mode='determinate')
+        self.wine_cpu_progress.pack(anchor=self.tk.W, fill=self.tk.X)
+        self.wine_cpu_label = self.tk.Label(cpu_col, text="0%", font=('Arial', 8))
         self.wine_cpu_label.pack(anchor=self.tk.W)
         
         # Колонка 4: Сеть
         net_col = self.tk.Frame(info_panel)
         net_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
         self.tk.Label(net_col, text="Сеть:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_net_label = self.tk.Label(net_col, text="░░░░░░░░░░ 0.0 MB/s", font=('Courier', 9))
+        self.wine_net_progress = self.ttk.Progressbar(net_col, length=100, mode='determinate')
+        self.wine_net_progress.pack(anchor=self.tk.W, fill=self.tk.X)
+        self.wine_net_label = self.tk.Label(net_col, text="0.0 MB/s", font=('Arial', 8))
         self.wine_net_label.pack(anchor=self.tk.W)
         
         # Колонка 5: Процессы
@@ -4002,6 +4025,12 @@ class AutomationGUI(object):
         self.wine_summary_text.insert(self.tk.END, "Проверка покажет какие компоненты установлены и готовы к работе")
         self.wine_summary_text.config(state=self.tk.DISABLED)
         
+        # Инициализируем прогресс-бары
+        if hasattr(self, 'wine_cpu_progress'):
+            self.wine_cpu_progress['value'] = 0
+        if hasattr(self, 'wine_net_progress'):
+            self.wine_net_progress['value'] = 0
+        
         # Обновляем информацию о ресурсах
         self.update_resources_info()
     
@@ -4018,6 +4047,30 @@ class AutomationGUI(object):
         
         # Запускаем первое обновление через 1 секунду
         self.root.after(1000, update_resources)
+    
+    def _center_window(self):
+        """Центрирование окна на экране"""
+        # Обновляем информацию о размерах окна
+        self.root.update_idletasks()
+        
+        # Получаем актуальные размеры окна
+        window_width = self.root.winfo_width()
+        window_height = self.root.winfo_height()
+        
+        # Получаем размер экрана
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Вычисляем позицию для центрирования
+        center_x = int(screen_width/2 - window_width/2)
+        center_y = int(screen_height/2 - window_height/2)
+        
+        # Убеждаемся, что окно не выходит за границы экрана
+        center_x = max(0, center_x)
+        center_y = max(0, center_y)
+        
+        # Устанавливаем новую позицию
+        self.root.geometry('+%d+%d' % (center_x, center_y))
     
     def _limit_tab_height(self, event):
         """Ограничиваем высоту вкладок, чтобы панель прогресса была видна"""
@@ -4287,14 +4340,100 @@ class AutomationGUI(object):
                     memory_text += " [OK]"
                     memory_color = 'green'
                 
-                # Обновляем только если элемент существует (на новой вкладке)
-                if hasattr(self, 'memory_label'):
-                    self.memory_label.config(text=memory_text, fg=memory_color)
+            # Обновляем только если элемент существует (на новой вкладке)
+            if hasattr(self, 'memory_label'):
+                self.memory_label.config(text=memory_text, fg=memory_color)
             else:
                 # Для macOS и других систем
                 memory_text = "Информация недоступна"
                 if hasattr(self, 'memory_label'):
                     self.memory_label.config(text=memory_text, fg='gray')
+            
+            # Обновляем CPU и сеть с цветовой индикацией (если элементы существуют)
+            if hasattr(self, 'wine_cpu_progress'):
+                try:
+                    # Получаем текущую загрузку CPU
+                    if PSUTIL_AVAILABLE:
+                        cpu_usage = psutil.cpu_percent(interval=0.1)
+                    else:
+                        cpu_usage = 0
+                    
+                    # Обновляем прогресс-бар
+                    self.wine_cpu_progress['value'] = cpu_usage
+                    
+                    # Цветовая индикация CPU
+                    if cpu_usage < 30:
+                        cpu_color = 'green'
+                    elif cpu_usage < 70:
+                        cpu_color = 'orange'
+                    else:
+                        cpu_color = 'red'
+                    
+                    # Обновляем цвет прогресс-бара
+                    if cpu_color == 'green':
+                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('CPU.TProgressbar', background='green')
+                    elif cpu_color == 'orange':
+                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('CPU.TProgressbar', background='orange')
+                    else:  # red
+                        self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('CPU.TProgressbar', background='red')
+                    
+                    self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
+                except:
+                    self.wine_cpu_progress['value'] = 0
+                    self.wine_cpu_label.config(text="N/A", fg='gray')
+            
+            if hasattr(self, 'wine_net_progress'):
+                try:
+                    # Получаем текущую сетевую активность
+                    if PSUTIL_AVAILABLE:
+                        net_io = psutil.net_io_counters()
+                        # Используем более простой расчет - процент от максимальной скорости
+                        net_speed = min(10.0, (net_io.bytes_sent + net_io.bytes_recv) / (1024*1024*60))  # MB/s за минуту
+                    else:
+                        net_speed = 0
+                    net_percent = min(100, int(net_speed * 10))  # Масштабируем до 100%
+                    
+                    # Обновляем прогресс-бар
+                    self.wine_net_progress['value'] = net_percent
+                    
+                    # Цветовая индикация сети (более мягкие пороги)
+                    if net_speed < 0.1:
+                        net_color = 'gray'
+                    elif net_speed < 1.0:
+                        net_color = 'green'
+                    elif net_speed < 3.0:
+                        net_color = 'orange'
+                    else:
+                        net_color = 'red'
+                    
+                    # Обновляем цвет прогресс-бара
+                    if net_color == 'gray':
+                        self.wine_net_progress.configure(style='NET.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('NET.TProgressbar', background='gray')
+                    elif net_color == 'green':
+                        self.wine_net_progress.configure(style='NET.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('NET.TProgressbar', background='green')
+                    elif net_color == 'orange':
+                        self.wine_net_progress.configure(style='NET.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('NET.TProgressbar', background='orange')
+                    else:  # red
+                        self.wine_net_progress.configure(style='NET.TProgressbar')
+                        style = self.ttk.Style()
+                        style.configure('NET.TProgressbar', background='red')
+                    
+                    self.wine_net_label.config(text="%.2f MB/s" % net_speed, fg=net_color)
+                except:
+                    self.wine_net_progress['value'] = 0
+                    self.wine_net_label.config(text="N/A", fg='gray')
             
             # Проверяем общие требования
             warnings = []
@@ -4632,7 +4771,10 @@ class AutomationGUI(object):
         
         # Обновляем CPU с прогресс-баром и цветовой индикацией
         cpu_usage = data.get('cpu_usage', 0)
-        cpu_bar = self._create_progress_bar(cpu_usage, 100, 10)
+        
+        # Обновляем прогресс-бар CPU
+        if hasattr(self, 'wine_cpu_progress'):
+            self.wine_cpu_progress['value'] = cpu_usage
         
         # Цветовая индикация CPU
         if cpu_usage < 30:
@@ -4642,13 +4784,32 @@ class AutomationGUI(object):
         else:
             cpu_color = 'red'
         
-        self.wine_cpu_label.config(text=cpu_bar, fg=cpu_color)
+        # Обновляем цвет прогресс-бара CPU
+        if hasattr(self, 'wine_cpu_progress'):
+            if cpu_color == 'green':
+                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('CPU.TProgressbar', background='green')
+            elif cpu_color == 'orange':
+                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('CPU.TProgressbar', background='orange')
+            else:  # red
+                self.wine_cpu_progress.configure(style='CPU.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('CPU.TProgressbar', background='red')
+        
+        if hasattr(self, 'wine_cpu_label'):
+            self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
         
         # Обновляем Сеть с прогресс-баром и цветовой индикацией
         net_speed = data.get('network_speed', 0.0)
         # Масштабируем до 10 MB/s для прогресс-бара
         net_percent = min(100, int((net_speed / 10.0) * 100))
-        net_bar = self._create_progress_bar(net_percent, 100, 10)
+        
+        # Обновляем прогресс-бар сети
+        if hasattr(self, 'wine_net_progress'):
+            self.wine_net_progress['value'] = net_percent
         
         # Цветовая индикация сети
         if net_speed < 1.0:
@@ -4660,7 +4821,27 @@ class AutomationGUI(object):
         else:
             net_color = 'red'  # Очень высокая активность
         
-        self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, net_speed), fg=net_color)
+        # Обновляем цвет прогресс-бара сети
+        if hasattr(self, 'wine_net_progress'):
+            if net_color == 'gray':
+                self.wine_net_progress.configure(style='NET.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('NET.TProgressbar', background='gray')
+            elif net_color == 'green':
+                self.wine_net_progress.configure(style='NET.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('NET.TProgressbar', background='green')
+            elif net_color == 'orange':
+                self.wine_net_progress.configure(style='NET.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('NET.TProgressbar', background='orange')
+            else:  # red
+                self.wine_net_progress.configure(style='NET.TProgressbar')
+                style = self.ttk.Style()
+                style.configure('NET.TProgressbar', background='red')
+        
+        if hasattr(self, 'wine_net_label'):
+            self.wine_net_label.config(text="%.1f MB/s" % net_speed, fg=net_color)
         
         # Обновляем прогресс-бар (примерная оценка на основе размера и времени)
         # Wine packages: ~100MB, winetricks: ~500MB, Astra.IDE: ~1500MB
@@ -5205,6 +5386,82 @@ class AutomationGUI(object):
     def open_system_monitor(self):
         """Открыть системный монитор"""
         try:
+            # Сначала проверяем, не запущен ли уже системный монитор
+            monitors_to_check = ['gnome-system-monitor', 'mate-system-monitor', 'ksysguard', 'xfce4-taskmanager', 'lxtask']
+            for monitor in monitors_to_check:
+                try:
+                    result = subprocess.run(['pgrep', '-f', monitor], 
+                                          stdout=subprocess.PIPE, 
+                                          stderr=subprocess.PIPE, 
+                                          check=False)
+                    if result.returncode == 0:
+                        # Диагностика - записываем в лог информацию о процессах и окнах
+                        self.log_message("[DEBUG] Найден процесс системного монитора: %s" % monitor)
+                        
+                        # Получаем список всех окон
+                        try:
+                            wmctrl_result = subprocess.run(['wmctrl', '-l'], 
+                                                         stdout=subprocess.PIPE, 
+                                                         stderr=subprocess.PIPE, 
+                                                         check=False)
+                            if wmctrl_result.returncode == 0:
+                                windows = wmctrl_result.stdout.decode()
+                                self.log_message("[DEBUG] Список окон:\n%s" % windows)
+                                
+                                # Ищем окно с именем монитора
+                                for line in windows.split('\n'):
+                                    if monitor.lower() in line.lower() or 'monitor' in line.lower() or 'system' in line.lower():
+                                        self.log_message("[DEBUG] Найдено окно: %s" % line)
+                                        window_id = line.split()[0]
+                                        # Пробуем активировать по ID
+                                        subprocess.run(['wmctrl', '-i', '-a', window_id], 
+                                                     stdout=subprocess.DEVNULL,
+                                                     stderr=subprocess.DEVNULL,
+                                                     check=False)
+                                        self.wine_status_label.config(text="Фокус переведен на окно", fg='green')
+                                        return
+                        except Exception as e:
+                            self.log_message("[DEBUG] Ошибка wmctrl: %s" % str(e))
+                        
+                        # Если wmctrl не сработал, пробуем xdotool
+                        try:
+                            subprocess.run(['xdotool', 'search', '--name', monitor, 'windowactivate'], 
+                                         stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL,
+                                         check=False)
+                            self.wine_status_label.config(text="Фокус переведен через xdotool", fg='green')
+                        except:
+                            # Дополнительная диагностика - пробуем найти окно по классу
+                            try:
+                                xwininfo_result = subprocess.run(['xwininfo', '-tree', '-root'], 
+                                                               stdout=subprocess.PIPE, 
+                                                               stderr=subprocess.PIPE, 
+                                                               check=False)
+                                if xwininfo_result.returncode == 0:
+                                    windows_info = xwininfo_result.stdout.decode()
+                                    self.log_message("[DEBUG] Информация об окнах:\n%s" % windows_info)
+                                    
+                                    # Ищем окно системного монитора
+                                    for line in windows_info.split('\n'):
+                                        if monitor.lower() in line.lower() or 'monitor' in line.lower():
+                                            self.log_message("[DEBUG] Найдено окно в xwininfo: %s" % line)
+                                            # Извлекаем window ID и пробуем активировать
+                                            if '0x' in line:
+                                                window_id = line.split()[0]
+                                                subprocess.run(['xdotool', 'windowactivate', window_id], 
+                                                             stdout=subprocess.DEVNULL,
+                                                             stderr=subprocess.DEVNULL,
+                                                             check=False)
+                                                self.wine_status_label.config(text="Фокус переведен через xdotool ID", fg='green')
+                                                return
+                            except Exception as e:
+                                self.log_message("[DEBUG] Ошибка xwininfo: %s" % str(e))
+                            
+                            self.wine_status_label.config(text="Системный монитор уже запущен", fg='blue')
+                        return
+                except:
+                    continue
+            
             # Пытаемся открыть системный монитор (разные варианты для разных систем)
             monitors = [
                 'gnome-system-monitor',  # GNOME
@@ -5226,18 +5483,16 @@ class AutomationGUI(object):
                     )
                     
                     if result.returncode == 0:
-                        # Запускаем монитор в фоновом режиме
-                        subprocess.Popen([monitor], 
+                        # Запускаем монитор в фоновом режиме с sudo
+                        subprocess.Popen(['sudo', monitor], 
                                        stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
-                        self.log_message("[SYSTEM] Запущен системный монитор: %s" % monitor)
                         self.wine_status_label.config(text="Системный монитор запущен", fg='green')
                         return
                 except:
                     continue
             
             # Если ничего не нашли
-            self.log_message("[WARNING] Системный монитор не найден в системе")
             self.wine_status_label.config(text="Системный монитор не найден", fg='orange')
             
         except Exception as e:
@@ -7132,7 +7387,7 @@ def main():
                 else:
                     print("\n[ERROR] Автоматизация завершена с ошибками")
                     logger.log_error("Автоматизация завершена с ошибками")
-                    
+                
             else:
                 # Неожиданный режим в консольном режиме
                 print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
