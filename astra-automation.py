@@ -3273,6 +3273,12 @@ class AutomationGUI(object):
         # Устанавливаем геометрию окна с позицией по центру
         self.root.geometry('%dx%d+%d+%d' % (window_width, window_height, center_x, center_y))
         
+        # Разрешаем изменение размера окна
+        self.root.resizable(True, True)
+        
+        # Обработчик изменения размера окна
+        self.root.bind('<Configure>', self._on_window_resize)
+        
         # Переменные состояния
         self.is_running = False
         self.dry_run = tk.BooleanVar()
@@ -3322,22 +3328,34 @@ class AutomationGUI(object):
             print("[OK] tkinter уже установлен")
             return True
         except ImportError:
-            print("[WARNING] tkinter не найден, устанавливаем python3-tk...")
+            print("[WARNING] tkinter не найден")
             
-            try:
-                # Устанавливаем python3-tk
-                result = subprocess.call(['apt-get', 'install', '-y', 'python3-tk'], 
-                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Проверяем операционную систему
+            import platform
+            if platform.system() == "Darwin":  # macOS
+                print("[INFO] macOS: tkinter должен быть установлен с Python")
+                print("[ERROR] tkinter не найден на macOS - переустановите Python")
+                return False
+            elif platform.system() == "Linux":
+                print("[WARNING] Linux: tkinter не найден, устанавливаем python3-tk...")
                 
-                if result == 0:
-                    print("[OK] python3-tk успешно установлен")
-                    return True
-                else:
-                    print("[ERROR] Не удалось установить python3-tk")
-                    return False
+                try:
+                    # Устанавливаем python3-tk
+                    result = subprocess.call(['apt-get', 'install', '-y', 'python3-tk'], 
+                                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     
-            except Exception as e:
-                print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
+                    if result == 0:
+                        print("[OK] python3-tk успешно установлен")
+                        return True
+                    else:
+                        print("[ERROR] Не удалось установить python3-tk")
+                        return False
+                        
+                except Exception as e:
+                    print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
+                    return False
+            else:
+                print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
     def _close_parent_terminal(self):
@@ -3387,6 +3405,17 @@ class AutomationGUI(object):
         if self.close_terminal_pid:
             self._close_parent_terminal()
         self.root.destroy()
+    
+    def _on_window_resize(self, event):
+        """Обработчик изменения размера окна"""
+        if event.widget == self.root:
+            # Обновляем интерфейс при изменении размера окна
+            try:
+                # Принудительно обновляем отображение
+                self.root.update_idletasks()
+            except Exception as e:
+                # Игнорируем ошибки при изменении размера
+                pass
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -3528,20 +3557,100 @@ class AutomationGUI(object):
         # Создаем элементы терминальной вкладки
         self.create_terminal_tab()
         
+        # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
+        # ========================================================================
+        # Панель прогресса установки (закреплена внизу главного окна)
+        progress_frame = self.tk.LabelFrame(self.root, text="Прогресс установки и итоговая сводка")
+        progress_frame.pack(fill=self.tk.X, padx=10, pady=3, side=self.tk.BOTTOM, anchor=self.tk.S)
+        
+        # Прогресс-бар
+        self.wine_progress = self.ttk.Progressbar(progress_frame, 
+                                                  mode='determinate')
+        self.wine_progress.pack(fill=self.tk.X, padx=10, pady=3)
+        
+        # Информационная панель (5 колонок)
+        info_panel = self.tk.Frame(progress_frame)
+        info_panel.pack(fill=self.tk.X, padx=10, pady=3)
+        
+        # Колонка 1: Время
+        time_col = self.tk.Frame(info_panel)
+        time_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(time_col, text="Время:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_time_label = self.tk.Label(time_col, text="0 мин 0 сек", font=('Arial', 9))
+        self.wine_time_label.pack(anchor=self.tk.W)
+        
+        # Колонка 2: Размер
+        size_col = self.tk.Frame(info_panel)
+        size_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(size_col, text="Установлено:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_size_label = self.tk.Label(size_col, text="0 MB", font=('Arial', 9))
+        self.wine_size_label.pack(anchor=self.tk.W)
+        
+        # Колонка 3: CPU
+        cpu_col = self.tk.Frame(info_panel)
+        cpu_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(cpu_col, text="CPU:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_cpu_label = self.tk.Label(cpu_col, text="░░░░░░░░░░ 0%", font=('Courier', 9))
+        self.wine_cpu_label.pack(anchor=self.tk.W)
+        
+        # Колонка 4: Сеть
+        net_col = self.tk.Frame(info_panel)
+        net_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(net_col, text="Сеть:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_net_label = self.tk.Label(net_col, text="░░░░░░░░░░ 0.0 MB/s", font=('Courier', 9))
+        self.wine_net_label.pack(anchor=self.tk.W)
+        
+        # Колонка 5: Процессы
+        proc_col = self.tk.Frame(info_panel)
+        proc_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(proc_col, text="Процессы Wine:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.wine_proc_label = self.tk.Label(proc_col, text="неактивны", font=('Arial', 9))
+        self.wine_proc_label.pack(anchor=self.tk.W)
+        
+        # Текущий этап
+        stage_frame = self.tk.Frame(progress_frame)
+        stage_frame.pack(fill=self.tk.X, padx=10, pady=3)
+        self.tk.Label(stage_frame, text="Этап:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_stage_label = self.tk.Label(stage_frame, text="Ожидание...", font=('Arial', 9), fg='gray')
+        self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Итоговая сводка (встроенная в прогресс)
+        summary_frame = self.tk.Frame(progress_frame)
+        summary_frame.pack(fill=self.tk.X, padx=10, pady=3)
+        self.tk.Label(summary_frame, text="Итоговая сводка:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        
+        self.wine_summary_text = self.tk.Text(summary_frame, height=2, wrap=self.tk.WORD,
+                                             font=('Courier', 8))
+        self.wine_summary_text.pack(fill=self.tk.X, padx=5, pady=1)
+        self.wine_summary_text.config(state=self.tk.DISABLED)
+        
+        # Настройка минимального размера окна
+        self.root.minsize(800, 600)
+        
+        # Настройка весов для правильного распределения пространства
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Инициализируем монитор как None
+        self.install_monitor = None
+        
+        # Заполняем начальными данными
+        self.populate_wine_status_initial()
+        
     def create_main_tab(self):
         """Создание основной вкладки"""
         # Панель управления
         control_frame = self.tk.LabelFrame(self.main_frame, text="Управление")
-        control_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        control_frame.pack(fill=self.tk.X, padx=10, pady=3)
         
         # Чекбокс для dry-run
         dry_run_check = self.tk.Checkbutton(control_frame, text="Режим тестирования (dry-run)", 
                                            variable=self.dry_run)
-        dry_run_check.pack(side=self.tk.LEFT, padx=5, pady=5)
+        dry_run_check.pack(side=self.tk.LEFT, padx=5, pady=3)
         
         # Кнопки управления
         button_frame = self.tk.Frame(control_frame)
-        button_frame.pack(side=self.tk.RIGHT, padx=5, pady=5)
+        button_frame.pack(side=self.tk.RIGHT, padx=5, pady=3)
         
         self.start_button = self.tk.Button(button_frame, text="Запустить", 
                                           command=self.start_automation)
@@ -3558,10 +3667,10 @@ class AutomationGUI(object):
         
         # Лог выполнения (на основной вкладке)
         log_frame = self.tk.LabelFrame(self.main_frame, text="Лог выполнения")
-        log_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        log_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=3)
         
         # Создаем Text с прокруткой
-        self.log_text = self.tk.Text(log_frame, height=12, wrap=self.tk.WORD)
+        self.log_text = self.tk.Text(log_frame, height=8, wrap=self.tk.WORD)
         scrollbar = self.tk.Scrollbar(log_frame, orient=self.tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
@@ -3573,32 +3682,32 @@ class AutomationGUI(object):
         
         # Статус
         status_frame = self.tk.LabelFrame(self.main_frame, text="Статус")
-        status_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        status_frame.pack(fill=self.tk.X, padx=10, pady=3)
         
         self.status_label = self.tk.Label(status_frame, text="Готов к запуску")
-        self.status_label.pack(padx=5, pady=5)
+        self.status_label.pack(padx=5, pady=3)
         
         # Информация о логе
         log_info_frame = self.tk.LabelFrame(self.main_frame, text="Информация о логе")
-        log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        log_info_frame.pack(fill=self.tk.X, padx=10, pady=3)
         
         logger = get_logger()
         log_path = logger.get_log_path()
         self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_path, 
                                           font=('Courier', 8), fg='blue')
-        self.log_path_label.pack(padx=5, pady=2)
+        self.log_path_label.pack(padx=5, pady=1)
         
         # Кнопка для открытия лога
         self.open_log_button = self.tk.Button(log_info_frame, text="Открыть лог файл", 
                                             command=self.open_log_file)
-        self.open_log_button.pack(padx=5, pady=2)
+        self.open_log_button.pack(padx=5, pady=1)
         
         # Статистика (зафиксирована внизу)
         stats_frame = self.tk.LabelFrame(self.main_frame, text="Статистика")
-        stats_frame.pack(fill=self.tk.X, padx=10, pady=5, side=self.tk.BOTTOM)
+        stats_frame.pack(fill=self.tk.X, padx=10, pady=3, side=self.tk.BOTTOM)
         
         stats_inner = self.tk.Frame(stats_frame)
-        stats_inner.pack(fill=self.tk.X, padx=5, pady=5)
+        stats_inner.pack(fill=self.tk.X, padx=5, pady=3)
         
         # Колонки статистики
         self.tk.Label(stats_inner, text="Репозитории:").grid(row=0, column=0, sticky=self.tk.W)
@@ -3759,11 +3868,15 @@ class AutomationGUI(object):
                                    font=('Arial', 10))
         info_label.pack(padx=10, pady=5)
         
-        # Кнопки управления
+        # Кнопки управления (группированные по функциям)
         button_frame = self.tk.Frame(self.wine_frame)
         button_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        self.check_wine_button = self.tk.Button(button_frame, 
+        # Первая строка: Основные действия
+        main_buttons_frame = self.tk.Frame(button_frame)
+        main_buttons_frame.pack(fill=self.tk.X, pady=2)
+        
+        self.check_wine_button = self.tk.Button(main_buttons_frame, 
                                                 text="Проверить компоненты", 
                                                 command=self.run_wine_check,
                                                 font=('Arial', 10, 'bold'),
@@ -3771,7 +3884,7 @@ class AutomationGUI(object):
                                                 fg='white')
         self.check_wine_button.pack(side=self.tk.LEFT, padx=5)
         
-        self.install_wine_button = self.tk.Button(button_frame, 
+        self.install_wine_button = self.tk.Button(main_buttons_frame, 
                                                   text="Установить выбранные", 
                                                   command=self.run_wine_install,
                                                   font=('Arial', 10, 'bold'),
@@ -3780,7 +3893,7 @@ class AutomationGUI(object):
                                                   state=self.tk.DISABLED)
         self.install_wine_button.pack(side=self.tk.LEFT, padx=5)
         
-        self.uninstall_wine_button = self.tk.Button(button_frame, 
+        self.uninstall_wine_button = self.tk.Button(main_buttons_frame, 
                                                     text="Удалить выбранные", 
                                                     command=self.run_wine_uninstall,
                                                     font=('Arial', 10, 'bold'),
@@ -3789,7 +3902,11 @@ class AutomationGUI(object):
                                                     state=self.tk.DISABLED)
         self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
         
-        self.full_cleanup_button = self.tk.Button(button_frame, 
+        # Вторая строка: Дополнительные действия
+        extra_buttons_frame = self.tk.Frame(button_frame)
+        extra_buttons_frame.pack(fill=self.tk.X, pady=2)
+        
+        self.full_cleanup_button = self.tk.Button(extra_buttons_frame, 
                                                   text="Полная очистка", 
                                                   command=self.run_full_cleanup,
                                                   font=('Arial', 10, 'bold'),
@@ -3797,23 +3914,8 @@ class AutomationGUI(object):
                                                   fg='white')
         self.full_cleanup_button.pack(side=self.tk.LEFT, padx=5)
         
-        self.check_repos_button = self.tk.Button(button_frame, 
-                                                 text="Проверить репозитории", 
-                                                 command=self.run_repos_check,
-                                                 font=('Arial', 10, 'bold'),
-                                                 bg='#FF9800',
-                                                 fg='white')
-        self.check_repos_button.pack(side=self.tk.LEFT, padx=5)
-        
-        self.sysmon_button = self.tk.Button(button_frame, 
-                                            text="Системный монитор", 
-                                            command=self.open_system_monitor,
-                                            font=('Arial', 10, 'bold'),
-                                            bg='#9C27B0',
-                                            fg='white')
-        self.sysmon_button.pack(side=self.tk.LEFT, padx=5)
-        
-        self.wine_status_label = self.tk.Label(button_frame, 
+        # Статус
+        self.wine_status_label = self.tk.Label(extra_buttons_frame, 
                                                text="Нажмите кнопку для проверки",
                                                font=('Arial', 9))
         self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
@@ -3840,6 +3942,18 @@ class AutomationGUI(object):
         self.memory_label = self.tk.Label(memory_col, text="Проверяется...", font=('Arial', 9))
         self.memory_label.pack(anchor=self.tk.W)
         
+        # Колонка 3: Кнопка системного монитора
+        monitor_col = self.tk.Frame(resources_panel)
+        monitor_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(monitor_col, text="Мониторинг:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.sysmon_button = self.tk.Button(monitor_col, 
+                                            text="Системный монитор", 
+                                            command=self.open_system_monitor,
+                                            font=('Arial', 8, 'bold'),
+                                            bg='#9C27B0',
+                                            fg='white')
+        self.sysmon_button.pack(anchor=self.tk.W, pady=2)
+        
         # Предупреждение о ресурсах
         self.resources_warning_label = self.tk.Label(resources_frame, 
                                                      text="", 
@@ -3848,64 +3962,6 @@ class AutomationGUI(object):
                                                      wraplength=800)
         self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
         
-        # Панель прогресса установки
-        progress_frame = self.tk.LabelFrame(self.wine_frame, text="Прогресс установки")
-        progress_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        # Прогресс-бар
-        self.wine_progress = self.ttk.Progressbar(progress_frame, 
-                                                  length=600, 
-                                                  mode='determinate')
-        self.wine_progress.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        # Информационная панель (3 колонки)
-        info_panel = self.tk.Frame(progress_frame)
-        info_panel.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        # Колонка 1: Время
-        time_col = self.tk.Frame(info_panel)
-        time_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(time_col, text="Время:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_time_label = self.tk.Label(time_col, text="0 мин 0 сек", font=('Arial', 9))
-        self.wine_time_label.pack(anchor=self.tk.W)
-        
-        # Колонка 2: Размер
-        size_col = self.tk.Frame(info_panel)
-        size_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(size_col, text="Установлено:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_size_label = self.tk.Label(size_col, text="0 MB", font=('Arial', 9))
-        self.wine_size_label.pack(anchor=self.tk.W)
-        
-        # Колонка 3: CPU
-        cpu_col = self.tk.Frame(info_panel)
-        cpu_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(cpu_col, text="CPU:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_cpu_label = self.tk.Label(cpu_col, text="░░░░░░░░░░ 0%", font=('Courier', 9))
-        self.wine_cpu_label.pack(anchor=self.tk.W)
-        
-        # Колонка 4: Сеть
-        net_col = self.tk.Frame(info_panel)
-        net_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(net_col, text="Сеть:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_net_label = self.tk.Label(net_col, text="░░░░░░░░░░ 0.0 MB/s", font=('Courier', 9))
-        self.wine_net_label.pack(anchor=self.tk.W)
-        
-        # Колонка 5: Процессы
-        proc_col = self.tk.Frame(info_panel)
-        proc_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(proc_col, text="Процессы Wine:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_proc_label = self.tk.Label(proc_col, text="неактивны", font=('Arial', 9))
-        self.wine_proc_label.pack(anchor=self.tk.W)
-        
-        # Текущий этап
-        stage_frame = self.tk.Frame(progress_frame)
-        stage_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        self.tk.Label(stage_frame, text="Этап:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.wine_stage_label = self.tk.Label(stage_frame, text="Ожидание...", font=('Arial', 9), fg='gray')
-        self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
-        
-        # Инициализируем монитор как None
-        self.install_monitor = None
         
         # Область статуса компонентов
         status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов (кликните для выбора)")
@@ -3939,18 +3995,6 @@ class AutomationGUI(object):
         
         self.wine_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         wine_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
-        
-        # Итоговая сводка
-        summary_frame = self.tk.LabelFrame(self.wine_frame, text="Итоговая сводка")
-        summary_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        self.wine_summary_text = self.tk.Text(summary_frame, height=4, wrap=self.tk.WORD,
-                                             font=('Courier', 9))
-        self.wine_summary_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
-        self.wine_summary_text.config(state=self.tk.DISABLED)
-        
-        # Заполняем начальными данными
-        self.populate_wine_status_initial()
     
     def populate_wine_status_initial(self):
         """Заполнение начальными данными (без проверки)"""
@@ -4028,33 +4072,54 @@ class AutomationGUI(object):
             self.disk_space_label.config(text=disk_text)
             
             # Проверяем память
-            with open('/proc/meminfo', 'r') as f:
-                meminfo = f.read()
-            
-            lines = meminfo.split('\n')
-            mem_total = 0
-            mem_available = 0
-            
-            for line in lines:
-                if line.startswith('MemTotal:'):
-                    mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
-                elif line.startswith('MemAvailable:'):
-                    mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
-            
-            memory_text = "%d МБ доступно из %d МБ" % (mem_available, mem_total)
-            if mem_available < 1024:
-                memory_text += " ⚠️"
-                self.memory_label.config(fg='red')
+            import platform
+            if platform.system() == "Linux":
+                with open('/proc/meminfo', 'r') as f:
+                    meminfo = f.read()
+                
+                lines = meminfo.split('\n')
+                mem_total = 0
+                mem_available = 0
+                
+                for line in lines:
+                    if line.startswith('MemTotal:'):
+                        mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                    elif line.startswith('MemAvailable:'):
+                        mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                
+                if mem_available == 0:
+                    # Fallback для старых ядер
+                    mem_free = 0
+                    mem_buffers = 0
+                    mem_cached = 0
+                    for line in lines:
+                        if line.startswith('MemFree:'):
+                            mem_free = int(line.split()[1]) // 1024
+                        elif line.startswith('Buffers:'):
+                            mem_buffers = int(line.split()[1]) // 1024
+                        elif line.startswith('Cached:'):
+                            mem_cached = int(line.split()[1]) // 1024
+                    
+                    mem_available = mem_free + mem_buffers + mem_cached
+                
+                memory_text = "%d МБ доступно из %d МБ" % (mem_available, mem_total)
+                if mem_available < 1024:
+                    memory_text += " ⚠️"
+                    self.memory_label.config(fg='red')
+                else:
+                    self.memory_label.config(fg='green')
+                
+                self.memory_label.config(text=memory_text)
             else:
-                self.memory_label.config(fg='green')
-            
-            self.memory_label.config(text=memory_text)
+                # Для macOS и других систем
+                memory_text = "Информация недоступна"
+                self.memory_label.config(text=memory_text, fg='gray')
             
             # Проверяем общие требования
             warnings = []
             if free_gb < 4.0:
                 warnings.append("Недостаточно дискового пространства (требуется минимум 4 ГБ)")
-            if mem_available < 1024:
+            if platform.system() == "Linux" and mem_available < 1024:
                 warnings.append("Недостаточно памяти (требуется минимум 1 ГБ)")
             
             if warnings:
@@ -4670,155 +4735,6 @@ class AutomationGUI(object):
         # Включаем кнопки обратно
         self.check_wine_button.config(state=self.tk.NORMAL)
     
-    def run_repos_check(self):
-        """Запуск проверки репозиториев"""
-        self.wine_status_label.config(text="Проверка репозиториев...", fg='blue')
-        self.check_repos_button.config(state=self.tk.DISABLED)
-        
-        # Запускаем проверку в отдельном потоке
-        import threading
-        check_thread = threading.Thread(target=self._perform_repos_check)
-        check_thread.daemon = True
-        check_thread.start()
-    
-    def _perform_repos_check(self):
-        """Выполнение проверки репозиториев (в отдельном потоке)"""
-        try:
-            self.root.after(0, lambda: self.log_message("\n" + "=" * 60))
-            self.root.after(0, lambda: self.log_message("[REPOS] ДИАГНОСТИКА РЕПОЗИТОРИЕВ"))
-            self.root.after(0, lambda: self.log_message("=" * 60))
-            
-            # 1. Проверка прав доступа к sources.list
-            sources_file = "/etc/apt/sources.list"
-            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка файла репозиториев..."))
-            self.root.after(0, lambda: self.log_message("Файл: %s" % sources_file))
-            
-            if not os.path.exists(sources_file):
-                self.root.after(0, lambda: self.log_message("[ERR] Файл не существует!", ))
-                self.root.after(0, lambda: self._repos_check_completed(False))
-                return
-            
-            # Проверяем права на чтение
-            try:
-                with open(sources_file, 'r') as f:
-                    content = f.read()
-                self.root.after(0, lambda: self.log_message("[OK] Файл доступен для чтения"))
-                self.root.after(0, lambda: self.log_message("Размер файла: %d байт" % len(content)))
-            except PermissionError:
-                self.root.after(0, lambda: self.log_message("[ERR] Нет прав на чтение файла!"))
-                self.root.after(0, lambda: self.log_message("[INFO] Требуются права root"))
-                content = None
-            except Exception as e:
-                self.root.after(0, lambda: self.log_message("[ERR] Ошибка чтения: %s" % str(e)))
-                content = None
-            
-            # 2. Вывод содержимого sources.list
-            if content:
-                self.root.after(0, lambda: self.log_message("\n[INFO] Содержимое /etc/apt/sources.list:"))
-                self.root.after(0, lambda: self.log_message("-" * 60))
-                
-                lines = content.split('\n')
-                active_repos = []
-                disabled_repos = []
-                
-                for i, line in enumerate(lines, 1):
-                    line_stripped = line.strip()
-                    if not line_stripped or line_stripped.startswith('#'):
-                        # Комментарий или пустая строка
-                        if line_stripped.startswith('#') and 'deb' in line_stripped:
-                            disabled_repos.append(line_stripped)
-                    elif line_stripped.startswith('deb'):
-                        # Активный репозиторий
-                        active_repos.append(line_stripped)
-                        self.root.after(0, lambda l=line_stripped: self.log_message("  [ACTIVE] %s" % l))
-                
-                self.root.after(0, lambda: self.log_message("-" * 60))
-                self.root.after(0, lambda: self.log_message("Активных репозиториев: %d" % len(active_repos)))
-                self.root.after(0, lambda: self.log_message("Отключенных репозиториев: %d" % len(disabled_repos)))
-                
-                if len(active_repos) == 0:
-                    self.root.after(0, lambda: self.log_message("[WARNING] НЕТ АКТИВНЫХ РЕПОЗИТОРИЕВ!"))
-                    self.root.after(0, lambda: self.log_message("[WARNING] Это объясняет ошибки установки пакетов"))
-            
-            # 3. Проверка доступности репозиториев
-            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка доступности репозиториев..."))
-            self.root.after(0, lambda: self.log_message("Выполнение: apt-get update (это может занять время)"))
-            
-            result = subprocess.run(
-                ['apt-get', 'update'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                check=False
-            )
-            
-            if result.returncode == 0:
-                self.root.after(0, lambda: self.log_message("[OK] apt-get update выполнен успешно"))
-            else:
-                self.root.after(0, lambda: self.log_message("[ERR] apt-get update завершился с ошибкой (код %d)" % result.returncode))
-                
-                if result.stderr:
-                    self.root.after(0, lambda: self.log_message("\nОшибки:"))
-                    for line in result.stderr.strip().split('\n')[:20]:  # Первые 20 строк
-                        if line.strip():
-                            self.root.after(0, lambda l=line: self.log_message("  ! %s" % l))
-            
-            # 4. Проверка политики apt
-            self.root.after(0, lambda: self.log_message("\n[CHECK] Политика APT..."))
-            
-            result = subprocess.run(
-                ['apt-cache', 'policy'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                check=False
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                lines = result.stdout.strip().split('\n')[:15]  # Первые 15 строк
-                for line in lines:
-                    if line.strip():
-                        self.root.after(0, lambda l=line: self.log_message("  %s" % l))
-            
-            # 5. Проверка наличия нужных пакетов в репозиториях
-            self.root.after(0, lambda: self.log_message("\n[CHECK] Проверка доступности пакетов-зависимостей..."))
-            
-            required_packages = ['ia32-libs', 'winetricks', 'libc6:i386']
-            
-            for pkg in required_packages:
-                result = subprocess.run(
-                    ['apt-cache', 'show', pkg],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                    check=False
-                )
-                
-                if result.returncode == 0:
-                    self.root.after(0, lambda p=pkg: self.log_message("  [OK] Пакет '%s' найден в репозиториях" % p))
-                else:
-                    self.root.after(0, lambda p=pkg: self.log_message("  [ERR] Пакет '%s' НЕ найден в репозиториях!" % p))
-            
-            # Завершение
-            self.root.after(0, lambda: self.log_message("\n" + "=" * 60))
-            self.root.after(0, lambda: self.log_message("[REPOS] ДИАГНОСТИКА ЗАВЕРШЕНА"))
-            self.root.after(0, lambda: self.log_message("=" * 60))
-            
-            self.root.after(0, lambda: self._repos_check_completed(True))
-            
-        except Exception as e:
-            error_msg = "Ошибка проверки репозиториев: %s" % str(e)
-            self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
-            self.root.after(0, lambda: self._repos_check_completed(False))
-    
-    def _repos_check_completed(self, success):
-        """Обработка завершения проверки репозиториев"""
-        if success:
-            self.wine_status_label.config(text="Диагностика репозиториев завершена (см. лог)", fg='green')
-        else:
-            self.wine_status_label.config(text="Ошибка проверки репозиториев", fg='red')
-        
-        self.check_repos_button.config(state=self.tk.NORMAL)
     
     # ========================================================================
     # МЕТОДЫ ДЛЯ ВКЛАДКИ РЕПОЗИТОРИЕВ
@@ -5156,10 +5072,10 @@ class AutomationGUI(object):
             while not self.terminal_queue.empty():
                 message = self.terminal_queue.get_nowait()
                 # Обновляем терминал в главном потоке (безопасно)
-                self.terminal_text.config(state=self.tk.NORMAL)
-                self.terminal_text.insert(self.tk.END, message + "\n")
-                self.terminal_text.see(self.tk.END)
-                self.terminal_text.config(state=self.tk.DISABLED)
+            self.terminal_text.config(state=self.tk.NORMAL)
+            self.terminal_text.insert(self.tk.END, message + "\n")
+            self.terminal_text.see(self.tk.END)
+            self.terminal_text.config(state=self.tk.DISABLED)
         except Exception as e:
             pass  # Игнорируем ошибки
         finally:
@@ -6830,8 +6746,8 @@ def main():
             else:
                 print("\n[ERROR] Не удалось обработать репозитории")
                 sys.exit(1)
-        
-        logger.log_info("Начинаем выполнение основной программы")
+            
+            logger.log_info("Начинаем выполнение основной программы")
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
@@ -6858,7 +6774,6 @@ def main():
                 except Exception as gui_error:
                     logger.log_exception(gui_error, "Критическая ошибка GUI")
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                    logger.cleanup_locks()
                     
             elif start_mode == "gui_install_first":
                 # Нужно установить GUI компоненты
@@ -6907,7 +6822,7 @@ def main():
                 except Exception as gui_error:
                     logger.log_exception(gui_error, "Критическая ошибка GUI")
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                    logger.cleanup_locks()
+                logger.cleanup_locks()
             return
     
         # Консольный режим (только если указан --console)
