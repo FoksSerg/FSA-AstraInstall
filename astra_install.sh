@@ -419,6 +419,21 @@ echo ""
         if install_tkinter_with_verification; then
                 echo "   [OK] tkinter установлен и работает"
                 log_message "tkinter установлен и проверен"
+                
+                # Устанавливаем дополнительные компоненты для GUI
+                echo ""
+                echo "[#] Установка дополнительных компонентов для GUI..."
+                yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
+                COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
+                
+                if [ $COMPONENTS_EXIT_CODE -eq 0 ] || [ $COMPONENTS_EXIT_CODE -eq 141 ]; then
+                    echo "   [OK] Дополнительные компоненты установлены (код: $COMPONENTS_EXIT_CODE)"
+                    log_message "psutil, wmctrl, xdotool, expect установлены успешно"
+                else
+                    echo "   [WARNING] Некоторые компоненты не установлены (код: $COMPONENTS_EXIT_CODE)"
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые компоненты не установлены, функциональность может быть ограничена"
+                fi
+                
                 # Меняем режим на gui_ready после успешной установки
                 START_MODE="gui_ready"
                 echo "   [i] Режим изменен на: gui_ready"
@@ -489,6 +504,20 @@ echo ""
 if [ "$CONSOLE_MODE" = true ]; then
     echo "[>] Консольный режим - обновление системы..."
     log_message "Запускаем консольный режим"
+    
+    # Устанавливаем psutil для мониторинга системы в консольном режиме
+    echo ""
+    echo "[#] Установка psutil для мониторинга системы..."
+    yes "Y" | apt-get install -y python3-psutil $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
+    PSUTIL_EXIT_CODE=${PIPESTATUS[0]}
+    
+    if [ $PSUTIL_EXIT_CODE -eq 0 ] || [ $PSUTIL_EXIT_CODE -eq 141 ]; then
+        echo "   [OK] psutil установлен (код: $PSUTIL_EXIT_CODE)"
+        log_message "psutil установлен успешно в консольном режиме"
+    else
+        echo "   [WARNING] psutil не установлен (код: $PSUTIL_EXIT_CODE)"
+        log_message "ПРЕДУПРЕЖДЕНИЕ: psutil не установлен, мониторинг будет ограничен"
+    fi
     
     echo ""
     echo "[*] Запуск Python скрипта в консольном режиме..."

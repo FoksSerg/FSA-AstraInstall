@@ -19,7 +19,7 @@ import traceback
 
 # Попытка импорта psutil (может быть не установлен)
 try:
-    import psutil
+    import psutil  # pyright: ignore[reportMissingModuleSource]
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -3291,7 +3291,7 @@ class AutomationGUI(object):
         
         # Принудительно центрируем окно после создания
         self.root.update_idletasks()
-        self._center_window()
+        # self._center_window()  # Отключено - вызывает проблемы
         
         # Разрешаем изменение размера окна
         self.root.resizable(True, True)
@@ -3486,14 +3486,9 @@ class AutomationGUI(object):
     def _update_system_display(self):
         """Периодическое обновление отображения CPU/NET в GUI"""
         try:
-            # Обновляем CPU
-            cpu_bar = self._create_progress_bar(self.last_cpu_usage, 100, 10)
-            self.wine_cpu_label.config(text=cpu_bar)
-            
-            # Обновляем Сеть
-            net_percent = min(100, int((self.last_net_speed / 10.0) * 100))
-            net_bar = self._create_progress_bar(net_percent, 100, 10)
-            self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, self.last_net_speed))
+            # Обновляем только графические прогресс-бары
+            # Псевдографические индикаторы убраны
+            pass
             
         except Exception as e:
             pass  # Игнорируем ошибки обновления
@@ -3593,7 +3588,7 @@ class AutomationGUI(object):
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
         # Панель прогресса установки (закреплена внизу главного окна)
-        progress_frame = self.tk.LabelFrame(self.root, text="Прогресс установки и итоговая сводка")
+        progress_frame = self.tk.LabelFrame(self.root, text="Прогресс установки")
         progress_frame.pack(fill=self.tk.X, padx=10, pady=3, side=self.tk.BOTTOM, anchor=self.tk.S)
         
         # Делаем панель прогресса устойчивой к сжатию
@@ -3605,55 +3600,42 @@ class AutomationGUI(object):
                                                   mode='determinate')
         self.wine_progress.pack(fill=self.tk.X, padx=10, pady=3)
         
-        # Информационная панель (5 колонок)
+        # Информационная панель - ВСЕ В ОДНОЙ СТРОКЕ
         info_panel = self.tk.Frame(progress_frame)
         info_panel.pack(fill=self.tk.X, padx=10, pady=3)
         
-        # Колонка 1: Время
-        time_col = self.tk.Frame(info_panel)
-        time_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(time_col, text="Время:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_time_label = self.tk.Label(time_col, text="0 мин 0 сек", font=('Arial', 9))
-        self.wine_time_label.pack(anchor=self.tk.W)
+        # Время
+        self.tk.Label(info_panel, text="Время:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_time_label = self.tk.Label(info_panel, text="0 мин 0 сек", font=('Arial', 9))
+        self.wine_time_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
-        # Колонка 2: Размер
-        size_col = self.tk.Frame(info_panel)
-        size_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(size_col, text="Установлено:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_size_label = self.tk.Label(size_col, text="0 MB", font=('Arial', 9))
-        self.wine_size_label.pack(anchor=self.tk.W)
+        # Размер
+        self.tk.Label(info_panel, text="Установлено:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_size_label = self.tk.Label(info_panel, text="0 MB", font=('Arial', 9))
+        self.wine_size_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
-        # Колонка 3: CPU
-        cpu_col = self.tk.Frame(info_panel)
-        cpu_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(cpu_col, text="CPU:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_cpu_progress = self.ttk.Progressbar(cpu_col, length=100, mode='determinate')
-        self.wine_cpu_progress.pack(anchor=self.tk.W, fill=self.tk.X)
-        self.wine_cpu_label = self.tk.Label(cpu_col, text="0%", font=('Arial', 8))
-        self.wine_cpu_label.pack(anchor=self.tk.W)
+        # CPU
+        self.tk.Label(info_panel, text="CPU:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_cpu_progress = self.ttk.Progressbar(info_panel, length=60, mode='determinate')
+        self.wine_cpu_progress.pack(side=self.tk.LEFT, padx=(5, 5))
+        self.wine_cpu_label = self.tk.Label(info_panel, text="0%", font=('Arial', 8))
+        self.wine_cpu_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
-        # Колонка 4: Сеть
-        net_col = self.tk.Frame(info_panel)
-        net_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(net_col, text="Сеть:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_net_progress = self.ttk.Progressbar(net_col, length=100, mode='determinate')
-        self.wine_net_progress.pack(anchor=self.tk.W, fill=self.tk.X)
-        self.wine_net_label = self.tk.Label(net_col, text="0.0 MB/s", font=('Arial', 8))
-        self.wine_net_label.pack(anchor=self.tk.W)
+        # Сеть
+        self.tk.Label(info_panel, text="Сеть:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_net_progress = self.ttk.Progressbar(info_panel, length=60, mode='determinate')
+        self.wine_net_progress.pack(side=self.tk.LEFT, padx=(5, 5))
+        self.wine_net_label = self.tk.Label(info_panel, text="0.0 MB/s", font=('Arial', 8))
+        self.wine_net_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
-        # Колонка 5: Процессы
-        proc_col = self.tk.Frame(info_panel)
-        proc_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(proc_col, text="Процессы Wine:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.wine_proc_label = self.tk.Label(proc_col, text="неактивны", font=('Arial', 9))
-        self.wine_proc_label.pack(anchor=self.tk.W)
-        
-        # Текущий этап
-        stage_frame = self.tk.Frame(progress_frame)
-        stage_frame.pack(fill=self.tk.X, padx=10, pady=3)
-        self.tk.Label(stage_frame, text="Этап:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.wine_stage_label = self.tk.Label(stage_frame, text="Ожидание...", font=('Arial', 9), fg='gray')
+        # Этап
+        self.tk.Label(info_panel, text="Этап:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_stage_label = self.tk.Label(info_panel, text="Ожидание...", font=('Arial', 9), fg='gray')
         self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Процессы Wine перенесены на вкладку "Информация о Системе"
+        
+        # Этап перенесен в info_panel выше
         
         # Настройка минимального размера окна
         self.root.minsize(800, 600)
@@ -3665,11 +3647,11 @@ class AutomationGUI(object):
         # Инициализируем монитор как None
         self.install_monitor = None
         
-        # Заполняем начальными данными
-        self.populate_wine_status_initial()
-        
         # Запускаем фоновое обновление системных ресурсов
         self.start_background_resource_update()
+        
+        # Заполняем начальными данными ПОСЛЕ создания всех виджетов
+        self.populate_wine_status_initial()
         
     def create_main_tab(self):
         """Создание основной вкладки"""
@@ -4050,27 +4032,36 @@ class AutomationGUI(object):
     
     def _center_window(self):
         """Центрирование окна на экране"""
-        # Обновляем информацию о размерах окна
-        self.root.update_idletasks()
-        
-        # Получаем актуальные размеры окна
-        window_width = self.root.winfo_width()
-        window_height = self.root.winfo_height()
-        
-        # Получаем размер экрана
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        
-        # Вычисляем позицию для центрирования
-        center_x = int(screen_width/2 - window_width/2)
-        center_y = int(screen_height/2 - window_height/2)
-        
-        # Убеждаемся, что окно не выходит за границы экрана
-        center_x = max(0, center_x)
-        center_y = max(0, center_y)
-        
-        # Устанавливаем новую позицию
-        self.root.geometry('+%d+%d' % (center_x, center_y))
+        try:
+            # Обновляем информацию о размерах окна
+            self.root.update_idletasks()
+            
+            # Получаем актуальные размеры окна
+            window_width = self.root.winfo_width()
+            window_height = self.root.winfo_height()
+            
+            # Если размеры еще не определены, используем значения по умолчанию
+            if window_width <= 1 or window_height <= 1:
+                window_width = 1000
+                window_height = 600
+            
+            # Получаем размер экрана
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
+            # Вычисляем позицию для центрирования
+            center_x = int(screen_width/2 - window_width/2)
+            center_y = int(screen_height/2 - window_height/2)
+            
+            # Убеждаемся, что окно не выходит за границы экрана
+            center_x = max(0, center_x)
+            center_y = max(0, center_y)
+            
+            # Устанавливаем новую позицию
+            self.root.geometry('+%d+%d' % (center_x, center_y))
+        except Exception as e:
+            # Игнорируем ошибки центрирования
+            pass
     
     def _limit_tab_height(self, event):
         """Ограничиваем высоту вкладок, чтобы панель прогресса была видна"""
@@ -4158,6 +4149,17 @@ class AutomationGUI(object):
         self.wine_path_label = self.tk.Label(wine_path_frame, text="Не найден", font=('Arial', 9))
         self.wine_path_label.pack(side=self.tk.LEFT, padx=5)
         
+        # Процессы Wine (перенесенные с основной панели)
+        wine_proc_frame = self.tk.LabelFrame(self.system_info_frame, text="Процессы Wine")
+        wine_proc_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Количество процессов
+        proc_count_frame = self.tk.Frame(wine_proc_frame)
+        proc_count_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(proc_count_frame, text="Активные процессы:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_proc_label = self.tk.Label(proc_count_frame, text="неактивны", font=('Arial', 9))
+        self.wine_proc_label.pack(side=self.tk.LEFT, padx=5)
+        
         # Итоговая сводка (перенесенная с основной вкладки)
         summary_frame = self.tk.LabelFrame(self.system_info_frame, text="Итоговая сводка")
         summary_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
@@ -4167,8 +4169,7 @@ class AutomationGUI(object):
         self.wine_summary_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         self.wine_summary_text.config(state=self.tk.DISABLED)
         
-        # Заполняем начальными данными итоговой сводки
-        self.populate_wine_status_initial()
+        # Инициализация уже выполнена в AutomationGUI.__init__
         
         # Информация о логе (перенесенная с основной вкладки)
         log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
@@ -4361,6 +4362,10 @@ class AutomationGUI(object):
                     # Обновляем прогресс-бар
                     self.wine_cpu_progress['value'] = cpu_usage
                     
+                    # Обновляем текстовую метку
+                    if hasattr(self, 'wine_cpu_label'):
+                        self.wine_cpu_label.config(text="%.1f%%" % cpu_usage)
+                    
                     # Цветовая индикация CPU
                     if cpu_usage < 30:
                         cpu_color = 'green'
@@ -4386,7 +4391,7 @@ class AutomationGUI(object):
                     self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
                 except:
                     self.wine_cpu_progress['value'] = 0
-                    self.wine_cpu_label.config(text="N/A", fg='gray')
+                    self.wine_cpu_label.config(text="0.0%", fg='gray')
             
             if hasattr(self, 'wine_net_progress'):
                 try:
@@ -4401,6 +4406,10 @@ class AutomationGUI(object):
                     
                     # Обновляем прогресс-бар
                     self.wine_net_progress['value'] = net_percent
+                    
+                    # Обновляем текстовую метку
+                    if hasattr(self, 'wine_net_label'):
+                        self.wine_net_label.config(text="%.1f MB/s" % net_speed)
                     
                     # Цветовая индикация сети (более мягкие пороги)
                     if net_speed < 0.1:
@@ -4433,7 +4442,7 @@ class AutomationGUI(object):
                     self.wine_net_label.config(text="%.2f MB/s" % net_speed, fg=net_color)
                 except:
                     self.wine_net_progress['value'] = 0
-                    self.wine_net_label.config(text="N/A", fg='gray')
+                    self.wine_net_label.config(text="0.0 MB/s", fg='gray')
             
             # Проверяем общие требования
             warnings = []
