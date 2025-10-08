@@ -1381,6 +1381,10 @@ class WineInstaller(object):
         self.winetricks = os.path.join(self.astrapack_dir, "winetricks")
         self.wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
         self.winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
+        
+        # Минимальные требования для Wine + Astra.IDE
+        self.min_free_space_gb = 4.0  # 4 ГБ для Wine + Astra.IDE + компоненты
+        self.min_free_memory_mb = 1024  # 1 ГБ памяти для Wine процессов
     
     def _log(self, message, level="INFO"):
         """Логирование с выводом в консоль и callback"""
@@ -1397,6 +1401,447 @@ class WineInstaller(object):
         
         if self.callback:
             self.callback(message)
+    
+    def _check_disk_space(self):
+        """Проверка свободного места на диске для Wine/Astra.IDE"""
+        try:
+            import shutil
+            total, used, free = shutil.disk_usage('/')
+            free_gb = free / (1024**3)
+            
+            self._log("Проверка дискового пространства: %.2f ГБ свободно (минимум: %.1f ГБ)" % (free_gb, self.min_free_space_gb))
+            
+            if free_gb < self.min_free_space_gb:
+                self._log("ОШИБКА: Недостаточно свободного места на диске!", "ERROR")
+                self._log("Требуется минимум %.1f ГБ для установки Wine + Astra.IDE" % self.min_free_space_gb, "ERROR")
+                self._log("Рекомендации:", "ERROR")
+                self._log("  - Очистите временные файлы: sudo apt clean && sudo apt autoclean", "ERROR")
+                self._log("  - Удалите неиспользуемые пакеты: sudo apt autoremove", "ERROR")
+                self._log("  - Проверьте логи: sudo du -sh /var/log/*", "ERROR")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка проверки дискового пространства: %s" % str(e), "ERROR")
+            return False
+    
+    def _check_memory(self):
+        """Проверка доступной памяти для Wine процессов"""
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = f.read()
+            
+            # Извлекаем информацию о памяти
+            lines = meminfo.split('\n')
+            mem_total = 0
+            mem_available = 0
+            
+            for line in lines:
+                if line.startswith('MemTotal:'):
+                    mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                elif line.startswith('MemAvailable:'):
+                    mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
+            
+            self._log("Проверка памяти: %d МБ доступно (минимум: %d МБ)" % (mem_available, self.min_free_memory_mb))
+            
+            if mem_available < self.min_free_memory_mb:
+                self._log("ОШИБКА: Недостаточно свободной памяти!", "ERROR")
+                self._log("Требуется минимум %d МБ для работы Wine процессов" % self.min_free_memory_mb, "ERROR")
+                self._log("Рекомендации:", "ERROR")
+                self._log("  - Закройте другие приложения", "ERROR")
+                self._log("  - Перезагрузите систему для освобождения памяти", "ERROR")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка проверки памяти: %s" % str(e), "ERROR")
+            return False
+    
+    def check_system_resources(self):
+        """Проверка системных ресурсов для Wine/Astra.IDE"""
+        self._log("=" * 60)
+        self._log("ПРОВЕРКА СИСТЕМНЫХ РЕСУРСОВ")
+        self._log("=" * 60)
+        
+        # Проверяем свободное место на диске
+        if not self._check_disk_space():
+            self._log("ПРОВЕРКА ДИСКА: НЕ ПРОЙДЕНА", "ERROR")
+            return False
+        
+        # Проверяем доступную память
+        if not self._check_memory():
+            self._log("ПРОВЕРКА ПАМЯТИ: НЕ ПРОЙДЕНА", "ERROR")
+            return False
+        
+        self._log("=" * 60)
+        self._log("ВСЕ СИСТЕМНЫЕ РЕСУРСЫ В ПОРЯДКЕ")
+        self._log("=" * 60)
+        return True
+    
+    def _check_xdotool(self):
+        """Проверка наличия xdotool для автоматического подтверждения диалогов"""
+        try:
+            result = subprocess.run(
+                ['xdotool', '--version'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                version = result.stdout.decode('utf-8').strip()
+                self._log("xdotool найден: %s" % version)
+                return True
+            else:
+                self._log("xdotool не найден", "WARNING")
+                return False
+                
+        except FileNotFoundError:
+            self._log("xdotool не установлен", "WARNING")
+            return False
+        except Exception as e:
+            self._log("Ошибка проверки xdotool: %s" % str(e), "WARNING")
+            return False
+    
+    def _install_xdotool(self):
+        """Установка xdotool для автоматического подтверждения диалогов"""
+        try:
+            self._log("Установка xdotool...")
+            
+            # Устанавливаем xdotool через apt
+            result = subprocess.run(
+                ['apt-get', 'install', '-y', 'xdotool'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                check=False
+            )
+            
+            if result.returncode == 0:
+                self._log("xdotool успешно установлен")
+                return True
+            else:
+                self._log("Ошибка установки xdotool: %s" % result.stderr, "ERROR")
+                return False
+                
+        except Exception as e:
+            self._log("Ошибка установки xdotool: %s" % str(e), "ERROR")
+            return False
+    
+    def _ensure_wineprefix_architecture(self):
+        """Проверка и исправление архитектуры WINEPREFIX"""
+        self._log("Проверка архитектуры WINEPREFIX...")
+        
+        # Если WINEPREFIX не существует, создаем его с правильной архитектурой
+        if not os.path.exists(self.wineprefix):
+            self._log("WINEPREFIX не существует, создаем с архитектурой win64...")
+            
+            # Настраиваем переменные окружения для создания WINEPREFIX
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINEARCH'] = 'win64'
+            env['WINEBUILD'] = 'x86_64'
+            env['WINEDEBUG'] = '-all'
+            env['WINE'] = '/opt/wine-9.0/bin/wine'
+            
+            # Отключаем диалоги Wine Mono
+            env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
+            env['WINEDEBUG'] = '-all'
+            
+            # Пытаемся отключить диалоги Wine Mono через переменные окружения
+            env['WINE_MONO_INSTALL'] = '0'  # Отключаем автоматическую установку Mono
+            env['WINE_GECKO_INSTALL'] = '0'  # Отключаем автоматическую установку Gecko
+            
+            # Создаем WINEPREFIX с автоматическим подтверждением диалогов Wine Mono
+            try:
+                # Запускаем winecfg в фоне и автоматически подтверждаем диалоги
+                result = self._create_wineprefix_with_auto_confirm(env)
+                
+                if result:
+                    self._log("WINEPREFIX создан с архитектурой win64")
+                    return True
+                else:
+                    self._log("Ошибка создания WINEPREFIX", "ERROR")
+                    return False
+                    
+            except Exception as e:
+                self._log("Ошибка создания WINEPREFIX: %s" % str(e), "ERROR")
+                return False
+        
+        # Проверяем существующий WINEPREFIX
+        reg_file = os.path.join(self.wineprefix, "system.reg")
+        if os.path.exists(reg_file):
+            try:
+                with open(reg_file, 'r') as f:
+                    content = f.read()
+                    if '[Software\\Wine\\WineDbg]' in content and 'ShowCrashDialog' in content:
+                        # Это похоже на правильный WINEPREFIX
+                        self._log("WINEPREFIX существует и выглядит корректно")
+                        return True
+                    else:
+                        self._log("WINEPREFIX поврежден, пересоздаем...", "WARNING")
+                        # Удаляем поврежденный WINEPREFIX
+                        import shutil
+                        shutil.rmtree(self.wineprefix)
+                        return self._ensure_wineprefix_architecture()
+            except Exception as e:
+                self._log("Ошибка проверки WINEPREFIX: %s" % str(e), "ERROR")
+                return False
+        else:
+            self._log("WINEPREFIX неполный, пересоздаем...", "WARNING")
+            import shutil
+            shutil.rmtree(self.wineprefix)
+            return self._ensure_wineprefix_architecture()
+    
+    def _create_wineprefix_with_auto_confirm(self, env):
+        """Создание WINEPREFIX с автоматическим подтверждением диалогов Wine Mono"""
+        import threading
+        import time
+        
+        self._log("Запуск winecfg с автоматическим подтверждением диалогов...")
+        
+        # Пробуем использовать expect для автоматического подтверждения
+        if self._try_expect_method(env):
+            return True
+        
+        # Если expect не сработал, используем xdotool
+        self._log("Переход к методу xdotool...")
+        
+        # Запускаем winecfg в отдельном процессе
+        process = subprocess.Popen(
+            [env['WINE'], 'winecfg'],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Запускаем мониторинг диалогов в отдельном потоке
+        dialog_thread = threading.Thread(target=self._monitor_wine_dialogs, args=(process.pid,))
+        dialog_thread.daemon = True
+        dialog_thread.start()
+        
+        # Ждем завершения процесса с таймаутом
+        try:
+            stdout, stderr = process.communicate(timeout=60)
+            
+            # Логируем вывод
+            if stdout:
+                for line in stdout.strip().split('\n'):
+                    if line.strip():
+                        self._log("  > %s" % line)
+            
+            if stderr:
+                for line in stderr.strip().split('\n'):
+                    if line.strip():
+                        self._log("  ! %s" % line)
+            
+            # Проверяем успешность создания WINEPREFIX
+            if os.path.exists(self.wineprefix):
+                self._log("WINEPREFIX успешно создан")
+                return True
+            else:
+                self._log("WINEPREFIX не был создан", "ERROR")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self._log("Таймаут при создании WINEPREFIX", "ERROR")
+            process.kill()
+            return False
+        except Exception as e:
+            self._log("Ошибка при создании WINEPREFIX: %s" % str(e), "ERROR")
+            return False
+    
+    def _try_expect_method(self, env):
+        """Попытка использования expect для автоматического подтверждения"""
+        try:
+            self._log("Попытка использования expect для автоматического подтверждения...")
+            
+            # Создаем expect скрипт
+            expect_script = '''#!/usr/bin/expect -f
+set timeout 60
+spawn {wine} winecfg
+expect {{
+    "Установка Wine Mono" {{
+        send "\\r"
+        exp_continue
+    }}
+    "Wine Mono Installation" {{
+        send "\\r"
+        exp_continue
+    }}
+    "Install" {{
+        send "\\r"
+        exp_continue
+    }}
+    "Установить" {{
+        send "\\r"
+        exp_continue
+    }}
+    timeout {{
+        exit 1
+    }}
+    eof {{
+        exit 0
+    }}
+}}
+'''.format(wine=env['WINE'])
+            
+            # Записываем скрипт во временный файл
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.exp', delete=False) as f:
+                f.write(expect_script)
+                script_path = f.name
+            
+            # Делаем скрипт исполняемым
+            os.chmod(script_path, 0o755)
+            
+            # Запускаем expect скрипт
+            result = subprocess.run(
+                [script_path],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False
+            )
+            
+            # Удаляем временный файл
+            os.unlink(script_path)
+            
+            if result.returncode == 0 and os.path.exists(self.wineprefix):
+                self._log("WINEPREFIX создан через expect")
+                return True
+            else:
+                self._log("expect метод не сработал")
+                return False
+                
+        except Exception as e:
+            self._log("Ошибка expect метода: %s" % str(e), "WARNING")
+            return False
+    
+    def _monitor_wine_dialogs(self, wine_pid):
+        """Мониторинг и автоматическое подтверждение диалогов Wine"""
+        import time
+        
+        self._log("Запуск мониторинга диалогов Wine...")
+        
+        # Ждем немного, чтобы Wine успел запуститься
+        time.sleep(1)
+        
+        # Ищем окна Wine Mono и автоматически подтверждаем их
+        max_attempts = 30  # Увеличиваем количество попыток
+        attempt = 0
+        
+        while attempt < max_attempts:
+            try:
+                # Ищем все окна Wine
+                result = subprocess.run(
+                    ['xdotool', 'search', '--name', 'Wine'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    window_ids = result.stdout.strip().decode('utf-8').split('\n')
+                    self._log("Найдено окон Wine: %d" % len(window_ids))
+                    
+                    for window_id in window_ids:
+                        if not window_id.strip():
+                            continue
+                            
+                        # Получаем название окна
+                        name_result = subprocess.run(
+                            ['xdotool', 'getwindowname', window_id],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False
+                        )
+                        
+                        if name_result.returncode == 0:
+                            window_name = name_result.stdout.strip().decode('utf-8')
+                            self._log("Окно Wine: '%s' (ID: %s)" % (window_name, window_id))
+                            
+                            # Проверяем, это ли диалог Wine Mono
+                            if any(keyword in window_name.lower() for keyword in ['mono', 'установка', 'installation']):
+                                self._log("Найден диалог Wine Mono: %s" % window_name)
+                                
+                                # Активируем окно
+                                subprocess.run(['xdotool', 'windowactivate', window_id], check=False)
+                                time.sleep(0.5)
+                                
+                                # Пробуем разные способы нажатия кнопки "Установить"
+                                # Способ 1: Tab + Enter (если кнопка в фокусе)
+                                subprocess.run(['xdotool', 'key', 'Tab'], check=False)
+                                time.sleep(0.2)
+                                subprocess.run(['xdotool', 'key', 'Return'], check=False)
+                                time.sleep(0.5)
+                                
+                                # Способ 2: Прямой клик по кнопке "Установить" (если Tab не сработал)
+                                subprocess.run(['xdotool', 'key', 'Alt+U'], check=False)  # Alt+U для "Установить"
+                                time.sleep(0.5)
+                                
+                                # Способ 3: Enter (если кнопка уже в фокусе)
+                                subprocess.run(['xdotool', 'key', 'Return'], check=False)
+                                
+                                self._log("Автоматически подтвержден диалог Wine Mono")
+                                return  # Выходим из функции после успешного подтверждения
+                
+                # Также ищем по английскому названию более точно
+                result = subprocess.run(
+                    ['xdotool', 'search', '--name', 'Mono'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    window_ids = result.stdout.strip().decode('utf-8').split('\n')
+                    for window_id in window_ids:
+                        if not window_id.strip():
+                            continue
+                            
+                        name_result = subprocess.run(
+                            ['xdotool', 'getwindowname', window_id],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False
+                        )
+                        
+                        if name_result.returncode == 0:
+                            window_name = name_result.stdout.strip().decode('utf-8')
+                            if 'mono' in window_name.lower():
+                                self._log("Найден диалог Mono (EN): %s" % window_name)
+                                
+                                subprocess.run(['xdotool', 'windowactivate', window_id], check=False)
+                                time.sleep(0.5)
+                                subprocess.run(['xdotool', 'key', 'Tab'], check=False)
+                                time.sleep(0.2)
+                                subprocess.run(['xdotool', 'key', 'Return'], check=False)
+                                time.sleep(0.5)
+                                subprocess.run(['xdotool', 'key', 'Alt+I'], check=False)  # Alt+I для "Install"
+                                
+                                self._log("Автоматически подтвержден диалог Mono (EN)")
+                                return
+                
+                # Проверяем, что процесс Wine еще работает
+                try:
+                    subprocess.run(['kill', '-0', str(wine_pid)], check=True)
+                except subprocess.CalledProcessError:
+                    self._log("Процесс Wine завершился")
+                    break
+                
+                time.sleep(0.5)  # Уменьшаем интервал для более быстрого реагирования
+                attempt += 1
+                
+            except Exception as e:
+                self._log("Ошибка мониторинга диалогов: %s" % str(e), "WARNING")
+                break
+        
+        self._log("Мониторинг диалогов Wine завершен (попыток: %d)" % attempt)
     
     def _run_command(self, cmd, description="", sudo=False):
         """Выполнение команды с логированием"""
@@ -1479,6 +1924,17 @@ class WineInstaller(object):
         if os.geteuid() != 0:
             self._log("ОШИБКА: Требуются права root для установки", "ERROR")
             return False
+        
+        # Проверяем системные ресурсы
+        if not self.check_system_resources():
+            self._log("ОШИБКА: Недостаточно системных ресурсов для установки", "ERROR")
+            return False
+        
+        # Проверяем и устанавливаем xdotool для автоматического подтверждения диалогов
+        if not self._check_xdotool():
+            self._log("xdotool не найден, устанавливаем...")
+            if not self._install_xdotool():
+                self._log("ПРЕДУПРЕЖДЕНИЕ: Не удалось установить xdotool - диалоги Wine могут требовать ручного подтверждения", "WARNING")
         
         self._log("=" * 60)
         self._log("ВСЕ ПРЕДВАРИТЕЛЬНЫЕ УСЛОВИЯ ВЫПОЛНЕНЫ")
@@ -1636,6 +2092,15 @@ class WineInstaller(object):
             return False
         
         self._log("\nWine пакеты успешно установлены!")
+        
+        # Проверяем и исправляем архитектуру WINEPREFIX после установки Wine
+        self._log("\nПроверка архитектуры WINEPREFIX...")
+        if not self._ensure_wineprefix_architecture():
+            self._log("ПРЕДУПРЕЖДЕНИЕ: Не удалось настроить архитектуру WINEPREFIX", "WARNING")
+            self._log("Продолжаем установку - архитектура будет проверена позже", "WARNING")
+        else:
+            self._log("WINEPREFIX настроен с правильной архитектурой win64")
+        
         return True
     
     def configure_ptrace_scope(self):
@@ -1854,9 +2319,12 @@ class WineInstaller(object):
         env['WINEDEBUG'] = '-all'
         env['WINE'] = '/opt/wine-9.0/bin/wine'
         
+        # КРИТИЧЕСКИ ВАЖНО: Устанавливаем правильную архитектуру для Astra.IDE
+        env['WINEARCH'] = 'win64'
+        env['WINEBUILD'] = 'x86_64'
+        
         # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
         env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d'
-        env['WINEARCH'] = 'win64'
         env['DISPLAY'] = ':0'
         
         # Дополнительные параметры для подавления диалогов
@@ -2046,9 +2514,15 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
         env['WINEDEBUG'] = '-all'
         env['WINE'] = '/opt/wine-astraregul/bin/wine'
         
-        # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
-        env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d'
+        # КРИТИЧЕСКИ ВАЖНО: Устанавливаем правильную архитектуру для Astra.IDE
         env['WINEARCH'] = 'win64'
+        env['WINEBUILD'] = 'x86_64'
+        
+        # Дополнительные параметры для стабильности Astra.IDE
+        env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
+        env['WINEDLLPATH'] = '/opt/wine-astraregul/lib64/wine'
+        
+        # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
         env['DISPLAY'] = ':0'
         
         self._log("Запуск установщика Astra.IDE...")
@@ -2081,6 +2555,15 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
             
             self._log("Выполняем команду: %s" % ' '.join(su_cmd))
             
+            # Дополнительная диагностика архитектуры
+            self._log("Проверка архитектуры Wine перед установкой...")
+            arch_check_cmd = ['su', real_user, '-c', 'export WINEPREFIX="%s" && export WINEARCH=win64 && %s winecfg --version' % (self.wineprefix, env['WINE'])]
+            arch_result = subprocess.run(arch_check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
+            if arch_result.returncode == 0:
+                self._log("Wine архитектура: %s" % arch_result.stdout.strip())
+            else:
+                self._log("Предупреждение: не удалось проверить архитектуру Wine", "WARNING")
+            
             # Запускаем установку от имени пользователя
             result = subprocess.run(
                 su_cmd,
@@ -2095,6 +2578,19 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
                 self._log("Установщик Astra.IDE завершен успешно")
             else:
                 self._log("Установщик завершился с кодом: %d" % result.returncode)
+                self._log("Вывод stdout: %s" % result.stdout)
+                self._log("Вывод stderr: %s" % result.stderr)
+                
+                # Проверяем на специфические ошибки Wine
+                if "page fault" in result.stderr.lower():
+                    self._log("ОШИБКА: Обнаружена ошибка доступа к памяти Wine!", "ERROR")
+                    self._log("Это может быть связано с неправильной архитектурой WINEPREFIX", "ERROR")
+                    self._log("Рекомендация: удалите WINEPREFIX и переустановите компоненты", "ERROR")
+                    return False
+                elif "package" in result.stderr.lower() and "temp" in result.stderr.lower():
+                    self._log("ОШИБКА: Проблема с временными файлами установщика", "ERROR")
+                    self._log("Рекомендация: очистите временные файлы и попробуйте снова", "ERROR")
+                    return False
             
             # Даем время на завершение установки
             import time
@@ -2418,6 +2914,131 @@ class WineUninstaller(object):
             self._log("Ошибка удаления WINEPREFIX: %s" % str(e), "ERROR")
             return False
     
+    def remove_all_wine_data(self):
+        """ПОЛНАЯ очистка всех данных Wine (включая кэши, временные файлы, логи)"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 3: ПОЛНАЯ ОЧИСТКА ВСЕХ ДАННЫХ WINE")
+        self._log("=" * 60)
+        
+        try:
+            # Список всех папок и файлов Wine для удаления
+            wine_paths = [
+                # Основной WINEPREFIX
+                self.wineprefix,
+                
+                # Кэши Wine
+                os.path.join(self.home, ".cache", "wine"),
+                os.path.join(self.home, ".cache", "winetricks"),
+                
+                # Другие возможные WINEPREFIX
+                os.path.join(self.home, ".wine"),
+                os.path.join(self.home, ".wine-*"),
+                
+                # Временные файлы Wine
+                os.path.join(self.home, ".local", "share", "wineprefixes"),
+                
+                # Логи Wine
+                os.path.join(self.home, ".wine-*", "*.log"),
+                
+                # Конфигурационные файлы Wine
+                os.path.join(self.home, ".config", "wine"),
+                
+                # Временные файлы установки
+                os.path.join(self.home, "Temp"),
+                os.path.join(self.home, ".tmp"),
+            ]
+            
+            removed_count = 0
+            total_size = 0
+            
+            for path in wine_paths:
+                if os.path.exists(path):
+                    try:
+                        # Подсчитываем размер перед удалением
+                        if os.path.isdir(path):
+                            for root, dirs, files in os.walk(path):
+                                for file in files:
+                                    try:
+                                        total_size += os.path.getsize(os.path.join(root, file))
+                                    except:
+                                        pass
+                        
+                        # Удаляем файл/папку
+                        if os.path.isdir(path):
+                            import shutil
+                            shutil.rmtree(path)
+                            self._log("Удалена папка: %s" % path)
+                        else:
+                            os.remove(path)
+                            self._log("Удален файл: %s" % path)
+                        
+                        removed_count += 1
+                        
+                    except Exception as e:
+                        self._log("Не удалось удалить %s: %s" % (path, str(e)), "WARNING")
+                else:
+                    # Проверяем паттерны с * (например, .wine-*)
+                    if '*' in path:
+                        import glob
+                        matching_paths = glob.glob(path)
+                        for match_path in matching_paths:
+                            try:
+                                if os.path.isdir(match_path):
+                                    import shutil
+                                    shutil.rmtree(match_path)
+                                    self._log("Удалена папка (паттерн): %s" % match_path)
+                                    removed_count += 1
+                                elif os.path.isfile(match_path):
+                                    os.remove(match_path)
+                                    self._log("Удален файл (паттерн): %s" % match_path)
+                                    removed_count += 1
+                            except Exception as e:
+                                self._log("Не удалось удалить %s: %s" % (match_path, str(e)), "WARNING")
+            
+            # Очищаем системные кэши Wine (если есть права)
+            system_cache_paths = [
+                "/tmp/.wine-*",
+                "/var/tmp/.wine-*",
+                "/tmp/wine-*",
+            ]
+            
+            for path in system_cache_paths:
+                try:
+                    import glob
+                    matching_paths = glob.glob(path)
+                    for match_path in matching_paths:
+                        try:
+                            if os.path.isdir(match_path):
+                                import shutil
+                                shutil.rmtree(match_path)
+                                self._log("Удален системный кэш: %s" % match_path)
+                                removed_count += 1
+                        except Exception as e:
+                            self._log("Не удалось удалить системный кэш %s: %s" % (match_path, str(e)), "WARNING")
+                except Exception as e:
+                    self._log("Ошибка очистки системных кэшей: %s" % str(e), "WARNING")
+            
+            # Форматируем размер
+            if total_size > 1024 * 1024 * 1024:  # ГБ
+                size_str = "%.1f ГБ" % (total_size / (1024 * 1024 * 1024))
+            elif total_size > 1024 * 1024:  # МБ
+                size_str = "%.1f МБ" % (total_size / (1024 * 1024))
+            else:  # КБ
+                size_str = "%.1f КБ" % (total_size / 1024)
+            
+            self._log("=" * 60)
+            self._log("ПОЛНАЯ ОЧИСТКА ЗАВЕРШЕНА")
+            self._log("=" * 60)
+            self._log("Удалено объектов: %d" % removed_count)
+            self._log("Освобождено места: %s" % size_str)
+            self._log("=" * 60)
+            
+            return True
+            
+        except Exception as e:
+            self._log("Ошибка полной очистки Wine: %s" % str(e), "ERROR")
+            return False
+    
     def remove_winetricks_components(self):
         """Удаление отдельных компонентов winetricks (без полного удаления WINEPREFIX)"""
         if not self.winetricks_components:
@@ -2582,6 +3203,14 @@ class WineUninstaller(object):
         else:
             self._log("\nШаг: Пропущено (WINEPREFIX не выбран)")
         
+        # ПОЛНАЯ ОЧИСТКА всех данных Wine (кэши, временные файлы, логи)
+        if self.remove_wineprefix:
+            self._log("\nВыполняется полная очистка всех данных Wine...")
+            if not self.remove_all_wine_data():
+                self._log("\nПРЕДУПРЕЖДЕНИЕ: Ошибка полной очистки Wine (не критично)")
+        else:
+            self._log("\nШаг: Пропущено (полная очистка не требуется)")
+        
         # Удаление Wine пакетов
         if self.remove_wine:
             if not self.remove_wine_packages():
@@ -2625,6 +3254,9 @@ class AutomationGUI(object):
         
         self.root = tk.Tk()
         self.root.title("FSA-AstraInstall Automation")
+        
+        # Обработчик закрытия окна
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
         # Размер окна
         window_width = 1000
@@ -2675,7 +3307,7 @@ class AutomationGUI(object):
         
         # Закрываем родительский терминал после полного запуска GUI
         if self.close_terminal_pid:
-            self.root.after(2000, self._close_parent_terminal)
+            self.root.after(500, self._close_parent_terminal)
         
         # Запускаем постоянный мониторинг CPU/NET
         self.start_system_monitoring()
@@ -2711,6 +3343,7 @@ class AutomationGUI(object):
     def _close_parent_terminal(self):
         """Закрытие родительского терминала после полного запуска GUI"""
         if not self.close_terminal_pid:
+            self.log_message("[INFO] PID терминала не задан, пропускаем закрытие")
             return
         
         try:
@@ -2724,10 +3357,9 @@ class AutomationGUI(object):
                 # Процесс уже не существует
                 return
             
-            # Сначала мягкое завершение
+            # Простая попытка закрытия через os.kill
             try:
                 os.kill(pid, signal.SIGTERM)
-                self.log_message("[INFO] Отправлен SIGTERM терминалу (PID: %d)" % pid)
                 
                 # Даем время на завершение
                 import time
@@ -2738,16 +3370,23 @@ class AutomationGUI(object):
                     os.kill(pid, 0)
                     # Процесс еще жив - отправляем SIGKILL
                     os.kill(pid, signal.SIGKILL)
-                    self.log_message("[INFO] Отправлен SIGKILL терминалу (PID: %d)" % pid)
                 except OSError:
                     # Процесс уже завершился
-                    self.log_message("[INFO] Родительский терминал успешно закрыт (PID: %d)" % pid)
+                    pass
                     
-            except Exception as e:
-                self.log_message("[WARNING] Не удалось закрыть терминал: %s" % str(e))
+            except Exception:
+                # Игнорируем ошибки закрытия
+                pass
                 
         except Exception as e:
             self.log_message("[ERROR] Ошибка закрытия родительского терминала: %s" % str(e))
+    
+    def _on_closing(self):
+        """Обработчик закрытия окна GUI"""
+        self.log_message("[INFO] GUI закрывается, пытаемся закрыть терминал")
+        if self.close_terminal_pid:
+            self._close_parent_terminal()
+        self.root.destroy()
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -3150,6 +3789,14 @@ class AutomationGUI(object):
                                                     state=self.tk.DISABLED)
         self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
         
+        self.full_cleanup_button = self.tk.Button(button_frame, 
+                                                  text="Полная очистка", 
+                                                  command=self.run_full_cleanup,
+                                                  font=('Arial', 10, 'bold'),
+                                                  bg='#E91E63',
+                                                  fg='white')
+        self.full_cleanup_button.pack(side=self.tk.LEFT, padx=5)
+        
         self.check_repos_button = self.tk.Button(button_frame, 
                                                  text="Проверить репозитории", 
                                                  command=self.run_repos_check,
@@ -3170,6 +3817,36 @@ class AutomationGUI(object):
                                                text="Нажмите кнопку для проверки",
                                                font=('Arial', 9))
         self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
+        
+        # Панель системных ресурсов
+        resources_frame = self.tk.LabelFrame(self.wine_frame, text="Системные ресурсы")
+        resources_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Информация о ресурсах (2 колонки)
+        resources_panel = self.tk.Frame(resources_frame)
+        resources_panel.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        # Колонка 1: Дисковое пространство
+        disk_col = self.tk.Frame(resources_panel)
+        disk_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(disk_col, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.disk_space_label = self.tk.Label(disk_col, text="Проверяется...", font=('Arial', 9))
+        self.disk_space_label.pack(anchor=self.tk.W)
+        
+        # Колонка 2: Память
+        memory_col = self.tk.Frame(resources_panel)
+        memory_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
+        self.tk.Label(memory_col, text="Доступная память:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
+        self.memory_label = self.tk.Label(memory_col, text="Проверяется...", font=('Arial', 9))
+        self.memory_label.pack(anchor=self.tk.W)
+        
+        # Предупреждение о ресурсах
+        self.resources_warning_label = self.tk.Label(resources_frame, 
+                                                     text="", 
+                                                     font=('Arial', 9),
+                                                     fg='red',
+                                                     wraplength=800)
+        self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
         
         # Панель прогресса установки
         progress_frame = self.tk.LabelFrame(self.wine_frame, text="Прогресс установки")
@@ -3327,6 +4004,73 @@ class AutomationGUI(object):
         self.wine_summary_text.insert(self.tk.END, "Нажмите кнопку 'Проверить компоненты' для запуска проверки\n")
         self.wine_summary_text.insert(self.tk.END, "Проверка покажет какие компоненты установлены и готовы к работе")
         self.wine_summary_text.config(state=self.tk.DISABLED)
+        
+        # Обновляем информацию о ресурсах
+        self.update_resources_info()
+    
+    def update_resources_info(self):
+        """Обновление информации о системных ресурсах в GUI"""
+        try:
+            import shutil
+            
+            # Проверяем дисковое пространство
+            total, used, free = shutil.disk_usage('/')
+            free_gb = free / (1024**3)
+            total_gb = total / (1024**3)
+            
+            disk_text = "%.1f ГБ свободно из %.1f ГБ" % (free_gb, total_gb)
+            if free_gb < 4.0:
+                disk_text += " ⚠️"
+                self.disk_space_label.config(fg='red')
+            else:
+                self.disk_space_label.config(fg='green')
+            
+            self.disk_space_label.config(text=disk_text)
+            
+            # Проверяем память
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = f.read()
+            
+            lines = meminfo.split('\n')
+            mem_total = 0
+            mem_available = 0
+            
+            for line in lines:
+                if line.startswith('MemTotal:'):
+                    mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                elif line.startswith('MemAvailable:'):
+                    mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
+            
+            memory_text = "%d МБ доступно из %d МБ" % (mem_available, mem_total)
+            if mem_available < 1024:
+                memory_text += " ⚠️"
+                self.memory_label.config(fg='red')
+            else:
+                self.memory_label.config(fg='green')
+            
+            self.memory_label.config(text=memory_text)
+            
+            # Проверяем общие требования
+            warnings = []
+            if free_gb < 4.0:
+                warnings.append("Недостаточно дискового пространства (требуется минимум 4 ГБ)")
+            if mem_available < 1024:
+                warnings.append("Недостаточно памяти (требуется минимум 1 ГБ)")
+            
+            if warnings:
+                warning_text = "⚠️ ВНИМАНИЕ: " + "; ".join(warnings)
+                self.resources_warning_label.config(text=warning_text)
+                self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+            else:
+                self.resources_warning_label.config(text="✅ Системные ресурсы достаточны для установки Wine + Astra.IDE")
+                self.resources_warning_label.config(fg='green')
+                self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+                
+        except Exception as e:
+            self.disk_space_label.config(text="Ошибка проверки", fg='red')
+            self.memory_label.config(text="Ошибка проверки", fg='red')
+            self.resources_warning_label.config(text="Ошибка проверки системных ресурсов: %s" % str(e))
+            self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
     
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
@@ -3779,6 +4523,84 @@ class AutomationGUI(object):
         uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
         uninstall_thread.daemon = True
         uninstall_thread.start()
+    
+    def run_full_cleanup(self):
+        """Запуск полной очистки всех данных Wine"""
+        # Подтверждение от пользователя
+        import tkinter.messagebox as messagebox
+        message = ("ВНИМАНИЕ! Полная очистка удалит ВСЕ данные Wine:\n\n"
+                  "• WINEPREFIX (~/.wine-astraregul)\n"
+                  "• Все кэши Wine (~/.cache/wine, ~/.cache/winetricks)\n"
+                  "• Временные файлы Wine\n"
+                  "• Логи Wine\n"
+                  "• Другие WINEPREFIX (~/.wine, ~/.wine-*)\n\n"
+                  "Это действие НЕОБРАТИМО!\n\n"
+                  "Продолжить?")
+        
+        if not messagebox.askyesno("Подтверждение полной очистки", message):
+            return
+        
+        self.wine_status_label.config(text="Полная очистка запущена...", fg='orange')
+        self.full_cleanup_button.config(state=self.tk.DISABLED)
+        self.uninstall_wine_button.config(state=self.tk.DISABLED)
+        self.install_wine_button.config(state=self.tk.DISABLED)
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем полную очистку в отдельном потоке
+        import threading
+        cleanup_thread = threading.Thread(target=self._perform_full_cleanup)
+        cleanup_thread.daemon = True
+        cleanup_thread.start()
+    
+    def _perform_full_cleanup(self):
+        """Выполнение полной очистки (в отдельном потоке)"""
+        try:
+            # Создаем callback для обновления статуса
+            def update_callback(message):
+                self.root.after(0, lambda: self._update_install_status(message))
+            
+            # Получаем logger из main_log_file
+            logger = None
+            if hasattr(self, 'main_log_file') and self.main_log_file:
+                logger = Logger(self.main_log_file)
+            
+            # Создаем деинсталлятор с полной очисткой
+            uninstaller = WineUninstaller(
+                logger=logger,
+                callback=update_callback,
+                remove_wine=False,  # НЕ удаляем Wine пакеты
+                remove_wineprefix=True,  # Удаляем WINEPREFIX
+                remove_ide=True  # Удаляем скрипты и ярлыки
+            )
+            
+            # Выполняем полную очистку
+            success = uninstaller.remove_all_wine_data()
+            
+            # Уведомляем о завершении
+            self.root.after(0, lambda: self._full_cleanup_completed(success))
+            
+        except Exception as e:
+            error_msg = "Ошибка полной очистки: %s" % str(e)
+            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
+            self.root.after(0, lambda: self.log_message("[ERROR] %s" % error_msg))
+            self.root.after(0, lambda: self.full_cleanup_button.config(state=self.tk.NORMAL))
+            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+    
+    def _full_cleanup_completed(self, success):
+        """Обработка завершения полной очистки (вызывается из главного потока)"""
+        if success:
+            self.wine_status_label.config(text="Полная очистка завершена успешно!", fg='green')
+            self.log_message("[SUCCESS] Полная очистка Wine завершена успешно")
+            
+            # Автоматически запускаем проверку
+            self.root.after(2000, self.run_wine_check)
+        else:
+            self.wine_status_label.config(text="Ошибка полной очистки", fg='red')
+            self.log_message("[ERROR] Ошибка полной очистки Wine")
+        
+        # Восстанавливаем кнопки
+        self.full_cleanup_button.config(state=self.tk.NORMAL)
+        self.check_wine_button.config(state=self.tk.NORMAL)
     
     def _perform_wine_uninstall(self, selected_components):
         """Выполнение удаления Wine компонентов (в отдельном потоке)"""
@@ -5949,7 +6771,10 @@ def main():
                     if i + 1 < len(sys.argv):
                         close_terminal_pid = sys.argv[i + 1]
                         logger.log_info("Терминал будет закрыт после запуска GUI (PID: %s)" % close_terminal_pid)
+                        print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
                         i += 1  # Пропускаем следующий аргумент
+                    else:
+                        logger.log_warning("Флаг --close-terminal указан без PID")
                 elif arg == '--mode':
                     # Следующий аргумент - режим запуска
                     if i + 1 < len(sys.argv):
@@ -5960,7 +6785,8 @@ def main():
         
         # Режим настройки репозиториев - выполнить и выйти
         if setup_repos:
-            logger.log_info("Запуск режима настройки репозиториев")
+            # В режиме --setup-repos не создаем отдельный лог файл
+            # Все логи будут записаны в основной лог bash скрипта
             print("")
             print("="*60)
             print("[SETUP-REPOS] Настройка репозиториев")
@@ -5972,10 +6798,8 @@ def main():
             print("\n[BACKUP] Создаем резервную копию sources.list...")
             if repo_checker.backup_sources_list(dry_run=False):
                 print("   [OK] Backup создан")
-                logger.log_info("Backup репозиториев создан успешно")
             else:
                 print("   [ERROR] Не удалось создать backup")
-                logger.log_error("Не удалось создать backup репозиториев")
                 sys.exit(1)
             
             # Проверяем и настраиваем репозитории
@@ -5994,8 +6818,6 @@ def main():
                     print("   - Активных: %d" % stats['activated'])
                     print("   - Деактивированных: %d" % stats['deactivated'])
                     
-                    logger.log_info("Репозитории настроены: %d активных, %d деактивированных" % 
-                                  (stats['activated'], stats['deactivated']))
                     
                     print("\n="*60)
                     print("[SUCCESS] Настройка репозиториев завершена")
@@ -6004,11 +6826,9 @@ def main():
                     
                 except Exception as e:
                     print("\n[ERROR] Ошибка применения настроек: %s" % str(e))
-                    logger.log_exception(e, "Ошибка применения настроек репозиториев")
                     sys.exit(1)
             else:
                 print("\n[ERROR] Не удалось обработать репозитории")
-                logger.log_error("Не удалось обработать репозитории")
                 sys.exit(1)
         
         logger.log_info("Начинаем выполнение основной программы")

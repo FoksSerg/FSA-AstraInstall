@@ -71,13 +71,23 @@ find_tkinter_package() {
     # Список возможных названий пакетов tkinter
     local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
     
+    echo "   [DEBUG] Ищем пакеты tkinter в репозиториях..."
+    log_message "Поиск пакетов tkinter в репозиториях"
+    
     for pkg in "${TKINTER_PACKAGES[@]}"; do
+        echo "   [DEBUG] Проверяем пакет: $pkg"
         if apt-cache show "$pkg" >/dev/null 2>&1; then
+            echo "   [DEBUG] Пакет $pkg найден в репозиториях!"
+            log_message "Пакет $pkg найден в репозиториях"
             echo "$pkg"  # Возвращаем первый найденный пакет
             return 0
+        else
+            echo "   [DEBUG] Пакет $pkg не найден в репозиториях"
         fi
     done
     
+    echo "   [DEBUG] Ни один пакет tkinter не найден в репозиториях"
+    log_message "Ни один пакет tkinter не найден в репозиториях"
     return 1  # Ни один пакет не найден в репозиториях
 }
 
@@ -104,11 +114,13 @@ install_tkinter_with_verification() {
         echo "   [INSTALL] Устанавливаем $pkg..."
         log_message "Устанавливаем пакет $pkg"
         
-        # Устанавливаем с проверкой кода возврата
-        apt-get install -y $DPKG_OPTS "$pkg" 2>&1 | tee -a "$LOG_FILE"
+        # Устанавливаем с максимально агрессивными опциями автоматического подтверждения
+        # Используем yes "Y" для автоматического ответа "Y" на все запросы dpkg (обновляем конфигурации)
+        yes "Y" | apt-get install -y $DPKG_OPTS "$pkg" 2>&1 | tee -a "$LOG_FILE"
         local EXIT_CODE=${PIPESTATUS[0]}
         
-        if [ $EXIT_CODE -eq 0 ]; then
+        # Игнорируем код 141 (SIGPIPE) от yes команды - это нормально
+        if [ $EXIT_CODE -eq 0 ] || [ $EXIT_CODE -eq 141 ]; then
             echo "   [OK] Пакет $pkg установлен (код возврата: 0)"
             log_message "Пакет $pkg установлен успешно (код: 0)"
             
@@ -235,6 +247,10 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 export DEBIAN_PRIORITY=critical
 export APT_LISTCHANGES_FRONTEND=none
+
+# Опции dpkg для автоматического обновления конфигураций
+DPKG_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-confmiss"
+
 log_message "Настроены переменные окружения для автоматических ответов"
 
 echo "[?] Проверяем систему..."
@@ -267,26 +283,73 @@ echo ""
     # Переменная для выбора режима
     START_MODE=""
     
-    # Проверка 1: Есть ли tkinter?
-    echo "   [?] Проверяем доступность tkinter..."
-    if check_tkinter_available; then
-        echo "   [OK] tkinter найден и работает"
-        log_message "tkinter доступен - можно запускать GUI"
-        START_MODE="gui_ready"
-    else
-        echo "   [!] tkinter не найден"
-        log_message "tkinter недоступен - требуется анализ"
+    # СНАЧАЛА настраиваем репозитории, если их нет
+    echo "   [?] Проверяем доступность репозиториев..."
+    if ! check_repos_available; then
+        echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
+        log_message "Нет рабочих репозиториев - настраиваем через Python"
         
-        # Проверка 2: Есть ли рабочие репозитории?
-        echo "   [?] Проверяем доступность репозиториев..."
-        if check_repos_available; then
-            echo "   [OK] Рабочие репозитории найдены"
-            log_message "Рабочие репозитории доступны"
+        echo "   [#] Настраиваем репозитории через Python..."
+        log_message "Вызываем Python для настройки репозиториев"
+        
+        python3 astra-automation.py --setup-repos 2>&1 | tee -a "$LOG_FILE"
+        REPOS_EXIT_CODE=${PIPESTATUS[0]}
+        
+        if [ $REPOS_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Репозитории настроены успешно"
+            log_message "Репозитории настроены через Python"
             
-            # Проверка 3: Есть ли пакет tkinter в репозиториях?
+            # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
+            echo "   [#] Обновляем список пакетов после настройки репозиториев..."
+            log_message "Обновляем список пакетов после настройки репозиториев"
+            
+            yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
+            UPDATE_EXIT_CODE=${PIPESTATUS[0]}
+            
+        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Список пакетов обновлен после настройки репозиториев"
+            log_message "Список пакетов обновлен успешно после настройки репозиториев"
+        else
+            echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+            echo "   [i] Продолжаем работу - возможно список уже актуален"
+            log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
+        fi
+        else
+            echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
+            log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
+            echo "   [i] Переключение на консольный режим"
+            log_message "Переключение на консольный режим из-за ошибки настройки репозиториев"
+            START_MODE="console_forced"
+            CONSOLE_MODE=true
+        fi
+    else
+        echo "   [OK] Рабочие репозитории уже настроены"
+        log_message "Рабочие репозитории доступны"
+    fi
+    
+    # Теперь определяем режим на основе доступности tkinter
+    if [ -z "$START_MODE" ]; then  # Если режим еще не определен
+        echo "   [?] Проверяем доступность tkinter..."
+        if check_tkinter_available; then
+            echo "   [OK] tkinter найден и работает"
+            log_message "tkinter доступен - можно запускать GUI"
+            START_MODE="gui_ready"
+        else
+            echo "   [!] tkinter не найден"
+            log_message "tkinter недоступен - требуется установка"
+            
+            # Проверяем есть ли пакет tkinter в репозиториях
             echo "   [?] Ищем пакет tkinter в репозиториях..."
+            log_message "Поиск пакета tkinter в репозиториях"
+            
             TKINTER_PKG=$(find_tkinter_package)
-            if [ $? -eq 0 ]; then
+            TKINTER_FOUND=$?
+            
+            echo "   [DEBUG] Результат поиска tkinter: код=$TKINTER_FOUND, пакет='$TKINTER_PKG'"
+            log_message "Результат поиска tkinter: код=$TKINTER_FOUND, пакет='$TKINTER_PKG'"
+            
+            if [ $TKINTER_FOUND -eq 0 ]; then
                 echo "   [OK] Найден пакет: $TKINTER_PKG"
                 log_message "Пакет tkinter найден в репозиториях: $TKINTER_PKG"
                 START_MODE="gui_install_first"
@@ -294,11 +357,8 @@ echo ""
                 echo "   [!] Пакет tkinter не найден в репозиториях"
                 log_message "Пакет tkinter не найден - принудительный консольный режим"
                 START_MODE="console_forced"
+                CONSOLE_MODE=true
             fi
-        else
-            echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
-            log_message "Нет рабочих репозиториев - принудительный консольный режим"
-            START_MODE="console_forced"
         fi
     fi
     
@@ -338,25 +398,25 @@ echo ""
         echo "[~] Обновляем список пакетов..."
         log_message "Начинаем обновление списка пакетов (apt-get update)"
         
-        apt-get update -y 2>&1 | tee -a "$LOG_FILE"
+        yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
         UPDATE_EXIT_CODE=${PIPESTATUS[0]}
         
-        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+        # Игнорируем код 141 (SIGPIPE) от yes команды
+        if [ $UPDATE_EXIT_CODE -eq 0 ] || [ $UPDATE_EXIT_CODE -eq 141 ]; then
             echo "   [OK] Список пакетов обновлен (код: 0)"
             log_message "Список пакетов обновлен успешно (код: 0)"
         else
-            echo "   [ERROR] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-            log_message "ОШИБКА: Не удалось обновить списки пакетов (код: $UPDATE_EXIT_CODE)"
-            echo "   [i] Переключение на консольный режим"
-            log_message "Переключение на консольный режим из-за ошибки apt-get update"
-            START_MODE="console_forced"
-            CONSOLE_MODE=true
+            echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+            echo "   [i] Продолжаем работу - возможно список уже актуален"
+            log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
         fi
         
-        # Продолжаем только если update успешен
-        if [ "$START_MODE" = "gui_install_first" ]; then
-            # Устанавливаем tkinter с проверкой
-            if install_tkinter_with_verification; then
+        # НЕ переключаемся в консольный режим из-за ошибки apt-get update!
+        # Продолжаем установку GUI компонентов
+        
+        # Устанавливаем tkinter с проверкой
+        if install_tkinter_with_verification; then
                 echo "   [OK] tkinter установлен и работает"
                 log_message "tkinter установлен и проверен"
                 # Меняем режим на gui_ready после успешной установки
@@ -371,21 +431,10 @@ echo ""
                 CONSOLE_MODE=true
             fi
             
-            # Устанавливаем pip3 (не критично для GUI)
-            if ! pip3 --version >/dev/null 2>&1; then
-                echo ""
-                echo "   [#] Устанавливаем pip3..."
-                log_message "Устанавливаем pip3"
-                apt-get install -y $DPKG_OPTS python3-pip 2>&1 | tee -a "$LOG_FILE"
-                PIP_EXIT_CODE=${PIPESTATUS[0]}
-                if [ $PIP_EXIT_CODE -eq 0 ]; then
-                    echo "     [OK] pip3 установлен (код: 0)"
-                    log_message "pip3 установлен успешно (код: 0)"
-                else
-                    echo "     [WARNING] Не удалось установить pip3 (код: $PIP_EXIT_CODE)"
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Не удалось установить pip3 (код: $PIP_EXIT_CODE)"
-                fi
-            fi
+            # Пропускаем установку pip3 для экономии места и времени
+            # pip3 не критичен для работы GUI
+            echo "     [SKIP] Пропускаем установку pip3 (не критично для GUI)"
+            log_message "Пропускаем установку pip3 (не критично для GUI)"
             
             # Исправляем зависимости
     echo ""
@@ -431,7 +480,6 @@ echo ""
 echo ""
     echo "[+] Подготовка завершена!"
     log_message "Подготовка компонентов завершена. Режим: $START_MODE"
-fi
 
 # ============================================================
 # БЛОК 5: ЗАПУСК PYTHON СКРИПТА
@@ -439,34 +487,12 @@ fi
 
 echo ""
 if [ "$CONSOLE_MODE" = true ]; then
-    echo "[>] Консольный режим - настройка репозиториев и обновление системы..."
+    echo "[>] Консольный режим - обновление системы..."
     log_message "Запускаем консольный режим"
     
-    # Сначала настраиваем репозитории через Python
     echo ""
-    echo "[*] Шаг 1: Настройка репозиториев..."
-    log_message "Вызываем Python для настройки репозиториев"
-    
-    if python3 --version >/dev/null 2>&1; then
-        python3 astra-automation.py --setup-repos --log-file "$LOG_FILE"
-        SETUP_EXIT_CODE=$?
-        
-        if [ $SETUP_EXIT_CODE -eq 0 ]; then
-            echo "   [OK] Репозитории настроены успешно"
-            log_message "Репозитории настроены успешно (код: 0)"
-        else
-            echo "   [WARNING] Ошибка настройки репозиториев (код: $SETUP_EXIT_CODE)"
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка настройки репозиториев (код: $SETUP_EXIT_CODE)"
-        fi
-    else
-        echo "   [ERROR] Python 3 не найден!"
-        log_message "ОШИБКА: Python 3 не найден"
-        exit 1
-    fi
-    
-    echo ""
-    echo "[*] Шаг 2: Обновление системы..."
-    log_message "Переход к обновлению системы"
+    echo "[*] Запуск Python скрипта в консольном режиме..."
+    log_message "Запускаем Python с флагом --console"
 else
     echo "[>] Запускаем графический интерфейс..."
     log_message "Запускаем графический интерфейс"
@@ -489,9 +515,29 @@ log_message "Лог файл: $LOG_FILE"
         echo "   [i] Окно терминала закроется автоматически после запуска GUI"
         log_message "GUI запускается в фоновом режиме (детачится от терминала)"
         
-        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
-        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        # Ищем PID процесса fly-term (окно терминала)
+        TERM_PID=$(pgrep fly-term | head -1)
+        
+        # Если fly-term не найден, пробуем другие терминалы
+        if [ -z "$TERM_PID" ]; then
+            for term_name in gnome-terminal xterm konsole xfce4-terminal mate-terminal lxterminal; do
+                TERM_PID=$(pgrep "$term_name" | head -1)
+                if [ -n "$TERM_PID" ]; then
+                    break
+                fi
+            done
+        fi
+        
+        # Если терминал не найден, используем старый метод
+        if [ -z "$TERM_PID" ] || [ "$TERM_PID" = "1" ]; then
+            TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        fi
+        
+        # Последний fallback
+        if [ -z "$TERM_PID" ] || [ "$TERM_PID" = "1" ]; then
+            TERM_PID=$PPID
+        fi
+        
         log_message "PID bash скрипта: $PPID"
         log_message "PID окна терминала: $TERM_PID"
         
