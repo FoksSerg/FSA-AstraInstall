@@ -3529,6 +3529,9 @@ class AutomationGUI(object):
         self.notebook = self.ttk.Notebook(self.root)
         self.notebook.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
         
+        # Ограничиваем высоту содержимого вкладок, чтобы панель прогресса была видна
+        self.notebook.bind('<Configure>', self._limit_tab_height)
+        
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.main_frame, text=" Управление ")
@@ -3545,6 +3548,14 @@ class AutomationGUI(object):
         self.terminal_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.terminal_frame, text=" Терминал ")
         
+        # Вкладка Информация о Системе
+        self.system_info_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.system_info_frame, text=" Информация о Системе ")
+        
+        # Добавляем скроллбар для вкладки Информация о Системе
+        self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
+        self.system_info_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+        
         # Создаем элементы основной вкладки
         self.create_main_tab()
         
@@ -3557,11 +3568,18 @@ class AutomationGUI(object):
         # Создаем элементы терминальной вкладки
         self.create_terminal_tab()
         
+        # Создаем элементы вкладки Информация о Системе
+        self.create_system_info_tab()
+        
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
         # Панель прогресса установки (закреплена внизу главного окна)
         progress_frame = self.tk.LabelFrame(self.root, text="Прогресс установки и итоговая сводка")
         progress_frame.pack(fill=self.tk.X, padx=10, pady=3, side=self.tk.BOTTOM, anchor=self.tk.S)
+        
+        # Делаем панель прогресса устойчивой к сжатию
+        progress_frame.pack_propagate(True)  # Разрешаем автоматический размер
+        progress_frame.configure(height=180)  # Минимальная высота 180px
         
         # Прогресс-бар
         self.wine_progress = self.ttk.Progressbar(progress_frame, 
@@ -3614,16 +3632,6 @@ class AutomationGUI(object):
         self.wine_stage_label = self.tk.Label(stage_frame, text="Ожидание...", font=('Arial', 9), fg='gray')
         self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Итоговая сводка (встроенная в прогресс)
-        summary_frame = self.tk.Frame(progress_frame)
-        summary_frame.pack(fill=self.tk.X, padx=10, pady=3)
-        self.tk.Label(summary_frame, text="Итоговая сводка:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        
-        self.wine_summary_text = self.tk.Text(summary_frame, height=2, wrap=self.tk.WORD,
-                                             font=('Courier', 8))
-        self.wine_summary_text.pack(fill=self.tk.X, padx=5, pady=1)
-        self.wine_summary_text.config(state=self.tk.DISABLED)
-        
         # Настройка минимального размера окна
         self.root.minsize(800, 600)
         
@@ -3636,6 +3644,9 @@ class AutomationGUI(object):
         
         # Заполняем начальными данными
         self.populate_wine_status_initial()
+        
+        # Запускаем фоновое обновление системных ресурсов
+        self.start_background_resource_update()
         
     def create_main_tab(self):
         """Создание основной вкладки"""
@@ -3670,7 +3681,7 @@ class AutomationGUI(object):
         log_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=3)
         
         # Создаем Text с прокруткой
-        self.log_text = self.tk.Text(log_frame, height=8, wrap=self.tk.WORD)
+        self.log_text = self.tk.Text(log_frame, height=12, wrap=self.tk.WORD, font=('Courier', 9))
         scrollbar = self.tk.Scrollbar(log_frame, orient=self.tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
@@ -3686,21 +3697,6 @@ class AutomationGUI(object):
         
         self.status_label = self.tk.Label(status_frame, text="Готов к запуску")
         self.status_label.pack(padx=5, pady=3)
-        
-        # Информация о логе
-        log_info_frame = self.tk.LabelFrame(self.main_frame, text="Информация о логе")
-        log_info_frame.pack(fill=self.tk.X, padx=10, pady=3)
-        
-        logger = get_logger()
-        log_path = logger.get_log_path()
-        self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_path, 
-                                          font=('Courier', 8), fg='blue')
-        self.log_path_label.pack(padx=5, pady=1)
-        
-        # Кнопка для открытия лога
-        self.open_log_button = self.tk.Button(log_info_frame, text="Открыть лог файл", 
-                                            command=self.open_log_file)
-        self.open_log_button.pack(padx=5, pady=1)
         
         # Статистика (зафиксирована внизу)
         stats_frame = self.tk.LabelFrame(self.main_frame, text="Статистика")
@@ -3785,11 +3781,11 @@ class AutomationGUI(object):
         self.repos_tree.heading('distribution', text='Дистрибутив')
         self.repos_tree.heading('components', text='Компоненты')
         
-        self.repos_tree.column('status', width=80)
-        self.repos_tree.column('type', width=60)
-        self.repos_tree.column('uri', width=300)
-        self.repos_tree.column('distribution', width=150)
-        self.repos_tree.column('components', width=200)
+        self.repos_tree.column('status', width=100)
+        self.repos_tree.column('type', width=80)
+        self.repos_tree.column('uri', width=400)
+        self.repos_tree.column('distribution', width=180)
+        self.repos_tree.column('components', width=250)
         
         # Добавляем скроллбар
         repos_scrollbar = self.tk.Scrollbar(repos_list_frame, orient=self.tk.VERTICAL, 
@@ -3833,8 +3829,8 @@ class AutomationGUI(object):
         terminal_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
         
         # Создаем Text виджет для терминала
-        self.terminal_text = self.tk.Text(terminal_frame, height=20, wrap=self.tk.WORD, 
-                                       font=('Courier', 10), bg='black', fg='white')
+        self.terminal_text = self.tk.Text(terminal_frame, height=15, wrap=self.tk.WORD, 
+                                       font=('Courier', 10), bg='white', fg='black')
         terminal_scrollbar = self.tk.Scrollbar(terminal_frame, orient=self.tk.VERTICAL, 
                                             command=self.terminal_text.yview)
         self.terminal_text.configure(yscrollcommand=terminal_scrollbar.set)
@@ -3920,49 +3916,6 @@ class AutomationGUI(object):
                                                font=('Arial', 9))
         self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
         
-        # Панель системных ресурсов
-        resources_frame = self.tk.LabelFrame(self.wine_frame, text="Системные ресурсы")
-        resources_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        # Информация о ресурсах (2 колонки)
-        resources_panel = self.tk.Frame(resources_frame)
-        resources_panel.pack(fill=self.tk.X, padx=5, pady=5)
-        
-        # Колонка 1: Дисковое пространство
-        disk_col = self.tk.Frame(resources_panel)
-        disk_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(disk_col, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.disk_space_label = self.tk.Label(disk_col, text="Проверяется...", font=('Arial', 9))
-        self.disk_space_label.pack(anchor=self.tk.W)
-        
-        # Колонка 2: Память
-        memory_col = self.tk.Frame(resources_panel)
-        memory_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(memory_col, text="Доступная память:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.memory_label = self.tk.Label(memory_col, text="Проверяется...", font=('Arial', 9))
-        self.memory_label.pack(anchor=self.tk.W)
-        
-        # Колонка 3: Кнопка системного монитора
-        monitor_col = self.tk.Frame(resources_panel)
-        monitor_col.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=5)
-        self.tk.Label(monitor_col, text="Мониторинг:", font=('Arial', 9, 'bold')).pack(anchor=self.tk.W)
-        self.sysmon_button = self.tk.Button(monitor_col, 
-                                            text="Системный монитор", 
-                                            command=self.open_system_monitor,
-                                            font=('Arial', 8, 'bold'),
-                                            bg='#9C27B0',
-                                            fg='white')
-        self.sysmon_button.pack(anchor=self.tk.W, pady=2)
-        
-        # Предупреждение о ресурсах
-        self.resources_warning_label = self.tk.Label(resources_frame, 
-                                                     text="", 
-                                                     font=('Arial', 9),
-                                                     fg='red',
-                                                     wraplength=800)
-        self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
-        
-        
         # Область статуса компонентов
         status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов (кликните для выбора)")
         status_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
@@ -3977,10 +3930,10 @@ class AutomationGUI(object):
         self.wine_tree.heading('status', text='Статус')
         self.wine_tree.heading('path', text='Путь/Детали')
         
-        self.wine_tree.column('selected', width=40, anchor='center')
-        self.wine_tree.column('component', width=200)
-        self.wine_tree.column('status', width=100)
-        self.wine_tree.column('path', width=450)
+        self.wine_tree.column('selected', width=50, anchor='center')
+        self.wine_tree.column('component', width=250)
+        self.wine_tree.column('status', width=120)
+        self.wine_tree.column('path', width=500)
         
         # Словарь для хранения состояния чекбоксов (item_id -> True/False)
         self.wine_checkboxes = {}
@@ -4052,6 +4005,216 @@ class AutomationGUI(object):
         # Обновляем информацию о ресурсах
         self.update_resources_info()
     
+    def start_background_resource_update(self):
+        """Запуск фонового обновления системных ресурсов"""
+        def update_resources():
+            try:
+                self.update_resources_info()
+            except Exception as e:
+                # Игнорируем ошибки обновления
+                pass
+            # Планируем следующее обновление через 5 секунд
+            self.root.after(5000, update_resources)
+        
+        # Запускаем первое обновление через 1 секунду
+        self.root.after(1000, update_resources)
+    
+    def _limit_tab_height(self, event):
+        """Ограничиваем высоту вкладок, чтобы панель прогресса была видна"""
+        # Получаем размеры главного окна
+        root_height = self.root.winfo_height()
+        
+        # Резервируем 200px для панели прогресса
+        max_tab_height = root_height - 250
+        
+        # Ограничиваем высоту notebook
+        if max_tab_height > 0:
+            self.notebook.configure(height=max_tab_height)
+    
+    def create_system_info_tab(self):
+        """Создание вкладки Информация о Системе"""
+        # Системные ресурсы
+        resources_frame = self.tk.LabelFrame(self.system_info_frame, text="Системные ресурсы")
+        resources_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Дисковое пространство
+        disk_frame = self.tk.Frame(resources_frame)
+        disk_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(disk_frame, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.disk_space_label = self.tk.Label(disk_frame, text="Проверка...", font=('Arial', 9))
+        self.disk_space_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Доступная память
+        memory_frame = self.tk.Frame(resources_frame)
+        memory_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(memory_frame, text="Доступная память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.memory_label = self.tk.Label(memory_frame, text="Проверка...", font=('Arial', 9))
+        self.memory_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Мониторинг
+        monitor_frame = self.tk.Frame(resources_frame)
+        monitor_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(monitor_frame, text="Мониторинг:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.sysmon_button = self.tk.Button(monitor_frame, text="Системный монитор", 
+                                           command=self.open_system_monitor)
+        self.sysmon_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # Предупреждения о ресурсах
+        self.resources_warning_label = self.tk.Label(resources_frame, text="", font=('Arial', 8))
+        
+        # Информация о Linux
+        linux_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о Linux")
+        linux_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Дистрибутив
+        distro_frame = self.tk.Frame(linux_frame)
+        distro_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(distro_frame, text="Дистрибутив:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.distro_label = self.tk.Label(distro_frame, text="Определение...", font=('Arial', 9))
+        self.distro_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Версия ядра
+        kernel_frame = self.tk.Frame(linux_frame)
+        kernel_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(kernel_frame, text="Версия ядра:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.kernel_label = self.tk.Label(kernel_frame, text="Определение...", font=('Arial', 9))
+        self.kernel_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Архитектура
+        arch_frame = self.tk.Frame(linux_frame)
+        arch_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(arch_frame, text="Архитектура:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.arch_label = self.tk.Label(arch_frame, text="Определение...", font=('Arial', 9))
+        self.arch_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Информация о Wine
+        wine_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о Wine")
+        wine_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Версия Wine
+        wine_version_frame = self.tk.Frame(wine_info_frame)
+        wine_version_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(wine_version_frame, text="Версия Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_version_label = self.tk.Label(wine_version_frame, text="Не установлен", font=('Arial', 9))
+        self.wine_version_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Путь к Wine
+        wine_path_frame = self.tk.Frame(wine_info_frame)
+        wine_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(wine_path_frame, text="Путь к Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_path_label = self.tk.Label(wine_path_frame, text="Не найден", font=('Arial', 9))
+        self.wine_path_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Итоговая сводка (перенесенная с основной вкладки)
+        summary_frame = self.tk.LabelFrame(self.system_info_frame, text="Итоговая сводка")
+        summary_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.wine_summary_text = self.tk.Text(summary_frame, height=12, wrap=self.tk.WORD,
+                                             font=('Courier', 9))
+        self.wine_summary_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+        self.wine_summary_text.config(state=self.tk.DISABLED)
+        
+        # Заполняем начальными данными итоговой сводки
+        self.populate_wine_status_initial()
+        
+        # Информация о логе (перенесенная с основной вкладки)
+        log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
+        log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        logger = get_logger()
+        log_path = logger.get_log_path()
+        self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_path, 
+                                          font=('Courier', 8), fg='blue')
+        self.log_path_label.pack(padx=5, pady=3)
+        
+        # Кнопка для открытия лога
+        self.open_log_button = self.tk.Button(log_info_frame, text="Открыть лог файл", 
+                                            command=self.open_log_file)
+        self.open_log_button.pack(padx=5, pady=3)
+        
+        # Обновляем информацию о системе
+        self.update_system_info()
+    
+    def update_system_info(self):
+        """Обновление информации о системе"""
+        try:
+            import platform
+            import subprocess
+            
+            # Информация о дистрибутиве Linux
+            if platform.system() == "Linux":
+                try:
+                    # Пытаемся получить информацию о дистрибутиве
+                    with open('/etc/os-release', 'r') as f:
+                        os_info = f.read()
+                    
+                    distro_name = "Unknown"
+                    distro_version = "Unknown"
+                    
+                    for line in os_info.split('\n'):
+                        if line.startswith('PRETTY_NAME='):
+                            distro_name = line.split('=')[1].strip('"')
+                        elif line.startswith('VERSION='):
+                            distro_version = line.split('=')[1].strip('"')
+                    
+                    if distro_name != "Unknown":
+                        self.distro_label.config(text="%s %s" % (distro_name, distro_version))
+                    else:
+                        self.distro_label.config(text="Linux (неизвестный дистрибутив)")
+                        
+                except Exception:
+                    self.distro_label.config(text="Linux (информация недоступна)")
+                
+                # Версия ядра
+                try:
+                    kernel_version = platform.release()
+                    self.kernel_label.config(text=kernel_version)
+                except Exception:
+                    self.kernel_label.config(text="Неизвестно")
+                
+                # Архитектура
+                try:
+                    arch = platform.machine()
+                    self.arch_label.config(text=arch)
+                except Exception:
+                    self.arch_label.config(text="Неизвестно")
+                    
+            else:
+                # Для macOS и других систем
+                self.distro_label.config(text="%s %s" % (platform.system(), platform.release()))
+                self.kernel_label.config(text=platform.release())
+                self.arch_label.config(text=platform.machine())
+            
+            # Информация о Wine
+            try:
+                # Проверяем наличие Wine
+                result = subprocess.run(['wine', '--version'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    wine_version = result.stdout.strip()
+                    self.wine_version_label.config(text=wine_version, fg='green')
+                    
+                    # Путь к Wine
+                    wine_path_result = subprocess.run(['which', 'wine'], 
+                                                    capture_output=True, text=True, timeout=5)
+                    if wine_path_result.returncode == 0:
+                        wine_path = wine_path_result.stdout.strip()
+                        self.wine_path_label.config(text=wine_path, fg='green')
+                    else:
+                        self.wine_path_label.config(text="Путь не найден", fg='orange')
+                else:
+                    self.wine_version_label.config(text="Не установлен", fg='red')
+                    self.wine_path_label.config(text="Не найден", fg='red')
+                    
+            except Exception:
+                self.wine_version_label.config(text="Ошибка проверки", fg='red')
+                self.wine_path_label.config(text="Ошибка проверки", fg='red')
+                
+        except Exception as e:
+            self.distro_label.config(text="Ошибка: %s" % str(e), fg='red')
+            self.kernel_label.config(text="Ошибка", fg='red')
+            self.arch_label.config(text="Ошибка", fg='red')
+    
     def update_resources_info(self):
         """Обновление информации о системных ресурсах в GUI"""
         try:
@@ -4063,13 +4226,21 @@ class AutomationGUI(object):
             total_gb = total / (1024**3)
             
             disk_text = "%.1f ГБ свободно из %.1f ГБ" % (free_gb, total_gb)
-            if free_gb < 4.0:
-                disk_text += " ⚠️"
-                self.disk_space_label.config(fg='red')
-            else:
-                self.disk_space_label.config(fg='green')
             
-            self.disk_space_label.config(text=disk_text)
+            # Цветовая индикация дискового пространства
+            if free_gb < 2.0:
+                disk_text += " [CRITICAL]"
+                disk_color = 'red'
+            elif free_gb < 4.0:
+                disk_text += " [WARNING]"
+                disk_color = 'orange'
+            else:
+                disk_text += " [OK]"
+                disk_color = 'green'
+            
+            # Обновляем только если элемент существует (на новой вкладке)
+            if hasattr(self, 'disk_space_label'):
+                self.disk_space_label.config(text=disk_text, fg=disk_color)
             
             # Проверяем память
             import platform
@@ -4103,17 +4274,27 @@ class AutomationGUI(object):
                     mem_available = mem_free + mem_buffers + mem_cached
                 
                 memory_text = "%d МБ доступно из %d МБ" % (mem_available, mem_total)
-                if mem_available < 1024:
-                    memory_text += " ⚠️"
-                    self.memory_label.config(fg='red')
-                else:
-                    self.memory_label.config(fg='green')
                 
-                self.memory_label.config(text=memory_text)
+                # Цветовая индикация памяти
+                mem_percent = (mem_available / mem_total) * 100
+                if mem_percent < 20:  # Менее 20% доступно
+                    memory_text += " [CRITICAL]"
+                    memory_color = 'red'
+                elif mem_percent < 40:  # Менее 40% доступно
+                    memory_text += " [WARNING]"
+                    memory_color = 'orange'
+                else:  # Более 40% доступно
+                    memory_text += " [OK]"
+                    memory_color = 'green'
+                
+                # Обновляем только если элемент существует (на новой вкладке)
+                if hasattr(self, 'memory_label'):
+                    self.memory_label.config(text=memory_text, fg=memory_color)
             else:
                 # Для macOS и других систем
                 memory_text = "Информация недоступна"
-                self.memory_label.config(text=memory_text, fg='gray')
+                if hasattr(self, 'memory_label'):
+                    self.memory_label.config(text=memory_text, fg='gray')
             
             # Проверяем общие требования
             warnings = []
@@ -4124,18 +4305,23 @@ class AutomationGUI(object):
             
             if warnings:
                 warning_text = "⚠️ ВНИМАНИЕ: " + "; ".join(warnings)
-                self.resources_warning_label.config(text=warning_text)
-                self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+                if hasattr(self, 'resources_warning_label'):
+                    self.resources_warning_label.config(text=warning_text)
+                    self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
             else:
-                self.resources_warning_label.config(text="✅ Системные ресурсы достаточны для установки Wine + Astra.IDE")
-                self.resources_warning_label.config(fg='green')
-                self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+                if hasattr(self, 'resources_warning_label'):
+                    self.resources_warning_label.config(text="✅ Системные ресурсы достаточны для установки Wine + Astra.IDE")
+                    self.resources_warning_label.config(fg='green')
+                    self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
                 
         except Exception as e:
-            self.disk_space_label.config(text="Ошибка проверки", fg='red')
-            self.memory_label.config(text="Ошибка проверки", fg='red')
-            self.resources_warning_label.config(text="Ошибка проверки системных ресурсов: %s" % str(e))
-            self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+            if hasattr(self, 'disk_space_label'):
+                self.disk_space_label.config(text="Ошибка проверки", fg='red')
+            if hasattr(self, 'memory_label'):
+                self.memory_label.config(text="Ошибка проверки", fg='red')
+            if hasattr(self, 'resources_warning_label'):
+                self.resources_warning_label.config(text="Ошибка проверки системных ресурсов: %s" % str(e))
+                self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
     
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
@@ -4400,9 +4586,18 @@ class AutomationGUI(object):
         self.wine_stage_label.config(text="Подготовка...", fg='blue')
     
     def _create_progress_bar(self, value, max_value=100, width=10):
-        """Создать текстовый прогресс-бар"""
+        """Создать текстовый прогресс-бар с цветовой индикацией"""
         filled = int(width * value / max_value)
-        bar = '█' * filled + '░' * (width - filled)
+        
+        # Выбираем символы в зависимости от уровня
+        if value < 30:
+            filled_char = '█'  # Зеленый уровень
+        elif value < 70:
+            filled_char = '▓'  # Желтый уровень
+        else:
+            filled_char = '█'  # Красный уровень
+        
+        bar = filled_char * filled + '░' * (width - filled)
         return "%s %d%%" % (bar, value)
     
     def _update_install_progress(self, data):
@@ -4416,26 +4611,56 @@ class AutomationGUI(object):
         size_mb = data['wineprefix_size']
         self.wine_size_label.config(text="%d MB" % size_mb)
         
-        # Обновляем процессы
+        # Обновляем процессы с цветовой индикацией
         if data['wine_processes']:
             procs_text = ", ".join(data['wine_processes'][:3])  # Первые 3
             if len(data['wine_processes']) > 3:
                 procs_text += "..."
-            self.wine_proc_label.config(text=procs_text, fg='green')
+            
+            # Цветовая индикация процессов
+            proc_count = len(data['wine_processes'])
+            if proc_count == 1:
+                proc_color = 'green'  # Один процесс - нормально
+            elif proc_count <= 3:
+                proc_color = 'orange'  # Несколько процессов - активность
+            else:
+                proc_color = 'red'  # Много процессов - высокая нагрузка
+            
+            self.wine_proc_label.config(text=procs_text, fg=proc_color)
         else:
             self.wine_proc_label.config(text="неактивны", fg='gray')
         
-        # Обновляем CPU с прогресс-баром
+        # Обновляем CPU с прогресс-баром и цветовой индикацией
         cpu_usage = data.get('cpu_usage', 0)
         cpu_bar = self._create_progress_bar(cpu_usage, 100, 10)
-        self.wine_cpu_label.config(text=cpu_bar)
         
-        # Обновляем Сеть с прогресс-баром
+        # Цветовая индикация CPU
+        if cpu_usage < 30:
+            cpu_color = 'green'
+        elif cpu_usage < 70:
+            cpu_color = 'orange'
+        else:
+            cpu_color = 'red'
+        
+        self.wine_cpu_label.config(text=cpu_bar, fg=cpu_color)
+        
+        # Обновляем Сеть с прогресс-баром и цветовой индикацией
         net_speed = data.get('network_speed', 0.0)
         # Масштабируем до 10 MB/s для прогресс-бара
         net_percent = min(100, int((net_speed / 10.0) * 100))
         net_bar = self._create_progress_bar(net_percent, 100, 10)
-        self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, net_speed))
+        
+        # Цветовая индикация сети
+        if net_speed < 1.0:
+            net_color = 'gray'  # Низкая активность
+        elif net_speed < 5.0:
+            net_color = 'green'  # Нормальная активность
+        elif net_speed < 10.0:
+            net_color = 'orange'  # Высокая активность
+        else:
+            net_color = 'red'  # Очень высокая активность
+        
+        self.wine_net_label.config(text="%s %.1f MB/s" % (net_bar, net_speed), fg=net_color)
         
         # Обновляем прогресс-бар (примерная оценка на основе размера и времени)
         # Wine packages: ~100MB, winetricks: ~500MB, Astra.IDE: ~1500MB
@@ -6363,14 +6588,31 @@ def check_system_requirements():
     """Проверка системных требований"""
     print("[INFO] Проверка системных требований...")
     
+    # Проверяем операционную систему
+    import platform
+    system = platform.system()
+    
+    if system == "Darwin":  # macOS
+        print("[INFO] Обнаружена macOS - режим тестирования GUI")
+        print("[INFO] Linux-специфичные проверки пропущены")
+        return True
+    elif system != "Linux":
+        print("[WARNING] Неподдерживаемая ОС: %s" % system)
+        print("[INFO] Запуск в режиме тестирования GUI")
+        return True
+    
     # Синхронизация времени уже выполнена в bash скрипте
     print("[INFO] Синхронизация времени пропущена (уже выполнена в bash)")
     
-    # Проверяем права root
-    if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными файлами")
-        print("   Запустите: sudo python astra-automation.py")
-        return False
+    # Проверяем права root (только для Linux)
+    try:
+        if os.geteuid() != 0:
+            print("[ERROR] Требуются права root для работы с системными файлами")
+            print("   Запустите: sudo python astra-automation.py")
+            return False
+    except AttributeError:
+        # os.geteuid() не существует на macOS/Windows
+        print("[INFO] Проверка прав root пропущена (не Linux система)")
     
     # Проверяем Python версию (требуется Python 3.x)
     if sys.version_info[0] != 3:
@@ -6380,7 +6622,7 @@ def check_system_requirements():
     
     print("[OK] Python версия подходящая: %s" % sys.version.split()[0])
     
-    # Проверяем наличие apt-get
+    # Проверяем наличие apt-get (только для Linux)
     try:
         subprocess.check_call(['which', 'apt-get'], 
                             stdout=subprocess.PIPE, 
@@ -6390,7 +6632,7 @@ def check_system_requirements():
         print("[ERROR] apt-get не найден - возможно не Debian/Ubuntu система")
         return False
     
-    # Проверяем наличие sources.list
+    # Проверяем наличие sources.list (только для Linux)
     sources_list = '/etc/apt/sources.list'
     if not os.path.exists(sources_list):
         print("[ERROR] Файл %s не найден" % sources_list)
