@@ -2663,12 +2663,12 @@ expect {{
         )
         
         if success:
-            self._log("✅ Компоненты winetricks успешно установлены через WinetricksManager")
+            self._log("[OK] Компоненты winetricks успешно установлены через WinetricksManager")
             
             # Получаем полный отчет об изменениях в WINEPREFIX
             total_changes = directory_monitor.get_total_changes(self.wineprefix)
             if total_changes and (total_changes['new_files'] or total_changes['modified_files'] or total_changes['new_directories']):
-                self._log("\n📊 ПОЛНЫЙ ОТЧЕТ ОБ ИЗМЕНЕНИЯХ В WINEPREFIX:")
+                self._log("\n[REPORT] ПОЛНЫЙ ОТЧЕТ ОБ ИЗМЕНЕНИЯХ В WINEPREFIX:")
                 self._log("-" * 50)
                 formatted_changes = directory_monitor.format_changes(total_changes)
                 self._log(f"[DirectoryMonitor] {formatted_changes}")
@@ -2676,7 +2676,7 @@ expect {{
             
             return True
         else:
-            self._log("❌ Ошибка установки компонентов через WinetricksManager", "ERROR")
+            self._log("[ERROR] Ошибка установки компонентов через WinetricksManager", "ERROR")
             return False
     
     def install_astra_ide(self):
@@ -3282,7 +3282,7 @@ class MinimalWinetricks(object):
             # Логируем актуальный хеш для обновления
             actual_hash = self._sha256(dest_path)
             print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}")
-        print(f"[MinimalWinetricks] ✅ Скачан {os.path.basename(dest_path)}")
+        print(f"[MinimalWinetricks] [OK] Скачан {os.path.basename(dest_path)}")
         return dest_path
 
     def _sha256(self, path):
@@ -3380,15 +3380,15 @@ class MinimalWinetricks(object):
                 print(f"[MinimalWinetricks] Установка wine-mono после инициализации WINEPREFIX...")
                 ok = self._wine_mono(wineprefix)
                 if ok:
-                    print(f"[MinimalWinetricks] ✅ wine-mono установлен успешно")
+                    print(f"[MinimalWinetricks] [OK] wine-mono установлен успешно")
                     if callback:
-                        callback(f"✅ wine-mono установлен")
+                        callback(f"[OK] wine-mono установлен")
                         # Запускаем полную проверку всех компонентов
                         callback("UPDATE_ALL_COMPONENTS")
                 else:
-                    print(f"[MinimalWinetricks] ❌ Ошибка установки wine-mono")
+                    print(f"[MinimalWinetricks] [ERROR] Ошибка установки wine-mono")
                     if callback:
-                        callback(f"❌ Ошибка установки wine-mono")
+                        callback(f"[ERROR] Ошибка установки wine-mono")
             
             # Устанавливаем остальные компоненты
             for comp in components:
@@ -3414,20 +3414,20 @@ class MinimalWinetricks(object):
                         continue
                     
                     if ok:
-                        print(f"[MinimalWinetricks] ✅ {comp} установлен успешно")
+                        print(f"[MinimalWinetricks] [OK] {comp} установлен успешно")
                         if callback:
-                            callback(f"✅ {comp} установлен")
+                            callback(f"[OK] {comp} установлен")
                             # Запускаем полную проверку всех компонентов
                             callback("UPDATE_ALL_COMPONENTS")
                     else:
-                        print(f"[MinimalWinetricks] ❌ Ошибка установки {comp}")
+                        print(f"[MinimalWinetricks] [ERROR] Ошибка установки {comp}")
                         if callback:
-                            callback(f"❌ Ошибка установки {comp}")
+                            callback(f"[ERROR] Ошибка установки {comp}")
                         
                 except Exception as e:
                     print(f"[MinimalWinetricks] Исключение при установке {comp}: {e}")
                     if callback:
-                        callback(f"❌ Исключение при установке {comp}")
+                        callback(f"[ERROR] Исключение при установке {comp}")
             
             return True
             
@@ -4533,11 +4533,47 @@ class ComponentStatusManager(object):
         if component_name in self.removing:
             return '[Удаление]', 'removing'
         
-        # ТОЛЬКО если компонент не в процессе установки/удаления - проверяем реальное состояние
+        # Используем кэш статусов, если он есть
+        if component_id in self.status_cache:
+            cached_status = self.status_cache[component_id]
+            if cached_status == 'ok':
+                return '[OK]', 'ok'
+            else:
+                return '[---]', 'missing'
+        
+        # Fallback к собственной проверке, если кэша нет
         if self.check_component_status(component_id):
             return '[OK]', 'ok'
         else:
             return '[---]', 'missing'
+    
+    def sync_with_wine_checker(self, wine_checker):
+        """
+        Синхронизация с данными WineComponentsChecker
+        
+        Args:
+            wine_checker: Экземпляр WineComponentsChecker
+        """
+        if not wine_checker:
+            return
+        
+        # Обновляем кэш статусов на основе данных wine_checker
+        for component_id, config in COMPONENTS_CONFIG.items():
+            component_name = config['name']
+            
+            # Ключи в WineComponentsChecker совпадают с ID компонентов
+            checker_key = component_id
+            
+            # Проверяем статус через wine_checker
+            if hasattr(wine_checker, 'checks') and checker_key in wine_checker.checks:
+                is_installed = wine_checker.checks[checker_key]
+                self.status_cache[component_id] = 'ok' if is_installed else 'missing'
+            else:
+                # Fallback к собственной проверке
+                is_installed = self.check_component_status(component_id)
+                self.status_cache[component_id] = 'ok' if is_installed else 'missing'
+        
+        self.cache_timestamp = datetime.datetime.now()
     
     def update_component_status(self, component_id, status):
         """
@@ -4828,9 +4864,16 @@ class AutomationGUI(object):
         # Создаем интерфейс
         self.create_widgets()
         
+        # Устанавливаем глобальную ссылку на GUI для перенаправления print()
+        sys._gui_instance = self
+        
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
             self._redirect_output_to_terminal()
+        
+        # Автоматически запускаем проверку компонентов при инициализации GUI
+        if not console_mode:
+            self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -5172,7 +5215,7 @@ class AutomationGUI(object):
         self.start_background_resource_update()
         
         # Заполняем начальными данными ПОСЛЕ создания всех виджетов
-        self.populate_wine_status_initial()
+        # Старый метод populate_wine_status_initial() удален - используется новая универсальная архитектура
         
     def create_main_tab(self):
         """Создание основной вкладки"""
@@ -5484,78 +5527,6 @@ class AutomationGUI(object):
         
         self.wine_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         wine_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
-    
-    def populate_wine_status_initial(self):
-        """Заполнение начальными данными (без проверки)"""
-        # Основные компоненты с галочками
-        main_components = [
-            ('Wine Astraregul', '---', '/opt/wine-astraregul/bin/wine', True),
-            ('Wine 9.0', '---', '/opt/wine-9.0/bin/wine', True),
-            ('ptrace_scope', '---', '/proc/sys/kernel/yama/ptrace_scope', True),
-            ('WINEPREFIX', '---', '~/.wine-astraregul', True),
-        ]
-        
-        # Компоненты winetricks (только информация, БЕЗ галочек)
-        winetricks_info = [
-            ('  ├─ Wine Mono', '---', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
-            ('  ├─ .NET Framework 4.8', '---', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
-            ('  ├─ Visual C++ 2013', '---', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
-            ('  ├─ Visual C++ 2022', '---', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
-            ('  ├─ DirectX d3dcompiler_43', '---', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
-            ('  ├─ DirectX d3dcompiler_47', '---', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
-            ('  └─ DXVK', '---', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
-        ]
-        
-        # Остальные компоненты
-        other_components = [
-            ('Astra.IDE', '---', 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common', True),
-            ('Скрипт запуска', '---', '~/start-astraide.sh', True),
-            ('Ярлык рабочего стола', '---', '~/Desktop/AstraRegul.desktop', True)
-        ]
-        
-        # Добавляем основные компоненты
-        for component, status, path, has_checkbox in main_components:
-            checkbox = '☐' if has_checkbox else ' '
-            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
-            if has_checkbox:
-                self.wine_checkboxes[item_id] = False
-            # Цветовое выделение для статуса "---"
-            self.wine_tree.item(item_id, tags=('missing',))
-        
-        # Добавляем winetricks компоненты (только информация)
-        for component, status, path, has_checkbox in winetricks_info:
-            item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component, status, path))
-            # НЕ добавляем в wine_checkboxes - их нельзя выбрать
-            # Цветовое выделение для статуса "---"
-            self.wine_tree.item(item_id, tags=('missing',))
-        
-        # Добавляем остальные компоненты
-        for component, status, path, has_checkbox in other_components:
-            checkbox = '☐' if has_checkbox else ' '
-            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
-            if has_checkbox:
-                self.wine_checkboxes[item_id] = False
-            # Цветовое выделение для статуса "---"
-            self.wine_tree.item(item_id, tags=('missing',))
-        
-        # Настраиваем цвета тегов для начального состояния
-        self.wine_tree.tag_configure('missing', foreground='gray')
-        
-        # Начальное сообщение в сводке
-        self.wine_summary_text.config(state=self.tk.NORMAL)
-        self.wine_summary_text.delete('1.0', self.tk.END)
-        self.wine_summary_text.insert(self.tk.END, "Нажмите кнопку 'Проверить компоненты' для запуска проверки\n")
-        self.wine_summary_text.insert(self.tk.END, "Проверка покажет какие компоненты установлены и готовы к работе")
-        self.wine_summary_text.config(state=self.tk.DISABLED)
-        
-        # Инициализируем прогресс-бары
-        if hasattr(self, 'wine_cpu_progress'):
-            self.wine_cpu_progress['value'] = 0
-        if hasattr(self, 'wine_net_progress'):
-            self.wine_net_progress['value'] = 0
-        
-        # Обновляем информацию о ресурсах
-        self.update_resources_info()
     
     def start_background_resource_update(self):
         """Запуск фонового обновления системных ресурсов"""
@@ -5913,7 +5884,7 @@ class AutomationGUI(object):
                 warnings.append("Недостаточно дискового пространства (требуется минимум 4 ГБ)")
             
             if warnings:
-                warning_text = "⚠️ ВНИМАНИЕ: " + "; ".join(warnings)
+                warning_text = "[WARNING] ВНИМАНИЕ: " + "; ".join(warnings)
                 if hasattr(self, 'resources_warning_label'):
                     self.resources_warning_label.config(text=warning_text)
                     self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
@@ -5931,6 +5902,55 @@ class AutomationGUI(object):
             if hasattr(self, 'resources_warning_label'):
                 self.resources_warning_label.config(text="Ошибка проверки системных ресурсов: %s" % str(e))
                 self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
+    
+    def _auto_check_components(self):
+        """Автоматическая проверка компонентов при запуске GUI"""
+        try:
+            print("[DEBUG] Начинаем автоматическую проверку компонентов")
+            
+            # Обновляем статус кнопки
+            if hasattr(self, 'wine_status_label'):
+                self.wine_status_label.config(text="Автоматическая проверка...")
+            if hasattr(self, 'check_wine_button'):
+                self.check_wine_button.config(state=self.tk.DISABLED)
+            
+            print("[DEBUG] Создаем WineComponentsChecker")
+            # Сначала создаем WineComponentsChecker и выполняем проверку
+            self.wine_checker = WineComponentsChecker()
+            
+            print("[DEBUG] Выполняем проверку компонентов")
+            self.wine_checker.check_all_components()
+            
+            print("[DEBUG] Синхронизируем данные")
+            # Синхронизируем данные с ComponentStatusManager
+            self.component_status_manager.sync_with_wine_checker(self.wine_checker)
+            
+            print("[DEBUG] Обновляем GUI")
+            # Обновляем GUI
+            self._update_wine_status()
+            
+            print("[DEBUG] Обновляем статус кнопки")
+            # Обновляем статус кнопки
+            if hasattr(self, 'wine_status_label'):
+                self.wine_status_label.config(text="Проверка завершена")
+            if hasattr(self, 'check_wine_button'):
+                self.check_wine_button.config(state=self.tk.NORMAL)
+            
+            print("[DEBUG] Автоматическая проверка завершена успешно")
+            
+        except Exception as e:
+            print(f"[GUI] Ошибка автоматической проверки: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Безопасно обновляем статус кнопки
+            try:
+                if hasattr(self, 'wine_status_label'):
+                    self.wine_status_label.config(text="Ошибка автоматической проверки")
+                if hasattr(self, 'check_wine_button'):
+                    self.check_wine_button.config(state=self.tk.NORMAL)
+            except:
+                pass
     
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
@@ -5951,6 +5971,9 @@ class AutomationGUI(object):
             
             # Выполняем все проверки через старый метод для совместимости
             self.wine_checker.check_all_components()
+            
+            # Синхронизируем данные с ComponentStatusManager
+            self.component_status_manager.sync_with_wine_checker(self.wine_checker)
             
             # Обновляем GUI в главном потоке
             self.root.after(0, self._update_wine_status)
@@ -6020,6 +6043,11 @@ class AutomationGUI(object):
     
     def _update_wine_status(self):
         """Обновление статуса в GUI с использованием универсальной архитектуры"""
+        # Проверяем, что GUI элементы созданы
+        if not hasattr(self, 'wine_tree') or not self.wine_tree:
+            print("[DEBUG] wine_tree не создан, пропускаем обновление")
+            return
+        
         # Сохраняем текущее состояние выбора перед обновлением
         current_selection = set()
         for item, checked in self.wine_checkboxes.items():
@@ -6050,26 +6078,17 @@ class AutomationGUI(object):
             if category in categories:
                 categories[category].append((component_id, config))
         
+        # Сортируем компоненты в каждой категории по приоритету
+        for category in categories:
+            categories[category].sort(key=lambda x: x[1].get('priority', 999))
+        
         # Добавляем компоненты в таблицу по категориям
         for category, components in categories.items():
             if not components:
                 continue
                 
-            # Добавляем заголовок категории
-            category_name = {
-                'wine_packages': 'Wine пакеты',
-                'system_config': 'Системная конфигурация', 
-                'wine_environment': 'Wine окружение',
-                'winetricks': 'Winetricks компоненты',
-                'application': 'Приложения'
-            }.get(category, category)
-            
-            # Добавляем заголовок категории
-            header_item = self.wine_tree.insert('', self.tk.END, values=('', f"📁 {category_name}", '', ''))
-            self.wine_tree.item(header_item, tags=('header',))
-            
-            # Добавляем компоненты категории
-            for component_id, config in components:
+            # Добавляем компоненты категории (заголовки категорий отключены)
+            for i, (component_id, config) in enumerate(components):
                 status_text, status_tag = all_status.get(component_id, ('[---]', 'missing'))
                 
                 # Определяем путь для отображения
@@ -6080,10 +6099,22 @@ class AutomationGUI(object):
                 has_checkbox = config.get('gui_selectable', False)
                 checkbox = '☐' if has_checkbox else '  '
                 
+                # Определяем, является ли компонент дочерним (winetricks)
+                is_child_component = config.get('category') == 'winetricks'
+                
+                # Определяем символ для дочерних компонентов
+                if is_child_component:
+                    # Если это последний компонент в группе winetricks или единственный
+                    is_last_in_group = (i == len(components) - 1)
+                    symbol = '└─' if is_last_in_group else '├─'
+                    component_display_name = f"  {symbol} {config['name']}"
+                else:
+                    component_display_name = config['name']
+                
                 # Добавляем компонент в таблицу
                 item_id = self.wine_tree.insert('', self.tk.END, values=(
                     checkbox, 
-                    f"  ├─ {config['name']}", 
+                    component_display_name, 
                     status_text, 
                     display_path
                 ))
@@ -6101,7 +6132,7 @@ class AutomationGUI(object):
         self.wine_tree.tag_configure('installing', foreground='blue')
         self.wine_tree.tag_configure('removing', foreground='purple')
         self.wine_tree.tag_configure('error', foreground='red')
-        self.wine_tree.tag_configure('header', foreground='darkblue', font=('Arial', 9, 'bold'))
+        # Тег 'header' удален - заголовки категорий отключены
         
         # Принудительно обновляем размер таблицы
         self.wine_tree.update_idletasks()
@@ -6119,10 +6150,10 @@ class AutomationGUI(object):
                     values[0] = '☑'
                     self.wine_tree.item(item_id, values=values)
         
-        # Обновляем кнопки
-        self._update_wine_buttons()
-        
-        # Обновляем сводку
+        # Принудительно обновляем GUI для отображения изменений
+        self.wine_tree.update()
+        self.root.update()
+    
         self.wine_summary_text.config(state=self.tk.NORMAL)
         self.wine_summary_text.delete('1.0', self.tk.END)
         
@@ -6174,39 +6205,19 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Ничего не выбрано для установки", fg='orange')
             return
         
-        # Очищаем предыдущие состояния
-        self.clear_all_states()
+        # Используем новую универсальную архитектуру для установки
+        # Универсальный установщик автоматически разрешает зависимости
+        success = self.universal_installer.install_components(selected)
         
-        # Устанавливаем статус "Ожидание" для всех выбранных компонентов
-        # WINEPREFIX должен быть первым в очереди
-        wineprefix_selected = 'WINEPREFIX' in selected
+        if success:
+            self.wine_status_label.config(text="Установка завершена успешно", fg='green')
+            self.log_message("[OK] Установка компонентов завершена успешно")
+        else:
+            self.wine_status_label.config(text="Ошибка установки", fg='red')
+            self.log_message("[ERROR] Ошибка установки компонентов")
         
-        if wineprefix_selected:
-            # Сначала добавляем WINEPREFIX
-            self.pending_install.add('WINEPREFIX')
-            
-            # Затем добавляем все его подкомпоненты
-            winetricks_components = [
-                '  ├─ Wine Mono',
-                '  ├─ .NET Framework 4.8', 
-                '  ├─ Visual C++ 2013',
-                '  ├─ Visual C++ 2022',
-                '  ├─ DirectX d3dcompiler_43',
-                '  ├─ DirectX d3dcompiler_47',
-                '  └─ DXVK'
-            ]
-            for subcomponent in winetricks_components:
-                self.pending_install.add(subcomponent)
-        
-        # Добавляем остальные компоненты
-        for component in selected:
-            if component != 'WINEPREFIX':  # WINEPREFIX уже добавлен
-                self.pending_install.add(component)
-        
-        # Обновляем GUI чтобы показать статус "Ожидание"
+        # Обновляем статус компонентов
         self._update_wine_status()
-        
-        self.wine_status_label.config(text="Установка запущена...", fg='blue')
         # Убираем блокировку кнопок для возможности ручного обновления
         # self.install_wine_button.config(state=self.tk.DISABLED)
         # self.check_wine_button.config(state=self.tk.DISABLED)
@@ -6570,48 +6581,19 @@ class AutomationGUI(object):
         if not messagebox.askyesno("Подтверждение удаления", message):
             return
         
-        # Очищаем предыдущие состояния
-        self.clear_all_states()
+        # Используем новую универсальную архитектуру для удаления
+        # Универсальный установщик автоматически разрешает зависимости
+        success = self.universal_installer.uninstall_components(selected)
         
-        # Устанавливаем статус "Ожидание" для всех выбранных компонентов
-        # WINEPREFIX должен быть первым в очереди
-        wineprefix_selected = 'WINEPREFIX' in selected
+        if success:
+            self.wine_status_label.config(text="Удаление завершено успешно", fg='green')
+            self.log_message("[OK] Удаление компонентов завершено успешно")
+        else:
+            self.wine_status_label.config(text="Ошибка удаления", fg='red')
+            self.log_message("[ERROR] Ошибка удаления компонентов")
         
-        if wineprefix_selected:
-            # Сначала добавляем WINEPREFIX
-            self.pending_install.add('WINEPREFIX')
-            
-            # Затем добавляем все его подкомпоненты
-            winetricks_components = [
-                '  ├─ Wine Mono',
-                '  ├─ .NET Framework 4.8', 
-                '  ├─ Visual C++ 2013',
-                '  ├─ Visual C++ 2022',
-                '  ├─ DirectX d3dcompiler_43',
-                '  ├─ DirectX d3dcompiler_47',
-                '  └─ DXVK'
-            ]
-            for subcomponent in winetricks_components:
-                self.pending_install.add(subcomponent)
-        
-        # Добавляем остальные компоненты
-        for component in selected:
-            if component != 'WINEPREFIX':  # WINEPREFIX уже добавлен
-                self.pending_install.add(component)
-        
-        # Обновляем GUI чтобы показать статус "Ожидание"
+        # Обновляем статус компонентов
         self._update_wine_status()
-        
-        self.wine_status_label.config(text="Удаление запущено...", fg='blue')
-        self.uninstall_wine_button.config(state=self.tk.DISABLED)
-        self.install_wine_button.config(state=self.tk.DISABLED)
-        self.check_wine_button.config(state=self.tk.DISABLED)
-        
-        # Запускаем удаление в отдельном потоке
-        import threading
-        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
-        uninstall_thread.daemon = True
-        uninstall_thread.start()
     
     def run_full_cleanup(self):
         """Запуск полной очистки всех данных Wine"""
