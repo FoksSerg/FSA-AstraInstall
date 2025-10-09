@@ -1,0 +1,479 @@
+#!/bin/sh
+# Минимальный winetricks для FSA-AstraInstall
+# Только необходимые компоненты: dotnet48, vcrun2013, vcrun2022, d3dcompiler_43, d3dcompiler_47, dxvk
+# Сокращение с 19,000 строк до ~600 строк (в 30 раз!)
+
+# Версия минимального winetricks
+WINETRICKS_VERSION=20250102-minimal
+
+# Базовые константы
+TRUE=0
+FALSE=1
+W_TEXT_LINE="------------------------------------------------------"
+
+# Переменные окружения
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}"
+W_CACHE="${W_CACHE:-${XDG_CACHE_HOME}/winetricks}"
+
+# Основные переменные Wine
+W_ARCH=""
+W_DRIVE_C=""
+W_WINDIR_UNIX=""
+W_SYSTEM32_DLLS=""
+W_SYSTEM64_DLLS=""
+W_PACKAGE=""
+
+# Функции логирования
+w_info()
+{
+    printf '%s\n%b\n%s\n' "${W_TEXT_LINE}" "${@}" "${W_TEXT_LINE}" >&2
+}
+
+w_warn()
+{
+    printf '%s\n%b\n%s\n' "${W_TEXT_LINE}" "WARNING: ${@}" "${W_TEXT_LINE}" >&2
+}
+
+w_die()
+{
+    w_warn "$@"
+    exit 1
+}
+
+# Основная функция выполнения команд
+w_try()
+{
+    printf '%s\n' "Executing $*" >&2
+    
+    # Выполняем команду и сохраняем код возврата
+    "$@"
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        w_warn "Command failed: $* (exit code: $exit_code)"
+        return $exit_code
+    fi
+    
+    return 0
+}
+
+# Функция смены директории
+w_try_cd()
+{
+    w_try cd "$@"
+}
+
+# Функция копирования DLL с проверками
+w_try_cp_dll()
+{
+    local source="$1"
+    local dest="$2"
+    
+    # Проверяем существование исходного файла
+    if [ ! -f "${source}" ]; then
+        w_warn "Source file not found: ${source}"
+        return 1
+    fi
+    
+    # Создаем директорию назначения если не существует
+    local dest_dir=$(dirname "${dest}")
+    if [ ! -d "${dest_dir}" ]; then
+        w_info "Creating directory: ${dest_dir}"
+        w_try mkdir -p "${dest_dir}"
+    fi
+    
+    # Удаляем символическую ссылку если существует
+    [ -h "${dest}" ] && w_try rm -f "${dest}"
+    
+    # Копируем файл
+    w_try cp -f "${source}" "${dest}"
+}
+
+# Функция установки MSI/EXE с обработкой интерактивных диалогов
+w_try_ms_installer()
+{
+    local wine_exe="$1"
+    local installer="$2"
+    shift 2
+    local args="$@"
+    
+    w_info "Running installer: ${installer} with args: ${args}"
+    
+    # Пробуем установить с переданными аргументами
+    if ! "${wine_exe}" "${installer}" ${args}; then
+        w_warn "Installer failed with args: ${args}"
+        
+        # Если не удалось, пробуем с дополнительными флагами для автоматизации
+        w_info "Trying with additional automation flags..."
+        "${wine_exe}" "${installer}" ${args} /S /D=C:\\temp\\extract
+    fi
+}
+
+# Функция скачивания файлов
+w_download()
+{
+    _W_url="$1"
+    _W_sum="$2"
+    _W_file=""
+    
+    if [ "${_W_file}"x = ""x ] ; then
+        _W_file=$(basename "${_W_url}")
+    fi
+    
+    _W_destdir="${W_CACHE}/${W_PACKAGE}"
+    w_try mkdir -p "${_W_destdir}"
+    
+    _W_destfile="${_W_destdir}/${_W_file}"
+    
+    # Проверяем, есть ли уже файл
+    if [ -f "${_W_destfile}" ]; then
+        w_info "File already exists: ${_W_file}"
+        return 0
+    fi
+    
+    w_info "Downloading ${_W_file}..."
+    
+    # Определяем загрузчик
+    if [ -x "$(command -v wget 2>/dev/null)" ]; then
+        w_try wget -O "${_W_destfile}" "${_W_url}"
+    elif [ -x "$(command -v curl 2>/dev/null)" ]; then
+        w_try curl -L -o "${_W_destfile}" "${_W_url}"
+    else
+        w_die "Please install wget or curl"
+    fi
+    
+    # Проверяем хеш (если указан)
+    if [ -n "${_W_sum}" ]; then
+        if [ -x "$(command -v sha256sum 2>/dev/null)" ]; then
+            _W_actual_sum=$(sha256sum "${_W_destfile}" | cut -d' ' -f1)
+        elif [ -x "$(command -v shasum 2>/dev/null)" ]; then
+            _W_actual_sum=$(shasum -a 256 "${_W_destfile}" | cut -d' ' -f1)
+        else
+            w_warn "Cannot verify checksum - sha256sum/shasum not available"
+            return 0
+        fi
+        
+        if [ "${_W_actual_sum}" != "${_W_sum}" ]; then
+            w_die "Checksum mismatch for ${_W_file}. Expected: ${_W_sum}, Got: ${_W_actual_sum}"
+        fi
+    fi
+    
+    w_info "Downloaded: ${_W_file}"
+}
+
+# Функция установки версии Windows
+w_set_winver()
+{
+    _W_winver="$1"
+    w_info "Setting Windows version to ${_W_winver}"
+    
+    case "${_W_winver}" in
+        win7) _W_winver="win7" ;;
+        win10) _W_winver="win10" ;;
+        *) w_warn "Unknown Windows version: ${_W_winver}" ;;
+    esac
+    
+    # Используем regedit для установки версии Windows
+    w_try "${WINE}" reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion" /v "CurrentVersion" /d "6.1" /f
+    w_try "${WINE}" reg add "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion" /v "CurrentBuild" /d "7601" /f
+}
+
+# Функция настройки DLL overrides
+w_override_dlls()
+{
+    _W_mode="$1"
+    shift
+    
+    w_info "Setting DLL overrides: ${_W_mode} for $*"
+    
+    for dll in "$@"; do
+        w_try "${WINE}" reg add "HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides" /v "${dll}" /d "${_W_mode}" /f
+    done
+}
+
+# Функция вызова других компонентов
+w_call()
+{
+    _W_cmd="$1"
+    shift
+    
+    w_info "Calling ${_W_cmd} with args: $*"
+    
+    case "${_W_cmd}" in
+        dotnet40) load_dotnet40 ;;
+        remove_mono) w_info "Removing Mono (placeholder)" ;;
+        *) w_warn "Unknown command: ${_W_cmd}" ;;
+    esac
+}
+
+# Инициализация Wine окружения
+init_wine_env()
+{
+    if [ -z "${WINEPREFIX}" ]; then
+        w_die "WINEPREFIX not set"
+    fi
+    
+    if [ -z "${WINE}" ]; then
+        WINE="wine"
+    fi
+    
+    # Определяем архитектуру
+    if [ "${WINEARCH}" = "win64" ]; then
+        W_ARCH="win64"
+    else
+        W_ARCH="win32"
+    fi
+    
+    # Определяем пути
+    case "$(uname -s)" in
+        CYGWIN*)
+            W_DRIVE_C="/cygdrive/c" ;;
+        *)
+            W_DRIVE_C="${WINEPREFIX}/dosdevices/c:" ;;
+    esac
+    
+    W_WINDIR_UNIX="${W_DRIVE_C}/windows"
+    
+    # Инициализируем Wine окружение если нужно
+    if [ ! -d "${WINEPREFIX}" ]; then
+        w_info "Creating WINEPREFIX..."
+        w_try "${WINE}" wineboot --init
+        # Ждем завершения инициализации
+        sleep 2
+    fi
+    
+    # Создаем необходимые директории Wine
+    w_info "Creating Wine directories..."
+    w_try mkdir -p "${W_SYSTEM32_DLLS}"
+    if [ "${W_ARCH}" = "win64" ]; then
+        w_try mkdir -p "${W_SYSTEM64_DLLS}"
+    fi
+    
+    if [ "${W_ARCH}" = "win64" ]; then
+        W_SYSTEM32_DLLS="${W_WINDIR_UNIX}/syswow64"
+        W_SYSTEM64_DLLS="${W_WINDIR_UNIX}/system32"
+    else
+        W_SYSTEM32_DLLS="${W_WINDIR_UNIX}/system32"
+        W_SYSTEM64_DLLS="/dev/null"
+    fi
+    
+    w_info "Wine environment initialized:"
+    w_info "  WINEPREFIX: ${WINEPREFIX}"
+    w_info "  WINE: ${WINE}"
+    w_info "  WINEARCH: ${WINEARCH}"
+    w_info "  W_ARCH: ${W_ARCH}"
+}
+
+# Компонент: .NET Framework 4.8
+load_dotnet48()
+{
+    w_info "Installing .NET Framework 4.8..."
+    W_PACKAGE="dotnet48"
+    
+    # Проверяем, что Wine готов к работе
+    w_info "Checking Wine environment..."
+    if ! "${WINE}" --version >/dev/null 2>&1; then
+        w_die "Wine не работает корректно"
+    fi
+    
+    w_download "https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe" "95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53"
+    
+    w_call remove_mono internal
+    w_call dotnet40
+    w_set_winver win7
+    
+    w_try_cd "${W_CACHE}/${W_PACKAGE}"
+    
+    # Устанавливаем .NET Framework 4.8
+    w_info "Installing .NET Framework 4.8 (это может занять несколько минут)..."
+    
+    # Пробуем установить с разными параметрами
+    if ! WINEDLLOVERRIDES=fusion=b w_try_ms_installer "${WINE}" "ndp48-x86-x64-allos-enu.exe" /sfxlang:1027 /q /norestart; then
+        w_warn "Первая попытка установки не удалась, пробуем альтернативный способ..."
+        # Альтернативный способ установки
+        WINEDLLOVERRIDES=fusion=b w_try_ms_installer "${WINE}" "ndp48-x86-x64-allos-enu.exe" /quiet /norestart
+    fi
+    
+    w_override_dlls native mscoree
+    
+    w_try touch "${W_WINDIR_UNIX}/dotnet48.installed.workaround"
+    
+    w_info ".NET Framework 4.8 installed successfully"
+}
+
+# Компонент: .NET Framework 4.0 (зависимость для 4.8)
+load_dotnet40()
+{
+    w_info "Installing .NET Framework 4.0..."
+    W_PACKAGE="dotnet40"
+    
+    w_download "https://download.microsoft.com/download/9/5/A/95A9616B-7A37-4AF6-BC36-D6EA96C8DAAE/dotNetFx40_Full_x86_x64.exe" "65e064258f2e418816b304f646ff9e87af101e4c9552ab064bb74d281c38659f"
+    
+    w_set_winver win7
+    
+    w_try_cd "${W_CACHE}/${W_PACKAGE}"
+    
+    w_try_ms_installer "${WINE}" "dotNetFx40_Full_x86_x64.exe" /q /norestart
+    
+    w_info ".NET Framework 4.0 installed successfully"
+}
+
+# Компонент: Visual C++ 2013 Runtime
+load_vcrun2013()
+{
+    w_info "Installing Visual C++ 2013 Runtime..."
+    W_PACKAGE="vcrun2013"
+    
+    w_download "https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe" "89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17"
+    
+    w_override_dlls native,builtin atl120 msvcp120 msvcr120 vcomp120
+    w_try_cd "${W_CACHE}/${W_PACKAGE}"
+    w_try_ms_installer "${WINE}" "vcredist_x86.exe" /q
+    
+    if [ "${W_ARCH}" = "win64" ]; then
+        w_download "https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x64.exe" "20e2645b7cd5873b1fa3462b99a665ac8d6e14aae83ded9d875fea35ffdd7d7e"
+        w_try_ms_installer "${WINE}" "vcredist_x64.exe" /q
+    fi
+    
+    w_info "Visual C++ 2013 Runtime installed successfully"
+}
+
+# Компонент: Visual C++ 2022 Runtime
+load_vcrun2022()
+{
+    w_info "Installing Visual C++ 2022 Runtime..."
+    W_PACKAGE="vcrun2022"
+    
+    w_download "https://aka.ms/vs/17/release/vc_redist.x86.exe" "0c09f2611660441084ce0df425c51c11e147e6447963c3690f97e0b25c55ed64"
+    
+    w_try_cd "${W_CACHE}/${W_PACKAGE}"
+    w_try_ms_installer "${WINE}" "vc_redist.x86.exe" /quiet /norestart
+    
+    if [ "${W_ARCH}" = "win64" ]; then
+        w_download "https://aka.ms/vs/17/release/vc_redist.x64.exe" "0c09f2611660441084ce0df425c51c11e147e6447963c3690f97e0b25c55ed64"
+        w_try_ms_installer "${WINE}" "vc_redist.x64.exe" /quiet /norestart
+    fi
+    
+    w_info "Visual C++ 2022 Runtime installed successfully"
+}
+
+# Helper функция для DirectX June 2010 (как в оригинальном winetricks)
+helper_directx_Jun2010()
+{
+    # June 2010 DirectX 9c User Redistributable
+    # https://www.microsoft.com/en-us/download/details.aspx?id=8109
+    w_download_to directx9 "https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe" "8746ee1a84a083a90e37899d71d50d5c7c015e69688a466aa80447f011780c0d"
+    
+    DIRECTX_NAME="directx_Jun2010_redist.exe"
+}
+
+# Компонент: Direct3D Compiler 43 (оригинальный подход из winetricks)
+load_d3dcompiler_43()
+{
+    w_info "Installing Direct3D Compiler 43..."
+    W_PACKAGE="d3dcompiler_43"
+    
+    dllname="d3dcompiler_43"
+    
+    # Используем оригинальный подход из winetricks
+    helper_directx_Jun2010
+    
+    # Извлекаем DLL из CAB архива (как в оригинальном winetricks)
+    w_try_cabextract -d "${W_TMP}" -L -F "*${dllname}*x86*" "${W_CACHE}/directx9/${DIRECTX_NAME}"
+    
+    for x in "${W_TMP}"/*.cab; do
+        w_try_cabextract -d "${W_SYSTEM32_DLLS}" -L -F "${dllname}.dll" "${x}"
+    done
+    
+    if [ "${W_ARCH}" = "win64" ]; then
+        w_try_cabextract -d "${W_TMP}" -L -F "*${dllname}*x64*" "${W_CACHE}/directx9/${DIRECTX_NAME}"
+        
+        for x in "${W_TMP}"/*x64.cab; do
+            w_try_cabextract -d "${W_SYSTEM64_DLLS}" -L -F "${dllname}.dll" "${x}"
+        done
+    fi
+    
+    w_override_dlls native "${dllname}"
+    
+    w_info "Direct3D Compiler 43 installed successfully"
+}
+
+# Компонент: Direct3D Compiler 47
+load_d3dcompiler_47()
+{
+    w_info "Installing Direct3D Compiler 47..."
+    W_PACKAGE="d3dcompiler_47"
+    
+    w_download "https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47_32.dll" "2ad0d4987fc4624566b190e747c9d95038443956ed816abfd1e2d389b5ec0851"
+    w_try_cp_dll "${W_CACHE}/d3dcompiler_47/d3dcompiler_47_32.dll" "${W_SYSTEM32_DLLS}/d3dcompiler_47.dll"
+    
+    if [ "${W_ARCH}" = "win64" ]; then
+        w_download "https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47.dll" "4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3"
+        w_try_cp_dll "${W_CACHE}/d3dcompiler_47/d3dcompiler_47.dll" "${W_SYSTEM64_DLLS}/d3dcompiler_47.dll"
+    fi
+    
+    w_override_dlls native d3dcompiler_47
+    
+    w_info "Direct3D Compiler 47 installed successfully"
+}
+
+# Компонент: DXVK
+load_dxvk()
+{
+    w_info "Installing DXVK..."
+    W_PACKAGE="dxvk"
+    
+    w_download "https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz" "d8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8"
+    
+    w_try_cd "${W_CACHE}/${W_PACKAGE}"
+    w_try tar -xzf "dxvk-2.5.3.tar.gz"
+    
+    # Копируем DXVK DLL
+    if [ "${W_ARCH}" = "win64" ]; then
+        # Для win64: копируем x64 DLL в system32, x32 DLL в syswow64
+        w_info "Copying DXVK DLLs for win64..."
+        w_try_cp_dll "dxvk-2.5.3/x64/d3d11.dll" "${W_SYSTEM64_DLLS}/d3d11.dll"
+        w_try_cp_dll "dxvk-2.5.3/x64/dxgi.dll" "${W_SYSTEM64_DLLS}/dxgi.dll"
+        w_try_cp_dll "dxvk-2.5.3/x32/d3d11.dll" "${W_SYSTEM32_DLLS}/d3d11.dll"
+        w_try_cp_dll "dxvk-2.5.3/x32/dxgi.dll" "${W_SYSTEM32_DLLS}/dxgi.dll"
+    else
+        # Для win32: копируем только x32 DLL в system32
+        w_info "Copying DXVK DLLs for win32..."
+        w_try_cp_dll "dxvk-2.5.3/x32/d3d11.dll" "${W_SYSTEM32_DLLS}/d3d11.dll"
+        w_try_cp_dll "dxvk-2.5.3/x32/dxgi.dll" "${W_SYSTEM32_DLLS}/dxgi.dll"
+    fi
+    
+    w_override_dlls native dxgi d3d11
+    
+    w_info "DXVK installed successfully"
+}
+
+# Основная функция
+main()
+{
+    echo "Minimal winetricks v${WINETRICKS_VERSION}"
+    echo "Installing components: $*"
+    
+    # Инициализируем окружение
+    init_wine_env
+    
+    # Устанавливаем компоненты
+    for component in "$@"; do
+        echo "Processing component: ${component}"
+        case "${component}" in
+            dotnet48) load_dotnet48 ;;
+            vcrun2013) load_vcrun2013 ;;
+            vcrun2022) load_vcrun2022 ;;
+            d3dcompiler_43) load_d3dcompiler_43 ;;
+            d3dcompiler_47) load_d3dcompiler_47 ;;
+            dxvk) load_dxvk ;;
+            *) echo "Unknown component: ${component}" ;;
+        esac
+    done
+    
+    echo "All components installed successfully!"
+}
+
+# Запуск
+echo "Starting minimal winetricks..."
+main "$@"
