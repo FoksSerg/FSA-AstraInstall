@@ -127,3 +127,6 @@ commit_message.txt
 
 # Installation packages and files
 AstraPack/
+
+# Test environment (temporary testing files)
+test-environment/
