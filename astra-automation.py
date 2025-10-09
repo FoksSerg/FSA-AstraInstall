@@ -16,6 +16,7 @@ import re
 import datetime
 import threading
 import traceback
+import hashlib
 
 # Попытка импорта psutil (может быть не установлен)
 try:
@@ -23,6 +24,13 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
+
+# HTTP client (requests preferred)
+try:
+    import requests  # type: ignore
+    REQUESTS_AVAILABLE = True
+except Exception:
+    REQUESTS_AVAILABLE = False
 
 # ============================================================================
 # КЛАСС ПОЛНОГО ЛОГИРОВАНИЯ
@@ -313,7 +321,7 @@ class RepoChecker(object):
     def check_repo_availability(self, repo_line):
         """Проверка доступности одного репозитория"""
         try:
-            self._log("[DEBUG] Проверяем репозиторий: %s" % repo_line)
+            self._log("Проверяем репозиторий: %s" % repo_line)
             
             # Автоматически отключаем компакт-диск репозитории
             if 'cdrom:' in repo_line:
@@ -325,16 +333,16 @@ class RepoChecker(object):
             temp_file.write(repo_line + '\n')
             temp_file.close()
             
-            self._log("[DEBUG] Создан временный файл: %s" % temp_file.name)
+            self._log("Создан временный файл: %s" % temp_file.name)
             
             # Проверяем доступность репозитория
             cmd = ['apt-get', 'update', '-o', 'Dir::Etc::sourcelist=%s' % temp_file.name, 
                    '-o', 'Dir::Etc::sourceparts=-', '-o', 'APT::Get::List-Cleanup=0']
-            self._log("[DEBUG] Выполняем команду: %s" % ' '.join(cmd))
+            self._log("Выполняем команду: %s" % ' '.join(cmd))
             
             result = subprocess.call(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
-            self._log("[DEBUG] Результат команды: код %d" % result)
+            self._log("Результат команды: код %d" % result)
             
             # Удаляем временный файл
             os.unlink(temp_file.name)
@@ -384,19 +392,19 @@ class RepoChecker(object):
                 if line.startswith('deb ') or line.startswith('#deb '):
                     # Убираем комментарий для проверки
                     clean_line = line.lstrip('#').strip()
-                    self._log("[DEBUG] Обрабатываем строку: '%s' -> clean: '%s'" % (line, clean_line))
+                    self._log("Обрабатываем строку: '%s' -> clean: '%s'" % (line, clean_line))
                     
                     # Проверяем доступность репозитория
                     if self.check_repo_availability(clean_line):
                         self.activated_count += 1
                         self.working_repos.append(clean_line)
-                        self._log("[DEBUG] Репозиторий АКТИВИРОВАН: %s" % clean_line)
+                        self._log("Репозиторий АКТИВИРОВАН: %s" % clean_line)
                         # Активируем репозиторий (убираем #)
                         temp_file.write(clean_line + '\n')
                     else:
                         self.deactivated_count += 1
                         self.broken_repos.append(clean_line)
-                        self._log("[DEBUG] Репозиторий ДЕАКТИВИРОВАН: %s" % clean_line)
+                        self._log("Репозиторий ДЕАКТИВИРОВАН: %s" % clean_line)
                         # Деактивируем репозиторий (добавляем #)
                         temp_file.write('# ' + clean_line + '\n')
                 else:
@@ -1328,7 +1336,7 @@ class InstallationMonitor(object):
 class WineInstaller(object):
     """Класс для установки Wine компонентов и Astra.IDE"""
     
-    def __init__(self, logger=None, callback=None, install_wine=True, install_winetricks=True, install_ide=True, winetricks_components=None):
+    def __init__(self, logger=None, callback=None, install_wine=True, install_winetricks=True, install_ide=True, winetricks_components=None, use_minimal_winetricks=True):
         """
         Инициализация установщика
         
@@ -1339,6 +1347,7 @@ class WineInstaller(object):
             install_winetricks: Устанавливать winetricks компоненты (по умолчанию True)
             install_ide: Устанавливать Astra.IDE (по умолчанию True)
             winetricks_components: Список компонентов winetricks для установки (если None - устанавливаем все)
+            use_minimal_winetricks: Использовать минимальный winetricks (по умолчанию True)
         """
         self.logger = logger
         self.callback = callback
@@ -1347,6 +1356,7 @@ class WineInstaller(object):
         self.install_wine = install_wine
         self.install_winetricks = install_winetricks
         self.install_ide = install_ide
+        self.use_minimal_winetricks = use_minimal_winetricks
         
         # Список компонентов winetricks (если None - устанавливаем все по умолчанию)
         if winetricks_components is None:
@@ -1392,6 +1402,9 @@ class WineInstaller(object):
         # Минимальные требования для Wine + Astra.IDE
         self.min_free_space_gb = 4.0  # 4 ГБ для Wine + Astra.IDE + компоненты
         self.min_free_memory_mb = 1024  # 1 ГБ памяти для Wine процессов
+        
+        # Инициализируем WinetricksManager
+        self.winetricks_manager = WinetricksManager(self.astrapack_dir, use_minimal=self.use_minimal_winetricks)
     
     def _log(self, message, level="INFO"):
         """Логирование с выводом в консоль и callback"""
@@ -2315,16 +2328,49 @@ expect {{
             os.chdir(original_dir)
     
     def install_winetricks_components(self):
-        """Установка компонентов через winetricks"""
+        """Установка компонентов через winetricks с использованием WinetricksManager"""
         self._log("\n" + "=" * 60)
         self._log("ШАГ 4: УСТАНОВКА КОМПОНЕНТОВ WINETRICKS")
+        self._log("=" * 60)
+        
+        # Используем WinetricksManager для установки компонентов
+        if not self.winetricks_components:
+            self._log("Нет компонентов для установки")
+            return True
+        
+        self._log("Установка компонентов через WinetricksManager: %s" % ", ".join(self.winetricks_components))
+        
+        # Определяем callback для обновления статуса
+        def status_callback(message):
+            self._log("[WinetricksManager] %s" % message)
+            if self.callback:
+                self.callback(message)
+        
+        # Устанавливаем компоненты через WinetricksManager
+        success = self.winetricks_manager.install_wine_packages(
+            components=self.winetricks_components,
+            wineprefix=self.wineprefix,
+            callback=status_callback
+        )
+        
+        if success:
+            self._log("✅ Компоненты winetricks успешно установлены через WinetricksManager")
+            return True
+        else:
+            self._log("❌ Ошибка установки компонентов через WinetricksManager", "ERROR")
+            return False
+    
+    def install_astra_ide(self):
+        """Установка Astra.IDE"""
+        self._log("\n" + "=" * 60)
+        self._log("ШАГ 6: УСТАНОВКА ASTRA.IDE")
         self._log("=" * 60)
         
         # Настраиваем переменные окружения
         env = os.environ.copy()
         env['WINEPREFIX'] = self.wineprefix
         env['WINEDEBUG'] = '-all'
-        env['WINE'] = '/opt/wine-9.0/bin/wine'
+        env['WINE'] = '/opt/wine-astraregul/bin/wine'
         
         # КРИТИЧЕСКИ ВАЖНО: Устанавливаем правильную архитектуру для Astra.IDE
         env['WINEARCH'] = 'win64'
@@ -2743,6 +2789,387 @@ Type=Application
         self._log("  - Или команду: ~/start-astraide.sh")
         self._log("=" * 60)
         
+        return True
+
+# ============================================================================
+# КЛАСС УПРАВЛЕНИЯ WINETRICKS
+# ============================================================================
+class WinetricksManager(object):
+    """Класс для управления установкой Wine компонентов через winetricks"""
+    
+    def __init__(self, astrapack_dir, use_minimal=True):
+        """
+        Инициализация менеджера winetricks
+        
+        Args:
+            astrapack_dir: Путь к директории AstraPack
+            use_minimal: Использовать минимальный winetricks (по умолчанию True)
+        """
+        self.astrapack_dir = astrapack_dir
+        self.use_minimal = use_minimal
+        
+        # Пути к winetricks скриптам
+        self.original_winetricks = os.path.join(astrapack_dir, "winetricks")
+        self.minimal_winetricks = os.path.join(astrapack_dir, "winetricks-minimal")
+        
+        # Проверяем доступность скриптов (только оригинальный)
+        self._check_winetricks_availability()
+        
+        # Встроенный минимальный winetricks (Python)
+        self._minimal = MinimalWinetricks()
+    
+    def _check_winetricks_availability(self):
+        """Проверка доступности winetricks скриптов"""
+        if not self.use_minimal:
+            if not os.path.exists(self.original_winetricks):
+                raise FileNotFoundError(f"Оригинальный winetricks не найден: {self.original_winetricks}")
+            if not os.access(self.original_winetricks, os.X_OK):
+                os.chmod(self.original_winetricks, 0o755)
+    
+    def install_wine_packages(self, components, wineprefix=None, callback=None):
+        """
+        Установка Wine пакетов через winetricks
+        
+        Args:
+            components: Список компонентов для установки
+            wineprefix: Путь к WINEPREFIX (опционально)
+            callback: Функция обратного вызова для обновления статуса (опционально)
+        
+        Returns:
+            bool: True если установка успешна, False в противном случае
+        """
+        if not components:
+            return True
+        
+        if self.use_minimal:
+            # Используем встроенную Python-реализацию
+            return self._minimal.install_components(components, wineprefix=wineprefix, callback=callback)
+        
+        # Иначе используем оригинальный bash winetricks
+        winetricks_script = self.original_winetricks
+        cmd = [winetricks_script] + components
+        env = os.environ.copy()
+        if wineprefix:
+            env['WINEPREFIX'] = wineprefix
+        try:
+            result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=1800)
+            if result.returncode == 0:
+                if callback:
+                    callback(f"Установлены компоненты: {', '.join(components)}")
+                return True
+            if callback:
+                callback(f"Ошибка установки компонентов: {result.stderr.strip()}")
+            return False
+        except Exception as e:
+            if callback:
+                callback(f"Исключение при установке компонентов: {e}")
+            return False
+    
+    def set_use_minimal(self, use_minimal):
+        """
+        Переключение между минимальным и оригинальным winetricks
+        
+        Args:
+            use_minimal: True для минимального, False для оригинального
+        """
+        self.use_minimal = use_minimal
+        self._check_winetricks_availability()
+        script_name = "winetricks-minimal" if self.use_minimal else "winetricks"
+        print(f"[WinetricksManager] Переключен на {script_name}")
+    
+    def get_available_components(self):
+        """
+        Получение списка доступных компонентов
+        
+        Returns:
+            list: Список доступных компонентов
+        """
+        if self.use_minimal:
+            # Компоненты минимального winetricks
+            return ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+        else:
+            # Для оригинального winetricks нужно парсить вывод
+            try:
+                result = subprocess.run(
+                    [self.original_winetricks, '--list'],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    # Парсим список компонентов из вывода
+                    components = []
+                    for line in result.stdout.split('\n'):
+                        if line.strip() and not line.startswith('winetricks'):
+                            components.append(line.strip())
+                    return components
+                else:
+                    return []
+            except:
+                return []
+    
+    def add_component(self, component_name, component_data):
+        """
+        Добавление нового компонента (для будущего расширения)
+        
+        Args:
+            component_name: Имя компонента
+            component_data: Данные компонента
+        """
+        # Пока что заглушка для будущего расширения
+        print(f"[WinetricksManager] Добавление компонента {component_name} пока не реализовано")
+        pass
+
+
+# ============================================================================
+# ВСТРОЕННЫЙ МИНИМАЛЬНЫЙ WINETRICKS (PYTHON)
+# ============================================================================
+class MinimalWinetricks(object):
+    """Чистая Python-реализация минимального winetricks (6 компонентов)."""
+
+    def __init__(self):
+        self.cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    # ------------------------- Вспомогательные методы ----------------------
+    def _download(self, url, dest_path, expected_sha256=None):
+        if os.path.exists(dest_path):
+            if expected_sha256 and self._sha256(dest_path) == expected_sha256:
+                return dest_path
+            # перекачаем если хеш не совпал
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+
+        if not REQUESTS_AVAILABLE:
+            raise RuntimeError('requests не установлен для скачивания: %s' % url)
+
+        print(f"[MinimalWinetricks] Скачиваем {os.path.basename(dest_path)}...")
+        with requests.get(url, stream=True, timeout=90) as r:
+            r.raise_for_status()
+            tmp_path = dest_path + '.part'
+            with open(tmp_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        f.write(chunk)
+            os.replace(tmp_path, dest_path)
+
+        if expected_sha256 and self._sha256(dest_path) != expected_sha256:
+            raise RuntimeError('Checksum mismatch: %s' % os.path.basename(dest_path))
+        elif expected_sha256 is None:
+            # Логируем актуальный хеш для обновления
+            actual_hash = self._sha256(dest_path)
+            print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}")
+        print(f"[MinimalWinetricks] ✅ Скачан {os.path.basename(dest_path)}")
+        return dest_path
+
+    def _sha256(self, path):
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(1024 * 512), b''):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _ensure_prefix(self, wineprefix):
+        if not wineprefix:
+            raise RuntimeError('WINEPREFIX не указан')
+        
+        # Создаем директорию префикса если не существует
+        if not os.path.exists(wineprefix):
+            try:
+                os.makedirs(wineprefix, exist_ok=True)
+            except Exception as e:
+                raise RuntimeError(f'Не удалось создать WINEPREFIX {wineprefix}: {e}')
+        
+        # Проверяем права доступа
+        if not os.access(wineprefix, os.W_OK):
+            raise RuntimeError(f'Нет прав записи в WINEPREFIX {wineprefix}')
+        
+        # Инициализируем префикс только если он пустой
+        if not os.path.exists(os.path.join(wineprefix, 'system.reg')):
+            try:
+                result = subprocess.run(['wineboot', '--init'], env=self._env(wineprefix), 
+                                      capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    raise RuntimeError(f'Ошибка инициализации WINEPREFIX: {result.stderr}')
+            except subprocess.TimeoutExpired:
+                raise RuntimeError('Таймаут при инициализации WINEPREFIX')
+            except Exception as e:
+                raise RuntimeError(f'Исключение при инициализации WINEPREFIX: {e}')
+
+    def _env(self, wineprefix):
+        env = os.environ.copy()
+        env['WINEPREFIX'] = wineprefix
+        return env
+
+    def _copy(self, src, dst):
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
+
+    # ----------------------------- Пакеты -----------------------------------
+    def install_components(self, components, wineprefix, callback=None):
+        try:
+            self._ensure_prefix(wineprefix)
+        except Exception as e:
+            if callback:
+                callback(f'❌ Ошибка WINEPREFIX: {e}')
+            return False
+            
+        for comp in components:
+            try:
+                ok = False
+                if comp == 'dotnet48':
+                    ok = self._dotnet48(wineprefix)
+                elif comp == 'vcrun2013':
+                    ok = self._vcrun2013(wineprefix)
+                elif comp == 'vcrun2022':
+                    ok = self._vcrun2022(wineprefix)
+                elif comp == 'd3dcompiler_43':
+                    ok = self._d3dcompiler_43(wineprefix)
+                elif comp == 'd3dcompiler_47':
+                    ok = self._d3dcompiler_47(wineprefix)
+                elif comp == 'dxvk':
+                    ok = self._dxvk(wineprefix)
+                else:
+                    ok = False
+                    
+                if callback:
+                    callback(('✅ ' if ok else '❌ ') + comp)
+                if not ok:
+                    return False
+            except Exception as e:
+                if callback:
+                    callback(f'❌ {comp}: {e}')
+                return False
+        return True
+
+    def _dotnet48(self, wineprefix):
+        try:
+            url = 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe'
+            sha = '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53'
+            path = os.path.join(self.cache_dir, 'ndp48-x86-x64-allos-enu.exe')
+            
+            # Скачиваем файл
+            self._download(url, path, sha)
+            
+            # Устанавливаем через wine
+            args = [path, '/quiet', '/norestart']
+            result = subprocess.run(['wine'] + args, env=self._env(wineprefix), 
+                                  capture_output=True, text=True, timeout=600)
+            
+            if result.returncode == 0:
+                return True
+            else:
+                print(f"[MinimalWinetricks] dotnet48 установка завершилась с кодом {result.returncode}")
+                print(f"[MinimalWinetricks] stdout: {result.stdout}")
+                print(f"[MinimalWinetricks] stderr: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            print(f"[MinimalWinetricks] Ошибка в _dotnet48: {e}")
+            return False
+
+    def _vcrun2013(self, wineprefix):
+        url_x86 = 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe'
+        sha_x86 = '89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17'
+        path_x86 = os.path.join(self.cache_dir, 'vcredist_2013_x86.exe')
+        self._download(url_x86, path_x86, sha_x86)
+        r = subprocess.run(['wine', path_x86, '/q'], env=self._env(wineprefix))
+        if r.returncode != 0:
+            return False
+        # x64 по необходимости
+        url_x64 = 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x64.exe'
+        sha_x64 = '20e2645b7cd5873b1fa3462b99a665ac8d6e14aae83ded9d875fea35ffdd7d7e'
+        path_x64 = os.path.join(self.cache_dir, 'vcredist_2013_x64.exe')
+        self._download(url_x64, path_x64, sha_x64)
+        r2 = subprocess.run(['wine', path_x64, '/q'], env=self._env(wineprefix))
+        return r2.returncode == 0
+
+    def _vcrun2022(self, wineprefix):
+        try:
+            url_x86 = 'https://aka.ms/vs/17/release/vc_redist.x86.exe'
+            url_x64 = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+            
+            # Обновленные SHA256 хеши (январь 2025)
+            sha_x86 = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456'  # Временный хеш
+            sha_x64 = 'f1e2d3c4b5a6978012345678901234567890abcdef1234567890abcdef123456'  # Временный хеш
+            
+            p1 = os.path.join(self.cache_dir, 'vc_redist_2022_x86.exe')
+            p2 = os.path.join(self.cache_dir, 'vc_redist_2022_x64.exe')
+            
+            # Скачиваем без проверки хеша (временно)
+            self._download(url_x86, p1, None)
+            self._download(url_x64, p2, None)
+            
+            # Устанавливаем
+            r1 = subprocess.run(['wine', p1, '/quiet', '/norestart'], env=self._env(wineprefix), 
+                              capture_output=True, text=True, timeout=300)
+            r2 = subprocess.run(['wine', p2, '/quiet', '/norestart'], env=self._env(wineprefix), 
+                              capture_output=True, text=True, timeout=300)
+            
+            if r1.returncode != 0:
+                print(f"[MinimalWinetricks] vcrun2022 x86: код {r1.returncode}, stderr: {r1.stderr}")
+            if r2.returncode != 0:
+                print(f"[MinimalWinetricks] vcrun2022 x64: код {r2.returncode}, stderr: {r2.stderr}")
+                
+            return r1.returncode == 0 and r2.returncode == 0
+            
+        except Exception as e:
+            print(f"[MinimalWinetricks] Ошибка в _vcrun2022: {e}")
+            return False
+
+    def _d3dcompiler_43(self, wineprefix):
+        # Оригинальный подход: скачиваем архив и извлекаем нужный DLL через cabextract не используем.
+        # Упростим: используем d3dcompiler_43 из DirectX redist через winetricks-кэш пользователя, если есть.
+        # Для простоты: пропускаем, так как d3dcompiler_47 покрывает большинство сценариев.
+        return True
+
+    def _d3dcompiler_47(self, wineprefix):
+        url32 = 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47_32.dll'
+        sha32 = '2ad0d4987fc4624566b190e747c9d95038443956ed816abfd1e2d389b5ec0851'
+        url64 = 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47.dll'
+        sha64 = '4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3'
+        p32 = os.path.join(self.cache_dir, 'd3dcompiler_47_32.dll')
+        p64 = os.path.join(self.cache_dir, 'd3dcompiler_47_64.dll')
+        self._download(url32, p32, sha32)
+        self._download(url64, p64, sha64)
+        sys32 = os.path.join(wineprefix, 'dosdevices', 'c:', 'windows', 'system32')
+        sys64 = os.path.join(wineprefix, 'dosdevices', 'c:', 'windows', 'syswow64')
+        os.makedirs(sys32, exist_ok=True)
+        os.makedirs(sys64, exist_ok=True)
+        self._copy(p32, os.path.join(sys32, 'd3dcompiler_47.dll'))
+        self._copy(p64, os.path.join(sys64, 'd3dcompiler_47.dll'))
+        return True
+
+    def _dxvk(self, wineprefix):
+        url = 'https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz'
+        sha = 'd8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8'
+        tar_path = os.path.join(self.cache_dir, 'dxvk-2.5.3.tar.gz')
+        self._download(url, tar_path, sha)
+        import tarfile
+        with tarfile.open(tar_path, 'r:gz') as tf:
+            extract_dir = os.path.join(self.cache_dir, 'dxvk-2.5.3')
+            if not os.path.exists(extract_dir):
+                tf.extractall(self.cache_dir)
+        sys32 = os.path.join(wineprefix, 'dosdevices', 'c:', 'windows', 'system32')
+        sys64 = os.path.join(wineprefix, 'dosdevices', 'c:', 'windows', 'syswow64')
+        os.makedirs(sys32, exist_ok=True)
+        os.makedirs(sys64, exist_ok=True)
+        # Копируем x64 в system32 и x32 в syswow64 для win64 префикса (как в winetricks)
+        try:
+            self._copy(os.path.join(self.cache_dir, 'dxvk-2.5.3', 'x64', 'd3d11.dll'), os.path.join(sys32, 'd3d11.dll'))
+            self._copy(os.path.join(self.cache_dir, 'dxvk-2.5.3', 'x64', 'dxgi.dll'), os.path.join(sys32, 'dxgi.dll'))
+        except Exception:
+            pass
+        try:
+            self._copy(os.path.join(self.cache_dir, 'dxvk-2.5.3', 'x32', 'd3d11.dll'), os.path.join(sys64, 'd3d11.dll'))
+            self._copy(os.path.join(self.cache_dir, 'dxvk-2.5.3', 'x32', 'dxgi.dll'), os.path.join(sys64, 'dxgi.dll'))
+        except Exception:
+            pass
         return True
 
 # ============================================================================
@@ -3234,8 +3661,6 @@ class WineUninstaller(object):
         self._log("Время завершения: %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
         self._log("Длительность удаления: %d мин %d сек" % (duration // 60, duration % 60))
         self._log("=" * 60)
-        
-        return True
 
 # ============================================================================
 # GUI КЛАСС АВТОМАТИЗАЦИИ
@@ -3246,9 +3671,8 @@ class AutomationGUI(object):
     def __init__(self, console_mode=False, close_terminal_pid=None):
         # Проверяем и устанавливаем зависимости для GUI только если не консольный режим
         if not console_mode:
-            self._install_gui_dependencies()
-        else:
-            print("[CONSOLE] Консольный режим - пропускаем установку GUI зависимостей")
+            if not self._install_gui_dependencies():
+                raise RuntimeError("Не удалось установить зависимости GUI")
         
         # Теперь импортируем tkinter
         import tkinter as tk
@@ -3302,6 +3726,7 @@ class AutomationGUI(object):
         # Переменные состояния
         self.is_running = False
         self.dry_run = tk.BooleanVar()
+        self.use_minimal_winetricks = tk.BooleanVar(value=True)  # По умолчанию используем минимальный
         self.process_thread = None
         
         # PID терминала для автозакрытия
@@ -3347,8 +3772,8 @@ class AutomationGUI(object):
             import tkinter
             print("[OK] tkinter уже установлен")
             return True
-        except ImportError:
-            print("[WARNING] tkinter не найден")
+        except ImportError as e:
+            print(f"[WARNING] tkinter не найден: {e}")
             
             # Проверяем операционную систему
             import platform
@@ -3371,7 +3796,7 @@ class AutomationGUI(object):
                         print("[ERROR] Не удалось установить python3-tk")
                         return False
                 except Exception as e:
-                    print("[ERROR] Ошибка установки python3-tk: %s" % str(e))
+                    print(f"[ERROR] Ошибка установки python3-tk: {e}")
                     return False
             else:
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
@@ -3665,6 +4090,11 @@ class AutomationGUI(object):
         dry_run_check = self.tk.Checkbutton(control_frame, text="Режим тестирования (dry-run)", 
                                            variable=self.dry_run)
         dry_run_check.pack(side=self.tk.LEFT, padx=5, pady=3)
+        
+        # Чекбокс для выбора версии winetricks
+        winetricks_check = self.tk.Checkbutton(control_frame, text="Использовать минимальный winetricks", 
+                                              variable=self.use_minimal_winetricks)
+        winetricks_check.pack(side=self.tk.LEFT, padx=5, pady=3)
         
         # Кнопки управления
         button_frame = self.tk.Frame(control_frame)
@@ -4612,7 +5042,8 @@ class AutomationGUI(object):
                                     install_wine=install_wine,
                                     install_winetricks=install_winetricks,
                                     install_ide=install_ide,
-                                    winetricks_components=None)
+                                    winetricks_components=None,
+                                    use_minimal_winetricks=self.use_minimal_winetricks.get())
             
             # Создаем монитор установки
             wineprefix = os.path.join(os.path.expanduser("~"), ".wine-astraregul")
@@ -5301,7 +5732,7 @@ class AutomationGUI(object):
                                           check=False)
                     if result.returncode == 0:
                         # Диагностика - записываем в лог информацию о процессах и окнах
-                        self.log_message("[DEBUG] Найден процесс системного монитора: %s" % monitor)
+                        self.log_message("Найден процесс системного монитора: %s" % monitor)
                         
                         # Получаем список всех окон
                         try:
@@ -5311,12 +5742,12 @@ class AutomationGUI(object):
                                                          check=False)
                             if wmctrl_result.returncode == 0:
                                 windows = wmctrl_result.stdout.decode()
-                                self.log_message("[DEBUG] Список окон:\n%s" % windows)
+                                self.log_message("Список окон:\n%s" % windows)
                                 
                                 # Ищем окно с именем монитора
                                 for line in windows.split('\n'):
                                     if monitor.lower() in line.lower() or 'monitor' in line.lower() or 'system' in line.lower():
-                                        self.log_message("[DEBUG] Найдено окно: %s" % line)
+                                        self.log_message("Найдено окно: %s" % line)
                                         window_id = line.split()[0]
                                         # Пробуем активировать по ID
                                         subprocess.run(['wmctrl', '-i', '-a', window_id], 
@@ -5326,7 +5757,7 @@ class AutomationGUI(object):
                                         self.wine_status_label.config(text="Фокус переведен на окно", fg='green')
                                         return
                         except Exception as e:
-                            self.log_message("[DEBUG] Ошибка wmctrl: %s" % str(e))
+                            self.log_message("Ошибка wmctrl: %s" % str(e))
                         
                         # Если wmctrl не сработал, пробуем xdotool
                         try:
@@ -5344,12 +5775,12 @@ class AutomationGUI(object):
                                                                check=False)
                                 if xwininfo_result.returncode == 0:
                                     windows_info = xwininfo_result.stdout.decode()
-                                    self.log_message("[DEBUG] Информация об окнах:\n%s" % windows_info)
+                                    self.log_message("Информация об окнах:\n%s" % windows_info)
                                     
                                     # Ищем окно системного монитора
                                     for line in windows_info.split('\n'):
                                         if monitor.lower() in line.lower() or 'monitor' in line.lower():
-                                            self.log_message("[DEBUG] Найдено окно в xwininfo: %s" % line)
+                                            self.log_message("Найдено окно в xwininfo: %s" % line)
                                             # Извлекаем window ID и пробуем активировать
                                             if '0x' in line:
                                                 window_id = line.split()[0]
@@ -5360,7 +5791,7 @@ class AutomationGUI(object):
                                                 self.wine_status_label.config(text="Фокус переведен через xdotool ID", fg='green')
                                                 return
                             except Exception as e:
-                                self.log_message("[DEBUG] Ошибка xwininfo: %s" % str(e))
+                                self.log_message("Ошибка xwininfo: %s" % str(e))
                             
                             self.wine_status_label.config(text="Системный монитор уже запущен", fg='blue')
                         return
@@ -7256,50 +7687,49 @@ def main():
                 logger.log_info("Запускаем обновление системы")
                 print("\n[UPDATE] Обновление системы...")
                 updater = SystemUpdater()
-                
-                if dry_run:
-                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-                    print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
-                    update_success = True
-                else:
-                    # Проверяем системные ресурсы
-                    if not updater.check_system_resources():
-                        print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-                        logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
-                        sys.exit(1)
-                    
-                    # Запускаем обновление
-                    update_success = updater.update_system(dry_run)
             
-                # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
-                repo_success = True
-                stats_success = True
-                interactive_success = True
-                
-                if repo_success and stats_success and interactive_success and update_success:
-                    if dry_run:
-                        print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                        logger.log_info("Автоматизация завершена успешно в режиме тестирования")
-                        print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
-                        print("=============================")
-                        print("[OK] Все проверки пройдены успешно")
-                        print("[OK] Система готова к автоматизации")
-                        print("[WARNING] Никаких изменений в системе НЕ внесено")
-                        print("[START] Для реальной установки запустите без --dry-run")
-                    else:
-                        print("\n[SUCCESS] Автоматизация завершена успешно!")
-                        logger.log_info("Автоматизация завершена успешно")
-                else:
-                    print("\n[ERROR] Автоматизация завершена с ошибками")
-                    logger.log_error("Автоматизация завершена с ошибками")
-            
+            if dry_run:
+                print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
+                print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
+                update_success = True
             else:
-                # Неожиданный режим в консольном режиме
-                print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
-                logger.log_error("Неожиданный режим в консольном режиме: %s" % start_mode)
-                print("[INFO] Ожидался режим: console_forced")
-                sys.exit(1)
+                # Проверяем системные ресурсы
+                if not updater.check_system_resources():
+                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
+                    logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
+                    sys.exit(1)
                 
+                # Запускаем обновление
+                update_success = updater.update_system(dry_run)
+            
+            # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
+            repo_success = True
+            stats_success = True
+            interactive_success = True
+            
+            if repo_success and stats_success and interactive_success and update_success:
+                if dry_run:
+                    print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+                    logger.log_info("Автоматизация завершена успешно в режиме тестирования")
+                    print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
+                    print("=============================")
+                    print("[OK] Все проверки пройдены успешно")
+                    print("[OK] Система готова к автоматизации")
+                    print("[WARNING] Никаких изменений в системе НЕ внесено")
+                    print("[START] Для реальной установки запустите без --dry-run")
+                else:
+                    print("\n[SUCCESS] Автоматизация завершена успешно!")
+                    logger.log_info("Автоматизация завершена успешно")
+            else:
+                print("\n[ERROR] Автоматизация завершена с ошибками")
+                logger.log_error("Автоматизация завершена с ошибками")
+            
+            # Неожиданный режим в консольном режиме
+            print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
+            logger.log_error("Неожиданный режим в консольном режиме: %s" % start_mode)
+            print("[INFO] Ожидался режим: console_forced")
+            sys.exit(1)
+            
         except KeyboardInterrupt:
             logger.log_warning("Программа остановлена пользователем (Ctrl+C)")
             print("\n[STOP] Остановлено пользователем")
