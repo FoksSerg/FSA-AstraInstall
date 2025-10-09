@@ -793,6 +793,31 @@ class WineComponentsChecker(object):
             print("   [ERR] Wine 9.0 не найден: %s" % self.wine_9_path)
             return False
     
+    def check_wine_mono(self):
+        """Проверка наличия Wine Mono"""
+        print("[CHECK] Проверка Wine Mono...")
+        
+        if not self.checks['wineprefix']:
+            print("   [SKIP] WINEPREFIX не найден, пропускаем проверку Wine Mono")
+            self.checks['wine-mono'] = False
+            return False
+        
+        # Проверяем наличие Wine Mono в WINEPREFIX
+        mono_paths = [
+            os.path.join(self.wineprefix, 'drive_c', 'windows', 'Mono'),
+            os.path.join(self.wineprefix, 'drive_c', 'windows', 'Mono', 'lib', 'mono')
+        ]
+        
+        for path in mono_paths:
+            if os.path.exists(path):
+                print("   [OK] Wine Mono найден: %s" % path)
+                self.checks['wine-mono'] = True
+                return True
+        
+        print("   [ERR] Wine Mono не найден в WINEPREFIX")
+        self.checks['wine-mono'] = False
+        return False
+    
     def check_ptrace_scope(self):
         """Проверка настройки ptrace_scope (должно быть != 3)"""
         print("[CHECK] Проверка ptrace_scope...")
@@ -968,6 +993,13 @@ class WineComponentsChecker(object):
         
         # Определения компонентов и их характерных файлов/директорий
         components = {
+            'wine-mono': [
+                'drive_c/windows/mono',
+                'drive_c/windows/mono/mono-2.0',
+                'drive_c/windows/mono/mono-2.0/bin',
+                'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
+                'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
+            ],
             'dotnet48': [
                 'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319',
                 'drive_c/windows/Microsoft.NET/Framework/v4.0.30319'
@@ -1012,6 +1044,7 @@ class WineComponentsChecker(object):
         # Выполняем проверки в правильном порядке
         self.check_wine_astraregul()
         self.check_wine_9()
+        self.check_wine_mono()
         self.check_ptrace_scope()
         self.check_wineprefix()
         self.check_winetricks_components()  # Новая проверка!
@@ -1360,7 +1393,7 @@ class WineInstaller(object):
         
         # Список компонентов winetricks (если None - устанавливаем все по умолчанию)
         if winetricks_components is None:
-            self.winetricks_components = ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+            self.winetricks_components = ['wine-mono', 'dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
         else:
             self.winetricks_components = winetricks_components if winetricks_components else []
         
@@ -2327,6 +2360,71 @@ expect {{
             # Возвращаемся в исходную директорию
             os.chdir(original_dir)
     
+    def _install_wine_mono(self):
+        """Установка wine-mono отдельно от winetricks"""
+        try:
+            # Настраиваем переменные окружения
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINE'] = '/opt/wine-9.0/bin/wine'
+            env['WINEDEBUG'] = '-all'
+            
+            # Отключаем автоматические диалоги Wine Mono
+            env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
+            env['WINE_MONO_INSTALL'] = '0'  # Отключаем автоматическую установку Mono
+            env['WINE_GECKO_INSTALL'] = '0'  # Отключаем автоматическую установку Gecko
+            
+            # Инициализируем WINEPREFIX если он не существует
+            if not os.path.exists(self.wineprefix):
+                self._log("Инициализация WINEPREFIX...")
+                init_result = subprocess.run([
+                    '/opt/wine-9.0/bin/wineboot', '--init'
+                ], env=env, capture_output=True, text=True, timeout=60)
+                
+                if init_result.returncode != 0:
+                    self._log(f"Ошибка инициализации WINEPREFIX: {init_result.stderr}", "ERROR")
+                    return False
+            
+            # Скачиваем wine-mono
+            wine_mono_url = 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi'
+            wine_mono_path = os.path.join(self.wineprefix, '..', 'wine-mono-8.1.0-x86.msi')
+            
+            self._log("Скачивание wine-mono...")
+            import requests
+            response = requests.get(wine_mono_url, timeout=300)
+            
+            # Создаем директорию если не существует
+            os.makedirs(os.path.dirname(wine_mono_path), exist_ok=True)
+            
+            with open(wine_mono_path, 'wb') as f:
+                f.write(response.content)
+            
+            # Устанавливаем через wine msiexec
+            self._log("Установка wine-mono через msiexec...")
+            result = subprocess.run([
+                '/opt/wine-9.0/bin/wine', 'msiexec', 
+                '/i', wine_mono_path, 
+                '/quiet', '/norestart'
+            ], env=env, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                self._log("wine-mono успешно установлен")
+                return True
+            else:
+                self._log(f"Ошибка установки wine-mono: {result.stderr}", "ERROR")
+                return False
+                
+        except Exception as e:
+            self._log(f"Исключение при установке wine-mono: {e}", "ERROR")
+            return False
+        finally:
+            # Удаляем временный файл
+            try:
+                if 'wine_mono_path' in locals() and os.path.exists(wine_mono_path):
+                    os.remove(wine_mono_path)
+            except:
+                pass
+    
     def install_winetricks_components(self):
         """Установка компонентов через winetricks с использованием WinetricksManager"""
         self._log("\n" + "=" * 60)
@@ -2344,7 +2442,13 @@ expect {{
         def status_callback(message):
             self._log("[WinetricksManager] %s" % message)
             if self.callback:
-                self.callback(message)
+                if message.startswith("UPDATE_COMPONENT:"):
+                    # Команда обновления компонента - обновляем проверку
+                    component = message.split(":", 1)[1]
+                    self.callback(f"UPDATE_COMPONENT:{component}")
+                else:
+                    # Обычное сообщение
+                    self.callback(message)
         
         # Устанавливаем компоненты через WinetricksManager
         success = self.winetricks_manager.install_wine_packages(
@@ -2808,11 +2912,10 @@ class WinetricksManager(object):
         self.astrapack_dir = astrapack_dir
         self.use_minimal = use_minimal
         
-        # Пути к winetricks скриптам
+        # Путь к оригинальному winetricks скрипту
         self.original_winetricks = os.path.join(astrapack_dir, "winetricks")
-        self.minimal_winetricks = os.path.join(astrapack_dir, "winetricks-minimal")
         
-        # Проверяем доступность скриптов (только оригинальный)
+        # Проверяем доступность скриптов (только оригинальный winetricks)
         self._check_winetricks_availability()
         
         # Встроенный минимальный winetricks (Python)
@@ -2886,7 +2989,7 @@ class WinetricksManager(object):
         """
         if self.use_minimal:
             # Компоненты минимального winetricks
-            return ['dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
+            return ['wine-mono', 'dotnet48', 'vcrun2013', 'vcrun2022', 'd3dcompiler_43', 'd3dcompiler_47', 'dxvk']
         else:
             # Для оригинального winetricks нужно парсить вывод
             try:
@@ -3004,48 +3107,118 @@ class MinimalWinetricks(object):
     def _env(self, wineprefix):
         env = os.environ.copy()
         env['WINEPREFIX'] = wineprefix
+        # Подавляем диалоги Wine для автоматической установки
+        env['WINE_MONO_INSTALL'] = '0'  # Отключаем автоматическую установку wine-mono
+        env['WINE_GECKO_INSTALL'] = '0'  # Отключаем автоматическую установку wine-gecko
+        env['WINEDLLOVERRIDES'] = 'mscoree,mshtml='  # Отключаем загрузку .NET компонентов
         return env
 
     def _copy(self, src, dst):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
 
+    def _wine_mono(self, wineprefix):
+        """Установка wine-mono для поддержки .NET приложений"""
+        try:
+            # URL для скачивания wine-mono (последняя версия)
+            url = 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi'
+            sha = '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810'  # Правильный SHA256
+            path = os.path.join(self.cache_dir, 'wine-mono-8.1.0-x86.msi')
+            
+            # Скачиваем wine-mono с проверкой хеша
+            self._download(url, path, sha)
+            
+            # Создаем директорию для MSI файла
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            
+            # Устанавливаем через wine msiexec с подавлением диалогов
+            env = self._env(wineprefix)
+            result = subprocess.run(['wine', 'msiexec', '/i', path, '/quiet'], 
+                                  env=env, 
+                                  capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                return True
+            else:
+                print(f"[MinimalWinetricks] wine-mono установка завершилась с кодом {result.returncode}")
+                print(f"[MinimalWinetricks] stdout: {result.stdout}")
+                print(f"[MinimalWinetricks] stderr: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            print(f"[MinimalWinetricks] Ошибка в _wine_mono: {e}")
+            return False
+
     # ----------------------------- Пакеты -----------------------------------
     def install_components(self, components, wineprefix, callback=None):
         try:
-            self._ensure_prefix(wineprefix)
-        except Exception as e:
-            if callback:
-                callback(f'❌ Ошибка WINEPREFIX: {e}')
-            return False
+            if not components:
+                return True
+                
+            print(f"[MinimalWinetricks] Установка компонентов: {', '.join(components)}")
             
-        for comp in components:
-            try:
-                ok = False
-                if comp == 'dotnet48':
-                    ok = self._dotnet48(wineprefix)
-                elif comp == 'vcrun2013':
-                    ok = self._vcrun2013(wineprefix)
-                elif comp == 'vcrun2022':
-                    ok = self._vcrun2022(wineprefix)
-                elif comp == 'd3dcompiler_43':
-                    ok = self._d3dcompiler_43(wineprefix)
-                elif comp == 'd3dcompiler_47':
-                    ok = self._d3dcompiler_47(wineprefix)
-                elif comp == 'dxvk':
-                    ok = self._dxvk(wineprefix)
+            # Сначала инициализируем WINEPREFIX
+            self._ensure_prefix(wineprefix)
+            
+            # Затем устанавливаем wine-mono если он есть в списке
+            if 'wine-mono' in components:
+                print(f"[MinimalWinetricks] Установка wine-mono после инициализации WINEPREFIX...")
+                ok = self._wine_mono(wineprefix)
+                if ok:
+                    print(f"[MinimalWinetricks] ✅ wine-mono установлен успешно")
+                    if callback:
+                        callback(f"✅ wine-mono установлен")
+                        # Запускаем полную проверку всех компонентов
+                        callback("UPDATE_ALL_COMPONENTS")
                 else:
-                    ok = False
+                    print(f"[MinimalWinetricks] ❌ Ошибка установки wine-mono")
+                    if callback:
+                        callback(f"❌ Ошибка установки wine-mono")
+            
+            # Устанавливаем остальные компоненты
+            for comp in components:
+                if comp == 'wine-mono':
+                    continue  # Уже установлен выше
                     
-                if callback:
-                    callback(('✅ ' if ok else '❌ ') + comp)
-                if not ok:
-                    return False
-            except Exception as e:
-                if callback:
-                    callback(f'❌ {comp}: {e}')
-                return False
-        return True
+                try:
+                    ok = False
+                    if comp == 'dotnet48':
+                        ok = self._dotnet48(wineprefix)
+                    elif comp == 'vcrun2013':
+                        ok = self._vcrun2013(wineprefix)
+                    elif comp == 'vcrun2022':
+                        ok = self._vcrun2022(wineprefix)
+                    elif comp == 'd3dcompiler_43':
+                        ok = self._d3dcompiler_43(wineprefix)
+                    elif comp == 'd3dcompiler_47':
+                        ok = self._d3dcompiler_47(wineprefix)
+                    elif comp == 'dxvk':
+                        ok = self._dxvk(wineprefix)
+                    else:
+                        print(f"[MinimalWinetricks] Неизвестный компонент: {comp}")
+                        continue
+                    
+                    if ok:
+                        print(f"[MinimalWinetricks] ✅ {comp} установлен успешно")
+                        if callback:
+                            callback(f"✅ {comp} установлен")
+                            # Запускаем полную проверку всех компонентов
+                            callback("UPDATE_ALL_COMPONENTS")
+                    else:
+                        print(f"[MinimalWinetricks] ❌ Ошибка установки {comp}")
+                        if callback:
+                            callback(f"❌ Ошибка установки {comp}")
+                        
+                except Exception as e:
+                    print(f"[MinimalWinetricks] Исключение при установке {comp}: {e}")
+                    if callback:
+                        callback(f"❌ Исключение при установке {comp}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"[MinimalWinetricks] Критическая ошибка: {e}")
+            return False
 
     def _dotnet48(self, wineprefix):
         try:
@@ -4367,10 +4540,10 @@ class AutomationGUI(object):
         self.wine_tree.heading('status', text='Статус')
         self.wine_tree.heading('path', text='Путь/Детали')
         
-        self.wine_tree.column('selected', width=50, anchor='center')
-        self.wine_tree.column('component', width=250)
-        self.wine_tree.column('status', width=120)
-        self.wine_tree.column('path', width=500)
+        self.wine_tree.column('selected', width=50, anchor='center', minwidth=50)
+        self.wine_tree.column('component', width=200, minwidth=150)
+        self.wine_tree.column('status', width=100, minwidth=80)
+        self.wine_tree.column('path', width=300, minwidth=200)
         
         # Словарь для хранения состояния чекбоксов (item_id -> True/False)
         self.wine_checkboxes = {}
@@ -4398,6 +4571,7 @@ class AutomationGUI(object):
         
         # Компоненты winetricks (только информация, БЕЗ галочек)
         winetricks_info = [
+            ('  ├─ Wine Mono', 'Не проверено', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
             ('  ├─ .NET Framework 4.8', 'Не проверено', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
             ('  ├─ Visual C++ 2013', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
             ('  ├─ Visual C++ 2022', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
@@ -4884,6 +5058,7 @@ class AutomationGUI(object):
         
         # Winetricks компоненты (только информация, БЕЗ галочек)
         winetricks_info = [
+            ('  ├─ Wine Mono', 'wine-mono', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
             ('  ├─ .NET Framework 4.8', 'dotnet48', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
             ('  ├─ Visual C++ 2013', 'vcrun2013', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
             ('  ├─ Visual C++ 2022', 'vcrun2022', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
@@ -4901,40 +5076,40 @@ class AutomationGUI(object):
         
         # Добавляем основные компоненты
         for component_name, check_key, path, has_checkbox in main_components:
-            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
             checkbox = '☐' if has_checkbox else ' '
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
-            if self.wine_checker.checks[check_key]:
+            if self.wine_checker.checks.get(check_key, False):
                 self.wine_tree.item(item_id, tags=('ok',))
             else:
                 self.wine_tree.item(item_id, tags=('error',))
         
         # Добавляем winetricks компоненты (только информация)
         for component_name, check_key, path, has_checkbox in winetricks_info:
-            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
             item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component_name, status, path))
             # НЕ добавляем в wine_checkboxes
             
             # Цветовое выделение
-            if self.wine_checker.checks[check_key]:
+            if self.wine_checker.checks.get(check_key, False):
                 self.wine_tree.item(item_id, tags=('ok',))
             else:
                 self.wine_tree.item(item_id, tags=('error',))
         
         # Добавляем остальные компоненты
         for component_name, check_key, path, has_checkbox in other_components:
-            status = '[OK]' if self.wine_checker.checks[check_key] else '[ERR]'
+            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
             checkbox = '☐' if has_checkbox else ' '
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
-            if self.wine_checker.checks[check_key]:
+            if self.wine_checker.checks.get(check_key, False):
                 self.wine_tree.item(item_id, tags=('ok',))
             else:
                 self.wine_tree.item(item_id, tags=('error',))
@@ -4942,6 +5117,10 @@ class AutomationGUI(object):
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
         self.wine_tree.tag_configure('error', foreground='red')
+        
+        # Принудительно обновляем размер таблицы
+        self.wine_tree.update_idletasks()
+        self.root.update_idletasks()
         
         # Обновляем сводку
         self.wine_summary_text.config(state=self.tk.NORMAL)
@@ -4990,8 +5169,9 @@ class AutomationGUI(object):
             return
         
         self.wine_status_label.config(text="Установка запущена...", fg='blue')
-        self.install_wine_button.config(state=self.tk.DISABLED)
-        self.check_wine_button.config(state=self.tk.DISABLED)
+        # Убираем блокировку кнопок для возможности ручного обновления
+        # self.install_wine_button.config(state=self.tk.DISABLED)
+        # self.check_wine_button.config(state=self.tk.DISABLED)
         
         # Запускаем установку в отдельном потоке
         import threading
@@ -5019,7 +5199,7 @@ class AutomationGUI(object):
             
             # Определяем что устанавливать на основе выбранных компонентов
             install_wine = any(c in selected for c in ['Wine Astraregul', 'Wine 9.0'])
-            install_winetricks = 'WINEPREFIX' in selected  # Всегда устанавливаем ВСЕ компоненты
+            install_winetricks = 'WINEPREFIX' in selected  # WINEPREFIX включает все winetricks компоненты
             install_ide = 'Astra.IDE' in selected
             
             # Логируем план установки
@@ -5188,6 +5368,12 @@ class AutomationGUI(object):
     
     def _update_install_status(self, message):
         """Обновление статуса установки в GUI (вызывается из главного потока)"""
+        
+        # Обработка команды обновления всех компонентов
+        if message == "UPDATE_ALL_COMPONENTS":
+            self._update_all_components()
+            return
+        
         # Обновляем статус-метку (только первые 80 символов)
         short_msg = message[:80] + "..." if len(message) > 80 else message
         self.wine_status_label.config(text=short_msg, fg='blue')
@@ -5212,10 +5398,26 @@ class AutomationGUI(object):
         
         # Добавляем в лог
         self.log_message(message)
-        
-        # Также добавляем в терминал если сообщение важное
-        if any(keyword in message for keyword in ['ШАГ', 'УСТАНОВКА', 'УСПЕШНО', 'ОШИБКА']):
-            self.add_terminal_output(message)
+    
+    def _update_all_components(self):
+        """Обновление проверки всех компонентов в таблице"""
+        try:
+            # Небольшая задержка для записи файлов на диск
+            import time
+            time.sleep(0.5)
+            
+            # Запускаем полную проверку всех компонентов
+            if hasattr(self, 'wine_checker') and self.wine_checker:
+                self.wine_checker.check_all_components()
+            
+            # Обновляем таблицу
+            self._update_wine_status()
+            
+            # Обновляем GUI
+            self.root.update_idletasks()
+            
+        except Exception as e:
+            print(f"[GUI] Ошибка обновления всех компонентов: {e}")
     
     def _wine_install_completed(self, success):
         """Обработка завершения установки (вызывается из главного потока)"""
