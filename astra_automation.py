@@ -4813,6 +4813,10 @@ class AutomationGUI(object):
         # Экземпляр проверщика Wine компонентов
         self.wine_checker = None
         
+        # Инициализируем новую универсальную архитектуру
+        self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
+        self.universal_installer = UniversalInstaller(callback=self._component_status_callback)
+        
         # Лог-файл (будет установлен позже из main)
         self.main_log_file = None
         
@@ -4827,6 +4831,21 @@ class AutomationGUI(object):
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
             self._redirect_output_to_terminal()
+    
+    def _component_status_callback(self, message):
+        """Callback для обновления статусов компонентов из новой архитектуры"""
+        if message.startswith("UPDATE_COMPONENT:"):
+            component_id = message.split(":", 1)[1]
+            # Обновляем GUI в главном потоке
+            self.root.after(0, self._update_wine_status)
+        else:
+            # Обычное сообщение - логируем
+            if hasattr(self, 'main_log_file') and self.main_log_file:
+                try:
+                    with open(self.main_log_file, 'a', encoding='utf-8') as f:
+                        f.write(f"[COMPONENT] {message}\n")
+                except:
+                    pass
         
         # Запускаем обработку очереди терминала
         self.process_terminal_queue()
@@ -5925,16 +5944,20 @@ class AutomationGUI(object):
         check_thread.start()
     
     def _perform_wine_check(self):
-        """Выполнение проверки Wine компонентов (в отдельном потоке)"""
+        """Выполнение проверки Wine компонентов с использованием новой архитектуры (в отдельном потоке)"""
         try:
-            # Создаем экземпляр проверщика
+            # Создаем экземпляр проверщика для совместимости
             self.wine_checker = WineComponentsChecker()
             
-            # Выполняем все проверки
+            # Выполняем все проверки через старый метод для совместимости
             self.wine_checker.check_all_components()
             
             # Обновляем GUI в главном потоке
             self.root.after(0, self._update_wine_status)
+            
+            # Обновляем статус кнопки
+            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+            self.root.after(0, lambda: self.wine_status_label.config(text="Проверка завершена"))
             
         except Exception as e:
             error_msg = "Ошибка проверки: %s" % str(e)
@@ -5996,10 +6019,7 @@ class AutomationGUI(object):
             return '[---]', 'missing'
     
     def _update_wine_status(self):
-        """Обновление статуса в GUI (вызывается из главного потока)"""
-        if not self.wine_checker:
-            return
-        
+        """Обновление статуса в GUI с использованием универсальной архитектуры"""
         # Сохраняем текущее состояние выбора перед обновлением
         current_selection = set()
         for item, checked in self.wine_checkboxes.items():
@@ -6013,75 +6033,66 @@ class AutomationGUI(object):
             self.wine_tree.delete(item)
         self.wine_checkboxes.clear()
         
-        # Получаем реальный путь к Astra.IDE если установлена
-        astra_ide_path = 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common'
-        if self.wine_checker.checks['astra_ide']:
-            try:
-                import glob
-                astra_base = os.path.join(self.wine_checker.wineprefix, "drive_c", "Program Files", "AstraRegul")
-                astra_dirs = glob.glob(os.path.join(astra_base, "Astra.IDE_64_*"))
-                if astra_dirs:
-                    # Показываем полный путь к .exe
-                    astra_ide_path = os.path.join(astra_dirs[0], "Astra.IDE", "Common", "Astra.IDE.exe")
-            except:
-                pass
+        # Используем новую универсальную архитектуру для получения статусов
+        all_status = self.component_status_manager.get_all_components_status()
         
-        # Основные компоненты (с галочками)
-        main_components = [
-            ('Wine Astraregul', 'wine_astraregul', self.wine_checker.wine_astraregul_path, True),
-            ('Wine 9.0', 'wine_9', self.wine_checker.wine_9_path, True),
-            ('ptrace_scope', 'ptrace_scope', self.wine_checker.ptrace_scope_path, True),
-            ('WINEPREFIX', 'wineprefix', self.wine_checker.wineprefix, True),
-        ]
+        # Группируем компоненты по категориям для отображения
+        categories = {
+            'wine_packages': [],
+            'system_config': [],
+            'wine_environment': [],
+            'winetricks': [],
+            'application': []
+        }
         
-        # Winetricks компоненты (только информация, БЕЗ галочек)
-        winetricks_info = [
-            ('  ├─ Wine Mono', 'wine-mono', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
-            ('  ├─ .NET Framework 4.8', 'dotnet48', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
-            ('  ├─ Visual C++ 2013', 'vcrun2013', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
-            ('  ├─ Visual C++ 2022', 'vcrun2022', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
-            ('  ├─ DirectX d3dcompiler_43', 'd3dcompiler_43', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
-            ('  ├─ DirectX d3dcompiler_47', 'd3dcompiler_47', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
-            ('  └─ DXVK', 'dxvk', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
-        ]
+        for component_id, config in COMPONENTS_CONFIG.items():
+            category = config['category']
+            if category in categories:
+                categories[category].append((component_id, config))
         
-        # Остальные компоненты (с галочками)
-        other_components = [
-            ('Astra.IDE', 'astra_ide', astra_ide_path, True),
-            ('Скрипт запуска', 'start_script', self.wine_checker.start_script, True),
-            ('Ярлык рабочего стола', 'desktop_shortcut', self.wine_checker.desktop_shortcut, True)
-        ]
-        
-        # Добавляем основные компоненты
-        for component_name, check_key, path, has_checkbox in main_components:
-            status, status_tag = self.get_component_status(check_key, component_name)
-            checkbox = '☐' if has_checkbox else ' '
-            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
-            if has_checkbox:
-                self.wine_checkboxes[item_id] = False
+        # Добавляем компоненты в таблицу по категориям
+        for category, components in categories.items():
+            if not components:
+                continue
+                
+            # Добавляем заголовок категории
+            category_name = {
+                'wine_packages': 'Wine пакеты',
+                'system_config': 'Системная конфигурация', 
+                'wine_environment': 'Wine окружение',
+                'winetricks': 'Winetricks компоненты',
+                'application': 'Приложения'
+            }.get(category, category)
             
-            # Цветовое выделение
-            self.wine_tree.item(item_id, tags=(status_tag,))
-        
-        # Добавляем winetricks компоненты (только информация)
-        for component_name, check_key, path, has_checkbox in winetricks_info:
-            status, status_tag = self.get_component_status(check_key, component_name)
-            item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component_name, status, path))
-            # НЕ добавляем в wine_checkboxes
+            # Добавляем заголовок категории
+            header_item = self.wine_tree.insert('', self.tk.END, values=('', f"📁 {category_name}", '', ''))
+            self.wine_tree.item(header_item, tags=('header',))
             
-            # Цветовое выделение
-            self.wine_tree.item(item_id, tags=(status_tag,))
-        
-        # Добавляем остальные компоненты
-        for component_name, check_key, path, has_checkbox in other_components:
-            status, status_tag = self.get_component_status(check_key, component_name)
-            checkbox = '☐' if has_checkbox else ' '
-            item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
-            if has_checkbox:
-                self.wine_checkboxes[item_id] = False
-            
-            # Цветовое выделение
-            self.wine_tree.item(item_id, tags=(status_tag,))
+            # Добавляем компоненты категории
+            for component_id, config in components:
+                status_text, status_tag = all_status.get(component_id, ('[---]', 'missing'))
+                
+                # Определяем путь для отображения
+                check_paths = config['check_paths']
+                display_path = check_paths[0] if check_paths else 'N/A'
+                
+                # Определяем, есть ли чекбокс
+                has_checkbox = config.get('gui_selectable', False)
+                checkbox = '☐' if has_checkbox else '  '
+                
+                # Добавляем компонент в таблицу
+                item_id = self.wine_tree.insert('', self.tk.END, values=(
+                    checkbox, 
+                    f"  ├─ {config['name']}", 
+                    status_text, 
+                    display_path
+                ))
+                
+                if has_checkbox:
+                    self.wine_checkboxes[item_id] = False
+                
+                # Цветовое выделение
+                self.wine_tree.item(item_id, tags=(status_tag,))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
@@ -6090,6 +6101,7 @@ class AutomationGUI(object):
         self.wine_tree.tag_configure('installing', foreground='blue')
         self.wine_tree.tag_configure('removing', foreground='purple')
         self.wine_tree.tag_configure('error', foreground='red')
+        self.wine_tree.tag_configure('header', foreground='darkblue', font=('Arial', 9, 'bold'))
         
         # Принудительно обновляем размер таблицы
         self.wine_tree.update_idletasks()
