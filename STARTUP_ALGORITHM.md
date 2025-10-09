@@ -300,13 +300,13 @@ fi
 ```bash
 if [ "$CONSOLE_MODE" = true ]; then
     # Консольный режим - запуск в текущем терминале (синхронно)
-    python3 astra-automation.py $PYTHON_ARGS
+    python3 astra_automation.py $PYTHON_ARGS
     PYTHON_EXIT_CODE=$?
     
 else
     # GUI режим - запуск в фоне с автозакрытием терминала
     TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
-    nohup python3 astra-automation.py $PYTHON_ARGS \
+    nohup python3 astra_automation.py $PYTHON_ARGS \
           --close-terminal "$TERM_PID" >/dev/null 2>&1 &
     PYTHON_EXIT_CODE=0
 fi
@@ -316,7 +316,7 @@ exit $PYTHON_EXIT_CODE
 
 ---
 
-## 🔄 ЭТАП 5: PYTHON - ИНИЦИАЛИЗАЦИЯ (astra-automation.py)
+## 🔄 ЭТАП 5: PYTHON - ИНИЦИАЛИЗАЦИЯ (astra_automation.py)
 
 ### 5.1. Парсинг аргументов
 ```python

@@ -292,7 +292,7 @@ echo ""
         echo "   [#] Настраиваем репозитории через Python..."
         log_message "Вызываем Python для настройки репозиториев"
         
-        python3 astra-automation.py --setup-repos 2>&1 | tee -a "$LOG_FILE"
+        python3 astra_automation.py --setup-repos 2>&1 | tee -a "$LOG_FILE"
         REPOS_EXIT_CODE=${PIPESTATUS[0]}
         
         if [ $REPOS_EXIT_CODE -eq 0 ]; then
@@ -527,7 +527,7 @@ else
     log_message "Запускаем графический интерфейс"
 fi
 
-log_message "Передаем управление Python скрипту: astra-automation.py"
+log_message "Передаем управление Python скрипту: astra_automation.py"
 log_message "Лог файл: $LOG_FILE"
 
     if python3 --version >/dev/null 2>&1; then
@@ -536,7 +536,7 @@ log_message "Лог файл: $LOG_FILE"
     
     if [ "$CONSOLE_MODE" = true ]; then
         # Консольный режим - запускаем в текущем терминале
-        python3 astra-automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
+        python3 astra_automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
         PYTHON_EXIT_CODE=$?
     else
         # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
@@ -571,7 +571,7 @@ log_message "Лог файл: $LOG_FILE"
         log_message "PID окна терминала: $TERM_PID"
         
         # Запускаем GUI с передачей PID терминала для автозакрытия
-        nohup python3 astra-automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+        nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
         PYTHON_PID=$!
         
         echo "   [OK] GUI запущен (PID: $PYTHON_PID)"

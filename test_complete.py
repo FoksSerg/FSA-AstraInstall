@@ -20,14 +20,14 @@ def test_main_file_compilation():
     
     try:
         # Проверяем компиляцию основного файла
-        result = subprocess.run([sys.executable, '-m', 'py_compile', 'astra-automation.py'], 
+        result = subprocess.run([sys.executable, '-m', 'py_compile', 'astra_automation.py'], 
                               capture_output=True, text=True)
         
         if result.returncode == 0:
-            print("✅ Компиляция astra-automation.py успешна")
+            print("✅ Компиляция astra_automation.py успешна")
             return True
         else:
-            print("❌ Ошибка компиляции astra-automation.py:")
+            print("❌ Ошибка компиляции astra_automation.py:")
             print("   STDOUT: %s" % result.stdout)
             print("   STDERR: %s" % result.stderr)
             return False
@@ -43,7 +43,7 @@ def test_embedded_modules_syntax():
     try:
         # Импортируем функции из основного файла
         import importlib.util
-        spec = importlib.util.spec_from_file_location("astra_automation", "astra-automation.py")
+        spec = importlib.util.spec_from_file_location("astra_automation", "astra_automation.py")
         astra_automation = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(astra_automation)
         
@@ -71,7 +71,7 @@ def test_config_json_syntax():
     try:
         # Импортируем класс из основного файла
         import importlib.util
-        spec = importlib.util.spec_from_file_location("astra_automation", "astra-automation.py")
+        spec = importlib.util.spec_from_file_location("astra_automation", "astra_automation.py")
         astra_automation = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(astra_automation)
         
@@ -123,7 +123,7 @@ def test_file_permissions():
     print("\n🔍 Тестирование прав доступа к файлам...")
     
     files_to_check = [
-        'astra-automation.py',
+        'astra_automation.py',
         'astra_install.sh'
     ]
     

@@ -16,12 +16,12 @@ def launch_gui():
         
         # Получаем абсолютный путь к директории скрипта
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        astra_automation_path = os.path.join(script_dir, 'astra-automation.py')
+        astra_automation_path = os.path.join(script_dir, 'astra_automation.py')
         
         # Проверяем существование файла
         if not os.path.exists(astra_automation_path):
             print(f"Файл не найден: {astra_automation_path}")
-            print(f"   Убедитесь, что скрипт находится в папке с astra-automation.py")
+            print(f"   Убедитесь, что скрипт находится в папке с astra_automation.py")
             return False
         
         print(f"Путь к модулю: {astra_automation_path}")

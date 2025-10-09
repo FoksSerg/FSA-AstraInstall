@@ -33,6 +33,198 @@ except Exception:
     REQUESTS_AVAILABLE = False
 
 # ============================================================================
+# УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
+# ============================================================================
+COMPONENTS_CONFIG = {
+    # Wine пакеты системы
+    'wine_astraregul': {
+        'name': 'Wine Astraregul',
+        'category': 'wine_packages',
+        'dependencies': [],
+        'check_paths': ['/opt/wine-astraregul/bin/wine'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Основной Wine пакет Astraregul',
+        'priority': 1
+    },
+    'wine_9': {
+        'name': 'Wine 9.0',
+        'category': 'wine_packages',
+        'dependencies': ['wine_astraregul'],
+        'check_paths': ['/opt/wine-9.0/bin/wine'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Wine версии 9.0',
+        'priority': 2
+    },
+    'ptrace_scope': {
+        'name': 'ptrace_scope',
+        'category': 'system_config',
+        'dependencies': [],
+        'check_paths': ['/proc/sys/kernel/yama/ptrace_scope'],
+        'install_method': 'system_config',
+        'uninstall_method': 'system_config',
+        'gui_selectable': True,
+        'description': 'Настройка ptrace_scope для Wine',
+        'priority': 3
+    },
+    
+    # Wine окружение
+    'wineprefix': {
+        'name': 'WINEPREFIX',
+        'category': 'wine_environment',
+        'dependencies': ['wine_astraregul'],
+        'check_paths': ['~/.wine-astraregul'],
+        'install_method': 'wine_init',
+        'uninstall_method': 'wine_cleanup',
+        'gui_selectable': True,
+        'description': 'Wine префикс для Astra.IDE',
+        'priority': 4
+    },
+    
+    # Winetricks компоненты
+    'wine-mono': {
+        'name': 'Wine Mono',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
+            'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'Mono runtime для Wine',
+        'priority': 5
+    },
+    'dotnet48': {
+        'name': '.NET Framework 4.8',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
+            'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': '.NET Framework 4.8',
+        'priority': 6
+    },
+    'vcrun2013': {
+        'name': 'Visual C++ 2013',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/system32/msvcp120.dll',
+            'drive_c/windows/system32/msvcr120.dll',
+            'drive_c/windows/syswow64/msvcp120.dll',
+            'drive_c/windows/syswow64/msvcr120.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'Visual C++ 2013 Redistributable',
+        'priority': 7
+    },
+    'vcrun2022': {
+        'name': 'Visual C++ 2022',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/system32/msvcp140.dll',
+            'drive_c/windows/system32/vcruntime140.dll',
+            'drive_c/windows/syswow64/msvcp140.dll',
+            'drive_c/windows/syswow64/vcruntime140.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'Visual C++ 2022 Redistributable',
+        'priority': 8
+    },
+    'd3dcompiler_43': {
+        'name': 'DirectX d3dcompiler_43',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/system32/d3dcompiler_43.dll',
+            'drive_c/windows/syswow64/d3dcompiler_43.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'DirectX d3dcompiler_43',
+        'priority': 9
+    },
+    'd3dcompiler_47': {
+        'name': 'DirectX d3dcompiler_47',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/system32/d3dcompiler_47.dll',
+            'drive_c/windows/syswow64/d3dcompiler_47.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'DirectX d3dcompiler_47',
+        'priority': 10
+    },
+    'dxvk': {
+        'name': 'DXVK',
+        'category': 'winetricks',
+        'dependencies': ['wineprefix'],
+        'check_paths': [
+            'drive_c/windows/system32/dxgi.dll',
+            'drive_c/windows/system32/d3d11.dll'
+        ],
+        'install_method': 'winetricks',
+        'uninstall_method': 'winetricks',
+        'gui_selectable': False,
+        'description': 'DXVK - Vulkan-based D3D11 implementation',
+        'priority': 11
+    },
+    
+    # Astra.IDE и связанные компоненты
+    'astra_ide': {
+        'name': 'Astra.IDE',
+        'category': 'application',
+        'dependencies': ['wineprefix', 'dotnet48', 'vcrun2013', 'vcrun2022'],
+        'check_paths': ['drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe'],
+        'install_method': 'wine_executable',
+        'uninstall_method': 'wine_executable',
+        'gui_selectable': True,
+        'description': 'Astra.IDE приложение',
+        'priority': 12
+    },
+    'start_script': {
+        'name': 'Скрипт запуска',
+        'category': 'application',
+        'dependencies': ['astra_ide'],
+        'check_paths': ['~/start-astraide.sh'],
+        'install_method': 'script_creation',
+        'uninstall_method': 'script_removal',
+        'gui_selectable': True,
+        'description': 'Скрипт для запуска Astra.IDE',
+        'priority': 13
+    },
+    'desktop_shortcut': {
+        'name': 'Ярлык рабочего стола',
+        'category': 'application',
+        'dependencies': ['astra_ide'],
+        'check_paths': ['~/Desktop/AstraRegul.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'gui_selectable': True,
+        'description': 'Ярлык Astra.IDE на рабочем столе',
+        'priority': 14
+    }
+}
+
+# ============================================================================
 # КЛАСС ПОЛНОГО ЛОГИРОВАНИЯ
 # ============================================================================
 class Logger(object):
@@ -3859,6 +4051,693 @@ class WineUninstaller(object):
         self._log("=" * 60)
 
 # ============================================================================
+# УНИВЕРСАЛЬНЫЙ УСТАНОВЩИК КОМПОНЕНТОВ
+# ============================================================================
+class UniversalInstaller(object):
+    """
+    Универсальный установщик компонентов с автоматическим управлением зависимостями
+    """
+    
+    def __init__(self, logger=None, callback=None):
+        """
+        Инициализация универсального установщика
+        
+        Args:
+            logger: Экземпляр класса Logger для логирования
+            callback: Функция для обновления статуса в GUI (опционально)
+        """
+        self.logger = logger
+        self.callback = callback
+        
+        # Получаем абсолютный путь к директории скрипта
+        import sys
+        if os.path.isabs(sys.argv[0]):
+            script_path = sys.argv[0]
+        else:
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        
+        script_dir = os.path.dirname(os.path.abspath(script_path))
+        self.astrapack_dir = os.path.join(script_dir, "AstraPack")
+        
+        # Определяем домашнюю директорию РЕАЛЬНОГО пользователя
+        real_user = os.environ.get('SUDO_USER')
+        if real_user and real_user != 'root':
+            import pwd
+            self.home = pwd.getpwnam(real_user).pw_dir
+        else:
+            self.home = os.path.expanduser("~")
+        
+        self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+        
+        # Инициализируем специализированные установщики
+        self.wine_installer = None
+        self.winetricks_manager = None
+        
+    def _log(self, message, level="INFO"):
+        """Логирование сообщения"""
+        if self.logger:
+            if level == "ERROR":
+                self.logger.log_error(message)
+            elif level == "WARNING":
+                self.logger.log_warning(message)
+            else:
+                self.logger.log_info(message)
+        else:
+            print("[%s] %s" % (level, message))
+    
+    def _callback(self, message):
+        """Вызов callback функции"""
+        if self.callback:
+            self.callback(message)
+    
+    def resolve_dependencies(self, component_ids):
+        """
+        Разрешение зависимостей для списка компонентов
+        
+        Args:
+            component_ids: Список ID компонентов для установки
+            
+        Returns:
+            list: Отсортированный список компонентов с учетом зависимостей
+        """
+        resolved = []
+        visited = set()
+        
+        def resolve_component(component_id):
+            if component_id in visited:
+                return
+            visited.add(component_id)
+            
+            if component_id not in COMPONENTS_CONFIG:
+                self._log("Предупреждение: компонент '%s' не найден в конфигурации" % component_id, "WARNING")
+                return
+            
+            # Сначала разрешаем зависимости
+            for dep in COMPONENTS_CONFIG[component_id]['dependencies']:
+                resolve_component(dep)
+            
+            # Затем добавляем сам компонент
+            if component_id not in resolved:
+                resolved.append(component_id)
+        
+        # Разрешаем зависимости для каждого компонента
+        for component_id in component_ids:
+            resolve_component(component_id)
+        
+        # Сортируем по приоритету
+        resolved.sort(key=lambda x: COMPONENTS_CONFIG.get(x, {}).get('priority', 999))
+        
+        return resolved
+    
+    def find_all_children(self, component_ids):
+        """
+        Поиск всех дочерних компонентов (компонентов, зависящих от указанных)
+        
+        Args:
+            component_ids: Список ID компонентов
+            
+        Returns:
+            list: Список всех дочерних компонентов
+        """
+        children = set()
+        
+        def find_children_recursive(parent_id):
+            for component_id, config in COMPONENTS_CONFIG.items():
+                if parent_id in config.get('dependencies', []):
+                    children.add(component_id)
+                    find_children_recursive(component_id)
+        
+        for component_id in component_ids:
+            find_children_recursive(component_id)
+        
+        return list(children)
+    
+    def check_component_status(self, component_id):
+        """
+        Проверка статуса компонента
+        
+        Args:
+            component_id: ID компонента
+            
+        Returns:
+            bool: True если компонент установлен, False если нет
+        """
+        if component_id not in COMPONENTS_CONFIG:
+            return False
+        
+        config = COMPONENTS_CONFIG[component_id]
+        check_paths = config['check_paths']
+        
+        for path in check_paths:
+            # Обрабатываем специальные пути
+            if path.startswith('~/'):
+                full_path = os.path.expanduser(path)
+            elif path.startswith('drive_c/'):
+                # Путь внутри WINEPREFIX
+                full_path = os.path.join(self.wineprefix, path)
+            else:
+                full_path = path
+            
+            # Проверяем существование файла/директории
+            if os.path.exists(full_path):
+                return True
+        
+        return False
+    
+    def install_component(self, component_id):
+        """
+        Установка одного компонента
+        
+        Args:
+            component_id: ID компонента
+            
+        Returns:
+            bool: True если установка успешна, False если ошибка
+        """
+        if component_id not in COMPONENTS_CONFIG:
+            self._log("Ошибка: компонент '%s' не найден в конфигурации" % component_id, "ERROR")
+            return False
+        
+        config = COMPONENTS_CONFIG[component_id]
+        install_method = config['install_method']
+        
+        self._log("Установка компонента: %s (метод: %s)" % (config['name'], install_method))
+        
+        try:
+            if install_method == 'package_manager':
+                return self._install_package_manager(component_id, config)
+            elif install_method == 'system_config':
+                return self._install_system_config(component_id, config)
+            elif install_method == 'wine_init':
+                return self._install_wine_init(component_id, config)
+            elif install_method == 'winetricks':
+                return self._install_winetricks(component_id, config)
+            elif install_method == 'wine_executable':
+                return self._install_wine_executable(component_id, config)
+            elif install_method == 'script_creation':
+                return self._install_script_creation(component_id, config)
+            elif install_method == 'desktop_shortcut':
+                return self._install_desktop_shortcut(component_id, config)
+            else:
+                self._log("Неизвестный метод установки: %s" % install_method, "ERROR")
+                return False
+        except Exception as e:
+            self._log("Ошибка установки компонента %s: %s" % (component_id, str(e)), "ERROR")
+            return False
+    
+    def uninstall_component(self, component_id):
+        """
+        Удаление одного компонента
+        
+        Args:
+            component_id: ID компонента
+            
+        Returns:
+            bool: True если удаление успешно, False если ошибка
+        """
+        if component_id not in COMPONENTS_CONFIG:
+            self._log("Ошибка: компонент '%s' не найден в конфигурации" % component_id, "ERROR")
+            return False
+        
+        config = COMPONENTS_CONFIG[component_id]
+        uninstall_method = config['uninstall_method']
+        
+        self._log("Удаление компонента: %s (метод: %s)" % (config['name'], uninstall_method))
+        
+        try:
+            if uninstall_method == 'package_manager':
+                return self._uninstall_package_manager(component_id, config)
+            elif uninstall_method == 'system_config':
+                return self._uninstall_system_config(component_id, config)
+            elif uninstall_method == 'wine_cleanup':
+                return self._uninstall_wine_cleanup(component_id, config)
+            elif uninstall_method == 'winetricks':
+                return self._uninstall_winetricks(component_id, config)
+            elif uninstall_method == 'wine_executable':
+                return self._uninstall_wine_executable(component_id, config)
+            elif uninstall_method == 'script_removal':
+                return self._uninstall_script_removal(component_id, config)
+            elif uninstall_method == 'desktop_shortcut':
+                return self._uninstall_desktop_shortcut(component_id, config)
+            else:
+                self._log("Неизвестный метод удаления: %s" % uninstall_method, "ERROR")
+                return False
+        except Exception as e:
+            self._log("Ошибка удаления компонента %s: %s" % (component_id, str(e)), "ERROR")
+            return False
+    
+    def install_components(self, component_ids):
+        """
+        Установка компонентов с учетом зависимостей
+        
+        Args:
+            component_ids: Список ID компонентов для установки
+            
+        Returns:
+            bool: True если все компоненты установлены успешно, False если есть ошибки
+        """
+        self._log("Начало установки компонентов: %s" % ', '.join(component_ids))
+        
+        # Разрешаем зависимости
+        resolved_components = self.resolve_dependencies(component_ids)
+        self._log("Компоненты с учетом зависимостей: %s" % ', '.join(resolved_components))
+        
+        success = True
+        for component_id in resolved_components:
+            if not self.check_component_status(component_id):
+                if not self.install_component(component_id):
+                    self._log("Ошибка установки компонента: %s" % component_id, "ERROR")
+                    success = False
+                else:
+                    self._callback("UPDATE_COMPONENT:%s" % component_id)
+            else:
+                self._log("Компонент %s уже установлен, пропускаем" % component_id)
+        
+        return success
+    
+    def uninstall_components(self, component_ids):
+        """
+        Удаление компонентов с учетом дочерних зависимостей
+        
+        Args:
+            component_ids: Список ID компонентов для удаления
+            
+        Returns:
+            bool: True если все компоненты удалены успешно, False если есть ошибки
+        """
+        self._log("Начало удаления компонентов: %s" % ', '.join(component_ids))
+        
+        # Находим всех детей
+        all_children = self.find_all_children(component_ids)
+        all_components = list(set(component_ids + all_children))
+        
+        # Сортируем в обратном порядке приоритета для корректного удаления
+        all_components.sort(key=lambda x: COMPONENTS_CONFIG.get(x, {}).get('priority', 999), reverse=True)
+        
+        self._log("Компоненты для удаления (включая детей): %s" % ', '.join(all_components))
+        
+        success = True
+        for component_id in all_components:
+            if self.check_component_status(component_id):
+                if not self.uninstall_component(component_id):
+                    self._log("Ошибка удаления компонента: %s" % component_id, "ERROR")
+                    success = False
+                else:
+                    self._callback("UPDATE_COMPONENT:%s" % component_id)
+            else:
+                self._log("Компонент %s не установлен, пропускаем" % component_id)
+        
+        return success
+    
+    # Методы установки для разных типов компонентов
+    def _install_package_manager(self, component_id, config):
+        """Установка через пакетный менеджер"""
+        # Здесь будет интеграция с существующим WineInstaller
+        self._log("Установка через пакетный менеджер: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_system_config(self, component_id, config):
+        """Установка системной конфигурации"""
+        self._log("Установка системной конфигурации: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_wine_init(self, component_id, config):
+        """Инициализация Wine окружения"""
+        self._log("Инициализация Wine окружения: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_winetricks(self, component_id, config):
+        """Установка через winetricks"""
+        self._log("Установка через winetricks: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_wine_executable(self, component_id, config):
+        """Установка исполняемого файла в Wine"""
+        self._log("Установка исполняемого файла в Wine: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_script_creation(self, component_id, config):
+        """Создание скрипта"""
+        self._log("Создание скрипта: %s" % component_id)
+        return True  # Заглушка
+    
+    def _install_desktop_shortcut(self, component_id, config):
+        """Создание ярлыка рабочего стола"""
+        self._log("Создание ярлыка рабочего стола: %s" % component_id)
+        return True  # Заглушка
+    
+    # Методы удаления для разных типов компонентов
+    def _uninstall_package_manager(self, component_id, config):
+        """Удаление через пакетный менеджер"""
+        self._log("Удаление через пакетный менеджер: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_system_config(self, component_id, config):
+        """Удаление системной конфигурации"""
+        self._log("Удаление системной конфигурации: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_wine_cleanup(self, component_id, config):
+        """Очистка Wine окружения"""
+        self._log("Очистка Wine окружения: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_winetricks(self, component_id, config):
+        """Удаление через winetricks"""
+        self._log("Удаление через winetricks: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_wine_executable(self, component_id, config):
+        """Удаление исполняемого файла из Wine"""
+        self._log("Удаление исполняемого файла из Wine: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_script_removal(self, component_id, config):
+        """Удаление скрипта"""
+        self._log("Удаление скрипта: %s" % component_id)
+        return True  # Заглушка
+    
+    def _uninstall_desktop_shortcut(self, component_id, config):
+        """Удаление ярлыка рабочего стола"""
+        self._log("Удаление ярлыка рабочего стола: %s" % component_id)
+        return True  # Заглушка
+
+# ============================================================================
+# МЕНЕДЖЕР СТАТУСОВ КОМПОНЕНТОВ
+# ============================================================================
+class ComponentStatusManager(object):
+    """
+    Менеджер статусов компонентов с интеграцией в GUI
+    """
+    
+    def __init__(self, logger=None, callback=None):
+        """
+        Инициализация менеджера статусов
+        
+        Args:
+            logger: Экземпляр класса Logger для логирования
+            callback: Функция для обновления статуса в GUI (опционально)
+        """
+        self.logger = logger
+        self.callback = callback
+        
+        # Определяем домашнюю директорию РЕАЛЬНОГО пользователя
+        real_user = os.environ.get('SUDO_USER')
+        if real_user and real_user != 'root':
+            import pwd
+            self.home = pwd.getpwnam(real_user).pw_dir
+        else:
+            self.home = os.path.expanduser("~")
+        
+        self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+        
+        # Состояния компонентов для отслеживания процесса установки/удаления
+        self.pending_install = set()  # Компоненты ожидающие установки
+        self.installing = set()       # Компоненты в процессе установки
+        self.removing = set()        # Компоненты в процессе удаления
+        
+        # Кэш статусов компонентов
+        self.status_cache = {}
+        self.cache_timestamp = None
+    
+    def _log(self, message, level="INFO"):
+        """Логирование сообщения"""
+        if self.logger:
+            if level == "ERROR":
+                self.logger.log_error(message)
+            elif level == "WARNING":
+                self.logger.log_warning(message)
+            else:
+                self.logger.log_info(message)
+        else:
+            print("[%s] %s" % (level, message))
+    
+    def _callback(self, message):
+        """Вызов callback функции"""
+        if self.callback:
+            self.callback(message)
+    
+    def check_component_status(self, component_id):
+        """
+        Проверка статуса компонента
+        
+        Args:
+            component_id: ID компонента
+            
+        Returns:
+            bool: True если компонент установлен, False если нет
+        """
+        if component_id not in COMPONENTS_CONFIG:
+            return False
+        
+        config = COMPONENTS_CONFIG[component_id]
+        check_paths = config['check_paths']
+        
+        for path in check_paths:
+            # Обрабатываем специальные пути
+            if path.startswith('~/'):
+                full_path = os.path.expanduser(path)
+            elif path.startswith('drive_c/'):
+                # Путь внутри WINEPREFIX
+                full_path = os.path.join(self.wineprefix, path)
+            else:
+                full_path = path
+            
+            # Проверяем существование файла/директории
+            if os.path.exists(full_path):
+                return True
+        
+        return False
+    
+    def get_component_status(self, component_id, component_name):
+        """
+        Определяет статус компонента с учетом состояния установки
+        
+        Args:
+            component_id: ID компонента
+            component_name: Название компонента
+            
+        Returns:
+            tuple: (статус_текст, статус_тег)
+        """
+        # ПРИОРИТЕТ: сначала проверяем состояния установки/удаления
+        # Проверяем, есть ли компонент в списке ожидающих установки
+        if component_name in self.pending_install:
+            return '[Ожидание]', 'pending'
+        
+        # Проверяем, есть ли компонент в списке устанавливаемых
+        if component_name in self.installing:
+            return '[Установка]', 'installing'
+        
+        # Проверяем, есть ли компонент в списке удаляемых
+        if component_name in self.removing:
+            return '[Удаление]', 'removing'
+        
+        # ТОЛЬКО если компонент не в процессе установки/удаления - проверяем реальное состояние
+        if self.check_component_status(component_id):
+            return '[OK]', 'ok'
+        else:
+            return '[---]', 'missing'
+    
+    def update_component_status(self, component_id, status):
+        """
+        Обновление статуса компонента
+        
+        Args:
+            component_id: ID компонента
+            status: Новый статус ('pending', 'installing', 'removing', 'ok', 'missing')
+        """
+        if component_id not in COMPONENTS_CONFIG:
+            return
+        
+        component_name = COMPONENTS_CONFIG[component_id]['name']
+        
+        # Удаляем из всех списков состояний
+        self.pending_install.discard(component_name)
+        self.installing.discard(component_name)
+        self.removing.discard(component_name)
+        
+        # Добавляем в соответствующий список
+        if status == 'pending':
+            self.pending_install.add(component_name)
+        elif status == 'installing':
+            self.installing.add(component_name)
+        elif status == 'removing':
+            self.removing.add(component_name)
+        
+        # Обновляем кэш
+        self.status_cache[component_id] = status
+        self.cache_timestamp = datetime.datetime.now()
+        
+        # Уведомляем GUI
+        self._callback("UPDATE_COMPONENT:%s" % component_id)
+    
+    def clear_all_states(self):
+        """Очистка всех состояний установки/удаления"""
+        self.pending_install.clear()
+        self.installing.clear()
+        self.removing.clear()
+        self.status_cache.clear()
+        self.cache_timestamp = None
+    
+    def get_all_components_status(self):
+        """
+        Получение статуса всех компонентов
+        
+        Returns:
+            dict: Словарь {component_id: (status_text, status_tag)}
+        """
+        result = {}
+        
+        for component_id, config in COMPONENTS_CONFIG.items():
+            component_name = config['name']
+            status_text, status_tag = self.get_component_status(component_id, component_name)
+            result[component_id] = (status_text, status_tag)
+        
+        return result
+    
+    def get_components_by_category(self, category):
+        """
+        Получение компонентов по категории
+        
+        Args:
+            category: Категория компонентов
+            
+        Returns:
+            list: Список ID компонентов в категории
+        """
+        return [component_id for component_id, config in COMPONENTS_CONFIG.items() 
+                if config['category'] == category]
+    
+    def get_selectable_components(self):
+        """
+        Получение компонентов, доступных для выбора в GUI
+        
+        Returns:
+            list: Список ID компонентов с gui_selectable=True
+        """
+        return [component_id for component_id, config in COMPONENTS_CONFIG.items() 
+                if config.get('gui_selectable', False)]
+    
+    def get_missing_components(self):
+        """
+        Получение списка отсутствующих компонентов
+        
+        Returns:
+            list: Список ID отсутствующих компонентов
+        """
+        missing = []
+        
+        for component_id, config in COMPONENTS_CONFIG.items():
+            if not self.check_component_status(component_id):
+                missing.append(component_id)
+        
+        return missing
+    
+    def get_installed_components(self):
+        """
+        Получение списка установленных компонентов
+        
+        Returns:
+            list: Список ID установленных компонентов
+        """
+        installed = []
+        
+        for component_id, config in COMPONENTS_CONFIG.items():
+            if self.check_component_status(component_id):
+                installed.append(component_id)
+        
+        return installed
+    
+    def is_fully_installed(self):
+        """
+        Проверка что все компоненты установлены
+        
+        Returns:
+            bool: True если все компоненты установлены
+        """
+        return len(self.get_missing_components()) == 0
+    
+    def get_installation_progress(self):
+        """
+        Получение прогресса установки
+        
+        Returns:
+            dict: Словарь с информацией о прогрессе
+        """
+        total_components = len(COMPONENTS_CONFIG)
+        installed_components = len(self.get_installed_components())
+        missing_components = len(self.get_missing_components())
+        
+        progress_percent = (installed_components / total_components) * 100 if total_components > 0 else 0
+        
+        return {
+            'total': total_components,
+            'installed': installed_components,
+            'missing': missing_components,
+            'progress_percent': progress_percent,
+            'pending': len(self.pending_install),
+            'installing': len(self.installing),
+            'removing': len(self.removing)
+        }
+    
+    def validate_dependencies(self, component_ids):
+        """
+        Проверка зависимостей для списка компонентов
+        
+        Args:
+            component_ids: Список ID компонентов
+            
+        Returns:
+            dict: Результат проверки зависимостей
+        """
+        missing_deps = []
+        circular_deps = []
+        
+        # Проверяем отсутствующие зависимости
+        for component_id in component_ids:
+            if component_id not in COMPONENTS_CONFIG:
+                continue
+            
+            deps = COMPONENTS_CONFIG[component_id]['dependencies']
+            for dep in deps:
+                if not self.check_component_status(dep):
+                    missing_deps.append((component_id, dep))
+        
+        # Проверяем циклические зависимости (упрощенная проверка)
+        visited = set()
+        rec_stack = set()
+        
+        def has_cycle(component_id):
+            visited.add(component_id)
+            rec_stack.add(component_id)
+            
+            if component_id not in COMPONENTS_CONFIG:
+                rec_stack.remove(component_id)
+                return False
+            
+            for dep in COMPONENTS_CONFIG[component_id]['dependencies']:
+                if dep not in visited:
+                    if has_cycle(dep):
+                        return True
+                elif dep in rec_stack:
+                    circular_deps.append((component_id, dep))
+                    return True
+            
+            rec_stack.remove(component_id)
+            return False
+        
+        for component_id in component_ids:
+            if component_id not in visited:
+                has_cycle(component_id)
+        
+        return {
+            'valid': len(missing_deps) == 0 and len(circular_deps) == 0,
+            'missing_dependencies': missing_deps,
+            'circular_dependencies': circular_deps
+        }
+
+# ============================================================================
 # GUI КЛАСС АВТОМАТИЗАЦИИ
 # ============================================================================
 class AutomationGUI(object):
@@ -7605,7 +8484,7 @@ def check_system_requirements():
     try:
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с системными файлами")
-            print("   Запустите: sudo python astra-automation.py")
+            print("   Запустите: sudo python astra_automation.py")
             return False
     except AttributeError:
         # os.geteuid() не существует на macOS/Windows
@@ -7716,7 +8595,7 @@ def run_repo_checker(gui_terminal=None, dry_run=False):
         # Проверяем права доступа
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с /etc/apt/sources.list")
-            print("Запустите: sudo python3 astra-automation.py")
+            print("Запустите: sudo python3 astra_automation.py")
             return False
         
         # Создаем backup
@@ -7769,7 +8648,7 @@ def run_system_stats(temp_dir, dry_run=False):
         # Проверяем права доступа
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с системными пакетами")
-            print("Запустите: sudo python3 astra-automation.py")
+            print("Запустите: sudo python3 astra_automation.py")
             return False
         
         # Анализируем обновления

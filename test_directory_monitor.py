@@ -10,10 +10,10 @@ import shutil
 import time
 import sys
 
-# Импортируем классы из astra-automation.py
+# Импортируем классы из astra_automation.py
 try:
     import importlib.util
-    spec = importlib.util.spec_from_file_location('astra_automation', 'astra-automation.py')
+    spec = importlib.util.spec_from_file_location('astra_automation', 'astra_automation.py')
     astra_automation = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(astra_automation)
     
