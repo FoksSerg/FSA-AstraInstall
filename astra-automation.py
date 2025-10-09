@@ -991,26 +991,27 @@ class WineComponentsChecker(object):
             print("   [SKIP] WINEPREFIX не найден, пропускаем проверку")
             return
         
-        # Определения компонентов и их характерных файлов/директорий
+        # Определения компонентов и их ключевых файлов (синхронизировано с DirectoryMonitor)
         components = {
             'wine-mono': [
-                'drive_c/windows/mono',
-                'drive_c/windows/mono/mono-2.0',
-                'drive_c/windows/mono/mono-2.0/bin',
                 'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
                 'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
             ],
             'dotnet48': [
-                'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319',
-                'drive_c/windows/Microsoft.NET/Framework/v4.0.30319'
+                'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
+                'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll'
             ],
             'vcrun2013': [
                 'drive_c/windows/system32/msvcp120.dll',
-                'drive_c/windows/syswow64/msvcp120.dll'
+                'drive_c/windows/system32/msvcr120.dll',
+                'drive_c/windows/syswow64/msvcp120.dll',
+                'drive_c/windows/syswow64/msvcr120.dll'
             ],
             'vcrun2022': [
                 'drive_c/windows/system32/msvcp140.dll',
-                'drive_c/windows/system32/vcruntime140.dll'
+                'drive_c/windows/system32/vcruntime140.dll',
+                'drive_c/windows/syswow64/msvcp140.dll',
+                'drive_c/windows/syswow64/vcruntime140.dll'
             ],
             'd3dcompiler_43': [
                 'drive_c/windows/system32/d3dcompiler_43.dll',
@@ -1021,8 +1022,8 @@ class WineComponentsChecker(object):
                 'drive_c/windows/syswow64/d3dcompiler_47.dll'
             ],
             'dxvk': [
-                'drive_c/windows/system32/d3d11.dll',
-                'drive_c/windows/system32/dxgi.dll'
+                'drive_c/windows/system32/dxgi.dll',
+                'drive_c/windows/system32/d3d11.dll'
             ]
         }
         
@@ -2431,6 +2432,11 @@ expect {{
         self._log("ШАГ 4: УСТАНОВКА КОМПОНЕНТОВ WINETRICKS")
         self._log("=" * 60)
         
+        # Инициализируем монитор директорий для отслеживания изменений WINEPREFIX
+        directory_monitor = DirectoryMonitor(compact_mode=True)  # Включаем компактный режим
+        directory_monitor.start_monitoring(self.wineprefix)
+        self._log(f"[DirectoryMonitor] Мониторинг WINEPREFIX начат: {self.wineprefix}")
+        
         # Используем WinetricksManager для установки компонентов
         if not self.winetricks_components:
             self._log("Нет компонентов для установки")
@@ -2441,6 +2447,13 @@ expect {{
         # Определяем callback для обновления статуса
         def status_callback(message):
             self._log("[WinetricksManager] %s" % message)
+            
+            # Проверяем изменения в WINEPREFIX после каждого сообщения
+            changes = directory_monitor.check_changes(self.wineprefix)
+            if changes and (changes['new_files'] or changes['modified_files'] or changes['new_directories']):
+                formatted_changes = directory_monitor.format_changes(changes)
+                self._log(f"[DirectoryMonitor] {formatted_changes}")
+            
             if self.callback:
                 if message.startswith("UPDATE_COMPONENT:"):
                     # Команда обновления компонента - обновляем проверку
@@ -2459,6 +2472,16 @@ expect {{
         
         if success:
             self._log("✅ Компоненты winetricks успешно установлены через WinetricksManager")
+            
+            # Получаем полный отчет об изменениях в WINEPREFIX
+            total_changes = directory_monitor.get_total_changes(self.wineprefix)
+            if total_changes and (total_changes['new_files'] or total_changes['modified_files'] or total_changes['new_directories']):
+                self._log("\n📊 ПОЛНЫЙ ОТЧЕТ ОБ ИЗМЕНЕНИЯХ В WINEPREFIX:")
+                self._log("-" * 50)
+                formatted_changes = directory_monitor.format_changes(total_changes)
+                self._log(f"[DirectoryMonitor] {formatted_changes}")
+                self._log("-" * 50)
+            
             return True
         else:
             self._log("❌ Ошибка установки компонентов через WinetricksManager", "ERROR")
@@ -4542,11 +4565,16 @@ class AutomationGUI(object):
         
         self.wine_tree.column('selected', width=50, anchor='center', minwidth=50)
         self.wine_tree.column('component', width=200, minwidth=150)
-        self.wine_tree.column('status', width=100, minwidth=80)
+        self.wine_tree.column('status', width=100, minwidth=80, anchor='center')
         self.wine_tree.column('path', width=300, minwidth=200)
         
         # Словарь для хранения состояния чекбоксов (item_id -> True/False)
         self.wine_checkboxes = {}
+        
+        # Списки состояний компонентов для отслеживания процесса установки/удаления
+        self.pending_install = set()  # Компоненты ожидающие установки
+        self.installing = set()       # Компоненты в процессе установки
+        self.removing = set()        # Компоненты в процессе удаления
         
         # Привязываем клик к переключению чекбокса
         self.wine_tree.bind('<Button-1>', self.on_wine_tree_click)
@@ -4563,28 +4591,28 @@ class AutomationGUI(object):
         """Заполнение начальными данными (без проверки)"""
         # Основные компоненты с галочками
         main_components = [
-            ('Wine Astraregul', 'Не проверено', '/opt/wine-astraregul/bin/wine', True),
-            ('Wine 9.0', 'Не проверено', '/opt/wine-9.0/bin/wine', True),
-            ('ptrace_scope', 'Не проверено', '/proc/sys/kernel/yama/ptrace_scope', True),
-            ('WINEPREFIX', 'Не проверено', '~/.wine-astraregul', True),
+            ('Wine Astraregul', '---', '/opt/wine-astraregul/bin/wine', True),
+            ('Wine 9.0', '---', '/opt/wine-9.0/bin/wine', True),
+            ('ptrace_scope', '---', '/proc/sys/kernel/yama/ptrace_scope', True),
+            ('WINEPREFIX', '---', '~/.wine-astraregul', True),
         ]
         
         # Компоненты winetricks (только информация, БЕЗ галочек)
         winetricks_info = [
-            ('  ├─ Wine Mono', 'Не проверено', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
-            ('  ├─ .NET Framework 4.8', 'Не проверено', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
-            ('  ├─ Visual C++ 2013', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
-            ('  ├─ Visual C++ 2022', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
-            ('  ├─ DirectX d3dcompiler_43', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
-            ('  ├─ DirectX d3dcompiler_47', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
-            ('  └─ DXVK', 'Не проверено', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
+            ('  ├─ Wine Mono', '---', 'WINEPREFIX/drive_c/windows/mono/mono-2.0', False),
+            ('  ├─ .NET Framework 4.8', '---', 'WINEPREFIX/drive_c/windows/Microsoft.NET/Framework64/v4.0.30319', False),
+            ('  ├─ Visual C++ 2013', '---', 'WINEPREFIX/drive_c/windows/system32/msvcp120.dll', False),
+            ('  ├─ Visual C++ 2022', '---', 'WINEPREFIX/drive_c/windows/system32/msvcp140.dll', False),
+            ('  ├─ DirectX d3dcompiler_43', '---', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_43.dll', False),
+            ('  ├─ DirectX d3dcompiler_47', '---', 'WINEPREFIX/drive_c/windows/system32/d3dcompiler_47.dll', False),
+            ('  └─ DXVK', '---', 'WINEPREFIX/drive_c/windows/system32/d3d11.dll', False),
         ]
         
         # Остальные компоненты
         other_components = [
-            ('Astra.IDE', 'Не проверено', 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common', True),
-            ('Скрипт запуска', 'Не проверено', '~/start-astraide.sh', True),
-            ('Ярлык рабочего стола', 'Не проверено', '~/Desktop/AstraRegul.desktop', True)
+            ('Astra.IDE', '---', 'WINEPREFIX/drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common', True),
+            ('Скрипт запуска', '---', '~/start-astraide.sh', True),
+            ('Ярлык рабочего стола', '---', '~/Desktop/AstraRegul.desktop', True)
         ]
         
         # Добавляем основные компоненты
@@ -4593,11 +4621,15 @@ class AutomationGUI(object):
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
+            # Цветовое выделение для статуса "---"
+            self.wine_tree.item(item_id, tags=('missing',))
         
         # Добавляем winetricks компоненты (только информация)
         for component, status, path, has_checkbox in winetricks_info:
             item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component, status, path))
             # НЕ добавляем в wine_checkboxes - их нельзя выбрать
+            # Цветовое выделение для статуса "---"
+            self.wine_tree.item(item_id, tags=('missing',))
         
         # Добавляем остальные компоненты
         for component, status, path, has_checkbox in other_components:
@@ -4605,6 +4637,11 @@ class AutomationGUI(object):
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
+            # Цветовое выделение для статуса "---"
+            self.wine_tree.item(item_id, tags=('missing',))
+        
+        # Настраиваем цвета тегов для начального состояния
+        self.wine_tree.tag_configure('missing', foreground='gray')
         
         # Начальное сообщение в сводке
         self.wine_summary_text.config(state=self.tk.NORMAL)
@@ -5025,10 +5062,72 @@ class AutomationGUI(object):
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
     
+    def set_component_pending(self, component_name):
+        """Установить компонент в состояние ожидания установки"""
+        self.pending_install.add(component_name)
+        self._update_wine_status()
+    
+    def set_component_installing(self, component_name):
+        """Установить компонент в состояние установки"""
+        self.pending_install.discard(component_name)  # Убираем из ожидания
+        self.installing.add(component_name)
+        self._update_wine_status()
+    
+    def set_component_removing(self, component_name):
+        """Установить компонент в состояние удаления"""
+        self.pending_install.discard(component_name)  # Убираем из ожидания
+        self.removing.add(component_name)
+        self._update_wine_status()
+    
+    def set_component_completed(self, component_name, success=True):
+        """Установить компонент в завершенное состояние"""
+        self.installing.discard(component_name)
+        self.removing.discard(component_name)
+        if not success:
+            # В случае ошибки можно добавить в отдельный список ошибок
+            pass
+        self._update_wine_status()
+    
+    def clear_all_states(self):
+        """Очистить все состояния компонентов"""
+        self.pending_install.clear()
+        self.installing.clear()
+        self.removing.clear()
+        self._update_wine_status()
+    
+    def get_component_status(self, check_key, component_name):
+        """Определяет статус компонента с учетом состояния установки"""
+        # ПРИОРИТЕТ: сначала проверяем состояния установки/удаления
+        # Проверяем, есть ли компонент в списке ожидающих установки
+        if hasattr(self, 'pending_install') and component_name in self.pending_install:
+            return '[Ожидание]', 'pending'
+        
+        # Проверяем, есть ли компонент в списке устанавливаемых
+        if hasattr(self, 'installing') and component_name in self.installing:
+            return '[Установка]', 'installing'
+        
+        # Проверяем, есть ли компонент в списке удаляемых
+        if hasattr(self, 'removing') and component_name in self.removing:
+            return '[Удаление]', 'removing'
+        
+        # ТОЛЬКО если компонент не в процессе установки/удаления - проверяем реальное состояние
+        if self.wine_checker.checks.get(check_key, False):
+            return '[OK]', 'ok'
+        else:
+            return '[---]', 'missing'
+    
     def _update_wine_status(self):
         """Обновление статуса в GUI (вызывается из главного потока)"""
         if not self.wine_checker:
             return
+        
+        # Сохраняем текущее состояние выбора перед обновлением
+        current_selection = set()
+        for item, checked in self.wine_checkboxes.items():
+            if checked:
+                values = self.wine_tree.item(item, 'values')
+                component_name = values[1]  # Вторая колонка - название компонента
+                current_selection.add(component_name)
         
         # Очищаем таблицу и чекбоксы
         for item in self.wine_tree.get_children():
@@ -5076,51 +5175,61 @@ class AutomationGUI(object):
         
         # Добавляем основные компоненты
         for component_name, check_key, path, has_checkbox in main_components:
-            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
+            status, status_tag = self.get_component_status(check_key, component_name)
             checkbox = '☐' if has_checkbox else ' '
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
-            if self.wine_checker.checks.get(check_key, False):
-                self.wine_tree.item(item_id, tags=('ok',))
-            else:
-                self.wine_tree.item(item_id, tags=('error',))
+            self.wine_tree.item(item_id, tags=(status_tag,))
         
         # Добавляем winetricks компоненты (только информация)
         for component_name, check_key, path, has_checkbox in winetricks_info:
-            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
+            status, status_tag = self.get_component_status(check_key, component_name)
             item_id = self.wine_tree.insert('', self.tk.END, values=(' ', component_name, status, path))
             # НЕ добавляем в wine_checkboxes
             
             # Цветовое выделение
-            if self.wine_checker.checks.get(check_key, False):
-                self.wine_tree.item(item_id, tags=('ok',))
-            else:
-                self.wine_tree.item(item_id, tags=('error',))
+            self.wine_tree.item(item_id, tags=(status_tag,))
         
         # Добавляем остальные компоненты
         for component_name, check_key, path, has_checkbox in other_components:
-            status = '[OK]' if self.wine_checker.checks.get(check_key, False) else '[ERR]'
+            status, status_tag = self.get_component_status(check_key, component_name)
             checkbox = '☐' if has_checkbox else ' '
             item_id = self.wine_tree.insert('', self.tk.END, values=(checkbox, component_name, status, path))
             if has_checkbox:
                 self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
-            if self.wine_checker.checks.get(check_key, False):
-                self.wine_tree.item(item_id, tags=('ok',))
-            else:
-                self.wine_tree.item(item_id, tags=('error',))
+            self.wine_tree.item(item_id, tags=(status_tag,))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
+        self.wine_tree.tag_configure('missing', foreground='gray')
+        self.wine_tree.tag_configure('pending', foreground='orange')
+        self.wine_tree.tag_configure('installing', foreground='blue')
+        self.wine_tree.tag_configure('removing', foreground='purple')
         self.wine_tree.tag_configure('error', foreground='red')
         
         # Принудительно обновляем размер таблицы
         self.wine_tree.update_idletasks()
         self.root.update_idletasks()
+        
+        # Восстанавливаем состояние выбора
+        for item_id in self.wine_checkboxes:
+            if item_id in self.wine_tree.get_children():
+                values = self.wine_tree.item(item_id, 'values')
+                component_name = values[1]
+                if component_name in current_selection:
+                    self.wine_checkboxes[item_id] = True
+                    # Обновляем отображение чекбокса
+                    values = list(values)
+                    values[0] = '☑'
+                    self.wine_tree.item(item_id, values=values)
+        
+        # Обновляем кнопки
+        self._update_wine_buttons()
         
         # Обновляем сводку
         self.wine_summary_text.config(state=self.tk.NORMAL)
@@ -5168,6 +5277,44 @@ class AutomationGUI(object):
             self.log_message("[ERROR] Для установки Wine требуются права root")
             return
         
+        # Получаем список выбранных компонентов
+        selected = self.get_selected_wine_components()
+        if not selected:
+            self.wine_status_label.config(text="Ничего не выбрано для установки", fg='orange')
+            return
+        
+        # Очищаем предыдущие состояния
+        self.clear_all_states()
+        
+        # Устанавливаем статус "Ожидание" для всех выбранных компонентов
+        # WINEPREFIX должен быть первым в очереди
+        wineprefix_selected = 'WINEPREFIX' in selected
+        
+        if wineprefix_selected:
+            # Сначала добавляем WINEPREFIX
+            self.pending_install.add('WINEPREFIX')
+            
+            # Затем добавляем все его подкомпоненты
+            winetricks_components = [
+                '  ├─ Wine Mono',
+                '  ├─ .NET Framework 4.8', 
+                '  ├─ Visual C++ 2013',
+                '  ├─ Visual C++ 2022',
+                '  ├─ DirectX d3dcompiler_43',
+                '  ├─ DirectX d3dcompiler_47',
+                '  └─ DXVK'
+            ]
+            for subcomponent in winetricks_components:
+                self.pending_install.add(subcomponent)
+        
+        # Добавляем остальные компоненты
+        for component in selected:
+            if component != 'WINEPREFIX':  # WINEPREFIX уже добавлен
+                self.pending_install.add(component)
+        
+        # Обновляем GUI чтобы показать статус "Ожидание"
+        self._update_wine_status()
+        
         self.wine_status_label.config(text="Установка запущена...", fg='blue')
         # Убираем блокировку кнопок для возможности ручного обновления
         # self.install_wine_button.config(state=self.tk.DISABLED)
@@ -5185,6 +5332,16 @@ class AutomationGUI(object):
             # Создаем callback для обновления статуса
             def update_callback(message):
                 self.root.after(0, lambda: self._update_install_status(message))
+                
+                # Обрабатываем специальные команды для обновления статусов компонентов
+                if message.startswith("INSTALLING_COMPONENT:"):
+                    component = message.split(":", 1)[1]
+                    self.root.after(0, lambda: self.set_component_installing(component))
+                elif message.startswith("COMPONENT_COMPLETED:"):
+                    parts = message.split(":", 2)
+                    component = parts[1]
+                    success = parts[2].lower() == "true" if len(parts) > 2 else True
+                    self.root.after(0, lambda: self.set_component_completed(component, success))
             
             # Получаем logger из main_log_file
             logger = None
@@ -5522,6 +5679,38 @@ class AutomationGUI(object):
         if not messagebox.askyesno("Подтверждение удаления", message):
             return
         
+        # Очищаем предыдущие состояния
+        self.clear_all_states()
+        
+        # Устанавливаем статус "Ожидание" для всех выбранных компонентов
+        # WINEPREFIX должен быть первым в очереди
+        wineprefix_selected = 'WINEPREFIX' in selected
+        
+        if wineprefix_selected:
+            # Сначала добавляем WINEPREFIX
+            self.pending_install.add('WINEPREFIX')
+            
+            # Затем добавляем все его подкомпоненты
+            winetricks_components = [
+                '  ├─ Wine Mono',
+                '  ├─ .NET Framework 4.8', 
+                '  ├─ Visual C++ 2013',
+                '  ├─ Visual C++ 2022',
+                '  ├─ DirectX d3dcompiler_43',
+                '  ├─ DirectX d3dcompiler_47',
+                '  └─ DXVK'
+            ]
+            for subcomponent in winetricks_components:
+                self.pending_install.add(subcomponent)
+        
+        # Добавляем остальные компоненты
+        for component in selected:
+            if component != 'WINEPREFIX':  # WINEPREFIX уже добавлен
+                self.pending_install.add(component)
+        
+        # Обновляем GUI чтобы показать статус "Ожидание"
+        self._update_wine_status()
+        
         self.wine_status_label.config(text="Удаление запущено...", fg='blue')
         self.uninstall_wine_button.config(state=self.tk.DISABLED)
         self.install_wine_button.config(state=self.tk.DISABLED)
@@ -5617,6 +5806,21 @@ class AutomationGUI(object):
             # Создаем callback для обновления статуса
             def update_callback(message):
                 self.root.after(0, lambda: self._update_install_status(message))
+                
+                # Обрабатываем специальные команды для обновления статусов компонентов при удалении
+                if message.startswith("REMOVING_COMPONENT:"):
+                    component = message.split(":", 1)[1]
+                    self.root.after(0, lambda: self.set_component_removing(component))
+                elif message.startswith("COMPONENT_REMOVED:"):
+                    parts = message.split(":", 2)
+                    component = parts[1]
+                    success = parts[2].lower() == "true" if len(parts) > 2 else True
+                    if success:
+                        # После успешного удаления компонент больше не установлен
+                        self.root.after(0, lambda: self.set_component_completed(component, True))
+                    else:
+                        # При ошибке удаления показываем ошибку
+                        self.root.after(0, lambda: self.set_component_completed(component, False))
             
             # Получаем logger из main_log_file
             logger = None
@@ -7683,6 +7887,333 @@ def cleanup_temp_files(temp_dir):
     except Exception as e:
         print("[WARNING] Предупреждение: не удалось очистить временные файлы: %s" % str(e))
 
+# ============================================================================
+# КЛАССЫ МОНИТОРИНГА ДИРЕКТОРИЙ
+# ============================================================================
+
+class DirectorySnapshot(object):
+    """Класс для хранения снимка состояния директории"""
+    
+    def __init__(self, directory_path):
+        self.directory_path = directory_path
+        self.timestamp = datetime.datetime.now()
+        self.files = {}  # {relative_path: (size, mtime, hash)}
+        self.directories = set()  # {relative_path1, relative_path2, ...}
+        self._scan_directory()
+    
+    def _scan_directory(self):
+        """Сканирование директории и создание снимка"""
+        if not os.path.exists(self.directory_path):
+            return
+        
+        try:
+            for root, dirs, files in os.walk(self.directory_path):
+                # Добавляем директории
+                rel_root = os.path.relpath(root, self.directory_path)
+                if rel_root != '.':
+                    self.directories.add(rel_root)
+                
+                # Добавляем файлы
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, self.directory_path)
+                    
+                    try:
+                        stat = os.stat(file_path)
+                        # Простой хеш для быстрого сравнения (первые 8 байт + размер)
+                        file_hash = self._quick_hash(file_path)
+                        self.files[rel_path] = (stat.st_size, stat.st_mtime, file_hash)
+                    except (OSError, IOError):
+                        # Пропускаем файлы, к которым нет доступа
+                        continue
+        except (OSError, IOError):
+            # Пропускаем директории, к которым нет доступа
+            pass
+    
+    def _quick_hash(self, file_path):
+        """Быстрое хеширование файла (первые 8 байт + размер)"""
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read(8)  # Читаем первые 8 байт
+                size = os.path.getsize(file_path)
+                return hash(data + str(size).encode())
+        except (OSError, IOError):
+            return 0
+
+class DirectoryMonitor(object):
+    """Класс для мониторинга изменений в директории"""
+    
+    def __init__(self, compact_mode=False):
+        self.baseline = None  # Базовый снимок
+        self.last_snapshot = None  # Последний снимок
+        self.monitoring = False
+        self.compact_mode = compact_mode  # Режим компактного вывода
+    
+    def start_monitoring(self, directory_path):
+        """Начать мониторинг директории (создать базовый снимок)"""
+        self.baseline = DirectorySnapshot(directory_path)
+        self.last_snapshot = self.baseline
+        self.monitoring = True
+        print(f"[DirectoryMonitor] Мониторинг начат: {directory_path}")
+        print(f"[DirectoryMonitor] Базовый снимок: {len(self.baseline.files)} файлов, {len(self.baseline.directories)} папок")
+    
+    def check_changes(self, directory_path):
+        """Проверить изменения в директории (сравнить с последним снимком)"""
+        if not self.monitoring:
+            print("[DirectoryMonitor] Мониторинг не активен!")
+            return None
+        
+        current_snapshot = DirectorySnapshot(directory_path)
+        changes = self._compare_snapshots(self.last_snapshot, current_snapshot)
+        
+        # Обновляем последний снимок
+        self.last_snapshot = current_snapshot
+        
+        return changes
+    
+    def get_incremental_changes(self, directory_path):
+        """Получить инкрементальные изменения (с предыдущего снимка)"""
+        return self.check_changes(directory_path)
+    
+    def get_total_changes(self, directory_path):
+        """Получить полные изменения (с базового снимка)"""
+        if not self.monitoring or not self.baseline:
+            return None
+        
+        current_snapshot = DirectorySnapshot(directory_path)
+        return self._compare_snapshots(self.baseline, current_snapshot)
+    
+    def reset_baseline(self, directory_path):
+        """Сбросить базовый снимок (создать новый)"""
+        self.baseline = DirectorySnapshot(directory_path)
+        self.last_snapshot = self.baseline
+        print(f"[DirectoryMonitor] Базовый снимок сброшен: {len(self.baseline.files)} файлов, {len(self.baseline.directories)} папок")
+    
+    def detect_installed_components(self, changes):
+        """Определяет какие компоненты установились на основе ключевых файлов"""
+        component_files = {
+            'wine-mono': [
+                'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
+                'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
+            ],
+            'd3dcompiler_43': [
+                'drive_c/windows/system32/d3dcompiler_43.dll',
+                'drive_c/windows/syswow64/d3dcompiler_43.dll'
+            ],
+            'd3dcompiler_47': [
+                'drive_c/windows/system32/d3dcompiler_47.dll',
+                'drive_c/windows/syswow64/d3dcompiler_47.dll'
+            ],
+            'vcrun2013': [
+                'drive_c/windows/system32/msvcp120.dll',
+                'drive_c/windows/system32/msvcr120.dll'
+            ],
+            'vcrun2022': [
+                'drive_c/windows/system32/msvcp140.dll',
+                'drive_c/windows/system32/vcruntime140.dll'
+            ],
+            'dotnet48': [
+                'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
+                'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll'
+            ],
+            'dxvk': [
+                'drive_c/windows/system32/dxgi.dll',
+                'drive_c/windows/system32/d3d11.dll'
+            ]
+        }
+        
+        installed_components = []
+        for component, key_files in component_files.items():
+            for file_path in changes.get('new_files', []):
+                if any(key_file in file_path for key_file in key_files):
+                    installed_components.append(component)
+                    break
+        
+        return installed_components
+    
+    def format_changes_compact(self, changes):
+        """Компактное форматирование изменений для вывода"""
+        if not changes:
+            return "Изменений не обнаружено"
+        
+        # Определяем установленные компоненты
+        installed_components = self.detect_installed_components(changes)
+        
+        # Фильтруем служебные файлы Wine
+        filtered_files = self._filter_wine_service_files(changes.get('new_files', []))
+        filtered_dirs = self._filter_wine_service_files(changes.get('new_directories', []))
+        
+        # Подсчитываем изменения
+        new_files_count = len(filtered_files)
+        modified_files_count = len(changes.get('modified_files', []))
+        new_dirs_count = len(filtered_dirs)
+        
+        timestamp = changes['timestamp'].strftime("%H:%M:%S")
+        
+        # Формируем компактный вывод
+        if installed_components:
+            components_str = ", ".join(installed_components)
+            stats = []
+            if new_files_count > 0:
+                stats.append(f"+{new_files_count} файлов")
+            if new_dirs_count > 0:
+                stats.append(f"+{new_dirs_count} папок")
+            if modified_files_count > 0:
+                stats.append(f"~{modified_files_count} файлов")
+            
+            stats_str = f" ({', '.join(stats)})" if stats else ""
+            return f"[{timestamp}] Установлены компоненты: {components_str}{stats_str}"
+        else:
+            stats = []
+            if new_files_count > 0:
+                stats.append(f"+{new_files_count} файлов")
+            if new_dirs_count > 0:
+                stats.append(f"+{new_dirs_count} папок")
+            if modified_files_count > 0:
+                stats.append(f"~{modified_files_count} файлов")
+            
+            if stats:
+                return f"[{timestamp}] Изменения: {', '.join(stats)}"
+            else:
+                return f"[{timestamp}] Изменений не обнаружено"
+    
+    def _filter_wine_service_files(self, file_list):
+        """Фильтрует служебные файлы Wine из списка"""
+        service_patterns = [
+            'dosdevices/com',
+            'dosdevices/lpt',
+            'dosdevices/prn',
+            'dosdevices/aux',
+            'dosdevices/con',
+            '.update-timestamp',
+            'dosdevices/z:',
+            'dosdevices/y:',
+            'dosdevices/x:',
+            'dosdevices/w:',
+            'dosdevices/v:',
+            'dosdevices/u:',
+            'dosdevices/t:',
+            'dosdevices/s:',
+            'dosdevices/r:',
+            'dosdevices/q:',
+            'dosdevices/p:',
+            'dosdevices/o:',
+            'dosdevices/n:',
+            'dosdevices/m:',
+            'dosdevices/l:',
+            'dosdevices/k:',
+            'dosdevices/j:',
+            'dosdevices/i:',
+            'dosdevices/h:',
+            'dosdevices/g:',
+            'dosdevices/f:',
+            'dosdevices/e:',
+            'dosdevices/d:',
+            'dosdevices/c:',
+            'dosdevices/b:',
+            'dosdevices/a:'
+        ]
+        
+        filtered = []
+        for file_path in file_list:
+            is_service = False
+            for pattern in service_patterns:
+                if pattern in file_path:
+                    is_service = True
+                    break
+            if not is_service:
+                filtered.append(file_path)
+        
+        return filtered
+
+    def _compare_snapshots(self, old_snapshot, new_snapshot):
+        """Сравнение двух снимков и определение изменений"""
+        changes = {
+            'new_files': [],
+            'modified_files': [],
+            'deleted_files': [],
+            'new_directories': [],
+            'deleted_directories': [],
+            'timestamp': new_snapshot.timestamp
+        }
+        
+        # Проверяем файлы
+        old_files = set(old_snapshot.files.keys())
+        new_files = set(new_snapshot.files.keys())
+        
+        # Новые файлы
+        for file_path in new_files - old_files:
+            changes['new_files'].append(file_path)
+        
+        # Удаленные файлы
+        for file_path in old_files - new_files:
+            changes['deleted_files'].append(file_path)
+        
+        # Измененные файлы
+        for file_path in old_files & new_files:
+            old_info = old_snapshot.files[file_path]
+            new_info = new_snapshot.files[file_path]
+            if old_info != new_info:
+                changes['modified_files'].append(file_path)
+        
+        # Проверяем директории
+        old_dirs = old_snapshot.directories
+        new_dirs = new_snapshot.directories
+        
+        # Новые директории
+        for dir_path in new_dirs - old_dirs:
+            changes['new_directories'].append(dir_path)
+        
+        # Удаленные директории
+        for dir_path in old_dirs - new_dirs:
+            changes['deleted_directories'].append(dir_path)
+        
+        return changes
+    
+    def format_changes(self, changes):
+        """Форматирование изменений для вывода"""
+        if not changes:
+            return "Изменений не обнаружено"
+        
+        # Если включен компактный режим, используем компактное форматирование
+        if self.compact_mode:
+            return self.format_changes_compact(changes)
+        
+        # Полный режим - детальный вывод
+        output = []
+        timestamp = changes['timestamp'].strftime("%H:%M:%S")
+        
+        # Фильтруем служебные файлы Wine для полного режима
+        filtered_new_files = self._filter_wine_service_files(changes['new_files'])
+        filtered_new_dirs = self._filter_wine_service_files(changes['new_directories'])
+        
+        if filtered_new_files:
+            output.append(f"[{timestamp}] НОВЫЕ ФАЙЛЫ:")
+            for file_path in sorted(filtered_new_files):
+                output.append(f"  ├─ {file_path}")
+        
+        if changes['modified_files']:
+            output.append(f"[{timestamp}] ИЗМЕНЕННЫЕ ФАЙЛЫ:")
+            for file_path in sorted(changes['modified_files']):
+                output.append(f"  ├─ {file_path}")
+        
+        if filtered_new_dirs:
+            output.append(f"[{timestamp}] НОВЫЕ ПАПКИ:")
+            for dir_path in sorted(filtered_new_dirs):
+                output.append(f"  └─ {dir_path}/")
+        
+        if changes['deleted_files']:
+            output.append(f"[{timestamp}] УДАЛЕННЫЕ ФАЙЛЫ:")
+            for file_path in sorted(changes['deleted_files']):
+                output.append(f"  ├─ {file_path}")
+        
+        if changes['deleted_directories']:
+            output.append(f"[{timestamp}] УДАЛЕННЫЕ ПАПКИ:")
+            for dir_path in sorted(changes['deleted_directories']):
+                output.append(f"  └─ {dir_path}/")
+        
+        return "\n".join(output) if output else "Изменений не обнаружено"
+
 def main():
     """Основная функция"""
     logger = get_logger()
@@ -7960,7 +8491,5 @@ def main():
             logger.cleanup_locks()
         except:
             pass
-        sys.exit(1)
-
 if __name__ == '__main__':
     main()

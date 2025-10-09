@@ -421,7 +421,7 @@ echo ""
                 log_message "tkinter установлен и проверен"
                 
                 # Устанавливаем дополнительные компоненты для GUI
-                echo ""
+    echo ""
                 echo "[#] Установка дополнительных компонентов для GUI..."
                 yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
                 COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
