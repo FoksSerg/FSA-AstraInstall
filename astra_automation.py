@@ -51,12 +51,12 @@ COMPONENTS_CONFIG = {
     'wine_9': {
         'name': 'Wine 9.0',
         'category': 'wine_packages',
-        'dependencies': ['wine_astraregul'],
+        'dependencies': [],  # НЕЗАВИСИМ от wine_astraregul
         'check_paths': ['/opt/wine-9.0/bin/wine'],
         'install_method': 'package_manager',
         'uninstall_method': 'package_manager',
         'gui_selectable': True,
-        'description': 'Wine версии 9.0',
+        'description': 'Wine версии 9.0 для совместимости',
         'priority': 2
     },
     'ptrace_scope': {
@@ -4352,14 +4352,76 @@ class UniversalInstaller(object):
     # Методы установки для разных типов компонентов
     def _install_package_manager(self, component_id, config):
         """Установка через пакетный менеджер"""
-        # Здесь будет интеграция с существующим WineInstaller
         self._log("Установка через пакетный менеджер: %s" % component_id)
-        return True  # Заглушка
+        
+        # Определяем путь к пакету
+        if component_id == 'wine_astraregul':
+            package_path = 'AstraPack/wine-astraregul_10.0-rc6-3_amd64.deb'
+        elif component_id == 'wine_9':
+            package_path = 'AstraPack/wine_9.0-1_amd64.deb'
+        else:
+            self._log("ОШИБКА: Неизвестный пакет: %s" % component_id, "ERROR")
+            return False
+        
+        # Проверяем существование пакета
+        if not os.path.exists(package_path):
+            self._log("ОШИБКА: Файл пакета не найден: %s" % package_path, "ERROR")
+            return False
+        
+        try:
+            # Устанавливаем пакет через apt
+            self._log("Установка пакета: %s" % package_path)
+            result = subprocess.run(
+                ['apt', '-y', 'install', package_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            
+            self._log("Пакет %s установлен успешно" % component_id)
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self._log("ОШИБКА установки пакета %s: %s" % (component_id, e.stderr), "ERROR")
+            return False
+        except Exception as e:
+            self._log("ОШИБКА установки пакета %s: %s" % (component_id, str(e)), "ERROR")
+            return False
     
     def _install_system_config(self, component_id, config):
         """Установка системной конфигурации"""
         self._log("Установка системной конфигурации: %s" % component_id)
-        return True  # Заглушка
+        
+        if component_id == 'ptrace_scope':
+            return self._configure_ptrace_scope()
+        else:
+            self._log("ОШИБКА: Неизвестная системная конфигурация: %s" % component_id, "ERROR")
+            return False
+    
+    def _configure_ptrace_scope(self):
+        """Настройка ptrace_scope для Wine"""
+        try:
+            self._log("Настройка ptrace_scope для Wine...")
+            
+            # Устанавливаем ptrace_scope = 0 (разрешает отладку)
+            result = subprocess.run(
+                ['sysctl', '-w', 'kernel.yama.ptrace_scope=0'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            
+            self._log("ptrace_scope настроен успешно")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self._log("ОШИБКА настройки ptrace_scope: %s" % e.stderr, "ERROR")
+            return False
+        except Exception as e:
+            self._log("ОШИБКА настройки ptrace_scope: %s" % str(e), "ERROR")
+            return False
     
     def _install_wine_init(self, component_id, config):
         """Инициализация Wine окружения"""
@@ -4390,12 +4452,72 @@ class UniversalInstaller(object):
     def _uninstall_package_manager(self, component_id, config):
         """Удаление через пакетный менеджер"""
         self._log("Удаление через пакетный менеджер: %s" % component_id)
-        return True  # Заглушка
+        
+        # Определяем имя пакета для удаления
+        if component_id == 'wine_astraregul':
+            package_name = 'wine-astraregul'
+        elif component_id == 'wine_9':
+            package_name = 'wine-9.0'
+        else:
+            self._log("ОШИБКА: Неизвестный пакет для удаления: %s" % component_id, "ERROR")
+            return False
+        
+        try:
+            # Удаляем пакет через apt
+            self._log("Удаление пакета: %s" % package_name)
+            print("[DEBUG] Начинаем удаление пакета: %s" % package_name)
+            result = subprocess.run(
+                ['apt-get', 'remove', '-y', package_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            
+            self._log("Пакет %s удален успешно" % component_id)
+            print("[DEBUG] Пакет %s удален успешно" % component_id)
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self._log("ОШИБКА удаления пакета %s: %s" % (component_id, e.stderr), "ERROR")
+            return False
+        except Exception as e:
+            self._log("ОШИБКА удаления пакета %s: %s" % (component_id, str(e)), "ERROR")
+            return False
     
     def _uninstall_system_config(self, component_id, config):
         """Удаление системной конфигурации"""
         self._log("Удаление системной конфигурации: %s" % component_id)
-        return True  # Заглушка
+        
+        if component_id == 'ptrace_scope':
+            return self._restore_ptrace_scope()
+        else:
+            self._log("ОШИБКА: Неизвестная системная конфигурация для удаления: %s" % component_id, "ERROR")
+            return False
+    
+    def _restore_ptrace_scope(self):
+        """Восстановление ptrace_scope (возврат к значению по умолчанию)"""
+        try:
+            self._log("Восстановление ptrace_scope к значению по умолчанию...")
+            
+            # Устанавливаем ptrace_scope = 1 (значение по умолчанию)
+            result = subprocess.run(
+                ['sysctl', '-w', 'kernel.yama.ptrace_scope=1'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            
+            self._log("ptrace_scope восстановлен к значению по умолчанию")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            self._log("ОШИБКА восстановления ptrace_scope: %s" % e.stderr, "ERROR")
+            return False
+        except Exception as e:
+            self._log("ОШИБКА восстановления ptrace_scope: %s" % str(e), "ERROR")
+            return False
     
     def _uninstall_wine_cleanup(self, component_id, config):
         """Очистка Wine окружения"""
@@ -4826,7 +4948,7 @@ class AutomationGUI(object):
         
         # Принудительно центрируем окно после создания
         self.root.update_idletasks()
-        # self._center_window()  # Отключено - вызывает проблемы
+        self._center_window()  # Восстановлено центрирование окна
         
         # Разрешаем изменение размера окна
         self.root.resizable(True, True)
@@ -4892,6 +5014,10 @@ class AutomationGUI(object):
         
         # Запускаем обработку очереди терминала
         self.process_terminal_queue()
+        
+        # Тестовое сообщение для проверки работы терминала
+        print("[SYSTEM] Терминал GUI инициализирован успешно")
+        print("[SYSTEM] Все сообщения print() будут отображаться здесь")
         
         # Закрываем родительский терминал после полного запуска GUI
         if self.close_terminal_pid:
@@ -6205,9 +6331,39 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Ничего не выбрано для установки", fg='orange')
             return
         
-        # Используем новую универсальную архитектуру для установки
-        # Универсальный установщик автоматически разрешает зависимости
-        success = self.universal_installer.install_components(selected)
+        # Блокируем кнопки во время установки
+        self.install_wine_button.config(state=self.tk.DISABLED)
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        self.wine_status_label.config(text="Установка...", fg='blue')
+        
+        # Запускаем установку в отдельном потоке
+        import threading
+        install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,))
+        install_thread.daemon = True
+        install_thread.start()
+    
+    def _perform_wine_install(self, selected):
+        """Выполнение установки Wine компонентов в отдельном потоке"""
+        try:
+            print("[DEBUG] Начинаем установку компонентов: %s" % ', '.join(selected))
+            
+            # Используем новую универсальную архитектуру для установки
+            success = self.universal_installer.install_components(selected)
+            
+            # Обновляем GUI в главном потоке
+            self.root.after(0, self._install_completed, success)
+            
+        except Exception as e:
+            print("[ERROR] Ошибка установки: %s" % str(e))
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, self._install_completed, False)
+    
+    def _install_completed(self, success):
+        """Завершение установки (вызывается в главном потоке)"""
+        # Разблокируем кнопки
+        self.install_wine_button.config(state=self.tk.NORMAL)
+        self.check_wine_button.config(state=self.tk.NORMAL)
         
         if success:
             self.wine_status_label.config(text="Установка завершена успешно", fg='green')
@@ -6218,15 +6374,6 @@ class AutomationGUI(object):
         
         # Обновляем статус компонентов
         self._update_wine_status()
-        # Убираем блокировку кнопок для возможности ручного обновления
-        # self.install_wine_button.config(state=self.tk.DISABLED)
-        # self.check_wine_button.config(state=self.tk.DISABLED)
-        
-        # Запускаем установку в отдельном потоке
-        import threading
-        install_thread = threading.Thread(target=self._perform_wine_install)
-        install_thread.daemon = True
-        install_thread.start()
     
     def _perform_wine_install(self):
         """Выполнение установки Wine компонентов (в отдельном потоке)"""
@@ -6581,9 +6728,39 @@ class AutomationGUI(object):
         if not messagebox.askyesno("Подтверждение удаления", message):
             return
         
-        # Используем новую универсальную архитектуру для удаления
-        # Универсальный установщик автоматически разрешает зависимости
-        success = self.universal_installer.uninstall_components(selected)
+        # Блокируем кнопки во время удаления
+        self.uninstall_wine_button.config(state=self.tk.DISABLED)
+        self.check_wine_button.config(state=self.tk.DISABLED)
+        self.wine_status_label.config(text="Удаление...", fg='blue')
+        
+        # Запускаем удаление в отдельном потоке
+        import threading
+        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
+        uninstall_thread.daemon = True
+        uninstall_thread.start()
+    
+    def _perform_wine_uninstall(self, selected):
+        """Выполнение удаления Wine компонентов в отдельном потоке"""
+        try:
+            print("[DEBUG] Начинаем удаление компонентов: %s" % ', '.join(selected))
+            
+            # Используем новую универсальную архитектуру для удаления
+            success = self.universal_installer.uninstall_components(selected)
+            
+            # Обновляем GUI в главном потоке
+            self.root.after(0, self._uninstall_completed, success)
+            
+        except Exception as e:
+            print("[ERROR] Ошибка удаления: %s" % str(e))
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, self._uninstall_completed, False)
+    
+    def _uninstall_completed(self, success):
+        """Завершение удаления (вызывается в главном потоке)"""
+        # Разблокируем кнопки
+        self.uninstall_wine_button.config(state=self.tk.NORMAL)
+        self.check_wine_button.config(state=self.tk.NORMAL)
         
         if success:
             self.wine_status_label.config(text="Удаление завершено успешно", fg='green')
@@ -7167,10 +7344,10 @@ class AutomationGUI(object):
             while not self.terminal_queue.empty():
                 message = self.terminal_queue.get_nowait()
                 # Обновляем терминал в главном потоке (безопасно)
-            self.terminal_text.config(state=self.tk.NORMAL)
-            self.terminal_text.insert(self.tk.END, message + "\n")
-            self.terminal_text.see(self.tk.END)
-            self.terminal_text.config(state=self.tk.DISABLED)
+                self.terminal_text.config(state=self.tk.NORMAL)
+                self.terminal_text.insert(self.tk.END, message + "\n")
+                self.terminal_text.see(self.tk.END)
+                self.terminal_text.config(state=self.tk.DISABLED)
         except Exception as e:
             pass  # Игнорируем ошибки
         finally:
