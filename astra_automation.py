@@ -225,6 +225,37 @@ COMPONENTS_CONFIG = {
 }
 
 # ============================================================================
+# ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
+# ============================================================================
+
+# Переопределяем функцию print для перенаправления в GUI
+import builtins
+_original_print = builtins.print
+
+def custom_print(*args, **kwargs):
+    """Переопределенная функция print - использует UniversalProcessRunner"""
+    # Формируем сообщение
+    message = ' '.join(str(arg) for arg in args)
+    
+    # Отладка через файл
+    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+        f.write(f"[STEP1] custom_print вызван: {message}\n")
+    
+    # Если есть UniversalProcessRunner - используем его
+    if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP1] Передаем в UniversalProcessRunner: {message}\n")
+        sys._gui_instance.process_runner.add_output(message)
+    else:
+        # Иначе используем оригинальный print
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP1] Используем оригинальный print: {message}\n")
+        _original_print(*args, **kwargs)
+
+# Переопределяем builtins.print
+builtins.print = custom_print
+
+# ============================================================================
 # КЛАСС ПОЛНОГО ЛОГИРОВАНИЯ
 # ============================================================================
 class Logger(object):
@@ -382,23 +413,7 @@ def get_logger():
     return _global_logger
 
 # Перехватываем все print() вызовы для логирования
-_original_print = print
-def print(*args, **kwargs):
-    """Переопределенная функция print - логирует и перенаправляет в GUI терминал"""
-    # Формируем сообщение
-    message = ' '.join(str(arg) for arg in args)
-    
-    # Логируем в файл
-    logger = get_logger()
-    logger.log_info(message)
-    
-    # Перенаправляем в GUI терминал или консоль
-    if hasattr(sys, '_gui_instance') and sys._gui_instance:
-        # В GUI режиме - отправляем в терминал GUI
-        sys._gui_instance.add_terminal_output(message)
-    else:
-        # В консольном режиме - используем оригинальный print
-        _original_print(*args, **kwargs)
+# Переопределение print() будет добавлено в конце файла после определения всех классов
 
 # ============================================================================
 # КЛАСС КОНФИГУРАЦИИ ИНТЕРАКТИВНЫХ ЗАПРОСОВ
@@ -4369,22 +4384,19 @@ class UniversalInstaller(object):
             return False
         
         try:
-            # Устанавливаем пакет через apt
-            self._log("Установка пакета: %s" % package_path)
-            result = subprocess.run(
+            # Используем универсальный обработчик процессов
+            return_code = self.process_runner.run_process(
                 ['apt', '-y', 'install', package_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+                process_type="install",
+                channels=["file", "terminal"]
             )
             
-            self._log("Пакет %s установлен успешно" % component_id)
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            self._log("ОШИБКА установки пакета %s: %s" % (component_id, e.stderr), "ERROR")
-            return False
+            if return_code == 0:
+                self._log("Пакет %s установлен успешно" % component_id)
+                return True
+            else:
+                self._log("ОШИБКА установки пакета %s (код: %d)" % (component_id, return_code), "ERROR")
+                return False
         except Exception as e:
             self._log("ОШИБКА установки пакета %s: %s" % (component_id, str(e)), "ERROR")
             return False
@@ -4402,23 +4414,19 @@ class UniversalInstaller(object):
     def _configure_ptrace_scope(self):
         """Настройка ptrace_scope для Wine"""
         try:
-            self._log("Настройка ptrace_scope для Wine...")
-            
-            # Устанавливаем ptrace_scope = 0 (разрешает отладку)
-            result = subprocess.run(
+            # Используем универсальный обработчик процессов
+            return_code = self.process_runner.run_process(
                 ['sysctl', '-w', 'kernel.yama.ptrace_scope=0'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+                process_type="config",
+                channels=["file", "terminal"]
             )
             
-            self._log("ptrace_scope настроен успешно")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            self._log("ОШИБКА настройки ptrace_scope: %s" % e.stderr, "ERROR")
-            return False
+            if return_code == 0:
+                self._log("ptrace_scope настроен успешно")
+                return True
+            else:
+                self._log("ОШИБКА настройки ptrace_scope (код: %d)" % return_code, "ERROR")
+                return False
         except Exception as e:
             self._log("ОШИБКА настройки ptrace_scope: %s" % str(e), "ERROR")
             return False
@@ -4463,24 +4471,19 @@ class UniversalInstaller(object):
             return False
         
         try:
-            # Удаляем пакет через apt
-            self._log("Удаление пакета: %s" % package_name)
-            print("[DEBUG] Начинаем удаление пакета: %s" % package_name)
-            result = subprocess.run(
+            # Используем универсальный обработчик процессов
+            return_code = self.process_runner.run_process(
                 ['apt-get', 'remove', '-y', package_name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+                process_type="remove",
+                channels=["file", "terminal"]
             )
             
-            self._log("Пакет %s удален успешно" % component_id)
-            print("[DEBUG] Пакет %s удален успешно" % component_id)
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            self._log("ОШИБКА удаления пакета %s: %s" % (component_id, e.stderr), "ERROR")
-            return False
+            if return_code == 0:
+                self._log("Пакет %s удален успешно" % component_id)
+                return True
+            else:
+                self._log("ОШИБКА удаления пакета %s (код: %d)" % (component_id, return_code), "ERROR")
+                return False
         except Exception as e:
             self._log("ОШИБКА удаления пакета %s: %s" % (component_id, str(e)), "ERROR")
             return False
@@ -4498,23 +4501,19 @@ class UniversalInstaller(object):
     def _restore_ptrace_scope(self):
         """Восстановление ptrace_scope (возврат к значению по умолчанию)"""
         try:
-            self._log("Восстановление ptrace_scope к значению по умолчанию...")
-            
-            # Устанавливаем ptrace_scope = 1 (значение по умолчанию)
-            result = subprocess.run(
+            # Используем универсальный обработчик процессов
+            return_code = self.process_runner.run_process(
                 ['sysctl', '-w', 'kernel.yama.ptrace_scope=1'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
+                process_type="config",
+                channels=["file", "terminal"]
             )
             
-            self._log("ptrace_scope восстановлен к значению по умолчанию")
-            return True
-            
-        except subprocess.CalledProcessError as e:
-            self._log("ОШИБКА восстановления ptrace_scope: %s" % e.stderr, "ERROR")
-            return False
+            if return_code == 0:
+                self._log("ptrace_scope восстановлен к значению по умолчанию")
+                return True
+            else:
+                self._log("ОШИБКА восстановления ptrace_scope (код: %d)" % return_code, "ERROR")
+                return False
         except Exception as e:
             self._log("ОШИБКА восстановления ptrace_scope: %s" % str(e), "ERROR")
             return False
@@ -4989,13 +4988,40 @@ class AutomationGUI(object):
         # Устанавливаем глобальную ссылку на GUI для перенаправления print()
         sys._gui_instance = self
         
+        # Создаем универсальный обработчик процессов (logger будет установлен позже)
+        self.process_runner = UniversalProcessRunner(
+            logger=None,  # Будет установлен позже
+            gui_callback=self.add_terminal_output
+        )
+        
+        # ТЕСТ: Проверяем работу очереди
+        print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале")
+        
+        # Добавляем функцию для записи содержимого терминала в лог
+        self.add_terminal_to_log()
+        
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
             self._redirect_output_to_terminal()
         
+        # Запускаем обработку очереди терминала с задержкой (ПЕРЕД _auto_check_components!)
+        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue - ПЕРЕД _auto_check_components")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue - ПЕРЕД _auto_check_components\n")
+        print(f"[DEBUG] Планируем запуск process_terminal_queue через 1000мс")
+        self.root.after(1000, self.process_terminal_queue)
+        print(f"[DEBUG] process_terminal_queue запланирован")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] process_terminal_queue запланирован через 1000мс\n")
+        
         # Автоматически запускаем проверку компонентов при инициализации GUI
         if not console_mode:
             self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
+        
+        # АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ ЧЕРЕЗ 10 СЕКУНД ДЛЯ ОТЛАДКИ
+        
+        # ТЕСТОВОЕ СООБЩЕНИЕ ПОСЛЕ ПЛАНИРОВАНИЯ process_terminal_queue
+        self.root.after(2000, lambda: print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале"))
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -5012,19 +5038,43 @@ class AutomationGUI(object):
                 except:
                     pass
         
-        # Запускаем обработку очереди терминала
-        self.process_terminal_queue()
+        # Отладка ПЕРЕД планированием process_terminal_queue
+        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue - строка 5029")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue - строка 5029\n")
         
-        # Тестовое сообщение для проверки работы терминала
-        print("[SYSTEM] Терминал GUI инициализирован успешно")
-        print("[SYSTEM] Все сообщения print() будут отображаться здесь")
+        # Запускаем обработку очереди терминала с задержкой
+        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue\n")
+        print(f"[DEBUG] ДО планирования process_terminal_queue")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ДО планирования process_terminal_queue\n")
+        print(f"[DEBUG] Планируем запуск process_terminal_queue через 1000мс")
+        self.root.after(1000, self.process_terminal_queue)
+        print(f"[DEBUG] process_terminal_queue запланирован")
+        print(f"[DEBUG] ПОСЛЕ планирования process_terminal_queue")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] process_terminal_queue запланирован через 1000мс\n")
         
         # Закрываем родительский терминал после полного запуска GUI
         if self.close_terminal_pid:
             self.root.after(500, self._close_parent_terminal)
         
         # Запускаем постоянный мониторинг CPU/NET
+        print(f"[DEBUG] ПЕРЕД start_system_monitoring")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ПЕРЕД start_system_monitoring\n")
         self.start_system_monitoring()
+        print(f"[DEBUG] ПОСЛЕ start_system_monitoring")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] ПОСЛЕ start_system_monitoring\n")
+        
+        # UniversalProcessRunner готов к работе
+        print(f"[DEBUG] КОНЕЦ __init__ - UniversalProcessRunner готов к работе")
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP0] КОНЕЦ __init__ - UniversalProcessRunner готов к работе\n")
+        
     
     def _install_gui_dependencies(self):
         """Установка зависимостей для GUI"""
@@ -5546,6 +5596,7 @@ class AutomationGUI(object):
         self.terminal_text.insert(self.tk.END, "Здесь будет отображаться вывод системных команд\n")
         self.terminal_text.insert(self.tk.END, "Для ввода команд используйте кнопки управления\n")
         self.terminal_text.insert(self.tk.END, "Для копирования текста: выделите мышью и нажмите Ctrl+C или правую кнопку мыши\n\n")
+        
         
         # Делаем терминал только для чтения (команды запускаются через GUI)
         self.terminal_text.config(state=self.tk.DISABLED)
@@ -6245,11 +6296,11 @@ class AutomationGUI(object):
                     display_path
                 ))
                 
-                if has_checkbox:
-                    self.wine_checkboxes[item_id] = False
-                
-                # Цветовое выделение
-                self.wine_tree.item(item_id, tags=(status_tag,))
+            if has_checkbox:
+                self.wine_checkboxes[item_id] = False
+            
+            # Цветовое выделение
+            self.wine_tree.item(item_id, tags=(status_tag,))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
@@ -6279,7 +6330,7 @@ class AutomationGUI(object):
         # Принудительно обновляем GUI для отображения изменений
         self.wine_tree.update()
         self.root.update()
-    
+        
         self.wine_summary_text.config(state=self.tk.NORMAL)
         self.wine_summary_text.delete('1.0', self.tk.END)
         
@@ -7073,53 +7124,40 @@ class AutomationGUI(object):
             self.root.after(0, lambda: self.check_repos_button2.config(state=self.tk.NORMAL))
     
     def run_apt_update(self):
-        """Выполнение apt-get update"""
+        """Выполнение apt-get update с использованием UniversalProcessRunner"""
         self.repos_status_label.config(text="Обновление списков пакетов...", fg='blue')
         self.update_repos_button.config(state=self.tk.DISABLED)
         
         # Запускаем в отдельном потоке
         import threading
-        update_thread = threading.Thread(target=self._run_apt_update_thread)
+        update_thread = threading.Thread(target=self._run_apt_update_universal)
         update_thread.daemon = True
         update_thread.start()
     
-    def _run_apt_update_thread(self):
-        """Выполнение apt-get update (в потоке)"""
+    def _run_apt_update_universal(self):
+        """Выполнение apt-get update через UniversalProcessRunner"""
         try:
-            self.root.after(0, lambda: self.log_message("\n[REPOS] Выполнение apt-get update..."))
-            self.root.after(0, lambda: self.log_message("Это может занять некоторое время..."))
-            
-            result = subprocess.run(
+            # Используем новый универсальный обработчик
+            return_code = self.process_runner.run_process(
                 ['apt-get', 'update'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                check=False
+                process_type="update",
+                channels=["file", "terminal", "gui"]
             )
             
-            # Логируем вывод
-            if result.stdout:
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        self.root.after(0, lambda l=line: self.log_message("  > %s" % l))
-            
-            if result.returncode == 0:
+            # Обновляем GUI в главном потоке
+            if return_code == 0:
                 self.root.after(0, lambda: self.log_message("[OK] apt-get update завершен успешно"))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Списки пакетов обновлены", fg='green'))
             else:
-                self.root.after(0, lambda: self.log_message("[ERR] apt-get update завершился с ошибкой"))
+                self.root.after(0, lambda: self.log_message("[ERROR] apt-get update завершился с ошибкой"))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
-                
-                if result.stderr:
-                    for line in result.stderr.strip().split('\n')[:20]:
-                        if line.strip():
-                            self.root.after(0, lambda l=line: self.log_message("  ! %s" % l))
         
         except Exception as e:
             self.root.after(0, lambda: self.log_message("[ERROR] Ошибка: %s" % str(e)))
-            self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка выполнения", fg='red'))
+            self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
         
         finally:
+            # Разблокируем кнопку
             self.root.after(0, lambda: self.update_repos_button.config(state=self.tk.NORMAL))
     
     def show_repo_context_menu(self, event):
@@ -7332,24 +7370,100 @@ class AutomationGUI(object):
     def add_terminal_output(self, message):
         """Добавление сообщения в системный терминал (потокобезопасно)"""
         try:
+            # Отладка через файл
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP3] add_terminal_output вызван: {message}\n")
+                f.write(f"[STEP3] terminal_queue: {self.terminal_queue}\n")
+            
             # Добавляем сообщение в очередь вместо прямого обновления GUI
             self.terminal_queue.put(message)
+            
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP3] Сообщение добавлено в очередь: {message}\n")
+                f.write(f"[STEP3] Размер очереди: {self.terminal_queue.qsize()}\n")
         except Exception as e:
-            pass  # Игнорируем ошибки если очередь не готова
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP3] Ошибка add_terminal_output: {e}\n")
+    
+    def add_terminal_to_log(self):
+        """Добавление функции для записи содержимого терминала в лог"""
+        # Создаем лог-файл для содержимого терминала
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.terminal_log_file = f"terminal_content_{timestamp}.log"
+        
+        # Записываем начальное содержимое терминала
+        try:
+            terminal_content = self.terminal_text.get("1.0", "end")
+            with open(self.terminal_log_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== СОДЕРЖИМОЕ ТЕРМИНАЛА GUI ===\n")
+                f.write(f"Время: {datetime.datetime.now()}\n")
+                f.write(f"Файл: {self.terminal_log_file}\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(terminal_content)
+                f.write("\n" + "=" * 50 + "\n")
+                f.write("=== КОНЕЦ СОДЕРЖИМОГО ТЕРМИНАЛА ===\n")
+        except Exception as e:
+            print(f"[ERROR] Ошибка записи терминала в лог: {e}")
+        
+        # Запускаем периодическое обновление лога терминала
+        self.update_terminal_log()
+    
+    def update_terminal_log(self):
+        """Обновление лог-файла с содержимым терминала"""
+        try:
+            terminal_content = self.terminal_text.get("1.0", "end")
+            with open(self.terminal_log_file, 'a', encoding='utf-8') as f:
+                f.write(f"\n--- ОБНОВЛЕНИЕ: {datetime.datetime.now()} ---\n")
+                f.write(terminal_content)
+                f.write("--- КОНЕЦ ОБНОВЛЕНИЯ ---\n")
+        except Exception as e:
+            pass  # Игнорируем ошибки
+        
+        # Планируем следующее обновление через 5 секунд
+        self.root.after(5000, self.update_terminal_log)
     
     def process_terminal_queue(self):
         """Обработка очереди сообщений терминала (вызывается из главного потока)"""
         try:
+            # Отладка через файл
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP4] process_terminal_queue вызван\n")
+                f.write(f"[STEP4] Размер очереди: {self.terminal_queue.qsize()}\n")
+            
             # Обрабатываем все сообщения из очереди
             while not self.terminal_queue.empty():
-                message = self.terminal_queue.get_nowait()
-                # Обновляем терминал в главном потоке (безопасно)
-                self.terminal_text.config(state=self.tk.NORMAL)
-                self.terminal_text.insert(self.tk.END, message + "\n")
-                self.terminal_text.see(self.tk.END)
-                self.terminal_text.config(state=self.tk.DISABLED)
+                try:
+                    message = self.terminal_queue.get_nowait()
+                    
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Обрабатываем сообщение: {message}\n")
+                    
+                    # Обновляем терминал в главном потоке (безопасно)
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Начинаем обновление терминала\n")
+                    self.terminal_text.config(state=self.tk.NORMAL)
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Терминал разблокирован\n")
+                    self.terminal_text.insert(self.tk.END, message + "\n")
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Сообщение вставлено в терминал\n")
+                    self.terminal_text.see(self.tk.END)
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Прокрутка к концу\n")
+                    self.terminal_text.config(state=self.tk.DISABLED)
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Терминал заблокирован\n")
+                    
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Сообщение добавлено в GUI терминал: {message}\n")
+                except Exception as e:
+                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                        f.write(f"[STEP4] Ошибка обработки сообщения: {e}\n")
+                    break  # Выходим из цикла при ошибке
         except Exception as e:
-            pass  # Игнорируем ошибки
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP4] Ошибка process_terminal_queue: {e}\n")
         finally:
             # Повторяем через 100 мс (постоянный мониторинг очереди)
             self.root.after(100, self.process_terminal_queue)
@@ -8917,6 +9031,9 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         logger = get_logger()
         gui.main_log_file = logger.log_file
         
+        # Устанавливаем logger в process_runner
+        gui.process_runner.logger = logger
+        
         print("   [OK] GUI создан успешно, запускаем...")
         
         # Запускаем GUI
@@ -9541,5 +9658,224 @@ def main():
             logger.cleanup_locks()
         except:
             pass
+# ============================================================================
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ПРОЦЕССОВ
+# ============================================================================
+
+class UniversalProcessRunner(object):
+    """
+    Универсальный обработчик процессов с выводом в реальном времени
+    Поддерживает все каналы логирования и неблокирующее выполнение
+    """
+    
+    def __init__(self, logger=None, gui_callback=None):
+        """
+        Инициализация универсального обработчика процессов
+        
+        Args:
+            logger: Экземпляр Logger для записи в файл
+            gui_callback: Функция для отправки сообщений в GUI терминал
+        """
+        self.logger = logger
+        self.gui_callback = gui_callback
+        self.output_buffer = []
+        self.is_running = False
+        
+        # Тестовое сообщение для проверки инициализации
+        if gui_callback:
+            gui_callback("[UNIVERSAL] UniversalProcessRunner инициализирован")
+        
+    def run_process(self, command, process_type="general", 
+                   channels=["file", "terminal"], callback=None, timeout=None):
+        """
+        Универсальный запуск процесса с выводом в реальном времени
+        
+        Args:
+            command: Список команд или строка
+            process_type: Тип процесса ("install", "update", "check", "remove", "general")
+            channels: Каналы вывода ["file", "terminal", "gui"]
+            callback: Функция для уведомлений о прогрессе
+            timeout: Таймаут выполнения в секундах
+            
+        Returns:
+            int: Код возврата процесса (0 = успех)
+        """
+        if self.is_running:
+            self._log("Предупреждение: процесс уже выполняется", "WARNING", channels)
+            return -1
+            
+        self.is_running = True
+        
+        try:
+            # Логируем начало процесса
+            cmd_str = ' '.join(command) if isinstance(command, list) else str(command)
+            self._log("Начало выполнения: %s" % cmd_str, "INFO", channels)
+            
+            # Запускаем процесс
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Читаем вывод построчно в реальном времени
+            output_buffer = ""
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+                
+                # Выводим строку в реальном времени
+                line_clean = line.rstrip()
+                if line_clean:
+                    self._log("  %s" % line_clean, "INFO", channels)
+                    output_buffer += line
+                
+                # Проверяем на интерактивные запросы
+                if self._detect_interactive_prompt(output_buffer):
+                    response = self._get_auto_response(output_buffer)
+                    if response:
+                        process.stdin.write(response + "\n")
+                        process.stdin.flush()
+                        self._log("  [AUTO] Автоматический ответ: %s" % response, "INFO", channels)
+            
+            # Ждем завершения процесса
+            return_code = process.wait()
+            
+            # Логируем результат
+            if return_code == 0:
+                self._log("Процесс завершен успешно", "INFO", channels)
+            else:
+                self._log("Процесс завершен с ошибкой (код: %d)" % return_code, "ERROR", channels)
+            
+            return return_code
+            
+        except subprocess.TimeoutExpired:
+            self._log("Процесс превысил таймаут", "ERROR", channels)
+            process.kill()
+            return -1
+        except Exception as e:
+            self._log("Ошибка выполнения процесса: %s" % str(e), "ERROR", channels)
+            return -1
+        finally:
+            self.is_running = False
+    
+    def add_output(self, message, level="INFO", channels=["file", "terminal"]):
+        """
+        Добавление сообщения в буфер для последующей отправки в GUI
+        
+        Args:
+            message: Текст сообщения
+            level: Уровень сообщения ("INFO", "WARNING", "ERROR")
+            channels: Каналы вывода
+        """
+        # Отладка через файл
+        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+            f.write(f"[STEP2] UniversalProcessRunner.add_output вызван: {message}\n")
+            f.write(f"[STEP2] channels: {channels}\n")
+            f.write(f"[STEP2] gui_callback: {self.gui_callback}\n")
+        
+        # Буферизируем для лог-файла
+        if "file" in channels:
+            self.output_buffer.append((message, level, channels))
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP2] Сообщение добавлено в буфер файла\n")
+        
+        # Сразу отправляем в терминал через очередь
+        if "terminal" in channels and self.gui_callback:
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP2] Вызываем gui_callback: {message}\n")
+            self.gui_callback(message)
+        else:
+            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
+                f.write(f"[STEP2] НЕ вызываем gui_callback: terminal in channels={'terminal' in channels}, gui_callback={self.gui_callback}\n")
+    
+    def flush_to_gui(self):
+        """Отправка всех сообщений из буфера в GUI"""
+        for message, level, channels in self.output_buffer:
+            self._log(message, level, channels)
+        self.output_buffer.clear()
+    
+    def flush_to_log(self):
+        """Запись всех сообщений из буфера в лог-файл"""
+        if not self.logger:
+            return
+        
+        for message, level, channels in self.output_buffer:
+            if "file" in channels:
+                if level == "INFO":
+                    self.logger.info(message)
+                elif level == "WARNING":
+                    self.logger.warning(message)
+                elif level == "ERROR":
+                    self.logger.error(message)
+                else:
+                    self.logger.info(message)
+        
+        # Очищаем буфер после записи
+        self.output_buffer.clear()
+    
+    def _log(self, message, level="INFO", channels=["file", "terminal"]):
+        """
+        Универсальное логирование в выбранные каналы
+        
+        Args:
+            message: Текст сообщения
+            level: Уровень сообщения
+            channels: Список каналов ["file", "terminal", "gui"]
+        """
+        # Лог файл (всегда, если есть logger)
+        if "file" in channels and self.logger:
+            if level == "ERROR":
+                self.logger.log_error(message)
+            elif level == "WARNING":
+                self.logger.log_warning(message)
+            else:
+                self.logger.log_info(message)
+        
+        # GUI терминал
+        if "terminal" in channels and self.gui_callback:
+            self.gui_callback(message)
+        
+        # GUI лог (только для ключевых сообщений)
+        if "gui" in channels:
+            # Здесь можно добавить логику для GUI лога
+            pass
+    
+    def _detect_interactive_prompt(self, output_buffer):
+        """Определение интерактивных запросов в выводе"""
+        interactive_patterns = [
+            "Do you want to continue?",
+            "Continue?",
+            "Y/n",
+            "y/N",
+            "[Y/n]",
+            "[y/N]",
+            "Press ENTER",
+            "Press any key"
+        ]
+        
+        for pattern in interactive_patterns:
+            if pattern in output_buffer:
+                return True
+        return False
+    
+    def _get_auto_response(self, output_buffer):
+        """Получение автоматического ответа на интерактивный запрос"""
+        if "Do you want to continue?" in output_buffer or "Continue?" in output_buffer:
+            return "y"
+        elif "Y/n" in output_buffer or "[Y/n]" in output_buffer:
+            return "y"
+        elif "Press ENTER" in output_buffer:
+            return ""
+        return None
+
+# ============================================================================
+# ОСНОВНЫЕ ФУНКЦИИ
+# ============================================================================
+
 if __name__ == '__main__':
     main()
