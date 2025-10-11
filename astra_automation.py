@@ -237,19 +237,11 @@ def custom_print(*args, **kwargs):
     # Формируем сообщение
     message = ' '.join(str(arg) for arg in args)
     
-    # Отладка через файл
-    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-        f.write(f"[STEP1] custom_print вызван: {message}\n")
-    
     # Если есть UniversalProcessRunner - используем его
     if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP1] Передаем в UniversalProcessRunner: {message}\n")
         sys._gui_instance.process_runner.add_output(message)
     else:
         # Иначе используем оригинальный print
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP1] Используем оригинальный print: {message}\n")
         _original_print(*args, **kwargs)
 
 # Переопределяем builtins.print
@@ -4997,22 +4989,12 @@ class AutomationGUI(object):
         # ТЕСТ: Проверяем работу очереди
         print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале")
         
-        # Добавляем функцию для записи содержимого терминала в лог
-        self.add_terminal_to_log()
-        
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
             self._redirect_output_to_terminal()
         
         # Запускаем обработку очереди терминала с задержкой (ПЕРЕД _auto_check_components!)
-        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue - ПЕРЕД _auto_check_components")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue - ПЕРЕД _auto_check_components\n")
-        print(f"[DEBUG] Планируем запуск process_terminal_queue через 1000мс")
         self.root.after(1000, self.process_terminal_queue)
-        print(f"[DEBUG] process_terminal_queue запланирован")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] process_terminal_queue запланирован через 1000мс\n")
         
         # Автоматически запускаем проверку компонентов при инициализации GUI
         if not console_mode:
@@ -5038,41 +5020,16 @@ class AutomationGUI(object):
                 except:
                     pass
         
-        # Отладка ПЕРЕД планированием process_terminal_queue
-        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue - строка 5029")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue - строка 5029\n")
-        
         # Запускаем обработку очереди терминала с задержкой
-        print(f"[DEBUG] ПЕРЕД планированием process_terminal_queue")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ПЕРЕД планированием process_terminal_queue\n")
-        print(f"[DEBUG] ДО планирования process_terminal_queue")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ДО планирования process_terminal_queue\n")
-        print(f"[DEBUG] Планируем запуск process_terminal_queue через 1000мс")
         self.root.after(1000, self.process_terminal_queue)
-        print(f"[DEBUG] process_terminal_queue запланирован")
-        print(f"[DEBUG] ПОСЛЕ планирования process_terminal_queue")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] process_terminal_queue запланирован через 1000мс\n")
         
         # Закрываем родительский терминал после полного запуска GUI
         # УБРАНО - теперь закрываем сразу при получении PID
         
         # Запускаем постоянный мониторинг CPU/NET
-        print(f"[DEBUG] ПЕРЕД start_system_monitoring")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ПЕРЕД start_system_monitoring\n")
         self.start_system_monitoring()
-        print(f"[DEBUG] ПОСЛЕ start_system_monitoring")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] ПОСЛЕ start_system_monitoring\n")
         
         # UniversalProcessRunner готов к работе
-        print(f"[DEBUG] КОНЕЦ __init__ - UniversalProcessRunner готов к работе")
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP0] КОНЕЦ __init__ - UniversalProcessRunner готов к работе\n")
         
     
     def _install_gui_dependencies(self):
@@ -7369,100 +7326,30 @@ class AutomationGUI(object):
     def add_terminal_output(self, message):
         """Добавление сообщения в системный терминал (потокобезопасно)"""
         try:
-            # Отладка через файл
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP3] add_terminal_output вызван: {message}\n")
-                f.write(f"[STEP3] terminal_queue: {self.terminal_queue}\n")
-            
             # Добавляем сообщение в очередь вместо прямого обновления GUI
             self.terminal_queue.put(message)
-            
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP3] Сообщение добавлено в очередь: {message}\n")
-                f.write(f"[STEP3] Размер очереди: {self.terminal_queue.qsize()}\n")
         except Exception as e:
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP3] Ошибка add_terminal_output: {e}\n")
+            pass
     
-    def add_terminal_to_log(self):
-        """Добавление функции для записи содержимого терминала в лог"""
-        # Создаем лог-файл для содержимого терминала
-        import datetime
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.terminal_log_file = f"terminal_content_{timestamp}.log"
-        
-        # Записываем начальное содержимое терминала
-        try:
-            terminal_content = self.terminal_text.get("1.0", "end")
-            with open(self.terminal_log_file, 'w', encoding='utf-8') as f:
-                f.write(f"=== СОДЕРЖИМОЕ ТЕРМИНАЛА GUI ===\n")
-                f.write(f"Время: {datetime.datetime.now()}\n")
-                f.write(f"Файл: {self.terminal_log_file}\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(terminal_content)
-                f.write("\n" + "=" * 50 + "\n")
-                f.write("=== КОНЕЦ СОДЕРЖИМОГО ТЕРМИНАЛА ===\n")
-        except Exception as e:
-            print(f"[ERROR] Ошибка записи терминала в лог: {e}")
-        
-        # Запускаем периодическое обновление лога терминала
-        self.update_terminal_log()
     
-    def update_terminal_log(self):
-        """Обновление лог-файла с содержимым терминала"""
-        try:
-            terminal_content = self.terminal_text.get("1.0", "end")
-            with open(self.terminal_log_file, 'a', encoding='utf-8') as f:
-                f.write(f"\n--- ОБНОВЛЕНИЕ: {datetime.datetime.now()} ---\n")
-                f.write(terminal_content)
-                f.write("--- КОНЕЦ ОБНОВЛЕНИЯ ---\n")
-        except Exception as e:
-            pass  # Игнорируем ошибки
-        
-        # Планируем следующее обновление через 5 секунд
-        self.root.after(5000, self.update_terminal_log)
     
     def process_terminal_queue(self):
         """Обработка очереди сообщений терминала (вызывается из главного потока)"""
         try:
-            # Отладка через файл
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP4] process_terminal_queue вызван\n")
-                f.write(f"[STEP4] Размер очереди: {self.terminal_queue.qsize()}\n")
-            
             # Обрабатываем все сообщения из очереди
             while not self.terminal_queue.empty():
                 try:
                     message = self.terminal_queue.get_nowait()
                     
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Обрабатываем сообщение: {message}\n")
-                    
                     # Обновляем терминал в главном потоке (безопасно)
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Начинаем обновление терминала\n")
                     self.terminal_text.config(state=self.tk.NORMAL)
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Терминал разблокирован\n")
                     self.terminal_text.insert(self.tk.END, message + "\n")
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Сообщение вставлено в терминал\n")
                     self.terminal_text.see(self.tk.END)
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Прокрутка к концу\n")
                     self.terminal_text.config(state=self.tk.DISABLED)
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Терминал заблокирован\n")
-                    
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Сообщение добавлено в GUI терминал: {message}\n")
                 except Exception as e:
-                    with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                        f.write(f"[STEP4] Ошибка обработки сообщения: {e}\n")
                     break  # Выходим из цикла при ошибке
         except Exception as e:
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP4] Ошибка process_terminal_queue: {e}\n")
+            pass
         finally:
             # Повторяем через 100 мс (постоянный мониторинг очереди)
             self.root.after(100, self.process_terminal_queue)
@@ -9807,26 +9694,13 @@ class UniversalProcessRunner(object):
             level: Уровень сообщения ("INFO", "WARNING", "ERROR")
             channels: Каналы вывода
         """
-        # Отладка через файл
-        with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-            f.write(f"[STEP2] UniversalProcessRunner.add_output вызван: {message}\n")
-            f.write(f"[STEP2] channels: {channels}\n")
-            f.write(f"[STEP2] gui_callback: {self.gui_callback}\n")
-        
         # Буферизируем для лог-файла
         if "file" in channels:
             self.output_buffer.append((message, level, channels))
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP2] Сообщение добавлено в буфер файла\n")
         
         # Сразу отправляем в терминал через очередь
         if "terminal" in channels and self.gui_callback:
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP2] Вызываем gui_callback: {message}\n")
             self.gui_callback(message)
-        else:
-            with open("debug_full_chain.txt", "a", encoding="utf-8") as f:
-                f.write(f"[STEP2] НЕ вызываем gui_callback: terminal in channels={'terminal' in channels}, gui_callback={self.gui_callback}\n")
     
     def flush_to_gui(self):
         """Отправка всех сообщений из буфера в GUI"""

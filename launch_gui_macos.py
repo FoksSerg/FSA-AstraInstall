@@ -26,21 +26,51 @@ def launch_gui():
         
         print(f"Путь к модулю: {astra_automation_path}")
         
+        # Создаем папку Log если её нет
+        log_dir = os.path.join(script_dir, 'Log')
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Создаем лог файл с временной меткой
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"astra_automation_macos_{timestamp}.log")
+        
+        # Записываем процесс запуска в лог
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("FSA-AstraInstall Automation - ЗАПУСК ЧЕРЕЗ launch_gui_macos.py\n")
+            f.write(f"Время запуска: {datetime.now()}\n")
+            f.write(f"Рабочая директория: {script_dir}\n")
+            f.write(f"Путь к модулю: {astra_automation_path}\n")
+            f.write(f"Лог файл: {log_file}\n")
+            f.write("=" * 80 + "\n")
+            f.write("ПЕРЕДАЧА УПРАВЛЕНИЯ ОСНОВНОМУ ФАЙЛУ...\n")
+            f.write("=" * 80 + "\n")
+        
+        print(f"Лог файл создан: {log_file}")
+        
+        # Устанавливаем аргументы командной строки ПЕРЕД импортом
+        sys.argv = ['astra_automation.py', '--log-file', log_file]
         # Импортируем модуль с дефисом
         spec = importlib.util.spec_from_file_location('astra_automation', astra_automation_path)
         astra_automation = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(astra_automation)
         
-        # Создаем экземпляр GUI напрямую, минуя main()
-        gui = astra_automation.AutomationGUI(console_mode=False)
+        # Записываем успешный импорт в лог
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] Модуль astra_automation успешно импортирован\n")
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] Запуск main() с аргументами: {sys.argv}\n")
         
-        print("GUI создан успешно!")
-        print("Запускаем интерфейс...")
+        # Запускаем через main() с передачей пути к логу
+        astra_automation.main()
         
-        # Запускаем GUI
-        print("GUI запущен, ожидаем закрытия окна...")
-        gui.run()
-        print("GUI закрыт")
+        # Записываем завершение в лог
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] main() завершен\n")
+            f.write("=" * 80 + "\n")
+            f.write("FSA-AstraInstall Automation - ЗАВЕРШЕНИЕ СЕССИИ\n")
+            f.write("=" * 80 + "\n")
+        
         return True
         
     except Exception as e:
