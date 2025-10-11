@@ -5058,8 +5058,7 @@ class AutomationGUI(object):
             f.write(f"[STEP0] process_terminal_queue запланирован через 1000мс\n")
         
         # Закрываем родительский терминал после полного запуска GUI
-        if self.close_terminal_pid:
-            self.root.after(500, self._close_parent_terminal)
+        # УБРАНО - теперь закрываем сразу при получении PID
         
         # Запускаем постоянный мониторинг CPU/NET
         print(f"[DEBUG] ПЕРЕД start_system_monitoring")
@@ -5118,7 +5117,6 @@ class AutomationGUI(object):
     def _close_parent_terminal(self):
         """Закрытие родительского терминала после полного запуска GUI"""
         if not self.close_terminal_pid:
-            self.log_message("[INFO] PID терминала не задан, пропускаем закрытие")
             return
         
         try:
@@ -5132,9 +5130,10 @@ class AutomationGUI(object):
                 # Процесс уже не существует
                 return
             
-            # Простая попытка закрытия через os.kill
+            # Сначала мягкое завершение
             try:
                 os.kill(pid, signal.SIGTERM)
+                self.log_message("[INFO] Отправлен SIGTERM терминалу (PID: %d)" % pid)
                 
                 # Даем время на завершение
                 import time
@@ -5145,13 +5144,13 @@ class AutomationGUI(object):
                     os.kill(pid, 0)
                     # Процесс еще жив - отправляем SIGKILL
                     os.kill(pid, signal.SIGKILL)
+                    self.log_message("[INFO] Отправлен SIGKILL терминалу (PID: %d)" % pid)
                 except OSError:
                     # Процесс уже завершился
-                    pass
+                    self.log_message("[INFO] Родительский терминал успешно закрыт (PID: %d)" % pid)
                     
-            except Exception:
-                # Игнорируем ошибки закрытия
-                pass
+            except Exception as e:
+                self.log_message("[WARNING] Не удалось закрыть терминал: %s" % str(e))
                 
         except Exception as e:
             self.log_message("[ERROR] Ошибка закрытия родительского терминала: %s" % str(e))
@@ -9421,6 +9420,42 @@ def main():
                         close_terminal_pid = sys.argv[i + 1]
                         logger.log_info("Терминал будет закрыт после запуска GUI (PID: %s)" % close_terminal_pid)
                         print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
+                        
+                        # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
+                        try:
+                            import signal
+                            pid = int(close_terminal_pid)
+                            print(f"[INFO] Закрываем терминал PID: {pid}")
+                            
+                            # Проверяем что процесс существует
+                            try:
+                                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                                print(f"[INFO] Процесс {pid} существует, закрываем...")
+                                
+                                # Сначала мягкое завершение
+                                os.kill(pid, signal.SIGTERM)
+                                print(f"[INFO] Отправлен SIGTERM терминалу (PID: {pid})")
+                                
+                                # Даем время на завершение
+                                import time
+                                time.sleep(0.5)
+                                
+                                # Проверяем что процесс завершился
+                                try:
+                                    os.kill(pid, 0)
+                                    # Процесс еще жив - отправляем SIGKILL
+                                    os.kill(pid, signal.SIGKILL)
+                                    print(f"[INFO] Отправлен SIGKILL терминалу (PID: {pid})")
+                                except OSError:
+                                    # Процесс уже завершился
+                                    print(f"[INFO] Терминал успешно закрыт (PID: {pid})")
+                                    
+                            except OSError:
+                                print(f"[INFO] Процесс {pid} уже не существует")
+                                
+                        except Exception as e:
+                            print(f"[ERROR] Ошибка закрытия терминала: {e}")
+                        
                         i += 1  # Пропускаем следующий аргумент
                     else:
                         logger.log_warning("Флаг --close-terminal указан без PID")

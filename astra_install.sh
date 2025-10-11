@@ -544,28 +544,9 @@ log_message "Лог файл: $LOG_FILE"
         echo "   [i] Окно терминала закроется автоматически после запуска GUI"
         log_message "GUI запускается в фоновом режиме (детачится от терминала)"
         
-        # Ищем PID процесса fly-term (окно терминала)
-        TERM_PID=$(pgrep fly-term | head -1)
-        
-        # Если fly-term не найден, пробуем другие терминалы
-        if [ -z "$TERM_PID" ]; then
-            for term_name in gnome-terminal xterm konsole xfce4-terminal mate-terminal lxterminal; do
-                TERM_PID=$(pgrep "$term_name" | head -1)
-                if [ -n "$TERM_PID" ]; then
-                    break
-                fi
-            done
-        fi
-        
-        # Если терминал не найден, используем старый метод
-        if [ -z "$TERM_PID" ] || [ "$TERM_PID" = "1" ]; then
-            TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
-        fi
-        
-        # Последний fallback
-        if [ -z "$TERM_PID" ] || [ "$TERM_PID" = "1" ]; then
-            TERM_PID=$PPID
-        fi
+        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
+        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
+        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
         
         log_message "PID bash скрипта: $PPID"
         log_message "PID окна терминала: $TERM_PID"
