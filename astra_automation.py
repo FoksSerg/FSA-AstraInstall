@@ -4966,6 +4966,12 @@ class AutomationGUI(object):
         self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
         self.universal_installer = UniversalInstaller(callback=self._component_status_callback)
         
+        # Инициализируем UniversalProcessRunner для перехвата всех сообщений
+        self.universal_runner = UniversalProcessRunner(
+            logger=None,  # Будет установлен позже из main
+            gui_callback=self.add_terminal_output
+        )
+        
         # Лог-файл (будет установлен позже из main)
         self.main_log_file = None
         
@@ -5704,9 +5710,12 @@ class AutomationGUI(object):
             
             # Устанавливаем новую позицию
             self.root.geometry('+%d+%d' % (center_x, center_y))
+            
+            # Добавляем сообщение о центрировании в терминал
+            print(f"[GUI] Окно центрировано: {window_width}x{window_height} на позиции ({center_x}, {center_y})")
         except Exception as e:
             # Игнорируем ошибки центрирования
-            pass
+            print(f"[GUI] Ошибка центрирования окна: {e}")
     
     def _limit_tab_height(self, event):
         """Ограничиваем высоту вкладок, чтобы панель прогресса была видна"""
@@ -8917,8 +8926,9 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         logger = get_logger()
         gui.main_log_file = logger.log_file
         
-        # Устанавливаем logger в process_runner
-        gui.process_runner.logger = logger
+        # Устанавливаем logger в universal_runner и активируем перехват print()
+        gui.universal_runner.logger = logger
+        gui.universal_runner.setup_print_redirect()
         
         print("   [OK] GUI создан успешно, запускаем...")
         
@@ -9603,9 +9613,26 @@ class UniversalProcessRunner(object):
         self.output_buffer = []
         self.is_running = False
         
-        # Тестовое сообщение для проверки инициализации
-        if gui_callback:
-            gui_callback("[UNIVERSAL] UniversalProcessRunner инициализирован")
+        # Сохраняем оригинальный print для совместимости
+        self._original_print = print
+        
+        # Тестовое сообщение будет отправлено при активации перехвата
+    
+    def setup_print_redirect(self):
+        """Настройка перехвата стандартного print()"""
+        import builtins
+        
+        def universal_print(*args, **kwargs):
+            """Универсальный print с отправкой в GUI терминал"""
+            message = ' '.join(str(arg) for arg in args)
+            self.add_output(message)
+        
+        # Заменяем встроенный print
+        builtins.print = universal_print
+        
+        # Отправляем тестовое сообщение о готовности перехвата
+        if self.gui_callback:
+            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату print()")
         
     def run_process(self, command, process_type="general", 
                    channels=["file", "terminal"], callback=None, timeout=None):
