@@ -379,10 +379,120 @@ class UniversalProcessRunner(object):
         if self.gui_callback:
             self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату print()")
     
-    def log_info(self, message):
+    def setup_subprocess_redirect(self):
+        """Подмена subprocess.run() на UniversalProcessRunner"""
+        import subprocess as original_subprocess
+        
+        # Сохраняем оригинальный subprocess.run
+        if not hasattr(self, '_original_subprocess_run'):
+            self._original_subprocess_run = original_subprocess.run
+        
+        def universal_subprocess_run(*args, **kwargs):
+            """Универсальный subprocess.run с отправкой в UniversalProcessRunner"""
+            # Отладочные сообщения
+            print(f"[DEBUG] universal_subprocess_run вызван с args={args}, kwargs={kwargs}")
+            
+            # Обрабатываем args
+            if len(args) > 0:
+                if isinstance(args[0], list):
+                    # Массив аргументов - используем оригинальный subprocess
+                    print(f"[DEBUG] Массив аргументов: {args[0]}")
+                    print(f"[DEBUG] Используем оригинальный subprocess.run с массивом")
+                    result = self._original_subprocess_run(*args, **kwargs)
+                    print(f"[DEBUG] Результат оригинального subprocess: {result}")
+                    return result
+                else:
+                    # Строка команды - конвертируем в массив и используем оригинальный subprocess
+                    command_args = str(args[0]).split()
+                    print(f"[DEBUG] Строка команды: '{args[0]}'")
+                    print(f"[DEBUG] Конвертировано в массив: {command_args}")
+                    print(f"[DEBUG] Используем оригинальный subprocess.run с массивом")
+                    result = self._original_subprocess_run(command_args, **kwargs)
+                    print(f"[DEBUG] Результат оригинального subprocess: {result}")
+                    return result
+            else:
+                # Если нет аргументов, используем оригинальный subprocess
+                print(f"[DEBUG] Нет аргументов, используем оригинальный subprocess")
+                result = self._original_subprocess_run(*args, **kwargs)
+                print(f"[DEBUG] Результат оригинального subprocess: {result}")
+                return result
+        
+        # Подменяем subprocess.run
+        original_subprocess.run = universal_subprocess_run
+        
+        # Отправляем сообщение о готовности перехвата subprocess
+        if self.gui_callback:
+            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату subprocess.run()")
+    
+    def setup_logging_redirect(self):
+        """Подмена стандартного logging на UniversalProcessRunner"""
+        import logging as original_logging
+        
+        # Сохраняем оригинальный getLogger
+        if not hasattr(self, '_original_getLogger'):
+            self._original_getLogger = original_logging.getLogger
+        
+        class UniversalLogger:
+            def __init__(self, universal_runner):
+                self.universal_runner = universal_runner
+            
+            def info(self, message):
+                self.universal_runner.log_info(message)
+            
+            def error(self, message):
+                self.universal_runner.log_error(message)
+            
+            def warning(self, message):
+                self.universal_runner.log_warning(message)
+            
+            def debug(self, message):
+                self.universal_runner.log_debug(message)
+        
+        # Подменяем getLogger
+        original_logging.getLogger = lambda name: UniversalLogger(self)
+        
+        # Отправляем сообщение о готовности перехвата logging
+        if self.gui_callback:
+            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату logging.getLogger()")
+    
+    def setup_universal_logging_redirect(self):
+        """Подмена ВСЕХ методов логирования на UniversalProcessRunner"""
+        
+        # Подменяем все методы _log в классах
+        def universal_log(self, message, level="INFO"):
+            """Универсальный _log с отправкой в UniversalProcessRunner"""
+            universal_runner = get_universal_runner()
+            if level == "ERROR":
+                universal_runner.log_error(message)
+            elif level == "WARNING":
+                universal_runner.log_warning(message)
+            else:
+                universal_runner.log_info(message)
+        
+        # Подменяем все методы _write_to_file
+        def universal_write_to_file(self, message):
+            """Универсальный _write_to_file с отправкой в UniversalProcessRunner"""
+            universal_runner = get_universal_runner()
+            universal_runner._write_to_file(message)
+        
+        # Подменяем все методы _log в классах
+        import types
+        types.MethodType = lambda func, instance: universal_log if func.__name__ == '_log' else func
+        
+        # Отправляем сообщение о готовности перехвата всех методов логирования
+        if self.gui_callback:
+            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату ВСЕХ методов логирования")
+    
+    def log_info(self, message, description=None, extra_info=None):
         """Логирование информационного сообщения"""
-        self.add_output(f"[INFO] {message}")
-        self._write_to_file(f"[INFO] {message}")
+        if description and extra_info is not None:
+            full_message = f"{description}: {str(message)} (доп.инфо: {extra_info})"
+        elif description:
+            full_message = f"{description}: {str(message)}"
+        else:
+            full_message = str(message)
+        self.add_output(f"[INFO] {full_message}")
+        self._write_to_file(f"[INFO] {full_message}")
     
     def log_error(self, message, description=None):
         """Логирование сообщения об ошибке"""
@@ -393,10 +503,23 @@ class UniversalProcessRunner(object):
         self.add_output(f"[ERROR] {full_message}")
         self._write_to_file(f"[ERROR] {full_message}")
     
-    def log_warning(self, message):
+    def log_warning(self, message, description=None):
         """Логирование предупреждения"""
-        self.add_output(f"[WARNING] {message}")
-        self._write_to_file(f"[WARNING] {message}")
+        if description:
+            full_message = f"{description}: {str(message)}"
+        else:
+            full_message = str(message)
+        self.add_output(f"[WARNING] {full_message}")
+        self._write_to_file(f"[WARNING] {full_message}")
+    
+    def log_debug(self, message, description=None):
+        """Логирование отладочных сообщений"""
+        if description:
+            full_message = f"{description}: {str(message)}"
+        else:
+            full_message = str(message)
+        self.add_output(f"[DEBUG] {full_message}")
+        self._write_to_file(f"[DEBUG] {full_message}")
     
     def set_log_file(self, log_file_path):
         """Установка пути к лог-файлу"""
@@ -434,6 +557,10 @@ class UniversalProcessRunner(object):
         Returns:
             int: Код возврата процесса (0 = успех)
         """
+        # Отладочные сообщения
+        print(f"[DEBUG] run_process вызван с command='{command}', process_type='{process_type}', channels={channels}")
+        print(f"[DEBUG] Тип command: {type(command)}")
+        
         if self.is_running:
             self._log("Предупреждение: процесс уже выполняется", "WARNING", channels)
             return -1
@@ -5059,6 +5186,9 @@ class AutomationGUI(object):
         # Создаем стили для цветных прогресс-баров
         style = ttk.Style()
         # Настраиваем стили для прогресс-баров (упрощенная версия)
+        
+        # Инициализируем переменные для отслеживания прогресса
+        self.current_download_size = 0
         style = self.ttk.Style()
         
         # Обработчик закрытия окна
@@ -7492,6 +7622,60 @@ class AutomationGUI(object):
         except Exception as e:
             self.log_message("[WARNING] Ошибка запуска мониторинга: %s" % str(e))
     
+    def handle_apt_progress(self, message):
+        """Обработка прогресса apt-get"""
+        try:
+            import ast
+            # Извлекаем данные прогресса из сообщения
+            progress_data_str = message.replace("[PROGRESS] ", "")
+            progress_data = ast.literal_eval(progress_data_str)
+            
+            if progress_data['type'] == 'apt_progress':
+                package_num = progress_data['package_num']
+                package_name = progress_data['package_name']
+                size_mb = progress_data['size_mb']
+                
+                # Обновляем прогресс-бар (предполагаем общее количество пакетов ~1600)
+                total_packages = 1600  # Можно сделать динамическим
+                progress_percent = min(100, (package_num / total_packages) * 100)
+                
+                # Обновляем GUI элементы
+                self.wine_progress['value'] = progress_percent
+                
+                # Обновляем размер
+                current_size = getattr(self, 'current_download_size', 0)
+                current_size += size_mb
+                self.current_download_size = current_size
+                self.wine_size_label.config(text=f"{current_size:.1f} MB")
+                
+                # Обновляем этап
+                self.wine_stage_label.config(text=f"Скачивание: {package_name}")
+                
+                # Обновляем время (примерно)
+                elapsed_minutes = int(package_num / 100)  # Примерно 100 пакетов в минуту
+                elapsed_seconds = int((package_num % 100) * 0.6)  # Примерно 0.6 сек на пакет
+                self.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_seconds} сек")
+                
+        except Exception as e:
+            # Игнорируем ошибки парсинга
+            pass
+    
+    def handle_stage_update(self, message):
+        """Обработка обновления этапа"""
+        try:
+            stage_text = message.replace("[STAGE] ", "")
+            self.wine_stage_label.config(text=stage_text)
+            
+            # Сбрасываем прогресс для новых этапов
+            if "Чтение списков пакетов" in stage_text:
+                self.wine_progress['value'] = 0
+                self.current_download_size = 0
+                self.wine_size_label.config(text="0 MB")
+                self.wine_time_label.config(text="0 мин 0 сек")
+                
+        except Exception as e:
+            pass
+    
     def add_terminal_output(self, message):
         """Добавление сообщения в системный терминал (потокобезопасно)"""
         try:
@@ -7516,17 +7700,23 @@ class AutomationGUI(object):
                 try:
                     message = self.terminal_queue.get_nowait()
                     
-                    # ИСПРАВЛЕНИЕ: Записываем во ВСЕ ТРИ получателя одновременно
-                    if hasattr(self, 'universal_runner') and self.universal_runner:
-                        # 1. Записываем в основной лог-файл
-                        self.universal_runner._write_to_file(message)
-                    
-                    # 2. Записываем в GUI лог (тот же текст что и в терминал)
-                    try:
-                        self.log_text.insert(self.tk.END, message + "\n")
-                        self.log_text.see(self.tk.END)
-                    except:
-                        pass
+                    # Обрабатываем специальные сообщения прогресса
+                    if message.startswith("[PROGRESS]"):
+                        self.handle_apt_progress(message)
+                    elif message.startswith("[STAGE]"):
+                        self.handle_stage_update(message)
+                    else:
+                        # ИСПРАВЛЕНИЕ: Записываем во ВСЕ ТРИ получателя одновременно
+                        if hasattr(self, 'universal_runner') and self.universal_runner:
+                            # 1. Записываем в основной лог-файл
+                            self.universal_runner._write_to_file(message)
+                        
+                        # 2. Записываем в GUI лог (тот же текст что и в терминал)
+                        try:
+                            self.log_text.insert(self.tk.END, message + "\n")
+                            self.log_text.see(self.tk.END)
+                        except:
+                            pass
                     
                     # 3. Обновляем терминал в главном потоке (безопасно)
                     self.terminal_text.config(state=self.tk.NORMAL)
@@ -7544,6 +7734,11 @@ class AutomationGUI(object):
     def start_automation(self):
         """Запуск автоматизации"""
         if self.is_running:
+            return
+        
+        # Проверяем, не запущен ли уже поток
+        if self.process_thread and self.process_thread.is_alive():
+            self.universal_runner.log_warning("Предыдущий процесс еще выполняется, ожидаем завершения...")
             return
             
         self.is_running = True
@@ -7565,6 +7760,16 @@ class AutomationGUI(object):
         self.start_button.config(state=self.tk.NORMAL)
         self.stop_button.config(state=self.tk.DISABLED)
         self.update_status("Остановлено пользователем")
+        self.universal_runner.log_info("Процесс остановлен пользователем")
+        
+        # Ждем завершения потока (с таймаутом)
+        if self.process_thread and self.process_thread.is_alive():
+            self.universal_runner.log_info("Ожидаем завершения потока...")
+            self.process_thread.join(timeout=5.0)  # Ждем максимум 5 секунд
+            if self.process_thread.is_alive():
+                self.universal_runner.log_warning("Поток не завершился за 5 секунд")
+            else:
+                self.universal_runner.log_info("Поток успешно завершен")
         
     def toggle_terminal(self):
         """Переключение на вкладку терминала"""
@@ -7652,6 +7857,11 @@ class AutomationGUI(object):
             self.log_message("[START] Запуск автоматизации проверки репозиториев...")
             self.universal_runner.log_info("Начинаем проверку репозиториев")
             
+            # Проверяем флаг остановки
+            if not self.is_running:
+                self.universal_runner.log_info("Процесс остановлен пользователем")
+                return
+            
             try:
                 # Используем класс RepoChecker напрямую
                 checker = RepoChecker(gui_terminal=self)
@@ -7688,6 +7898,11 @@ class AutomationGUI(object):
             self.update_status("Анализ статистики...", "Статистика")
             self.log_message("[STATS] Запуск анализа статистики системы...")
             self.universal_runner.log_info("Начинаем анализ статистики системы")
+            
+            # Проверяем флаг остановки
+            if not self.is_running:
+                self.universal_runner.log_info("Процесс остановлен пользователем")
+                return
             
             try:
                 # Используем класс SystemStats напрямую
@@ -7727,9 +7942,15 @@ class AutomationGUI(object):
             self.log_message("[PROCESS] Запуск обновления системы...")
             self.universal_runner.log_info("Начинаем обновление системы")
             
+            # Проверяем флаг остановки
+            if not self.is_running:
+                self.universal_runner.log_info("Процесс остановлен пользователем")
+                return
+            
             try:
-                # Используем класс SystemUpdater напрямую
-                updater = SystemUpdater()
+                # Используем класс SystemUpdater с передачей universal_runner
+                updater = SystemUpdater(self.universal_runner)
+                updater.gui_instance = self  # Передаем ссылку на GUI для проверки флага остановки
                 updater.simulate_update_scenarios()
                 
                 if not self.dry_run.get():
@@ -7774,10 +7995,13 @@ class AutomationGUI(object):
             self.universal_runner.log_info("Очистка блокировок")
             
         finally:
-            self.is_running = False
-            self.start_button.config(state=self.tk.NORMAL)
-            self.stop_button.config(state=self.tk.DISABLED)
-            self.universal_runner.log_info("GUI автоматизация завершена")
+            # Сбрасываем флаг только если процесс НЕ был остановлен пользователем
+            if self.is_running:  # Если флаг еще True, значит процесс завершился естественно
+                self.is_running = False
+                self.start_button.config(state=self.tk.NORMAL)
+                self.stop_button.config(state=self.tk.DISABLED)
+                self.universal_runner.log_info("GUI автоматизация завершена")
+            # Если флаг уже False, значит пользователь остановил процесс
             
     def parse_status_from_output(self, line):
         """Парсинг статуса из вывода"""
@@ -7829,6 +8053,7 @@ class InteractiveHandler(object):
     def get_auto_response(self, prompt_type):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
+    
     
     def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
@@ -7966,7 +8191,10 @@ class InteractiveHandler(object):
 class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
-    def __init__(self):
+    def __init__(self, universal_runner=None):
+        # Получаем UniversalProcessRunner
+        self.universal_runner = universal_runner or get_universal_runner()
+        
         # Используем общий класс конфигурации
         self.config = InteractiveConfig()
         # Минимальные требования системы
@@ -7980,6 +8208,78 @@ class SystemUpdater(object):
     def get_auto_response(self, prompt_type):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
+    
+    def parse_apt_progress(self, line):
+        """Парсинг прогресса apt-get для обновления GUI"""
+        try:
+            # Парсим строки типа: "Пол:201 https://download.astralinux.ru/... libsqlite3-0 amd64 3.34.1-3+deb11u1.astra3 [756 kB]"
+            if line.startswith("Пол:"):
+                import re
+                
+                # Извлекаем номер пакета
+                match = re.match(r'Пол:(\d+)', line)
+                if match:
+                    package_num = int(match.group(1))
+                    
+                    # Извлекаем размер пакета
+                    size_match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
+                    if size_match:
+                        size_value = float(size_match.group(1).replace(',', '.'))
+                        size_unit = size_match.group(2)
+                        
+                        # Конвертируем в MB
+                        if size_unit == 'KB':
+                            size_mb = size_value / 1024
+                        elif size_unit == 'MB':
+                            size_mb = size_value
+                        elif size_unit == 'GB':
+                            size_mb = size_value * 1024
+                        else:
+                            size_mb = 0
+                        
+                        # Извлекаем название пакета
+                        package_name = ""
+                        parts = line.split()
+                        for i, part in enumerate(parts):
+                            if part.endswith('amd64') or part.endswith('all'):
+                                if i > 0:
+                                    package_name = parts[i-1]
+                                break
+                        
+                        # Обновляем GUI (если доступен)
+                        if hasattr(self, 'universal_runner') and self.universal_runner:
+                            if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
+                                # Отправляем информацию о прогрессе
+                                progress_info = {
+                                    'type': 'apt_progress',
+                                    'package_num': package_num,
+                                    'package_name': package_name,
+                                    'size_mb': size_mb,
+                                    'line': line
+                                }
+                                self.universal_runner.gui_callback(f"[PROGRESS] {progress_info}")
+            
+            # Парсим строки типа: "Чтение списков пакетов…"
+            elif "Чтение списков пакетов" in line:
+                if hasattr(self, 'universal_runner') and self.universal_runner:
+                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
+                        self.universal_runner.gui_callback("[STAGE] Чтение списков пакетов...")
+            
+            # Парсим строки типа: "Построение дерева зависимостей…"
+            elif "Построение дерева зависимостей" in line:
+                if hasattr(self, 'universal_runner') and self.universal_runner:
+                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
+                        self.universal_runner.gui_callback("[STAGE] Построение дерева зависимостей...")
+            
+            # Парсим строки типа: "Чтение информации о состоянии…"
+            elif "Чтение информации о состоянии" in line:
+                if hasattr(self, 'universal_runner') and self.universal_runner:
+                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
+                        self.universal_runner.gui_callback("[STAGE] Чтение информации о состоянии...")
+                        
+        except Exception as e:
+            # Игнорируем ошибки парсинга
+            pass
     
     def check_system_resources(self):
         """Проверка системных ресурсов перед обновлением"""
@@ -8383,16 +8683,6 @@ class SystemUpdater(object):
     
     def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
-        
         if dry_run:
             print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
             print("   Команда: %s" % ' '.join(cmd))
@@ -8402,6 +8692,12 @@ class SystemUpdater(object):
         print("[START] Выполнение команды с автоматическими ответами...")
         print("   Команда: %s" % ' '.join(cmd))
         self.universal_runner.log_info(cmd, "Начинаем выполнение команды")
+        
+        # Проверяем флаг остановки перед выполнением команды
+        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+            print("[STOP] Процесс остановлен пользователем")
+            self.universal_runner.log_info("Процесс остановлен пользователем")
+            return -1
         
         try:
             # Подготавливаем переменные окружения для процесса
@@ -8433,12 +8729,22 @@ class SystemUpdater(object):
             buffer_line_count = 0
             
             while True:
+                # Проверяем флаг остановки в цикле чтения
+                if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+                    print("[STOP] Процесс остановлен пользователем")
+                    self.universal_runner.log_info("Процесс остановлен пользователем")
+                    process.terminate()  # Завершаем процесс
+                    return -1
+                
                 line = process.stdout.readline()
                 if not line:
                     break
                 
                 # Выводим строку
                 print("   %s" % line.rstrip())
+                
+                # Парсим прогресс apt-get для обновления GUI
+                self.parse_apt_progress(line.rstrip())
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
@@ -8607,6 +8913,13 @@ class SystemUpdater(object):
         
         # Сначала обновляем списки пакетов
         print("\n[PROCESS] Обновление списков пакетов...")
+        
+        # Проверяем флаг остановки перед обновлением списков
+        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+            print("[STOP] Процесс остановлен пользователем")
+            self.universal_runner.log_info("Процесс остановлен пользователем")
+            return False
+        
         update_cmd = ['apt-get', 'update']
         result = self.run_command_with_interactive_handling(update_cmd, dry_run, gui_terminal=True)
         
@@ -8616,6 +8929,13 @@ class SystemUpdater(object):
         
         # Затем обновляем систему с опциями dpkg для автоподтверждения
         print("\n[START] Обновление системы...")
+        
+        # Проверяем флаг остановки перед обновлением системы
+        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+            print("[STOP] Процесс остановлен пользователем")
+            self.universal_runner.log_info("Процесс остановлен пользователем")
+            return False
+        
         upgrade_cmd = ['apt-get', 'dist-upgrade', '-y',
                       '-o', 'Dpkg::Options::=--force-confdef',
                       '-o', 'Dpkg::Options::=--force-confold',
@@ -8628,6 +8948,13 @@ class SystemUpdater(object):
             
             # Автоматическая очистка ненужных пакетов
             print("\n[CLEANUP] Автоматическая очистка ненужных пакетов...")
+            
+            # Проверяем флаг остановки перед очисткой
+            if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+                print("[STOP] Процесс остановлен пользователем")
+                self.universal_runner.log_info("Процесс остановлен пользователем")
+                return False
+            
             autoremove_cmd = ['apt-get', 'autoremove', '-y',
                             '-o', 'Dpkg::Options::=--force-confdef',
                             '-o', 'Dpkg::Options::=--force-confold',
@@ -9148,8 +9475,9 @@ def run_system_updater(temp_dir, dry_run=False):
     print("\n[PROCESS] Запуск обновления системы...")
     
     try:
-        # Создаем экземпляр класса SystemUpdater напрямую
-        updater = SystemUpdater()
+        # Создаем экземпляр класса SystemUpdater с universal_runner
+        universal_runner = get_universal_runner()
+        updater = SystemUpdater(universal_runner)
         
         # Запускаем симуляцию сценариев обновления
         updater.simulate_update_scenarios()
@@ -9204,6 +9532,9 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         gui.universal_runner = get_universal_runner()
         gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
         gui.universal_runner.setup_print_redirect()  # ВКЛЮЧЕНО: рекурсия исправлена
+        gui.universal_runner.setup_subprocess_redirect()  # Подмена subprocess.run()
+        gui.universal_runner.setup_logging_redirect()  # Подмена logging.getLogger()
+        gui.universal_runner.setup_universal_logging_redirect()  # Подмена ВСЕХ методов логирования
         
         # Сохраняем ссылку на universal_runner для использования в функции
         universal_runner = gui.universal_runner
@@ -9830,7 +10161,8 @@ def main():
                 # Обновляем систему
                 logger.log_info("Запускаем обновление системы")
                 print("\n[UPDATE] Обновление системы...")
-                updater = SystemUpdater()
+                universal_runner = get_universal_runner()
+                updater = SystemUpdater(universal_runner)
             
             if dry_run:
                 print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
