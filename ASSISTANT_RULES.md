@@ -64,13 +64,16 @@
 - Использовать файл сообщения: `git commit -F filename`
 
 ## 📁 ПРАВИЛО ДЛЯ ИСТОРИИ КОММИТОВ:
-**ОБЯЗАТЕЛЬНО ПОСЛЕ КАЖДОГО КОММИТА:** Сохранять рабочие файлы в папку `History/YYYY_MM_DD_HH_MM/` для быстрого восстановления функциональности:
+**ОБЯЗАТЕЛЬНО ПОСЛЕ КАЖДОГО КОММИТА:** Создавать локальную историю с двумя скриптами проекта:
 
 ```bash
-LAST_COMMIT=$(git log -1 --pretty=format:"%h")
-COMMIT_DATE=$(git log -1 --pretty=format:"%Y_%m_%d_%H_%M")
+# Получаем последний коммит и его дату
+LAST_COMMIT=$(git log -1 --format="%H")
+COMMIT_DATE=$(git log -1 --format="%Y_%m_%d_%H_%M")
+
+# Создаем папку для снимка
 mkdir -p "History/$COMMIT_DATE"
-git show "$LAST_COMMIT:astra_automation.py" > "History/$COMMIT_DATE/astra_automation.py" 2>/dev/null || \
-git show "$LAST_COMMIT:astra-automation.py" > "History/$COMMIT_DATE/astra-automation.py" 2>/dev/null
+
+# Копируем оба скрипта из коммита
+git show "$LAST_COMMIT:astra_automation.py" > "History/$COMMIT_DATE/astra_automation.py" 2>/dev/null
 git show "$LAST_COMMIT:astra_install.sh" > "History/$COMMIT_DATE/astra_install.sh" 2>/dev/null
-```

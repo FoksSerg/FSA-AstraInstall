@@ -5661,12 +5661,12 @@ class AutomationGUI(object):
                                              command=self.toggle_terminal)
         self.terminal_button.pack(side=self.tk.LEFT, padx=2)
         
-        # Лог выполнения (на основной вкладке)
+        # Лог выполнения (на основной вкладке) - уменьшенный размер
         log_frame = self.tk.LabelFrame(self.main_frame, text="Лог выполнения")
         log_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=3)
         
-        # Создаем Text с прокруткой
-        self.log_text = self.tk.Text(log_frame, height=12, wrap=self.tk.WORD, font=('Courier', 9))
+        # Создаем Text с прокруткой (уменьшен с 12 до 8 строк)
+        self.log_text = self.tk.Text(log_frame, height=8, wrap=self.tk.WORD, font=('Courier', 9))
         scrollbar = self.tk.Scrollbar(log_frame, orient=self.tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
@@ -5675,6 +5675,29 @@ class AutomationGUI(object):
         
         # Добавляем контекстное меню для копирования
         self._add_copy_menu(self.log_text)
+        
+        # Детальная панель прогресса
+        detail_frame = self.tk.LabelFrame(self.main_frame, text="Детальный прогресс")
+        detail_frame.pack(fill=self.tk.X, padx=10, pady=3)
+        
+        # Текущий этап
+        self.stage_label = self.tk.Label(detail_frame, text="Готов к запуску", 
+                                       font=("Arial", 10, "bold"), fg="blue")
+        self.stage_label.pack(anchor=self.tk.W, padx=5, pady=(5, 2))
+        
+        # Этапный прогресс-бар
+        self.stage_progress = self.tk.ttk.Progressbar(detail_frame, length=400, mode='determinate')
+        self.stage_progress.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Детали операции
+        self.detail_label = self.tk.Label(detail_frame, text="", 
+                                        font=("Arial", 9), fg="darkgreen")
+        self.detail_label.pack(anchor=self.tk.W, padx=5, pady=2)
+        
+        # Скорость и время
+        self.speed_label = self.tk.Label(detail_frame, text="", 
+                                       font=("Arial", 8), fg="gray")
+        self.speed_label.pack(anchor=self.tk.W, padx=5, pady=(0, 5))
         
         # Статус
         status_frame = self.tk.LabelFrame(self.main_frame, text="Статус")
@@ -7686,7 +7709,57 @@ class AutomationGUI(object):
             print(f"[ERROR] Ошибка добавления в очередь терминала: {e}")
             print(f"[FALLBACK] Сообщение: {message}")
     
-    
+    def handle_advanced_progress(self, message):
+        """Обработка расширенного прогресса"""
+        try:
+            import ast
+            
+            # Извлекаем данные прогресса
+            data_str = message.replace("[ADVANCED_PROGRESS] ", "")
+            progress_data = ast.literal_eval(data_str)
+            
+            # Обновляем глобальный прогресс (внизу формы)
+            if hasattr(self, 'wine_progress'):
+                if "Система актуальна" in progress_data['stage_name']:
+                    self.wine_progress['value'] = 100  # Полный прогресс для актуальной системы
+                else:
+                    self.wine_progress['value'] = progress_data['global_progress']
+            
+            # Обновляем детальный прогресс (на вкладке Управление)
+            if hasattr(self, 'stage_label'):
+                self.stage_label.config(text=progress_data['stage_name'])
+            
+            if hasattr(self, 'stage_progress'):
+                if "Система актуальна" in progress_data['stage_name']:
+                    self.stage_progress['value'] = 100  # Полный прогресс для актуальной системы
+                else:
+                    self.stage_progress['value'] = progress_data['stage_progress']
+            
+            if hasattr(self, 'detail_label'):
+                self.detail_label.config(text=progress_data['details'])
+            
+            if hasattr(self, 'speed_label'):
+                speed_text = progress_data['speed']
+                time_text = progress_data['time_remaining']
+                if speed_text and time_text:
+                    self.speed_label.config(text=f"{speed_text} | {time_text}")
+                elif speed_text:
+                    self.speed_label.config(text=speed_text)
+                elif time_text:
+                    self.speed_label.config(text=time_text)
+                else:
+                    self.speed_label.config(text="")
+            
+            # Обновляем статус
+            if hasattr(self, 'status_label'):
+                if "Система актуальна" in progress_data['stage_name']:
+                    self.status_label.config(text="✅ Система актуальна - обновлений не требуется")
+                else:
+                    self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
+                
+        except Exception as e:
+            # Игнорируем ошибки парсинга
+            pass
     
     def process_terminal_queue(self):
         """Обработка очереди сообщений терминала (вызывается из главного потока)"""
@@ -7701,7 +7774,9 @@ class AutomationGUI(object):
                     message = self.terminal_queue.get_nowait()
                     
                     # Обрабатываем специальные сообщения прогресса
-                    if message.startswith("[PROGRESS]"):
+                    if message.startswith("[ADVANCED_PROGRESS]"):
+                        self.handle_advanced_progress(message)
+                    elif message.startswith("[PROGRESS]"):
                         self.handle_apt_progress(message)
                     elif message.startswith("[STAGE]"):
                         self.handle_stage_update(message)
@@ -8188,6 +8263,67 @@ class InteractiveHandler(object):
             self.universal_runner.log_error("Ошибка в simulate_interactive_scenarios: %s" % str(e))
             return False
 
+class ProgressStages:
+    """Система этапов прогресса для умного отображения"""
+    
+    STAGES = {
+        'reading_lists': {
+            'name': 'Чтение списков пакетов',
+            'start': 0,
+            'end': 5,
+            'description': 'Получение информации о доступных пакетах'
+        },
+        'building_deps': {
+            'name': 'Построение дерева зависимостей',
+            'start': 5,
+            'end': 10,
+            'description': 'Анализ зависимостей между пакетами'
+        },
+        'downloading': {
+            'name': 'Скачивание пакетов',
+            'start': 10,
+            'end': 70,
+            'description': 'Загрузка пакетов из репозиториев'
+        },
+        'unpacking': {
+            'name': 'Распаковка пакетов',
+            'start': 70,
+            'end': 85,
+            'description': 'Извлечение файлов из пакетов'
+        },
+        'configuring': {
+            'name': 'Настройка пакетов',
+            'start': 85,
+            'end': 95,
+            'description': 'Конфигурация установленных пакетов'
+        },
+        'cleaning': {
+            'name': 'Очистка системы',
+            'start': 95,
+            'end': 100,
+            'description': 'Удаление временных файлов и зависимостей'
+        }
+    }
+    
+    @classmethod
+    def get_stage_info(cls, stage_name):
+        """Получить информацию об этапе"""
+        return cls.STAGES.get(stage_name, {
+            'name': 'Неизвестный этап',
+            'start': 0,
+            'end': 100,
+            'description': 'Выполнение операции'
+        })
+    
+    @classmethod
+    def calculate_global_progress(cls, stage_name, stage_progress):
+        """Вычислить глобальный прогресс на основе этапа и его прогресса"""
+        stage_info = cls.get_stage_info(stage_name)
+        stage_range = stage_info['end'] - stage_info['start']
+        global_progress = stage_info['start'] + (stage_progress * stage_range / 100)
+        return min(100, max(0, global_progress))
+
+
 class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
@@ -8209,77 +8345,204 @@ class SystemUpdater(object):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
     
-    def parse_apt_progress(self, line):
-        """Парсинг прогресса apt-get для обновления GUI"""
+    def parse_apt_progress_advanced(self, line):
+        """Расширенный парсинг прогресса apt-get для умного отображения"""
         try:
-            # Парсим строки типа: "Пол:201 https://download.astralinux.ru/... libsqlite3-0 amd64 3.34.1-3+deb11u1.astra3 [756 kB]"
-            if line.startswith("Пол:"):
-                import re
-                
-                # Извлекаем номер пакета
-                match = re.match(r'Пол:(\d+)', line)
-                if match:
-                    package_num = int(match.group(1))
-                    
-                    # Извлекаем размер пакета
-                    size_match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
-                    if size_match:
-                        size_value = float(size_match.group(1).replace(',', '.'))
-                        size_unit = size_match.group(2)
-                        
-                        # Конвертируем в MB
-                        if size_unit == 'KB':
-                            size_mb = size_value / 1024
-                        elif size_unit == 'MB':
-                            size_mb = size_value
-                        elif size_unit == 'GB':
-                            size_mb = size_value * 1024
-                        else:
-                            size_mb = 0
-                        
-                        # Извлекаем название пакета
-                        package_name = ""
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if part.endswith('amd64') or part.endswith('all'):
-                                if i > 0:
-                                    package_name = parts[i-1]
-                                break
-                        
-                        # Обновляем GUI (если доступен)
-                        if hasattr(self, 'universal_runner') and self.universal_runner:
-                            if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
-                                # Отправляем информацию о прогрессе
-                                progress_info = {
-                                    'type': 'apt_progress',
-                                    'package_num': package_num,
-                                    'package_name': package_name,
-                                    'size_mb': size_mb,
-                                    'line': line
-                                }
-                                self.universal_runner.gui_callback(f"[PROGRESS] {progress_info}")
+            import re
+            import time
             
-            # Парсим строки типа: "Чтение списков пакетов…"
-            elif "Чтение списков пакетов" in line:
-                if hasattr(self, 'universal_runner') and self.universal_runner:
-                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
-                        self.universal_runner.gui_callback("[STAGE] Чтение списков пакетов...")
+            # Этап 1: Чтение списков пакетов
+            if "Чтение списков пакетов" in line:
+                self.send_stage_update("reading_lists", 100, "Получение списков пакетов", "")
+                return
             
-            # Парсим строки типа: "Построение дерева зависимостей…"
+            # Этап 2: Построение дерева зависимостей
             elif "Построение дерева зависимостей" in line:
-                if hasattr(self, 'universal_runner') and self.universal_runner:
-                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
-                        self.universal_runner.gui_callback("[STAGE] Построение дерева зависимостей...")
+                self.send_stage_update("building_deps", 100, "Анализ зависимостей", "")
+                return
             
-            # Парсим строки типа: "Чтение информации о состоянии…"
-            elif "Чтение информации о состоянии" in line:
-                if hasattr(self, 'universal_runner') and self.universal_runner:
-                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback:
-                        self.universal_runner.gui_callback("[STAGE] Чтение информации о состоянии...")
-                        
+            # Этап 3: Чтение состояния пакетов
+            elif "Чтение информации о состоянии" in line or "Чтение состояния пакетов" in line:
+                self.send_stage_update("building_deps", 50, "Чтение состояния пакетов", "")
+                return
+            
+            # Этап 4: Скачивание пакетов
+            elif line.startswith("Пол:"):
+                self.parse_download_progress(line)
+                return
+            
+            # Этап 5: Подготовка к распаковке
+            elif "Подготовка к распаковке" in line:
+                self.parse_unpack_progress(line, "preparing")
+                return
+            
+            # Этап 6: Распаковка пакетов
+            elif "Распаковывается" in line or "Распаковка" in line:
+                self.parse_unpack_progress(line, "unpacking")
+                return
+            
+            # Этап 7: Настройка пакетов
+            elif "Настраивается" in line or "Настройка" in line:
+                self.parse_config_progress(line)
+                return
+            
+            # Этап 8: Очистка системы
+            elif "Очистка" in line or "Удаление" in line:
+                self.send_stage_update("cleaning", 100, "Очистка системы", "")
+                return
+            
+            # Этап 9: Завершение (когда обновлений нет)
+            elif "Обновлено 0 пакетов" in line and "установлено 0 новых пакетов" in line:
+                self.send_stage_update("cleaning", 100, "Система актуальна - обновлений не требуется", "")
+                return
+            
+            # Этап 10: Расчёт обновлений
+            elif "Расчёт обновлений" in line:
+                self.send_stage_update("building_deps", 90, "Расчёт обновлений", "")
+                return
+            
+            # Этап 11: Успешное завершение обновления
+            elif "Обновлено" in line and "пакетов" in line and "установлено" in line:
+                # Определяем количество обновленных пакетов
+                import re
+                match = re.search(r'Обновлено (\d+) пакетов', line)
+                if match:
+                    updated_count = int(match.group(1))
+                    if updated_count == 0:
+                        self.send_stage_update("cleaning", 100, "Система актуальна - обновлений не требуется", "")
+                    else:
+                        self.send_stage_update("cleaning", 100, f"Обновлено {updated_count} пакетов", "")
+                return
+                
         except Exception as e:
             # Игнорируем ошибки парсинга
             pass
+    
+    def parse_download_progress(self, line):
+        """Парсинг прогресса скачивания пакетов"""
+        try:
+            import re
+            
+            # Извлекаем номер пакета
+            match = re.match(r'Пол:(\d+)', line)
+            if match:
+                package_num = int(match.group(1))
+                
+                # Извлекаем размер пакета
+                size_match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
+                if size_match:
+                    size_value = float(size_match.group(1).replace(',', '.'))
+                    size_unit = size_match.group(2)
+                    
+                    # Конвертируем в MB
+                    if size_unit == 'KB':
+                        size_mb = size_value / 1024
+                    elif size_unit == 'MB':
+                        size_mb = size_value
+                    elif size_unit == 'GB':
+                        size_mb = size_value * 1024
+                    else:
+                        size_mb = 0
+                    
+                    # Извлекаем название пакета
+                    package_name = ""
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part.endswith('amd64') or part.endswith('all'):
+                            if i > 0:
+                                package_name = parts[i-1]
+                            break
+                    
+                    # Вычисляем прогресс скачивания (примерно)
+                    stage_progress = min(100, (package_num / 10) * 100)  # Примерная оценка
+                    
+                    details = f"Пакет {package_num}: {package_name} ({size_value} {size_unit})"
+                    speed = f"{size_mb:.1f} MB"
+                    
+                    self.send_stage_update("downloading", stage_progress, details, speed)
+                    
+        except Exception as e:
+            pass
+    
+    def parse_unpack_progress(self, line, stage_type):
+        """Парсинг прогресса распаковки пакетов"""
+        try:
+            import re
+            
+            # Извлекаем название пакета
+            package_name = ""
+            if ":" in line:
+                package_name = line.split(":")[0].strip()
+            
+            # Определяем прогресс на основе типа операции
+            if stage_type == "preparing":
+                stage_progress = 10
+                details = f"Подготовка: {package_name}"
+            else:  # unpacking
+                stage_progress = 50
+                details = f"Распаковка: {package_name}"
+            
+            self.send_stage_update("unpacking", stage_progress, details, "")
+            
+        except Exception as e:
+            pass
+    
+    def parse_config_progress(self, line):
+        """Парсинг прогресса настройки пакетов"""
+        try:
+            import re
+            
+            # Извлекаем название пакета
+            package_name = ""
+            if ":" in line:
+                package_name = line.split(":")[0].strip()
+            
+            details = f"Настройка: {package_name}"
+            self.send_stage_update("configuring", 50, details, "")
+            
+        except Exception as e:
+            pass
+    
+    def send_stage_update(self, stage_name, stage_progress, details, speed):
+        """Отправка обновления этапа в GUI"""
+        try:
+            # Получаем информацию об этапе
+            stage_info = ProgressStages.get_stage_info(stage_name)
+            
+            # Вычисляем глобальный прогресс
+            global_progress = ProgressStages.calculate_global_progress(stage_name, stage_progress)
+            
+            # Формируем данные для GUI
+            progress_data = {
+                'stage_name': stage_info['name'],
+                'stage_progress': stage_progress,
+                'global_progress': global_progress,
+                'details': details,
+                'speed': speed,
+                'time_remaining': self.calculate_time_remaining(stage_progress)
+            }
+            
+            # Отправляем в GUI через universal_runner
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(progress_data))
+                
+        except Exception as e:
+            pass
+    
+    def calculate_time_remaining(self, progress):
+        """Вычисление оставшегося времени (упрощенная версия)"""
+        if progress <= 0:
+            return "Вычисляется..."
+        elif progress >= 100:
+            return "Завершено"
+        else:
+            # Простая оценка на основе прогресса
+            remaining_percent = 100 - progress
+            estimated_minutes = remaining_percent / 10  # Примерно 10% в минуту
+            if estimated_minutes < 1:
+                return "Менее минуты"
+            else:
+                return f"~{int(estimated_minutes)} мин"
     
     def check_system_resources(self):
         """Проверка системных ресурсов перед обновлением"""
@@ -8744,7 +9007,7 @@ class SystemUpdater(object):
                 print("   %s" % line.rstrip())
                 
                 # Парсим прогресс apt-get для обновления GUI
-                self.parse_apt_progress(line.rstrip())
+                self.parse_apt_progress_advanced(line.rstrip())
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
