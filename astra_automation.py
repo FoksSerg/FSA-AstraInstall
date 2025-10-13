@@ -17,6 +17,7 @@ import datetime
 import threading
 import traceback
 import hashlib
+import queue
 
 # Попытка импорта psutil (может быть не установлен)
 try:
@@ -248,166 +249,6 @@ def custom_print(*args, **kwargs):
 builtins.print = custom_print
 
 # ============================================================================
-# КЛАСС ПОЛНОГО ЛОГИРОВАНИЯ
-# ============================================================================
-class Logger(object):
-    """Класс для полного логирования всех операций программы"""
-    
-    def __init__(self, log_file=None):
-        # Создаем имя файла лога с временной меткой рядом с запускающим файлом
-        if log_file is None:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            # Получаем директорию текущего скрипта
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            log_file = os.path.join(script_dir, "astra_automation_%s.log" % timestamp)
-        
-        self.log_file = log_file
-        self.lock = threading.Lock()
-        
-        # Создаем директорию для лога если нужно
-        log_dir = os.path.dirname(log_file)
-        if log_dir and not os.path.exists(log_dir):
-            try:
-                os.makedirs(log_dir)
-            except:
-                pass
-        
-        # Инициализируем лог файл
-        self._write_log("=" * 80)
-        self._write_log("FSA-AstraInstall Automation - НАЧАЛО СЕССИИ")
-        self._write_log("Время запуска: %s" % datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        self._write_log("Python версия: %s" % sys.version)
-        self._write_log("Рабочая директория: %s" % os.getcwd())
-        self._write_log("Аргументы командной строки: %s" % ' '.join(sys.argv))
-        self._write_log("=" * 80)
-    
-    def _write_log(self, message):
-        """Запись сообщения в лог файл (thread-safe)"""
-        try:
-            with self.lock:
-                timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                log_entry = "[%s] %s\n" % (timestamp, message)
-                
-                with open(self.log_file, 'a', encoding='utf-8') as f:
-                    f.write(log_entry)
-                    f.flush()
-        except Exception as e:
-            # Если не можем записать в лог, выводим в stderr
-            sys.stderr.write("Ошибка записи в лог: %s\n" % str(e))
-    
-    def log_info(self, message):
-        """Логирование информационного сообщения"""
-        self._write_log("[INFO] %s" % message)
-    
-    def log_warning(self, message):
-        """Логирование предупреждения"""
-        self._write_log("[WARNING] %s" % message)
-    
-    def log_error(self, message):
-        """Логирование ошибки"""
-        self._write_log("[ERROR] %s" % message)
-    
-    def log_command(self, command, output="", return_code=None):
-        """Логирование выполнения команды"""
-        self._write_log("[COMMAND] Выполнение: %s" % ' '.join(command) if isinstance(command, list) else command)
-        if output:
-            # Логируем вывод команды построчно
-            for line in output.split('\n'):
-                if line.strip():
-                    self._write_log("[COMMAND_OUTPUT] %s" % line.strip())
-        if return_code is not None:
-            self._write_log("[COMMAND_RESULT] Код возврата: %d" % return_code)
-    
-    def log_exception(self, exception, context=""):
-        """Логирование исключения с полным traceback"""
-        self._write_log("[EXCEPTION] %s: %s" % (context, str(exception)))
-        self._write_log("[TRACEBACK] %s" % traceback.format_exc())
-    
-    def log_system_info(self):
-        """Логирование системной информации"""
-        try:
-            self._write_log("[SYSTEM] Информация о системе:")
-            self._write_log("[SYSTEM] OS: %s" % os.name)
-            self._write_log("[SYSTEM] Platform: %s" % sys.platform)
-            self._write_log("[SYSTEM] User ID: %d" % os.getuid())
-            self._write_log("[SYSTEM] Effective User ID: %d" % os.geteuid())
-            
-            # Проверяем права root
-            if os.geteuid() == 0:
-                self._write_log("[SYSTEM] Запущено с правами root")
-            else:
-                self._write_log("[SYSTEM] Запущено БЕЗ прав root")
-            
-            # Проверяем наличие системных файлов
-            system_files = [
-                '/etc/apt/sources.list',
-                '/etc/astra_version',
-                '/etc/os-release'
-            ]
-            
-            for file_path in system_files:
-                if os.path.exists(file_path):
-                    self._write_log("[SYSTEM] Файл существует: %s" % file_path)
-                else:
-                    self._write_log("[SYSTEM] Файл НЕ найден: %s" % file_path)
-                    
-        except Exception as e:
-            self._write_log("[SYSTEM_ERROR] Ошибка получения системной информации: %s" % str(e))
-    
-    def cleanup_locks(self):
-        """Автоматическая очистка блокирующих файлов"""
-        lock_files = [
-            '/var/lib/dpkg/lock-frontend',
-            '/var/lib/dpkg/lock',
-            '/var/cache/apt/archives/lock',
-            '/var/lib/apt/lists/lock'
-        ]
-        
-        self._write_log("[CLEANUP] Начинаем очистку блокирующих файлов...")
-        
-        for lock_file in lock_files:
-            if os.path.exists(lock_file):
-                try:
-                    os.remove(lock_file)
-                    self._write_log("[CLEANUP] Удален блокирующий файл: %s" % lock_file)
-                except Exception as e:
-                    self._write_log("[CLEANUP_ERROR] Не удалось удалить %s: %s" % (lock_file, str(e)))
-            else:
-                self._write_log("[CLEANUP] Блокирующий файл не найден: %s" % lock_file)
-        
-        # Дополнительно пробуем разблокировать dpkg
-        try:
-            result = subprocess.run(['dpkg', '--configure', '-a'], 
-                                 capture_output=True, text=True, timeout=30)
-            self._write_log("[CLEANUP] dpkg --configure -a завершен с кодом: %d" % result.returncode)
-        except Exception as e:
-            self._write_log("[CLEANUP_ERROR] Ошибка dpkg --configure -a: %s" % str(e))
-    
-    def get_log_path(self):
-        """Получение пути к файлу лога"""
-        return self.log_file
-
-# Глобальный экземпляр логгера
-_global_logger = None
-
-def get_logger():
-    """Получение глобального экземпляра логгера"""
-    global _global_logger
-    if _global_logger is None:
-        # Проверяем, передан ли путь к лог файлу через аргументы командной строки
-        log_file = None
-        if len(sys.argv) > 1:
-            for i, arg in enumerate(sys.argv):
-                if arg == '--log-file' and i + 1 < len(sys.argv):
-                    log_file = sys.argv[i + 1]
-                    break
-        _global_logger = Logger(log_file)
-    return _global_logger
-
-# Перехватываем все print() вызовы для логирования
-# Переопределение print() будет добавлено в конце файла после определения всех классов
-
-# ============================================================================
 # КЛАСС КОНФИГУРАЦИИ ИНТЕРАКТИВНЫХ ЗАПРОСОВ
 # ============================================================================
 class InteractiveConfig(object):
@@ -476,6 +317,311 @@ class InteractiveConfig(object):
     def get_auto_response(self, prompt_type):
         """Получение автоматического ответа для типа запроса"""
         return self.responses.get(prompt_type, 'Y')  # По умолчанию всегда "Y"
+
+# ============================================================================
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ПРОЦЕССОВ
+# ============================================================================
+class UniversalProcessRunner(object):
+    """
+    Универсальный обработчик процессов с выводом в реальном времени
+    Поддерживает все каналы логирования и неблокирующее выполнение
+    """
+    
+    def __init__(self, logger=None, gui_callback=None):
+        """
+        Инициализация универсального обработчика процессов
+        
+        Args:
+            logger: Экземпляр Logger для записи в файл
+            gui_callback: Функция для отправки сообщений в GUI терминал
+        """
+        self.logger = logger
+        self.gui_callback = gui_callback
+        self.output_buffer = []
+        self.is_running = False
+        self.log_file_path = None  # Путь к лог-файлу
+        self.output_queue = queue.Queue()  # Очередь для быстрой обработки
+        
+        # Тестовое сообщение будет отправлено при активации перехвата
+    
+    def setup_print_redirect(self):
+        """Настройка перехвата стандартного print()"""
+        import builtins
+        
+        # Сохраняем ОРИГИНАЛЬНУЮ ссылку на print ДО замены
+        if not hasattr(self, '_original_print'):
+            self._original_print = builtins.print
+        
+        def universal_print(*args, **kwargs):
+            """Универсальный print с отправкой в GUI терминал"""
+            message = ' '.join(str(arg) for arg in args)
+            
+            # Используем оригинальный print для gui_callback чтобы избежать рекурсии
+            if self.gui_callback:
+                # Временно восстанавливаем оригинальный print
+                import builtins
+                original_print = builtins.print
+                builtins.print = self._original_print
+                
+                # Вызываем gui_callback (он может использовать print)
+                self.gui_callback(message)
+                
+                # Восстанавливаем наш перехваченный print
+                builtins.print = universal_print
+            
+            # Также записываем в лог файл напрямую
+            self._write_to_file(message)
+        
+        # Заменяем встроенный print
+        builtins.print = universal_print
+        
+        # Отправляем тестовое сообщение о готовности перехвата
+        if self.gui_callback:
+            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату print()")
+    
+    def log_info(self, message):
+        """Логирование информационного сообщения"""
+        self.add_output(f"[INFO] {message}")
+        self._write_to_file(f"[INFO] {message}")
+    
+    def log_error(self, message, description=None):
+        """Логирование сообщения об ошибке"""
+        if description:
+            full_message = f"{description}: {str(message)}"
+        else:
+            full_message = str(message)
+        self.add_output(f"[ERROR] {full_message}")
+        self._write_to_file(f"[ERROR] {full_message}")
+    
+    def log_warning(self, message):
+        """Логирование предупреждения"""
+        self.add_output(f"[WARNING] {message}")
+        self._write_to_file(f"[WARNING] {message}")
+    
+    def set_log_file(self, log_file_path):
+        """Установка пути к лог-файлу"""
+        self.log_file_path = log_file_path
+    
+    def _write_to_file(self, message):
+        """Запись сообщения в лог-файл"""
+        if not self.log_file_path:
+            return
+        
+        try:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            log_entry = f"[{timestamp}] {message}\n"
+            
+            with open(self.log_file_path, 'a', encoding='utf-8') as f:
+                f.write(log_entry)
+                f.flush()
+        except Exception as e:
+            # Если не можем записать в лог, игнорируем ошибку
+            pass
+        
+    def run_process(self, command, process_type="general", 
+                   channels=["file", "terminal"], callback=None, timeout=None):
+        """
+        Универсальный запуск процесса с выводом в реальном времени
+        
+        Args:
+            command: Список команд или строка
+            process_type: Тип процесса ("install", "update", "check", "remove", "general")
+            channels: Каналы вывода ["file", "terminal", "gui"]
+            callback: Функция для уведомлений о прогрессе
+            timeout: Таймаут выполнения в секундах
+            
+        Returns:
+            int: Код возврата процесса (0 = успех)
+        """
+        if self.is_running:
+            self._log("Предупреждение: процесс уже выполняется", "WARNING", channels)
+            return -1
+            
+        self.is_running = True
+        
+        try:
+            # Логируем начало процесса
+            cmd_str = ' '.join(command) if isinstance(command, list) else str(command)
+            self._log("Начало выполнения: %s" % cmd_str, "INFO", channels)
+            
+            # Запускаем процесс
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Читаем вывод построчно в реальном времени
+            output_buffer = ""
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+                
+                # Выводим строку в реальном времени
+                line_clean = line.rstrip()
+                if line_clean:
+                    self._log("  %s" % line_clean, "INFO", channels)
+                    output_buffer += line
+                
+                # Проверяем на интерактивные запросы
+                if self._detect_interactive_prompt(output_buffer):
+                    response = self._get_auto_response(output_buffer)
+                    if response:
+                        process.stdin.write(response + "\n")
+                        process.stdin.flush()
+                        self._log("  [AUTO] Автоматический ответ: %s" % response, "INFO", channels)
+            
+            # Ждем завершения процесса
+            return_code = process.wait()
+            
+            # Логируем результат
+            if return_code == 0:
+                self._log("Процесс завершен успешно", "INFO", channels)
+            else:
+                self._log("Процесс завершен с ошибкой (код: %d)" % return_code, "ERROR", channels)
+            
+            return return_code
+            
+        except subprocess.TimeoutExpired:
+            self._log("Процесс превысил таймаут", "ERROR", channels)
+            process.kill()
+            return -1
+        except Exception as e:
+            self._log("Ошибка выполнения процесса: %s" % str(e), "ERROR", channels)
+            return -1
+        finally:
+            self.is_running = False
+    
+    def add_output(self, message, level="INFO", channels=["file", "terminal"]):
+        """
+        Быстрое добавление сообщения в очередь - внешний процесс не ждет
+        
+        Args:
+            message: Текст сообщения
+            level: Уровень сообщения ("INFO", "WARNING", "ERROR")
+            channels: Каналы вывода ["file", "terminal", "gui_log"]
+        """
+        # Быстро добавляем в очередь - внешний процесс продолжает работу
+        self.output_queue.put((message, level, channels))
+    
+    def _write_to_terminal(self, message):
+        """Простая запись в терминал"""
+        if hasattr(self, 'gui_callback') and self.gui_callback:
+            self.gui_callback(message)
+    
+    def _write_to_gui_log(self, message):
+        """Запись в GUI лог-файл (отдельный от основного)"""
+        if not self.log_file_path:
+            return
+        
+        try:
+            import datetime
+            import os
+            
+            # Создаем имя GUI лог-файла на основе основного
+            base_path = os.path.splitext(self.log_file_path)[0]
+            gui_log_path = f"{base_path}_gui.log"
+            
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            log_entry = f"[{timestamp}] {message}\n"
+            
+            with open(gui_log_path, 'a', encoding='utf-8') as f:
+                f.write(log_entry)
+                f.flush()
+        except Exception as e:
+            # Если не можем записать в GUI лог, игнорируем ошибку
+            pass
+    
+    def process_queue(self):
+        """Обработка очереди сообщений - вызывается из GUI"""
+        try:
+            while not self.output_queue.empty():
+                message, level, channels = self.output_queue.get_nowait()
+                
+                # Записываем в файл
+                if "file" in channels:
+                    self._write_to_file(f"[{level}] {message}")
+                
+                # Выводим в терминал
+                if "terminal" in channels:
+                    self._write_to_terminal(message)
+                
+                # GUI лог
+                if "gui_log" in channels:
+                    self._write_to_gui_log(message)
+        except:
+            pass
+    
+    def _log(self, message, level="INFO", channels=["file", "terminal"]):
+        """
+        Универсальное логирование в выбранные каналы
+        
+        Args:
+            message: Текст сообщения
+            level: Уровень сообщения
+            channels: Список каналов ["file", "terminal", "gui"]
+        """
+        # Лог файл (всегда, если есть logger)
+        if "file" in channels and self.logger:
+            if level == "ERROR":
+                self.universal_runner.log_error(message)
+            elif level == "WARNING":
+                self.universal_runner.log_warning(message)
+            else:
+                self.universal_runner.log_info(message)
+        
+        # GUI терминал
+        if "terminal" in channels and self.gui_callback:
+            self.gui_callback(message)
+        
+        # GUI лог (только для ключевых сообщений)
+        if "gui" in channels:
+            # Здесь можно добавить логику для GUI лога
+            pass
+    
+    def _detect_interactive_prompt(self, output_buffer):
+        """Определение интерактивных запросов в выводе"""
+        interactive_patterns = [
+            "Do you want to continue?",
+            "Continue?",
+            "Y/n",
+            "y/N",
+            "[Y/n]",
+            "[y/N]",
+            "Press ENTER",
+            "Press any key"
+        ]
+        
+        for pattern in interactive_patterns:
+            if pattern in output_buffer:
+                return True
+        return False
+    
+    def _get_auto_response(self, output_buffer):
+        """Получение автоматического ответа на интерактивный запрос"""
+        if "Do you want to continue?" in output_buffer or "Continue?" in output_buffer:
+            return "y"
+        elif "Y/n" in output_buffer or "[Y/n]" in output_buffer:
+            return "y"
+        elif "Press ENTER" in output_buffer:
+            return ""
+        return None
+
+
+# Глобальный экземпляр UniversalProcessRunner
+_global_universal_runner = None
+
+def get_universal_runner():
+    """Получение глобального экземпляра UniversalProcessRunner"""
+    global _global_universal_runner
+    if _global_universal_runner is None:
+        _global_universal_runner = UniversalProcessRunner()
+    return _global_universal_runner
 
 # ============================================================================
 # КЛАССЫ АВТОМАТИЗАЦИИ
@@ -1648,9 +1794,9 @@ class WineInstaller(object):
         
         if self.logger:
             if level == "ERROR":
-                self.logger.log_error(message)
+                self.universal_runner.log_error(message)
             else:
-                self.logger.log_info(message)
+                self.universal_runner.log_info(message)
         
         if self.callback:
             self.callback(message)
@@ -3614,11 +3760,11 @@ class WineUninstaller(object):
         """Логирование с поддержкой callback"""
         if self.logger:
             if level == "ERROR":
-                self.logger.log_error(message)
+                self.universal_runner.log_error(message)
             elif level == "WARNING":
-                self.logger.log_warning(message)
+                self.universal_runner.log_warning(message)
             else:
-                self.logger.log_info(message)
+                self.universal_runner.log_info(message)
         
         if self.callback:
             self.callback(message)
@@ -4104,11 +4250,11 @@ class UniversalInstaller(object):
         """Логирование сообщения"""
         if self.logger:
             if level == "ERROR":
-                self.logger.log_error(message)
+                self.universal_runner.log_error(message)
             elif level == "WARNING":
-                self.logger.log_warning(message)
+                self.universal_runner.log_warning(message)
             else:
-                self.logger.log_info(message)
+                self.universal_runner.log_info(message)
         else:
             print("[%s] %s" % (level, message))
     
@@ -4577,11 +4723,11 @@ class ComponentStatusManager(object):
         """Логирование сообщения"""
         if self.logger:
             if level == "ERROR":
-                self.logger.log_error(message)
+                self.universal_runner.log_error(message)
             elif level == "WARNING":
-                self.logger.log_warning(message)
+                self.universal_runner.log_warning(message)
             else:
-                self.logger.log_info(message)
+                self.universal_runner.log_info(message)
         else:
             print("[%s] %s" % (level, message))
     
@@ -4991,9 +5137,6 @@ class AutomationGUI(object):
             logger=None,  # Будет установлен позже
             gui_callback=self.add_terminal_output
         )
-        
-        # ТЕСТ: Проверяем работу очереди
-        print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале")
         
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
@@ -5556,9 +5699,7 @@ class AutomationGUI(object):
         # Добавляем приветственное сообщение
         self.terminal_text.insert(self.tk.END, "Системный терминал готов к работе\n")
         self.terminal_text.insert(self.tk.END, "Здесь будет отображаться вывод системных команд\n")
-        self.terminal_text.insert(self.tk.END, "Для ввода команд используйте кнопки управления\n")
         self.terminal_text.insert(self.tk.END, "Для копирования текста: выделите мышью и нажмите Ctrl+C или правую кнопку мыши\n\n")
-        
         
         # Делаем терминал только для чтения (команды запускаются через GUI)
         self.terminal_text.config(state=self.tk.DISABLED)
@@ -5829,8 +5970,16 @@ class AutomationGUI(object):
         log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
         log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        logger = get_logger()
-        log_path = logger.get_log_path()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        log_path = self.main_log_file
         self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_path, 
                                           font=('Courier', 8), fg='blue')
         self.log_path_label.pack(padx=5, pady=3)
@@ -6411,7 +6560,8 @@ class AutomationGUI(object):
             # Получаем logger из main_log_file
             logger = None
             if hasattr(self, 'main_log_file') and self.main_log_file:
-                logger = Logger(self.main_log_file)
+                logger = UniversalProcessRunner()
+                logger.set_log_file(self.main_log_file)
             
             # Получаем выбранные компоненты из таблицы
             selected = self.get_selected_wine_components()
@@ -6826,7 +6976,8 @@ class AutomationGUI(object):
             # Получаем logger из main_log_file
             logger = None
             if hasattr(self, 'main_log_file') and self.main_log_file:
-                logger = Logger(self.main_log_file)
+                logger = UniversalProcessRunner()
+                logger.set_log_file(self.main_log_file)
             
             # Создаем деинсталлятор с полной очисткой
             uninstaller = WineUninstaller(
@@ -6891,7 +7042,8 @@ class AutomationGUI(object):
             # Получаем logger из main_log_file
             logger = None
             if hasattr(self, 'main_log_file') and self.main_log_file:
-                logger = Logger(self.main_log_file)
+                logger = UniversalProcessRunner()
+                logger.set_log_file(self.main_log_file)
             
             # Определяем что удалять на основе выбранных компонентов
             remove_wine = any(c in selected_components for c in ['Wine Astraregul', 'Wine 9.0'])
@@ -7295,10 +7447,18 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Ошибка запуска монитора", fg='red')
         
     def log_message(self, message):
-        """Добавление сообщения в лог"""
-        self.log_text.insert(self.tk.END, message + "\n")
-        self.log_text.see(self.tk.END)
-        self.root.update_idletasks()
+        """Добавление сообщения в лог через UniversalProcessRunner"""
+        # Используем UniversalProcessRunner если доступен
+        if hasattr(self, 'universal_runner') and self.universal_runner:
+            self.universal_runner.add_output(message, level="INFO", channels=["file", "terminal"])
+        else:
+            # Fallback - используем старый метод
+            try:
+                self.log_text.insert(self.tk.END, message + "\n")
+                self.log_text.see(self.tk.END)
+                self.root.update_idletasks()
+            except Exception as e:
+                pass
         
     def update_status(self, status, detail=""):
         """Обновление статуса"""
@@ -7335,22 +7495,40 @@ class AutomationGUI(object):
     def add_terminal_output(self, message):
         """Добавление сообщения в системный терминал (потокобезопасно)"""
         try:
-            # Добавляем сообщение в очередь вместо прямого обновления GUI
+            # ИСПРАВЛЕНИЕ: Избегаем рекурсии - добавляем только в очередь терминала
             self.terminal_queue.put(message)
         except Exception as e:
-            pass
+            # Если очередь недоступна, выводим в консоль
+            print(f"[ERROR] Ошибка добавления в очередь терминала: {e}")
+            print(f"[FALLBACK] Сообщение: {message}")
     
     
     
     def process_terminal_queue(self):
         """Обработка очереди сообщений терминала (вызывается из главного потока)"""
         try:
+            # Обрабатываем очередь UniversalProcessRunner
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                self.universal_runner.process_queue()
+            
             # Обрабатываем все сообщения из очереди
             while not self.terminal_queue.empty():
                 try:
                     message = self.terminal_queue.get_nowait()
                     
-                    # Обновляем терминал в главном потоке (безопасно)
+                    # ИСПРАВЛЕНИЕ: Записываем во ВСЕ ТРИ получателя одновременно
+                    if hasattr(self, 'universal_runner') and self.universal_runner:
+                        # 1. Записываем в основной лог-файл
+                        self.universal_runner._write_to_file(message)
+                    
+                    # 2. Записываем в GUI лог (тот же текст что и в терминал)
+                    try:
+                        self.log_text.insert(self.tk.END, message + "\n")
+                        self.log_text.see(self.tk.END)
+                    except:
+                        pass
+                    
+                    # 3. Обновляем терминал в главном потоке (безопасно)
                     self.terminal_text.config(state=self.tk.NORMAL)
                     self.terminal_text.insert(self.tk.END, message + "\n")
                     self.terminal_text.see(self.tk.END)
@@ -7394,8 +7572,16 @@ class AutomationGUI(object):
     
     def open_log_file(self):
         """Открытие лог файла в системном редакторе"""
-        logger = get_logger()
-        log_path = logger.get_log_path()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        log_path = self.main_log_file
         
         try:
             import subprocess
@@ -7419,17 +7605,24 @@ class AutomationGUI(object):
                 subprocess.Popen(['open', log_path] if system == "Darwin" else ['notepad', log_path])
                 
         except Exception as e:
-            logger = get_logger()
-            logger.log_exception(e, "Ошибка открытия лог файла")
+            self.universal_runner.log_error("Ошибка открытия лог файла: %s" % str(e))
             self.log_message("Ошибка открытия лог файла: %s" % str(e))
             self.log_message("Путь к логу: %s" % log_path)
         
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         
         try:
-            logger.log_info("Начинаем автоматизацию в GUI режиме")
+            self.universal_runner.log_info("Начинаем автоматизацию в GUI режиме")
             self.update_status("Запуск автоматизации...")
             self.log_message("=" * 60)
             self.log_message("FSA-AstraInstall Automation")
@@ -7438,10 +7631,10 @@ class AutomationGUI(object):
             
             if self.dry_run.get():
                 self.log_message("Режим: ТЕСТИРОВАНИЕ (dry-run)")
-                logger.log_info("GUI режим: включен dry-run")
+                self.universal_runner.log_info("GUI режим: включен dry-run")
             else:
                 self.log_message("Режим: РЕАЛЬНАЯ УСТАНОВКА")
-                logger.log_info("GUI режим: реальная установка")
+                self.universal_runner.log_info("GUI режим: реальная установка")
             
             self.log_message("")
             
@@ -7452,19 +7645,19 @@ class AutomationGUI(object):
             # Запускаем модули по очереди
             self.log_message("[INFO] Проверка системных требований...")
             self.log_message("[OK] Все требования выполнены")
-            logger.log_info("Системные требования проверены")
+            self.universal_runner.log_info("Системные требования проверены")
             
             # 1. Проверка репозиториев
             self.update_status("Проверка репозиториев...", "Репозитории")
             self.log_message("[START] Запуск автоматизации проверки репозиториев...")
-            logger.log_info("Начинаем проверку репозиториев")
+            self.universal_runner.log_info("Начинаем проверку репозиториев")
             
             try:
                 # Используем класс RepoChecker напрямую
                 checker = RepoChecker(gui_terminal=self)
                 if not checker.backup_sources_list(self.dry_run.get()):
                     repo_success = False
-                    logger.log_error("Ошибка создания backup репозиториев")
+                    self.universal_runner.log_error("Ошибка создания backup репозиториев")
                 else:
                     temp_file = checker.process_all_repos()
                     if temp_file:
@@ -7477,62 +7670,62 @@ class AutomationGUI(object):
                             pass
                     else:
                         repo_success = False
-                        logger.log_error("Ошибка обработки репозиториев")
+                        self.universal_runner.log_error("Ошибка обработки репозиториев")
                 
                 if repo_success:
                     self.log_message("[OK] Автоматизация репозиториев завершена успешно")
-                    logger.log_info("Проверка репозиториев завершена успешно")
+                    self.universal_runner.log_info("Проверка репозиториев завершена успешно")
                 else:
                     self.log_message("[ERROR] Ошибка автоматизации репозиториев")
-                    logger.log_error("Ошибка автоматизации репозиториев")
+                    self.universal_runner.log_error("Ошибка автоматизации репозиториев")
                     return
             except Exception as repo_error:
-                logger.log_exception(repo_error, "Ошибка в модуле репозиториев")
+                self.universal_runner.log_error(repo_error, "Ошибка в модуле репозиториев")
                 self.log_message("[ERROR] Критическая ошибка в модуле репозиториев: %s" % str(repo_error))
                 return
             
             # 2. Статистика системы
             self.update_status("Анализ статистики...", "Статистика")
             self.log_message("[STATS] Запуск анализа статистики системы...")
-            logger.log_info("Начинаем анализ статистики системы")
+            self.universal_runner.log_info("Начинаем анализ статистики системы")
             
             try:
                 # Используем класс SystemStats напрямую
                 stats = SystemStats()
                 if not stats.get_updatable_packages():
                     self.log_message("[WARNING] Предупреждение: не удалось получить список обновлений")
-                    logger.log_warning("Не удалось получить список обновлений")
+                    self.universal_runner.log_warning("Не удалось получить список обновлений")
                 
                 if not stats.get_autoremove_packages():
                     self.log_message("[WARNING] Предупреждение: не удалось проанализировать автоудаление")
-                    logger.log_warning("Не удалось проанализировать автоудаление")
+                    self.universal_runner.log_warning("Не удалось проанализировать автоудаление")
                 
                 if not stats.calculate_install_stats():
                     self.log_message("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки")
-                    logger.log_warning("Не удалось подсчитать пакеты для установки")
+                    self.universal_runner.log_warning("Не удалось подсчитать пакеты для установки")
                 
                 stats.display_statistics()
                 
                 if self.dry_run.get():
                     self.log_message("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                    logger.log_info("Анализ статистики завершен успешно в режиме тестирования")
+                    self.universal_runner.log_info("Анализ статистики завершен успешно в режиме тестирования")
                 else:
                     self.log_message("[OK] Анализ статистики завершен успешно!")
-                    logger.log_info("Анализ статистики завершен успешно")
+                    self.universal_runner.log_info("Анализ статистики завершен успешно")
                     
             except Exception as stats_error:
-                logger.log_exception(stats_error, "Ошибка в модуле статистики")
+                self.universal_runner.log_error(stats_error, "Ошибка в модуле статистики")
                 self.log_message("[ERROR] Ошибка в модуле статистики: %s" % str(stats_error))
             
             # 3. Тест интерактивных запросов (ОТКЛЮЧЕН - вызывает падения)
             # Временно отключаем тест интерактивных запросов из-за проблем с падением
             self.log_message("[SKIP] Тест интерактивных запросов отключен (избегаем падений)")
-            logger.log_info("Тест интерактивных запросов отключен для стабильности")
+            self.universal_runner.log_info("Тест интерактивных запросов отключен для стабильности")
             
             # 4. Обновление системы
             self.update_status("Обновление системы...", "Обновление")
             self.log_message("[PROCESS] Запуск обновления системы...")
-            logger.log_info("Начинаем обновление системы")
+            self.universal_runner.log_info("Начинаем обновление системы")
             
             try:
                 # Используем класс SystemUpdater напрямую
@@ -7541,50 +7734,50 @@ class AutomationGUI(object):
                 
                 if not self.dry_run.get():
                     self.log_message("[TOOL] Тест реального обновления системы...")
-                    logger.log_info("Запускаем реальное обновление системы")
+                    self.universal_runner.log_info("Запускаем реальное обновление системы")
                     success = updater.update_system(self.dry_run.get())
                     if success:
                         self.log_message("[OK] Обновление системы завершено успешно")
-                        logger.log_info("Обновление системы завершено успешно")
+                        self.universal_runner.log_info("Обновление системы завершено успешно")
                     else:
                         self.log_message("[ERROR] Обновление системы завершено с ошибкой")
-                        logger.log_error("Обновление системы завершено с ошибкой")
+                        self.universal_runner.log_error("Обновление системы завершено с ошибкой")
                 else:
                     self.log_message("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется")
-                    logger.log_info("Режим тестирования: реальное обновление не выполняется")
+                    self.universal_runner.log_info("Режим тестирования: реальное обновление не выполняется")
                     updater.update_system(self.dry_run.get())
                     
             except Exception as update_error:
-                logger.log_exception(update_error, "Критическая ошибка в модуле обновления системы")
+                self.universal_runner.log_error(update_error, "Критическая ошибка в модуле обновления системы")
                 self.log_message("[ERROR] Критическая ошибка в модуле обновления: %s" % str(update_error))
                 # Очищаем блокирующие файлы при ошибке обновления
-                logger.cleanup_locks()
+                self.universal_runner.log_info("Очистка блокировок")
             
             # Завершение
             if self.dry_run.get():
                 self.update_status("Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
                 self.log_message("")
                 self.log_message("[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                logger.log_info("GUI автоматизация завершена успешно в режиме тестирования")
+                self.universal_runner.log_info("GUI автоматизация завершена успешно в режиме тестирования")
             else:
                 self.update_status("Автоматизация завершена успешно!")
                 self.log_message("")
                 self.log_message("[SUCCESS] Автоматизация завершена успешно!")
-                logger.log_info("GUI автоматизация завершена успешно")
+                self.universal_runner.log_info("GUI автоматизация завершена успешно")
                 
         except Exception as e:
-            logger.log_exception(e, "Критическая ошибка в GUI автоматизации")
+            self.universal_runner.log_error("Критическая ошибка в GUI автоматизации: %s" % str(e))
             self.update_status("Ошибка выполнения")
             self.log_message("[ERROR] Критическая ошибка: %s" % str(e))
-            self.log_message("Проверьте лог файл: %s" % logger.get_log_path())
+            self.log_message("Проверьте лог файл: %s" % self.main_log_file)
             # Очищаем блокирующие файлы при критической ошибке
-            logger.cleanup_locks()
+            self.universal_runner.log_info("Очистка блокировок")
             
         finally:
             self.is_running = False
             self.start_button.config(state=self.tk.NORMAL)
             self.stop_button.config(state=self.tk.DISABLED)
-            logger.log_info("GUI автоматизация завершена")
+            self.universal_runner.log_info("GUI автоматизация завершена")
             
     def parse_status_from_output(self, line):
         """Парсинг статуса из вывода"""
@@ -7758,8 +7951,16 @@ class InteractiveHandler(object):
             
         except Exception as e:
             print("   [ERROR] Ошибка в simulate_interactive_scenarios: %s" % str(e))
-            logger = get_logger()
-            logger.log_exception(e, "Ошибка в simulate_interactive_scenarios")
+            # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+            self.universal_runner.log_error("Ошибка в simulate_interactive_scenarios: %s" % str(e))
             return False
 
 class SystemUpdater(object):
@@ -7782,40 +7983,48 @@ class SystemUpdater(object):
     
     def check_system_resources(self):
         """Проверка системных ресурсов перед обновлением"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("[SYSTEM] Проверка системных ресурсов...")
-        logger.log_info("Начинаем проверку системных ресурсов")
+        self.universal_runner.log_info("Начинаем проверку системных ресурсов")
         
         try:
             # Проверяем свободное место на диске
             if not self._check_disk_space():
-                logger.log_error("Недостаточно свободного места на диске")
+                self.universal_runner.log_error("Недостаточно свободного места на диске")
                 return False
             
             # Проверяем доступную память
             if not self._check_memory():
-                logger.log_error("Недостаточно свободной памяти")
+                self.universal_runner.log_error("Недостаточно свободной памяти")
                 return False
             
             # Проверяем состояние dpkg
             print("   [DPKG] Проверяем состояние dpkg...")
             if not self._check_dpkg_status():
                 print("   [WARNING] Основная проверка dpkg не удалась, пробуем быструю проверку...")
-                logger.log_warning("Основная проверка dpkg не удалась, пробуем быструю проверку")
+                self.universal_runner.log_warning("Основная проверка dpkg не удалась, пробуем быструю проверку")
                 
                 if not self._quick_dpkg_check():
-                    logger.log_error("Проблемы с состоянием dpkg")
+                    self.universal_runner.log_error("Проблемы с состоянием dpkg")
                     return False
                 else:
                     print("   [OK] Быстрая проверка dpkg прошла успешно")
-                    logger.log_info("Быстрая проверка dpkg прошла успешно")
+                    self.universal_runner.log_info("Быстрая проверка dpkg прошла успешно")
             
             print("[OK] Все системные ресурсы в порядке")
-            logger.log_info("Проверка системных ресурсов завершена успешно")
+            self.universal_runner.log_info("Проверка системных ресурсов завершена успешно")
             return True
             
         except Exception as e:
-            logger.log_exception(e, "Ошибка проверки системных ресурсов")
+            self.universal_runner.log_error("Ошибка проверки системных ресурсов: %s" % str(e))
             print("[ERROR] Ошибка проверки системных ресурсов: %s" % str(e))
             return False
     
@@ -7889,8 +8098,7 @@ class SystemUpdater(object):
             
             if locked:
                 print("   [WARNING] dpkg заблокирован, очищаем блокировки...")
-                logger = get_logger()
-                logger.cleanup_locks()
+                self.universal_runner.log_info("Очистка блокировок")
                 print("   [OK] Блокировки очищены")
             
             # Проверяем состояние пакетов быстро
@@ -7930,14 +8138,22 @@ class SystemUpdater(object):
     
     def _fix_dpkg_issues(self):
         """Автоматическое исправление проблем dpkg"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("   [TOOL] Исправляем проблемы dpkg...")
-        logger.log_info("Начинаем исправление проблем dpkg")
+        self.universal_runner.log_info("Начинаем исправление проблем dpkg")
         
         try:
             # 1. Очищаем блокирующие файлы
             print("   [TOOL] Очищаем блокирующие файлы...")
-            logger.cleanup_locks()
+            self.universal_runner.log_info("Очистка блокировок")
             
             # 2. Проверяем, есть ли проблемные пакеты
             print("   [TOOL] Проверяем проблемные пакеты...")
@@ -7946,7 +8162,7 @@ class SystemUpdater(object):
             
             if audit_result.returncode == 0:
                 print("   [OK] Проблемных пакетов не найдено")
-                logger.log_info("Проблемных пакетов не найдено")
+                self.universal_runner.log_info("Проблемных пакетов не найдено")
                 return True
             
             # 3. Сначала обрабатываем неработоспособные пакеты
@@ -7955,15 +8171,15 @@ class SystemUpdater(object):
             
             if broken_packages:
                 print("   [WARNING] Найдены неработоспособные пакеты: %s" % ', '.join(broken_packages))
-                logger.log_warning("Найдены неработоспособные пакеты: %s" % ', '.join(broken_packages))
+                self.universal_runner.log_warning("Найдены неработоспособные пакеты: %s" % ', '.join(broken_packages))
                 
                 # Принудительно удаляем неработоспособные пакеты
                 if self._force_remove_broken_packages(broken_packages):
                     print("   [OK] Неработоспособные пакеты удалены")
-                    logger.log_info("Неработоспособные пакеты удалены")
+                    self.universal_runner.log_info("Неработоспособные пакеты удалены")
                 else:
                     print("   [WARNING] Не удалось удалить неработоспособные пакеты")
-                    logger.log_warning("Не удалось удалить неработоспособные пакеты")
+                    self.universal_runner.log_warning("Не удалось удалить неработоспособные пакеты")
             
             # 4. Пробуем исправить зависимости
             print("   [TOOL] Исправляем сломанные зависимости...")
@@ -7972,18 +8188,18 @@ class SystemUpdater(object):
             
             if result.returncode == 0:
                 print("   [OK] Зависимости исправлены")
-                logger.log_info("Зависимости исправлены")
+                self.universal_runner.log_info("Зависимости исправлены")
                 
                 # Проверяем еще раз
                 audit_result = subprocess.run(['dpkg', '--audit'], 
                                            capture_output=True, text=True, timeout=10)
                 if audit_result.returncode == 0:
                     print("   [OK] dpkg полностью исправлен")
-                    logger.log_info("dpkg полностью исправлен")
+                    self.universal_runner.log_info("dpkg полностью исправлен")
                     return True
                 else:
                     print("   [WARNING] Остались проблемные пакеты после исправления зависимостей")
-                    logger.log_warning("Остались проблемные пакеты после исправления зависимостей")
+                    self.universal_runner.log_warning("Остались проблемные пакеты после исправления зависимостей")
             
             # 4. Если зависимости не исправились, пробуем конфигурацию
             print("   [TOOL] Пробуем исправить конфигурацию пакетов...")
@@ -7992,11 +8208,11 @@ class SystemUpdater(object):
             
             if result.returncode == 0:
                 print("   [OK] Конфигурация пакетов исправлена")
-                logger.log_info("Конфигурация пакетов исправлена")
+                self.universal_runner.log_info("Конфигурация пакетов исправлена")
                 return True
             else:
                 print("   [WARNING] Не удалось исправить конфигурацию пакетов")
-                logger.log_warning("Не удалось исправить конфигурацию пакетов")
+                self.universal_runner.log_warning("Не удалось исправить конфигурацию пакетов")
                 
                 # 5. Последняя попытка - принудительное исправление
                 print("   [TOOL] Пробуем принудительное исправление...")
@@ -8020,31 +8236,31 @@ class SystemUpdater(object):
                         
                         if result.returncode == 0:
                             print("   [OK] Проблемные пакеты удалены")
-                            logger.log_info("Проблемные пакеты удалены")
+                            self.universal_runner.log_info("Проблемные пакеты удалены")
                             
                             # Повторяем исправление зависимостей
                             result = subprocess.run(['apt', '--fix-broken', 'install', '-y'], 
                                                  capture_output=True, text=True, timeout=90)
                             if result.returncode == 0:
                                 print("   [OK] Зависимости восстановлены")
-                                logger.log_info("Зависимости восстановлены")
+                                self.universal_runner.log_info("Зависимости восстановлены")
                                 return True
                     
                 except Exception as force_error:
-                    logger.log_exception(force_error, "Ошибка принудительного исправления")
+                    self.universal_runner.log_error(force_error, "Ошибка принудительного исправления")
                     print("   [ERROR] Ошибка принудительного исправления: %s" % str(force_error))
                 
                 print("   [ERROR] Не удалось полностью исправить dpkg")
-                logger.log_error("Не удалось полностью исправить dpkg")
+                self.universal_runner.log_error("Не удалось полностью исправить dpkg")
                 return False
                 
         except subprocess.TimeoutExpired:
             print("   [WARNING] Исправление dpkg заняло слишком много времени")
-            logger.log_warning("Исправление dpkg заняло слишком много времени")
+            self.universal_runner.log_warning("Исправление dpkg заняло слишком много времени")
             return False
             
         except Exception as e:
-            logger.log_exception(e, "Ошибка исправления dpkg")
+            self.universal_runner.log_error("Ошибка исправления dpkg: %s" % str(e))
             print("   [ERROR] Ошибка исправления dpkg: %s" % str(e))
             return False
     
@@ -8085,12 +8301,20 @@ class SystemUpdater(object):
     
     def _force_remove_broken_packages(self, broken_packages):
         """Принудительное удаление неработоспособных пакетов"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         
         try:
             for package in broken_packages[:3]:  # Обрабатываем максимум 3 пакета
                 print("   [TOOL] Принудительно удаляем пакет: %s" % package)
-                logger.log_info("Принудительно удаляем пакет: %s" % package)
+                self.universal_runner.log_info("Принудительно удаляем пакет: %s" % package)
                 
                 # Специальная обработка для qml-module-org-kde-kcoreaddons
                 if package == 'qml-module-org-kde-kcoreaddons':
@@ -8114,15 +8338,15 @@ class SystemUpdater(object):
                 
                 if result.returncode == 0:
                     print("   [OK] Пакет %s удален принудительно" % package)
-                    logger.log_info("Пакет %s удален принудительно" % package)
+                    self.universal_runner.log_info("Пакет %s удален принудительно" % package)
                 else:
                     print("   [WARNING] Не удалось удалить пакет %s: %s" % (package, result.stderr.strip()))
-                    logger.log_warning("Не удалось удалить пакет %s: %s" % (package, result.stderr.strip()))
+                    self.universal_runner.log_warning("Не удалось удалить пакет %s: %s" % (package, result.stderr.strip()))
             
             return True
             
         except Exception as e:
-            logger.log_exception(e, "Ошибка принудительного удаления пакетов")
+            self.universal_runner.log_error("Ошибка принудительного удаления пакетов: %s" % str(e))
             print("   [ERROR] Ошибка принудительного удаления пакетов: %s" % str(e))
             return False
     
@@ -8159,17 +8383,25 @@ class SystemUpdater(object):
     
     def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         
         if dry_run:
             print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
             print("   Команда: %s" % ' '.join(cmd))
-            logger.log_command(cmd, "РЕЖИМ ТЕСТИРОВАНИЯ - команда не выполнена", 0)
+            self.universal_runner.log_info(cmd, "РЕЖИМ ТЕСТИРОВАНИЯ - команда не выполнена", 0)
             return 0
         
         print("[START] Выполнение команды с автоматическими ответами...")
         print("   Команда: %s" % ' '.join(cmd))
-        logger.log_command(cmd, "Начинаем выполнение команды")
+        self.universal_runner.log_info(cmd, "Начинаем выполнение команды")
         
         try:
             # Подготавливаем переменные окружения для процесса
@@ -8225,10 +8457,10 @@ class SystemUpdater(object):
                     response = self.get_auto_response(prompt_type)
                     if response == '':
                         print("   [AUTO] Автоматический ответ: Enter (пустой ответ) для %s" % prompt_type)
-                        logger.log_info("Автоматический ответ: Enter для %s" % prompt_type)
+                        self.universal_runner.log_info("Автоматический ответ: Enter для %s" % prompt_type)
                     else:
                         print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
-                        logger.log_info("Автоматический ответ: %s для %s" % (response, prompt_type))
+                        self.universal_runner.log_info("Автоматический ответ: %s для %s" % (response, prompt_type))
                     
                     # Отправляем ответ
                     process.stdin.write(response + '\n')
@@ -8242,64 +8474,72 @@ class SystemUpdater(object):
             return_code = process.wait()
             
             # Логируем результат команды
-            logger.log_command(cmd, full_output, return_code)
+            self.universal_runner.log_info(cmd, full_output, return_code)
             
             if return_code == 0:
                 print("   [OK] Команда выполнена успешно")
-                logger.log_info("Команда выполнена успешно")
+                self.universal_runner.log_info("Команда выполнена успешно")
             else:
                 print("   [ERROR] Команда завершилась с ошибкой (код: %d)" % return_code)
-                logger.log_error("Команда завершилась с ошибкой (код: %d)" % return_code)
+                self.universal_runner.log_error("Команда завершилась с ошибкой (код: %d)" % return_code)
                 
                 # Проверяем на ошибки dpkg
                 if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
                     print("   [TOOL] Обнаружена ошибка dpkg, запускаем автоматическое исправление...")
-                    logger.log_warning("Обнаружена ошибка dpkg, запускаем автоматическое исправление")
+                    self.universal_runner.log_warning("Обнаружена ошибка dpkg, запускаем автоматическое исправление")
                     
                     try:
                         if self.auto_fix_dpkg_errors():
                             print("   [OK] Ошибки dpkg исправлены автоматически")
-                            logger.log_info("Ошибки dpkg исправлены автоматически")
+                            self.universal_runner.log_info("Ошибки dpkg исправлены автоматически")
                         else:
                             print("   [WARNING] Не удалось автоматически исправить ошибки dpkg")
-                            logger.log_warning("Не удалось автоматически исправить ошибки dpkg")
+                            self.universal_runner.log_warning("Не удалось автоматически исправить ошибки dpkg")
                     except Exception as fix_error:
-                        logger.log_exception(fix_error, "Ошибка при исправлении dpkg")
+                        self.universal_runner.log_error(fix_error, "Ошибка при исправлении dpkg")
                         print("   [ERROR] Ошибка при исправлении dpkg: %s" % str(fix_error))
             
             return return_code
             
         except Exception as e:
-            logger.log_exception(e, "Ошибка выполнения команды")
+            self.universal_runner.log_error("Ошибка выполнения команды: %s" % str(e))
             print("   [ERROR] Ошибка выполнения команды: %s" % str(e))
             
             # Проверяем на ошибку сегментации (код 139)
             if hasattr(e, 'returncode') and e.returncode == 139:
                 print("   [CRITICAL] Обнаружена ошибка сегментации (SIGSEGV)!")
-                logger.log_error("Обнаружена ошибка сегментации (SIGSEGV)")
+                self.universal_runner.log_error("Обнаружена ошибка сегментации (SIGSEGV)")
                 print("   [TOOL] Пробуем восстановить систему...")
                 
                 # Пробуем восстановить систему
                 if self._recover_from_segfault():
                     print("   [OK] Система восстановлена после ошибки сегментации")
-                    logger.log_info("Система восстановлена после ошибки сегментации")
+                    self.universal_runner.log_info("Система восстановлена после ошибки сегментации")
                     return 139  # Возвращаем код ошибки для обработки на верхнем уровне
                 else:
                     print("   [ERROR] Не удалось восстановить систему")
-                    logger.log_error("Не удалось восстановить систему")
+                    self.universal_runner.log_error("Не удалось восстановить систему")
             
             return 1
     
     def _recover_from_segfault(self):
         """Восстановление системы после ошибки сегментации"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("   [RECOVERY] Начинаем восстановление системы...")
-        logger.log_info("Начинаем восстановление системы после ошибки сегментации")
+        self.universal_runner.log_info("Начинаем восстановление системы после ошибки сегментации")
         
         try:
             # 1. Очищаем блокирующие файлы
             print("   [RECOVERY] Очищаем блокирующие файлы...")
-            logger.cleanup_locks()
+            self.universal_runner.log_info("Очистка блокировок")
             
             # 2. Исправляем конфигурацию dpkg
             print("   [RECOVERY] Исправляем конфигурацию dpkg...")
@@ -8308,7 +8548,7 @@ class SystemUpdater(object):
             
             if result.returncode != 0:
                 print("   [WARNING] dpkg требует дополнительного исправления")
-                logger.log_warning("dpkg требует дополнительного исправления")
+                self.universal_runner.log_warning("dpkg требует дополнительного исправления")
             
             # 3. Исправляем сломанные зависимости
             print("   [RECOVERY] Исправляем сломанные зависимости...")
@@ -8317,7 +8557,7 @@ class SystemUpdater(object):
             
             if result.returncode != 0:
                 print("   [WARNING] Не удалось исправить зависимости")
-                logger.log_warning("Не удалось исправить зависимости")
+                self.universal_runner.log_warning("Не удалось исправить зависимости")
             
             # 4. Очищаем кэш APT
             print("   [RECOVERY] Очищаем кэш APT...")
@@ -8328,21 +8568,29 @@ class SystemUpdater(object):
             print("   [RECOVERY] Проверяем состояние системы...")
             if self.check_system_resources():
                 print("   [OK] Система восстановлена успешно")
-                logger.log_info("Система восстановлена успешно")
+                self.universal_runner.log_info("Система восстановлена успешно")
                 return True
             else:
                 print("   [ERROR] Система не восстановлена")
-                logger.log_error("Система не восстановлена")
+                self.universal_runner.log_error("Система не восстановлена")
                 return False
                 
         except Exception as e:
-            logger.log_exception(e, "Ошибка восстановления системы")
+            self.universal_runner.log_error("Ошибка восстановления системы: %s" % str(e))
             print("   [ERROR] Ошибка восстановления системы: %s" % str(e))
             return False
     
     def update_system(self, dry_run=False):
         """Обновление системы"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("[PACKAGE] Обновление системы...")
         
         if dry_run:
@@ -8354,7 +8602,7 @@ class SystemUpdater(object):
         print("\n[SYSTEM] Проверка системных ресурсов перед обновлением...")
         if not self.check_system_resources():
             print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-            logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
+            self.universal_runner.log_error("Системные ресурсы не соответствуют требованиям для обновления")
             return False
         
         # Сначала обновляем списки пакетов
@@ -8396,7 +8644,7 @@ class SystemUpdater(object):
         elif result == 139:
             # Ошибка сегментации - система уже восстановлена
             print("[WARNING] Обновление завершилось с ошибкой сегментации, но система восстановлена")
-            logger.log_warning("Обновление завершилось с ошибкой сегментации, но система восстановлена")
+            self.universal_runner.log_warning("Обновление завершилось с ошибкой сегментации, но система восстановлена")
             
             # Пробуем продолжить с более безопасным подходом
             print("[TOOL] Пробуем безопасное обновление...")
@@ -8417,11 +8665,11 @@ class SystemUpdater(object):
                     return self._safe_update_retry()
                 else:
                     print("[ERROR] Ошибка обновления системы даже после исправления")
-                    logger.log_error("Ошибка обновления системы даже после исправления")
+                    self.universal_runner.log_error("Ошибка обновления системы даже после исправления")
                     
                     # Пробуем исправить проблемы с кэшем APT
                     print("[TOOL] Пробуем исправить проблемы с кэшем APT...")
-                    logger.log_info("Пробуем исправить проблемы с кэшем APT")
+                    self.universal_runner.log_info("Пробуем исправить проблемы с кэшем APT")
                     
                     try:
                         # Очищаем кэш APT
@@ -8429,25 +8677,25 @@ class SystemUpdater(object):
                         result = self.run_command_with_interactive_handling(cleanup_cmd, False, gui_terminal=True)
                         if result == 0:
                             print("   [OK] Кэш APT очищен")
-                            logger.log_info("Кэш APT очищен")
+                            self.universal_runner.log_info("Кэш APT очищен")
                         
                         # Пробуем обновление с --fix-missing
                         print("[TOOL] Пробуем обновление с --fix-missing...")
-                        logger.log_info("Пробуем обновление с --fix-missing")
+                        self.universal_runner.log_info("Пробуем обновление с --fix-missing")
                         fix_missing_cmd = ['apt-get', 'dist-upgrade', '-y', '--fix-missing']
                         result = self.run_command_with_interactive_handling(fix_missing_cmd, False, gui_terminal=True)
                         
                         if result == 0:
                             print("   [OK] Обновление с --fix-missing выполнено успешно")
-                            logger.log_info("Обновление с --fix-missing выполнено успешно")
+                            self.universal_runner.log_info("Обновление с --fix-missing выполнено успешно")
                             return True
                         else:
                             print("   [WARNING] Обновление с --fix-missing также завершилось с ошибкой")
-                            logger.log_warning("Обновление с --fix-missing также завершилось с ошибкой")
+                            self.universal_runner.log_warning("Обновление с --fix-missing также завершилось с ошибкой")
                             return False
                             
                     except Exception as cache_error:
-                        logger.log_exception(cache_error, "Ошибка при исправлении кэша APT")
+                        self.universal_runner.log_error(cache_error, "Ошибка при исправлении кэша APT")
                         print("   [ERROR] Ошибка при исправлении кэша APT: %s" % str(cache_error))
                     return False
             else:
@@ -8456,9 +8704,17 @@ class SystemUpdater(object):
     
     def _safe_update_retry(self):
         """Безопасное повторное обновление после ошибки сегментации"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("[SAFE] Безопасное повторное обновление...")
-        logger.log_info("Начинаем безопасное повторное обновление")
+        self.universal_runner.log_info("Начинаем безопасное повторное обновление")
         
         try:
             # 1. Обновляем только безопасные пакеты
@@ -8468,11 +8724,11 @@ class SystemUpdater(object):
             
             if result == 0:
                 print("   [OK] Безопасное обновление выполнено успешно")
-                logger.log_info("Безопасное обновление выполнено успешно")
+                self.universal_runner.log_info("Безопасное обновление выполнено успешно")
                 return True
             elif result == 139:
                 print("   [WARNING] Безопасное обновление также завершилось с ошибкой сегментации")
-                logger.log_warning("Безопасное обновление также завершилось с ошибкой сегментации")
+                self.universal_runner.log_warning("Безопасное обновление также завершилось с ошибкой сегментации")
                 
                 # Пробуем обновить только критические пакеты
                 print("   [SAFE] Пробуем обновить только критические пакеты...")
@@ -8481,49 +8737,57 @@ class SystemUpdater(object):
                 
                 if result == 0:
                     print("   [OK] Критические пакеты обновлены успешно")
-                    logger.log_info("Критические пакеты обновлены успешно")
+                    self.universal_runner.log_info("Критические пакеты обновлены успешно")
                     return True
                 else:
                     print("   [ERROR] Не удалось обновить даже критические пакеты")
-                    logger.log_error("Не удалось обновить даже критические пакеты")
+                    self.universal_runner.log_error("Не удалось обновить даже критические пакеты")
                     return False
             else:
                 print("   [ERROR] Безопасное обновление завершилось с ошибкой")
-                logger.log_error("Безопасное обновление завершилось с ошибкой")
+                self.universal_runner.log_error("Безопасное обновление завершилось с ошибкой")
                 return False
                 
         except Exception as e:
-            logger.log_exception(e, "Ошибка безопасного повторного обновления")
+            self.universal_runner.log_error("Ошибка безопасного повторного обновления: %s" % str(e))
             print("   [ERROR] Ошибка безопасного повторного обновления: %s" % str(e))
             return False
     
     def auto_fix_dpkg_errors(self):
         """Автоматическое исправление ошибок dpkg"""
-        logger = get_logger()
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
         print("[TOOL] Автоматическое исправление ошибок dpkg...")
-        logger.log_info("Начинаем автоматическое исправление ошибок dpkg")
+        self.universal_runner.log_info("Начинаем автоматическое исправление ошибок dpkg")
         
         try:
             # Сначала очищаем блокирующие файлы
-            logger.log_info("Очищаем блокирующие файлы перед исправлением dpkg")
-            logger.cleanup_locks()
+            self.universal_runner.log_info("Очищаем блокирующие файлы перед исправлением dpkg")
+            self.universal_runner.log_info("Очистка блокировок")
             
             # 1. Исправляем конфигурацию dpkg
             print("   [TOOL] Запускаем dpkg --configure -a...")
-            logger.log_info("Запускаем dpkg --configure -a")
+            self.universal_runner.log_info("Запускаем dpkg --configure -a")
             configure_cmd = ['dpkg', '--configure', '-a']
             result = self.run_command_with_interactive_handling(configure_cmd, False, gui_terminal=True)
             
             if result == 0:
                 print("   [OK] dpkg --configure -a выполнен успешно")
-                logger.log_info("dpkg --configure -a выполнен успешно")
+                self.universal_runner.log_info("dpkg --configure -a выполнен успешно")
             else:
                 print("   [WARNING] dpkg --configure -a завершился с ошибкой")
-                logger.log_warning("dpkg --configure -a завершился с ошибкой")
+                self.universal_runner.log_warning("dpkg --configure -a завершился с ошибкой")
             
             # 2. Исправляем сломанные зависимости
             print("   [TOOL] Запускаем apt --fix-broken install...")
-            logger.log_info("Запускаем apt --fix-broken install")
+            self.universal_runner.log_info("Запускаем apt --fix-broken install")
             fix_cmd = ['apt', '--fix-broken', 'install', '-y']
             
             try:
@@ -8531,42 +8795,42 @@ class SystemUpdater(object):
                 
                 if result == 0:
                     print("   [OK] apt --fix-broken install выполнен успешно")
-                    logger.log_info("apt --fix-broken install выполнен успешно")
+                    self.universal_runner.log_info("apt --fix-broken install выполнен успешно")
                     return True
                 else:
                     print("   [WARNING] apt --fix-broken install завершился с ошибкой")
-                    logger.log_warning("apt --fix-broken install завершился с ошибкой")
+                    self.universal_runner.log_warning("apt --fix-broken install завершился с ошибкой")
                     
             except Exception as fix_error:
-                logger.log_exception(fix_error, "Критическая ошибка в apt --fix-broken install")
+                self.universal_runner.log_error(fix_error, "Критическая ошибка в apt --fix-broken install")
                 print("   [ERROR] Критическая ошибка в apt --fix-broken install: %s" % str(fix_error))
-                logger.cleanup_locks()  # Очищаем блокировки при критической ошибке
+                self.universal_runner.log_info("Очистка блокировок")  # Очищаем блокировки при критической ошибке
                 return False
                 
                 # 3. Принудительное удаление проблемных пакетов
                 print("   [TOOL] Пробуем принудительное удаление проблемных пакетов...")
-                logger.log_warning("Пробуем принудительное удаление проблемных пакетов")
+                self.universal_runner.log_warning("Пробуем принудительное удаление проблемных пакетов")
                 force_remove_cmd = ['dpkg', '--remove', '--force-remove-reinstreq', 'python3-tk']
                 result = self.run_command_with_interactive_handling(force_remove_cmd, False, gui_terminal=True)
                 
                 if result == 0:
                     print("   [OK] Проблемные пакеты удалены принудительно")
-                    logger.log_info("Проблемные пакеты удалены принудительно")
+                    self.universal_runner.log_info("Проблемные пакеты удалены принудительно")
                     # Повторяем исправление зависимостей
-                    logger.log_info("Повторяем исправление зависимостей после принудительного удаления")
+                    self.universal_runner.log_info("Повторяем исправление зависимостей после принудительного удаления")
                     result = self.run_command_with_interactive_handling(fix_cmd, False, gui_terminal=True)
                     if result == 0:
                         print("   [OK] Зависимости исправлены после принудительного удаления")
-                        logger.log_info("Зависимости исправлены после принудительного удаления")
+                        self.universal_runner.log_info("Зависимости исправлены после принудительного удаления")
                         return True
                     else:
-                        logger.log_error("Не удалось исправить зависимости после принудительного удаления")
+                        self.universal_runner.log_error("Не удалось исправить зависимости после принудительного удаления")
                 
-                logger.log_error("Автоматическое исправление dpkg не удалось")
+                self.universal_runner.log_error("Автоматическое исправление dpkg не удалось")
                 return False
                 
         except Exception as e:
-            logger.log_exception(e, "Ошибка автоматического исправления dpkg")
+            self.universal_runner.log_error("Ошибка автоматического исправления dpkg: %s" % str(e))
             print("   [ERROR] Ошибка автоматического исправления: %s" % str(e))
             return False
     
@@ -8923,14 +9187,28 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         gui = AutomationGUI(console_mode=False, close_terminal_pid=close_terminal_pid)
         
         # Устанавливаем лог-файл для GUI
-        logger = get_logger()
-        gui.main_log_file = logger.log_file
+        # Создаем лог-файл напрямую
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
         
-        # Устанавливаем logger в universal_runner и активируем перехват print()
-        gui.universal_runner.logger = logger
-        gui.universal_runner.setup_print_redirect()
+        # Создаем директорию Log если нужно
+        log_dir = os.path.dirname(log_file)
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        gui.main_log_file = log_file
         
-        print("   [OK] GUI создан успешно, запускаем...")
+        print("   [OK] GUI создан успешно, настраиваем universal_runner...")
+        
+        # Передаем единый logger в GUI
+        gui.universal_runner = get_universal_runner()
+        gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
+        gui.universal_runner.setup_print_redirect()  # ВКЛЮЧЕНО: рекурсия исправлена
+        
+        # Сохраняем ссылку на universal_runner для использования в функции
+        universal_runner = gui.universal_runner
+        
+        print("   [OK] UniversalProcessRunner настроен, запускаем GUI...")
         
         # Запускаем GUI
         gui.run()
@@ -8940,6 +9218,9 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         
     except Exception as e:
         print("[ERROR] Ошибка запуска GUI: %s" % str(e))
+        import traceback
+        print("[ERROR] Детали ошибки:")
+        traceback.print_exc()
         return False
 
 def cleanup_temp_files(temp_dir):
@@ -9279,7 +9560,28 @@ class DirectoryMonitor(object):
 
 def main():
     """Основная функция"""
-    logger = get_logger()
+    # Проверяем аргументы командной строки для лог-файла
+    log_file = None
+    if len(sys.argv) > 1:
+        for i, arg in enumerate(sys.argv):
+            if arg == '--log-file' and i + 1 < len(sys.argv):
+                log_file = sys.argv[i + 1]
+                break
+    
+    # Если не передан, создаем автоматически
+    if log_file is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+    
+    # Создаем директорию Log если нужно
+    log_dir = os.path.dirname(log_file)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # Создаем единый universal_runner для всего приложения
+    logger = get_universal_runner()
+    logger.set_log_file(log_file)
     
     # Диагностическая информация
     logger.log_info("Аргументы командной строки: %s" % str(sys.argv))
@@ -9289,7 +9591,17 @@ def main():
     
     try:
         # Логируем системную информацию
-        logger.log_system_info()
+        logger.log_info("Системная информация:")
+        logger.log_info("OS: %s" % os.name)
+        logger.log_info("Platform: %s" % sys.platform)
+        logger.log_info("User ID: %d" % os.getuid())
+        logger.log_info("Effective User ID: %d" % os.geteuid())
+        
+        # Проверяем права root
+        if os.geteuid() == 0:
+            logger.log_info("Запущено с правами root")
+        else:
+            logger.log_info("Запущено БЕЗ прав root")
         
         # Проверяем аргументы командной строки
         dry_run = False
@@ -9400,7 +9712,7 @@ def main():
                     print("   - Деактивированных: %d" % stats['deactivated'])
                     
                     
-                    print("\n="*60)
+                    print("\n" + "="*60)
                     print("[SUCCESS] Настройка репозиториев завершена")
                     print("="*60)
                     sys.exit(0)
@@ -9437,7 +9749,7 @@ def main():
                         print("[ERROR] Ошибка GUI мониторинга")
                         logger.log_error("Ошибка GUI мониторинга")
                 except Exception as gui_error:
-                    logger.log_exception(gui_error, "Критическая ошибка GUI")
+                    logger.log_error(gui_error, "Критическая ошибка GUI")
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
                     
             elif start_mode == "gui_install_first":
@@ -9485,9 +9797,9 @@ def main():
                         print("[ERROR] Ошибка GUI мониторинга")
                         logger.log_error("Ошибка GUI мониторинга")
                 except Exception as gui_error:
-                    logger.log_exception(gui_error, "Критическая ошибка GUI")
+                    logger.log_error(gui_error, "Критическая ошибка GUI")
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                logger.cleanup_locks()
+                logger.log_info("Очистка блокировок")
             return
     
         # Консольный режим (только если указан --console)
@@ -9566,13 +9878,13 @@ def main():
             logger.log_warning("Программа остановлена пользователем (Ctrl+C)")
             print("\n[STOP] Остановлено пользователем")
             # Очищаем блокирующие файлы при прерывании
-            logger.cleanup_locks()
+            logger.log_info("Очистка блокировок")
             sys.exit(1)
         except Exception as e:
-            logger.log_exception(e, "Критическая ошибка в консольном режиме")
+            logger.log_error("Критическая ошибка в консольном режиме: %s" % str(e))
             print("\n[ERROR] Критическая ошибка: %s" % str(e))
             # Очищаем блокирующие файлы при ошибке
-            logger.cleanup_locks()
+            logger.log_info("Очистка блокировок")
             sys.exit(1)
         finally:
             # Очищаем временные файлы
@@ -9582,232 +9894,14 @@ def main():
             
     except Exception as main_error:
         # Критическая ошибка на уровне main()
-        logger.log_exception(main_error, "Критическая ошибка в main()")
+        logger.log_error("Критическая ошибка в main(): %s" % str(main_error))
         print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
         print("Проверьте лог файл: %s" % logger.get_log_path())
         # Очищаем блокирующие файлы при критической ошибке
         try:
-            logger.cleanup_locks()
+            logger.log_info("Очистка блокировок")
         except:
             pass
-# ============================================================================
-# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ПРОЦЕССОВ
-# ============================================================================
-
-class UniversalProcessRunner(object):
-    """
-    Универсальный обработчик процессов с выводом в реальном времени
-    Поддерживает все каналы логирования и неблокирующее выполнение
-    """
-    
-    def __init__(self, logger=None, gui_callback=None):
-        """
-        Инициализация универсального обработчика процессов
-        
-        Args:
-            logger: Экземпляр Logger для записи в файл
-            gui_callback: Функция для отправки сообщений в GUI терминал
-        """
-        self.logger = logger
-        self.gui_callback = gui_callback
-        self.output_buffer = []
-        self.is_running = False
-        
-        # Сохраняем оригинальный print для совместимости
-        self._original_print = print
-        
-        # Тестовое сообщение будет отправлено при активации перехвата
-    
-    def setup_print_redirect(self):
-        """Настройка перехвата стандартного print()"""
-        import builtins
-        
-        def universal_print(*args, **kwargs):
-            """Универсальный print с отправкой в GUI терминал"""
-            message = ' '.join(str(arg) for arg in args)
-            self.add_output(message)
-        
-        # Заменяем встроенный print
-        builtins.print = universal_print
-        
-        # Отправляем тестовое сообщение о готовности перехвата
-        if self.gui_callback:
-            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату print()")
-        
-    def run_process(self, command, process_type="general", 
-                   channels=["file", "terminal"], callback=None, timeout=None):
-        """
-        Универсальный запуск процесса с выводом в реальном времени
-        
-        Args:
-            command: Список команд или строка
-            process_type: Тип процесса ("install", "update", "check", "remove", "general")
-            channels: Каналы вывода ["file", "terminal", "gui"]
-            callback: Функция для уведомлений о прогрессе
-            timeout: Таймаут выполнения в секундах
-            
-        Returns:
-            int: Код возврата процесса (0 = успех)
-        """
-        if self.is_running:
-            self._log("Предупреждение: процесс уже выполняется", "WARNING", channels)
-            return -1
-            
-        self.is_running = True
-        
-        try:
-            # Логируем начало процесса
-            cmd_str = ' '.join(command) if isinstance(command, list) else str(command)
-            self._log("Начало выполнения: %s" % cmd_str, "INFO", channels)
-            
-            # Запускаем процесс
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1
-            )
-            
-            # Читаем вывод построчно в реальном времени
-            output_buffer = ""
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                
-                # Выводим строку в реальном времени
-                line_clean = line.rstrip()
-                if line_clean:
-                    self._log("  %s" % line_clean, "INFO", channels)
-                    output_buffer += line
-                
-                # Проверяем на интерактивные запросы
-                if self._detect_interactive_prompt(output_buffer):
-                    response = self._get_auto_response(output_buffer)
-                    if response:
-                        process.stdin.write(response + "\n")
-                        process.stdin.flush()
-                        self._log("  [AUTO] Автоматический ответ: %s" % response, "INFO", channels)
-            
-            # Ждем завершения процесса
-            return_code = process.wait()
-            
-            # Логируем результат
-            if return_code == 0:
-                self._log("Процесс завершен успешно", "INFO", channels)
-            else:
-                self._log("Процесс завершен с ошибкой (код: %d)" % return_code, "ERROR", channels)
-            
-            return return_code
-            
-        except subprocess.TimeoutExpired:
-            self._log("Процесс превысил таймаут", "ERROR", channels)
-            process.kill()
-            return -1
-        except Exception as e:
-            self._log("Ошибка выполнения процесса: %s" % str(e), "ERROR", channels)
-            return -1
-        finally:
-            self.is_running = False
-    
-    def add_output(self, message, level="INFO", channels=["file", "terminal"]):
-        """
-        Добавление сообщения в буфер для последующей отправки в GUI
-        
-        Args:
-            message: Текст сообщения
-            level: Уровень сообщения ("INFO", "WARNING", "ERROR")
-            channels: Каналы вывода
-        """
-        # Буферизируем для лог-файла
-        if "file" in channels:
-            self.output_buffer.append((message, level, channels))
-        
-        # Сразу отправляем в терминал через очередь
-        if "terminal" in channels and self.gui_callback:
-            self.gui_callback(message)
-    
-    def flush_to_gui(self):
-        """Отправка всех сообщений из буфера в GUI"""
-        for message, level, channels in self.output_buffer:
-            self._log(message, level, channels)
-        self.output_buffer.clear()
-    
-    def flush_to_log(self):
-        """Запись всех сообщений из буфера в лог-файл"""
-        if not self.logger:
-            return
-        
-        for message, level, channels in self.output_buffer:
-            if "file" in channels:
-                if level == "INFO":
-                    self.logger.info(message)
-                elif level == "WARNING":
-                    self.logger.warning(message)
-                elif level == "ERROR":
-                    self.logger.error(message)
-                else:
-                    self.logger.info(message)
-        
-        # Очищаем буфер после записи
-        self.output_buffer.clear()
-    
-    def _log(self, message, level="INFO", channels=["file", "terminal"]):
-        """
-        Универсальное логирование в выбранные каналы
-        
-        Args:
-            message: Текст сообщения
-            level: Уровень сообщения
-            channels: Список каналов ["file", "terminal", "gui"]
-        """
-        # Лог файл (всегда, если есть logger)
-        if "file" in channels and self.logger:
-            if level == "ERROR":
-                self.logger.log_error(message)
-            elif level == "WARNING":
-                self.logger.log_warning(message)
-            else:
-                self.logger.log_info(message)
-        
-        # GUI терминал
-        if "terminal" in channels and self.gui_callback:
-            self.gui_callback(message)
-        
-        # GUI лог (только для ключевых сообщений)
-        if "gui" in channels:
-            # Здесь можно добавить логику для GUI лога
-            pass
-    
-    def _detect_interactive_prompt(self, output_buffer):
-        """Определение интерактивных запросов в выводе"""
-        interactive_patterns = [
-            "Do you want to continue?",
-            "Continue?",
-            "Y/n",
-            "y/N",
-            "[Y/n]",
-            "[y/N]",
-            "Press ENTER",
-            "Press any key"
-        ]
-        
-        for pattern in interactive_patterns:
-            if pattern in output_buffer:
-                return True
-        return False
-    
-    def _get_auto_response(self, output_buffer):
-        """Получение автоматического ответа на интерактивный запрос"""
-        if "Do you want to continue?" in output_buffer or "Continue?" in output_buffer:
-            return "y"
-        elif "Y/n" in output_buffer or "[Y/n]" in output_buffer:
-            return "y"
-        elif "Press ENTER" in output_buffer:
-            return ""
-        return None
 
 # ============================================================================
 # ОСНОВНЫЕ ФУНКЦИИ

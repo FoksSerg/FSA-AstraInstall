@@ -290,9 +290,10 @@ echo ""
         log_message "Нет рабочих репозиториев - настраиваем через Python"
         
         echo "   [#] Настраиваем репозитории через Python..."
-        log_message "Вызываем Python для настройки репозиториев"
+        echo "   [DEBUG] Передаем лог-файл: $LOG_FILE"
+        log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
         
-        python3 astra_automation.py --setup-repos 2>&1 | tee -a "$LOG_FILE"
+        python3 astra_automation.py --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
         REPOS_EXIT_CODE=${PIPESTATUS[0]}
         
         if [ $REPOS_EXIT_CODE -eq 0 ]; then
@@ -434,10 +435,12 @@ echo ""
                     log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые компоненты не установлены, функциональность может быть ограничена"
                 fi
                 
-                # Меняем режим на gui_ready после успешной установки
+                # КРИТИЧНО: Меняем режим на gui_ready и СБРАСЫВАЕМ CONSOLE_MODE
                 START_MODE="gui_ready"
+                CONSOLE_MODE=false
                 echo "   [i] Режим изменен на: gui_ready"
-                log_message "Режим изменен на gui_ready после установки tkinter"
+                echo "   [i] CONSOLE_MODE сброшен в: false"
+                log_message "Режим изменен на gui_ready после установки tkinter, CONSOLE_MODE сброшен"
             else
                 echo "   [ERROR] Не удалось установить рабочий tkinter"
                 echo "   [i] Переключение на консольный режим"
@@ -481,7 +484,9 @@ echo ""
             CONSOLE_MODE=true
         else
             echo "   [OK] tkinter работает - готовы к запуску GUI"
-            log_message "Финальная проверка: tkinter работает, GUI готов"
+            echo "   [i] CONSOLE_MODE установлен в: false"
+            log_message "Финальная проверка: tkinter работает, GUI готов, CONSOLE_MODE=false"
+            CONSOLE_MODE=false
     fi
 fi
 
@@ -501,6 +506,11 @@ echo ""
 # ============================================================
 
 echo ""
+echo "[DEBUG] Финальные параметры запуска:"
+echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
+echo "   [i] START_MODE: $START_MODE"
+log_message "Финальные параметры: CONSOLE_MODE=$CONSOLE_MODE, START_MODE=$START_MODE"
+
 if [ "$CONSOLE_MODE" = true ]; then
     echo "[>] Консольный режим - обновление системы..."
     log_message "Запускаем консольный режим"
