@@ -470,32 +470,20 @@ class UniversalProcessRunner(object):
         
         def universal_subprocess_run(*args, **kwargs):
             """Универсальный subprocess.run с отправкой в UniversalProcessRunner"""
-            # Отладочные сообщения
-            print(f"[DEBUG] universal_subprocess_run вызван с args={args}, kwargs={kwargs}")
-            
             # Обрабатываем args
             if len(args) > 0:
                 if isinstance(args[0], list):
                     # Массив аргументов - используем оригинальный subprocess
-                    print(f"[DEBUG] Массив аргументов: {args[0]}")
-                    print(f"[DEBUG] Используем оригинальный subprocess.run с массивом")
                     result = self._original_subprocess_run(*args, **kwargs)
-                    print(f"[DEBUG] Результат оригинального subprocess: {result}")
                     return result
                 else:
                     # Строка команды - конвертируем в массив и используем оригинальный subprocess
                     command_args = str(args[0]).split()
-                    print(f"[DEBUG] Строка команды: '{args[0]}'")
-                    print(f"[DEBUG] Конвертировано в массив: {command_args}")
-                    print(f"[DEBUG] Используем оригинальный subprocess.run с массивом")
                     result = self._original_subprocess_run(command_args, **kwargs)
-                    print(f"[DEBUG] Результат оригинального subprocess: {result}")
                     return result
             else:
                 # Если нет аргументов, используем оригинальный subprocess
-                print(f"[DEBUG] Нет аргументов, используем оригинальный subprocess")
                 result = self._original_subprocess_run(*args, **kwargs)
-                print(f"[DEBUG] Результат оригинального subprocess: {result}")
                 return result
         
         # Подменяем subprocess.run
@@ -599,8 +587,6 @@ class UniversalProcessRunner(object):
             full_message = f"{description}: {str(message)}"
         else:
             full_message = str(message)
-        self.add_output(f"[DEBUG] {full_message}")
-        self._write_to_file(f"[DEBUG] {full_message}")
     
     def set_log_file(self, log_file_path):
         """Установка пути к лог-файлу"""
@@ -638,9 +624,6 @@ class UniversalProcessRunner(object):
         Returns:
             int: Код возврата процесса (0 = успех)
         """
-        # Отладочные сообщения
-        print(f"[DEBUG] run_process вызван с command='{command}', process_type='{process_type}', channels={channels}")
-        print(f"[DEBUG] Тип command: {type(command)}")
         
         if self.is_running:
             self._log("Предупреждение: процесс уже выполняется", "WARNING", channels)
@@ -6383,7 +6366,6 @@ class AutomationGUI(object):
     def _auto_check_components(self):
         """Автоматическая проверка компонентов при запуске GUI"""
         try:
-            print("[DEBUG] Начинаем автоматическую проверку компонентов")
             
             # Обновляем статус кнопки
             if hasattr(self, 'wine_status_label'):
@@ -6391,29 +6373,23 @@ class AutomationGUI(object):
             if hasattr(self, 'check_wine_button'):
                 self.check_wine_button.config(state=self.tk.DISABLED)
             
-            print("[DEBUG] Создаем WineComponentsChecker")
-            # Сначала создаем WineComponentsChecker и выполняем проверку
+            # Создаем WineComponentsChecker
             self.wine_checker = WineComponentsChecker()
             
-            print("[DEBUG] Выполняем проверку компонентов")
             self.wine_checker.check_all_components()
             
-            print("[DEBUG] Синхронизируем данные")
             # Синхронизируем данные с ComponentStatusManager
             self.component_status_manager.sync_with_wine_checker(self.wine_checker)
             
-            print("[DEBUG] Обновляем GUI")
             # Обновляем GUI
             self._update_wine_status()
             
-            print("[DEBUG] Обновляем статус кнопки")
             # Обновляем статус кнопки
             if hasattr(self, 'wine_status_label'):
                 self.wine_status_label.config(text="Проверка завершена")
             if hasattr(self, 'check_wine_button'):
                 self.check_wine_button.config(state=self.tk.NORMAL)
             
-            print("[DEBUG] Автоматическая проверка завершена успешно")
             
         except Exception as e:
             print(f"[GUI] Ошибка автоматической проверки: {e}")
@@ -6522,7 +6498,6 @@ class AutomationGUI(object):
         """Обновление статуса в GUI с использованием универсальной архитектуры"""
         # Проверяем, что GUI элементы созданы
         if not hasattr(self, 'wine_tree') or not self.wine_tree:
-            print("[DEBUG] wine_tree не создан, пропускаем обновление")
             return
         
         # Сохраняем текущее состояние выбора перед обновлением
@@ -6696,7 +6671,6 @@ class AutomationGUI(object):
     def _perform_wine_install(self, selected):
         """Выполнение установки Wine компонентов в отдельном потоке"""
         try:
-            print("[DEBUG] Начинаем установку компонентов: %s" % ', '.join(selected))
             
             # Используем новую универсальную архитектуру для установки
             success = self.universal_installer.install_components(selected)
@@ -7094,7 +7068,6 @@ class AutomationGUI(object):
     def _perform_wine_uninstall(self, selected):
         """Выполнение удаления Wine компонентов в отдельном потоке"""
         try:
-            print("[DEBUG] Начинаем удаление компонентов: %s" % ', '.join(selected))
             
             # Используем новую универсальную архитектуру для удаления
             success = self.universal_installer.uninstall_components(selected)
@@ -10283,40 +10256,30 @@ def main():
                 try:
                     import signal
                     pid = int(close_terminal_pid)
-                    print(f"[DEBUG] Получен PID терминала для закрытия: {pid}", channels=["gui_log"])
-                    print(f"[DEBUG] Тип PID: {type(pid)}, значение: {pid}")
                     
                     # Проверяем что процесс существует
                     try:
-                        print(f"[DEBUG] Проверяем существование процесса {pid}...", channels=["gui_log"])
                         os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-                        print(f"[DEBUG] Процесс {pid} существует, начинаем закрытие", channels=["gui_log"])
                         
                         # Сначала мягкое завершение
-                        print(f"[DEBUG] Отправляем SIGTERM процессу {pid}...", channels=["gui_log"])
                         os.kill(pid, signal.SIGTERM)
-                        print(f"[DEBUG] SIGTERM отправлен успешно процессу {pid}", channels=["gui_log"])
                         
                         # Даем время на завершение
-                        print(f"[DEBUG] Ждем 0.5 секунды для завершения процесса {pid}...", channels=["gui_log"])
                         import time
                         time.sleep(0.5)
                         
                         # Проверяем что процесс завершился
                         try:
-                            print(f"[DEBUG] Проверяем завершился ли процесс {pid}...", channels=["gui_log"])
                             os.kill(pid, 0)
                             # Процесс еще жив - отправляем SIGKILL
-                            print(f"[DEBUG] Процесс {pid} все еще жив, отправляем SIGKILL", channels=["gui_log"])
                             os.kill(pid, signal.SIGKILL)
-                            print(f"[DEBUG] SIGKILL отправлен процессу {pid}", channels=["gui_log"])
                         except OSError:
                             # Процесс уже завершился
-                            print(f"[DEBUG] Процесс {pid} успешно завершился после SIGTERM", channels=["gui_log"])
+                            pass
                             
                     except OSError as e:
-                        print(f"[DEBUG] Процесс {pid} уже не существует: {e}", channels=["gui_log"])
-                        print(f"[DEBUG] Возможно терминал уже был закрыт", channels=["gui_log"])
+                        # Процесс уже не существует
+                        pass
                         
                 except Exception as e:
                     print(f"[ERROR] Ошибка закрытия терминала: {e}")

@@ -71,22 +71,18 @@ find_tkinter_package() {
     # Список возможных названий пакетов tkinter
     local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
     
-    echo "   [DEBUG] Ищем пакеты tkinter в репозиториях..."
     log_message "Поиск пакетов tkinter в репозиториях"
     
     for pkg in "${TKINTER_PACKAGES[@]}"; do
-        echo "   [DEBUG] Проверяем пакет: $pkg"
         if apt-cache show "$pkg" >/dev/null 2>&1; then
-            echo "   [DEBUG] Пакет $pkg найден в репозиториях!"
             log_message "Пакет $pkg найден в репозиториях"
             echo "$pkg"  # Возвращаем первый найденный пакет
             return 0
         else
-            echo "   [DEBUG] Пакет $pkg не найден в репозиториях"
+            log_message "Пакет $pkg не найден в репозиториях"
         fi
     done
     
-    echo "   [DEBUG] Ни один пакет tkinter не найден в репозиториях"
     log_message "Ни один пакет tkinter не найден в репозиториях"
     return 1  # Ни один пакет не найден в репозиториях
 }
@@ -290,7 +286,6 @@ echo ""
         log_message "Нет рабочих репозиториев - настраиваем через Python"
         
         echo "   [#] Настраиваем репозитории через Python..."
-        echo "   [DEBUG] Передаем лог-файл: $LOG_FILE"
         log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
         
         python3 astra_automation.py --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
@@ -347,7 +342,6 @@ echo ""
             TKINTER_PKG=$(find_tkinter_package)
             TKINTER_FOUND=$?
             
-            echo "   [DEBUG] Результат поиска tkinter: код=$TKINTER_FOUND, пакет='$TKINTER_PKG'"
             log_message "Результат поиска tkinter: код=$TKINTER_FOUND, пакет='$TKINTER_PKG'"
             
             if [ $TKINTER_FOUND -eq 0 ]; then
@@ -506,7 +500,7 @@ echo ""
 # ============================================================
 
 echo ""
-echo "[DEBUG] Финальные параметры запуска:"
+echo "[INFO] Финальные параметры запуска:"
 echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
 echo "   [i] START_MODE: $START_MODE"
 log_message "Финальные параметры: CONSOLE_MODE=$CONSOLE_MODE, START_MODE=$START_MODE"
@@ -556,16 +550,52 @@ log_message "Лог файл: $LOG_FILE"
         
         # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
         # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-        echo "   [DEBUG] Определяем PID терминала для закрытия..."
-        echo "   [DEBUG] PID текущего bash скрипта: $$"
-        echo "   [DEBUG] PID родителя bash скрипта: $PPID"
+        # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
+        log_message "Начинаем поиск PID терминала с проверкой процессов"
         
-        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
-        echo "   [DEBUG] PID родителя родителя (терминал): $TERM_PID"
+        # Список методов определения PID (по приоритету)
+        methods=(
+            "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
+            "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
+            "\$PPID"                                                             # Метод 3 - простой fallback
+            "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
+            "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
+            "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
+        )
         
-        # Дополнительная отладка - показываем дерево процессов
-        echo "   [DEBUG] Дерево процессов:"
-        ps -o pid,ppid,comm -p $$,$PPID,$TERM_PID 2>/dev/null || echo "   [DEBUG] Не удалось получить дерево процессов"
+        # Проверяем каждый метод по очереди
+        for i in "${!methods[@]}"; do
+            method="${methods[$i]}"
+            # Проверяем каждый метод (детали только в лог)
+            candidate_pid=$(eval "$method" 2>/dev/null)
+            log_message "Метод $((i+1)) определения PID: $candidate_pid"
+            
+            # Проверяем существование и тип процесса
+            if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
+                process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
+                log_message "Процесс $candidate_pid существует, имя: $process_name"
+                
+                # Проверяем что это терминал
+                if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
+                    TERM_PID="$candidate_pid"
+                    echo "   [OK] Найден терминал: PID=$candidate_pid, имя=$process_name"
+                    log_message "[OK] НАЙДЕН ТЕРМИНАЛ: PID=$candidate_pid, имя=$process_name"
+                    break  # ВЫХОДИМ ИЗ ЦИКЛА!
+                else
+                    log_message "Процесс $candidate_pid не является терминалом"
+                fi
+            else
+                log_message "Процесс $candidate_pid не существует"
+            fi
+        done
+        
+        # Fallback если ничего не найдено
+        if [ -z "$TERM_PID" ]; then
+            echo "   [WARNING] Терминал не найден, используем первый метод как fallback"
+            log_message "WARNING: Терминал не найден, используем первый метод как fallback"
+            TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        fi
+        
         
         log_message "PID bash скрипта: $$"
         log_message "PID родителя bash скрипта: $PPID"
