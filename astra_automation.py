@@ -241,15 +241,33 @@ def custom_print(*args, **kwargs):
     # Формируем сообщение
     message = ' '.join(str(arg) for arg in args)
     
-    # Если есть UniversalProcessRunner - используем его
+    # Если есть GUI экземпляр - используем его
     if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
         sys._gui_instance.process_runner.add_output(message, level="INFO", channels=channels)
     else:
-        # Иначе используем оригинальный print (без channels)
-        _original_print(*args, **kwargs)
+        # Иначе используем глобальный UniversalProcessRunner
+        global_runner = get_global_universal_runner()
+        global_runner.add_output(message, level="INFO", channels=channels)
 
 # Переопределяем builtins.print
 builtins.print = custom_print
+
+# ============================================================================
+# ГЛОБАЛЬНЫЙ UNIVERSALPROCESSRUNNER - ДОСТУПЕН С САМОГО НАЧАЛА
+# ============================================================================
+
+# Создаем глобальный экземпляр UniversalProcessRunner сразу
+_global_universal_runner = None
+
+def get_global_universal_runner():
+    """Получение глобального экземпляра UniversalProcessRunner"""
+    global _global_universal_runner
+    if _global_universal_runner is None:
+        _global_universal_runner = UniversalProcessRunner()
+    return _global_universal_runner
+
+# Устанавливаем sys._gui_instance = None для начальной работы
+sys._gui_instance = None
 
 # ============================================================================
 # КЛАСС КОНФИГУРАЦИИ ИНТЕРАКТИВНЫХ ЗАПРОСОВ
@@ -344,7 +362,7 @@ class UniversalProcessRunner(object):
         self.is_running = False
         self.log_file_path = None  # Путь к лог-файлу
         self.output_queue = queue.Queue()  # Очередь для быстрой обработки
-        self.gui_filter_enabled = True  # Фильтрация для GUI лога
+        self.gui_filter_enabled = False  # ВРЕМЕННО ОТКЛЮЧЕНА фильтрация для GUI лога
         
         # Тестовое сообщение будет отправлено при активации перехвата
     
@@ -400,7 +418,12 @@ class UniversalProcessRunner(object):
                 return False
         
         # По умолчанию показываем сообщения уровня INFO и выше
-        return message.startswith("[INFO]") or message.startswith("[OK]") or message.startswith("[ERROR]") or message.startswith("[SUCCESS]")
+        return (message.startswith("[INFO]") or message.startswith("[OK]") or 
+                message.startswith("[ERROR]") or message.startswith("[SUCCESS]") or
+                message.startswith("[WARNING]") or message.startswith("[LIST]") or
+                message.startswith("[TOOL]") or message.startswith("[PROCESS]") or
+                message.startswith("[AUTO]") or message.startswith("[!]") or
+                message.startswith("[ERR]") or message.startswith("[MinimalWinetricks]"))
     
     def setup_print_redirect(self):
         """Настройка перехвата стандартного print()"""
@@ -519,7 +542,7 @@ class UniversalProcessRunner(object):
         # Подменяем все методы _log в классах
         def universal_log(self, message, level="INFO"):
             """Универсальный _log с отправкой в UniversalProcessRunner"""
-            universal_runner = get_universal_runner()
+            universal_runner = get_global_universal_runner()
             if level == "ERROR":
                 universal_runner.log_error(message)
             elif level == "WARNING":
@@ -530,7 +553,7 @@ class UniversalProcessRunner(object):
         # Подменяем все методы _write_to_file
         def universal_write_to_file(self, message):
             """Универсальный _write_to_file с отправкой в UniversalProcessRunner"""
-            universal_runner = get_universal_runner()
+            universal_runner = get_global_universal_runner()
             universal_runner._write_to_file(message)
         
         # Подменяем все методы _log в классах
@@ -732,15 +755,10 @@ class UniversalProcessRunner(object):
                     if bypass_filter or self.should_show_in_gui_log(message):
                         self._write_to_terminal(message)
                 
-                # GUI лог (с фильтрацией или без)
+                # GUI лог - если ЯВНО указан gui_log, НЕ ФИЛЬТРУЕМ!
                 if "gui_log" in channels:
-                    if bypass_filter:
-                        # Обходим фильтрацию
-                        if hasattr(self, 'gui_log_callback') and self.gui_log_callback:
-                            self.gui_log_callback(message)
-                    else:
-                        # Применяем фильтрацию
-                        self._write_to_gui_log(message)
+                    if hasattr(self, 'gui_log_callback') and self.gui_log_callback:
+                        self.gui_log_callback(message)
         except:
             pass
     
@@ -800,15 +818,12 @@ class UniversalProcessRunner(object):
         return None
 
 
-# Глобальный экземпляр UniversalProcessRunner
-_global_universal_runner = None
+# ============================================================================
+# ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНОГО UNIVERSALPROCESSRUNNER
+# ============================================================================
 
-def get_universal_runner():
-    """Получение глобального экземпляра UniversalProcessRunner"""
-    global _global_universal_runner
-    if _global_universal_runner is None:
-        _global_universal_runner = UniversalProcessRunner()
-    return _global_universal_runner
+# Инициализируем глобальный экземпляр ПОСЛЕ определения класса
+_global_universal_runner = UniversalProcessRunner()
 
 # ============================================================================
 # КЛАССЫ АВТОМАТИЗАЦИИ
@@ -5410,52 +5425,10 @@ class AutomationGUI(object):
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
-    def _close_parent_terminal(self):
-        """Закрытие родительского терминала после полного запуска GUI"""
-        if not self.close_terminal_pid:
-            return
-        
-        try:
-            import signal
-            pid = int(self.close_terminal_pid)
-            
-            # Проверяем что процесс существует
-            try:
-                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-            except OSError:
-                # Процесс уже не существует
-                return
-            
-            # Сначала мягкое завершение
-            try:
-                os.kill(pid, signal.SIGTERM)
-                print(f"[DEBUG_TERMINAL] Отправлен SIGTERM терминалу (PID: {pid})")
-                
-                # Даем время на завершение
-                import time
-                time.sleep(0.5)
-                
-                # Проверяем что процесс завершился
-                try:
-                    os.kill(pid, 0)
-                    # Процесс еще жив - отправляем SIGKILL
-                    os.kill(pid, signal.SIGKILL)
-                    print(f"[DEBUG_TERMINAL] Отправлен SIGKILL терминалу (PID: {pid})")
-                except OSError:
-                    # Процесс уже завершился
-                    print(f"[DEBUG_TERMINAL] Родительский терминал успешно закрыт (PID: {pid})")
-                    
-            except Exception as e:
-                print(f"[WARNING] Не удалось закрыть терминал: {e}", channels=["gui_log"])
-                
-        except Exception as e:
-            print(f"[ERROR] Ошибка закрытия родительского терминала: {e}", channels=["gui_log"])
     
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
-        print("[INFO] GUI закрывается, пытаемся закрыть терминал", channels=["gui_log"])
-        if self.close_terminal_pid:
-            self._close_parent_terminal()
+        print("[INFO] GUI закрывается", channels=["gui_log"])
         self.root.destroy()
     
     def _on_window_resize(self, event):
@@ -8374,7 +8347,7 @@ class SystemUpdater(object):
     
     def __init__(self, universal_runner=None):
         # Получаем UniversalProcessRunner
-        self.universal_runner = universal_runner or get_universal_runner()
+        self.universal_runner = universal_runner or get_global_universal_runner()
         
         # Используем общий класс конфигурации
         self.config = InteractiveConfig()
@@ -9144,22 +9117,20 @@ class SystemUpdater(object):
                     print("[INFO] ✅ Система обновлена", channels=["gui_log"])
                 elif 'apt-get autoremove' in ' '.join(cmd):
                     print("[INFO] ✅ Система очищена", channels=["gui_log"])
-                else:
-                    print("[INFO] Команда выполнена успешно", channels=["gui_log"])
             else:
                 print(f"[ERROR] Команда завершилась с ошибкой (код: {return_code})", channels=["gui_log"])
                 
-                # Проверяем на ошибки dpkg
-                if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
-                    print("[WARNING] Обнаружена ошибка dpkg, запускаем автоматическое исправление", channels=["gui_log"])
-                    
-                    try:
-                        if self.auto_fix_dpkg_errors():
-                            print("[OK] Ошибки dpkg исправлены автоматически", channels=["gui_log"])
-                        else:
-                            print("[WARNING] Не удалось автоматически исправить ошибки dpkg", channels=["gui_log"])
-                    except Exception as fix_error:
-                        print(f"[ERROR] Ошибка при исправлении dpkg: {fix_error}", channels=["gui_log"])
+            # Проверяем на ошибки dpkg
+            if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
+                print("[WARNING] Обнаружена ошибка dpkg, запускаем автоматическое исправление", channels=["gui_log"])
+                
+                try:
+                    if self.auto_fix_dpkg_errors():
+                        print("[OK] Ошибки dpkg исправлены автоматически", channels=["gui_log"])
+                    else:
+                        print("[WARNING] Не удалось автоматически исправить ошибки dpkg", channels=["gui_log"])
+                except Exception as fix_error:
+                    print(f"[ERROR] Ошибка при исправлении dpkg: {fix_error}", channels=["gui_log"])
             
             return return_code
             
@@ -9822,7 +9793,7 @@ def run_system_updater(temp_dir, dry_run=False):
     
     try:
         # Создаем экземпляр класса SystemUpdater с universal_runner
-        universal_runner = get_universal_runner()
+        universal_runner = get_global_universal_runner()
         updater = SystemUpdater(universal_runner)
         
         # Запускаем симуляцию сценариев обновления
@@ -9875,7 +9846,7 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         print("   [OK] GUI создан успешно, настраиваем universal_runner...")
         
         # Передаем единый logger в GUI
-        gui.universal_runner = get_universal_runner()
+        gui.universal_runner = get_global_universal_runner()
         gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
         gui.universal_runner.gui_log_callback = gui.add_gui_log_output  # УСТАНАВЛИВАЕМ GUI LOG CALLBACK!
         gui.universal_runner.setup_print_redirect()  # ВКЛЮЧЕНО: рекурсия исправлена
@@ -10258,101 +10229,122 @@ def main():
         os.makedirs(log_dir)
     
     # Создаем единый universal_runner для всего приложения
-    logger = get_universal_runner()
+    logger = get_global_universal_runner()
     logger.set_log_file(log_file)
     
+    # КРИТИЧЕСКОЕ ОТЛАДОЧНОЕ СООБЩЕНИЕ НА СТАРТЕ
+    print(f"[DEBUG_START] Python скрипт запущен! Лог файл: {log_file}", channels=["gui_log"])
+    print(f"[DEBUG_START] Все аргументы: {sys.argv}", channels=["gui_log"])
+    
+    # ДОПОЛНИТЕЛЬНАЯ ОТЛАДКА - обычный print() для гарантии попадания в лог
+    _original_print(f"[DEBUG_START_ORIGINAL] Python скрипт запущен! Лог файл: {log_file}")
+    _original_print(f"[DEBUG_START_ORIGINAL] Все аргументы: {sys.argv}")
+    
+    # КРИТИЧНО: Немедленно обрабатываем очередь для записи в лог файл!
+    logger.process_queue()
+    
     # Диагностическая информация
-    logger.log_info("Аргументы командной строки: %s" % str(sys.argv))
-    logger.log_info("Количество аргументов: %d" % len(sys.argv))
-    logger.log_info("Текущая рабочая директория: %s" % os.getcwd())
-    logger.log_info("Python версия: %s" % sys.version)
+    print(f"[INFO] Аргументы командной строки: {sys.argv}", channels=["gui_log"])
+    print(f"[INFO] Количество аргументов: {len(sys.argv)}", channels=["gui_log"])
+    print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", channels=["gui_log"])
+    print(f"[INFO] Python версия: {sys.version}", channels=["gui_log"])
+    
+    # КРИТИЧНО: Обрабатываем --close-terminal СРАЗУ после создания лог файла
+    close_terminal_pid = None
+    start_mode = None
+    console_mode = False
+    setup_repos = False
+    dry_run = False  # Инициализируем dry_run
+    
+    # Обрабатываем аргументы командной строки
+    i = 0
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == '--console':
+            console_mode = True
+            print("[INFO] Включен консольный режим", channels=["gui_log"])
+        elif arg == '--dry-run':
+            dry_run = True
+            print("[INFO] Включен режим тестирования", channels=["gui_log"])
+        elif arg == '--log-file':
+            # Уже обработан выше
+            i += 1  # Пропускаем следующий аргумент
+        elif arg == '--setup-repos':
+            setup_repos = True
+            print("[INFO] Режим: только настройка репозиториев", channels=["gui_log"])
+        elif arg == '--close-terminal':
+            # Следующий аргумент - PID терминала
+            if i + 1 < len(sys.argv):
+                close_terminal_pid = sys.argv[i + 1]
+                print(f"[INFO] Терминал будет закрыт после запуска GUI (PID: {close_terminal_pid})", channels=["gui_log"])
+                print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
+                
+                # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
+                try:
+                    import signal
+                    pid = int(close_terminal_pid)
+                    print(f"[DEBUG] Получен PID терминала для закрытия: {pid}", channels=["gui_log"])
+                    print(f"[DEBUG] Тип PID: {type(pid)}, значение: {pid}")
+                    
+                    # Проверяем что процесс существует
+                    try:
+                        print(f"[DEBUG] Проверяем существование процесса {pid}...", channels=["gui_log"])
+                        os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                        print(f"[DEBUG] Процесс {pid} существует, начинаем закрытие", channels=["gui_log"])
+                        
+                        # Сначала мягкое завершение
+                        print(f"[DEBUG] Отправляем SIGTERM процессу {pid}...", channels=["gui_log"])
+                        os.kill(pid, signal.SIGTERM)
+                        print(f"[DEBUG] SIGTERM отправлен успешно процессу {pid}", channels=["gui_log"])
+                        
+                        # Даем время на завершение
+                        print(f"[DEBUG] Ждем 0.5 секунды для завершения процесса {pid}...", channels=["gui_log"])
+                        import time
+                        time.sleep(0.5)
+                        
+                        # Проверяем что процесс завершился
+                        try:
+                            print(f"[DEBUG] Проверяем завершился ли процесс {pid}...", channels=["gui_log"])
+                            os.kill(pid, 0)
+                            # Процесс еще жив - отправляем SIGKILL
+                            print(f"[DEBUG] Процесс {pid} все еще жив, отправляем SIGKILL", channels=["gui_log"])
+                            os.kill(pid, signal.SIGKILL)
+                            print(f"[DEBUG] SIGKILL отправлен процессу {pid}", channels=["gui_log"])
+                        except OSError:
+                            # Процесс уже завершился
+                            print(f"[DEBUG] Процесс {pid} успешно завершился после SIGTERM", channels=["gui_log"])
+                            
+                    except OSError as e:
+                        print(f"[DEBUG] Процесс {pid} уже не существует: {e}", channels=["gui_log"])
+                        print(f"[DEBUG] Возможно терминал уже был закрыт", channels=["gui_log"])
+                        
+                except Exception as e:
+                    print(f"[ERROR] Ошибка закрытия терминала: {e}")
+                
+                i += 1  # Пропускаем следующий аргумент
+            else:
+                print("[WARNING] Флаг --close-terminal указан без PID", channels=["gui_log"])
+        elif arg == '--mode':
+            # Следующий аргумент - режим запуска
+            if i + 1 < len(sys.argv):
+                start_mode = sys.argv[i + 1]
+                print(f"[INFO] Режим запуска: {start_mode}", channels=["gui_log"])
+                i += 1  # Пропускаем следующий аргумент
+        i += 1
     
     try:
         # Логируем системную информацию
-        logger.log_info("Системная информация:")
-        logger.log_info("OS: %s" % os.name)
-        logger.log_info("Platform: %s" % sys.platform)
-        logger.log_info("User ID: %d" % os.getuid())
-        logger.log_info("Effective User ID: %d" % os.geteuid())
+        print("[INFO] Системная информация:", channels=["gui_log"])
+        print(f"[INFO] OS: {os.name}", channels=["gui_log"])
+        print(f"[INFO] Platform: {sys.platform}", channels=["gui_log"])
+        print(f"[INFO] User ID: {os.getuid()}", channels=["gui_log"])
+        print(f"[INFO] Effective User ID: {os.geteuid()}", channels=["gui_log"])
         
         # Проверяем права root
         if os.geteuid() == 0:
-            logger.log_info("Запущено с правами root")
+            print("[INFO] Запущено с правами root", channels=["gui_log"])
         else:
-            logger.log_info("Запущено БЕЗ прав root")
-        
-        # Проверяем аргументы командной строки
-        dry_run = False
-        console_mode = False
-        setup_repos = False
-        close_terminal_pid = None
-        start_mode = None
-        
-        if len(sys.argv) > 1:
-            i = 1
-            while i < len(sys.argv):
-                arg = sys.argv[i]
-                if arg == '--dry-run':
-                    dry_run = True
-                    logger.log_info("Включен режим тестирования (dry-run)")
-                elif arg == '--console':
-                    console_mode = True
-                    logger.log_info("Включен консольный режим")
-                elif arg == '--setup-repos':
-                    setup_repos = True
-                    logger.log_info("Режим: только настройка репозиториев")
-                elif arg == '--close-terminal':
-                    # Следующий аргумент - PID терминала
-                    if i + 1 < len(sys.argv):
-                        close_terminal_pid = sys.argv[i + 1]
-                        logger.log_info("Терминал будет закрыт после запуска GUI (PID: %s)" % close_terminal_pid)
-                        print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
-                        
-                        # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
-                        try:
-                            import signal
-                            pid = int(close_terminal_pid)
-                            print(f"[INFO] Закрываем терминал PID: {pid}")
-                            
-                            # Проверяем что процесс существует
-                            try:
-                                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-                                print(f"[INFO] Процесс {pid} существует, закрываем...")
-                                
-                                # Сначала мягкое завершение
-                                os.kill(pid, signal.SIGTERM)
-                                print(f"[INFO] Отправлен SIGTERM терминалу (PID: {pid})")
-                                
-                                # Даем время на завершение
-                                import time
-                                time.sleep(0.5)
-                                
-                                # Проверяем что процесс завершился
-                                try:
-                                    os.kill(pid, 0)
-                                    # Процесс еще жив - отправляем SIGKILL
-                                    os.kill(pid, signal.SIGKILL)
-                                    print(f"[INFO] Отправлен SIGKILL терминалу (PID: {pid})")
-                                except OSError:
-                                    # Процесс уже завершился
-                                    print(f"[INFO] Терминал успешно закрыт (PID: {pid})")
-                                    
-                            except OSError:
-                                print(f"[INFO] Процесс {pid} уже не существует")
-                                
-                        except Exception as e:
-                            print(f"[ERROR] Ошибка закрытия терминала: {e}")
-                        
-                        i += 1  # Пропускаем следующий аргумент
-                    else:
-                        logger.log_warning("Флаг --close-terminal указан без PID")
-                elif arg == '--mode':
-                    # Следующий аргумент - режим запуска
-                    if i + 1 < len(sys.argv):
-                        start_mode = sys.argv[i + 1]
-                        logger.log_info("Режим запуска: %s" % start_mode)
-                        i += 1  # Пропускаем следующий аргумент
-                i += 1
+            print("[INFO] Запущено БЕЗ прав root", channels=["gui_log"])
         
         # Режим настройки репозиториев - выполнить и выйти
         if setup_repos:
@@ -10402,38 +10394,35 @@ def main():
                 print("\n[ERROR] Не удалось обработать репозитории")
                 sys.exit(1)
             
-            logger.log_info("Начинаем выполнение основной программы")
+            print("[INFO] Начинаем выполнение основной программы", channels=["gui_log"])
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
-            logger.log_info("Запускаем GUI режим")
+            print("[INFO] Запускаем GUI режим", channels=["gui_log"])
             # Проверяем системные требования
             if not check_system_requirements():
-                logger.log_error("Системные требования не выполнены")
+                print("[ERROR] Системные требования не выполнены", channels=["gui_log"])
                 sys.exit(1)
             
             # Умная логика выбора режима на основе start_mode от bash
             if start_mode == "gui_ready":
                 # GUI готов - запускаем сразу
                 print("[GUI] GUI готов - запускаем интерфейс...")
-                logger.log_info("Режим: gui_ready - запускаем GUI")
+                print("[INFO] Режим: gui_ready - запускаем GUI", channels=["gui_log"])
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
                     if gui_success:
-                        print("[OK] GUI мониторинг завершен")
-                        logger.log_info("GUI мониторинг завершен успешно")
+                        print("[OK] GUI мониторинг завершен", channels=["gui_log"])
                     else:
-                        print("[ERROR] Ошибка GUI мониторинга")
-                        logger.log_error("Ошибка GUI мониторинга")
+                        print("[ERROR] Ошибка GUI мониторинга", channels=["gui_log"])
                 except Exception as gui_error:
-                    logger.log_error(gui_error, "Критическая ошибка GUI")
-                    print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
+                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", channels=["gui_log"])
                     
             elif start_mode == "gui_install_first":
                 # Нужно установить GUI компоненты
                 print("[GUI] Установка GUI компонентов...")
-                logger.log_info("Режим: gui_install_first - устанавливаем GUI компоненты")
+                print("[INFO] Режим: gui_install_first - устанавливаем GUI компоненты", channels=["gui_log"])
                 
                 if dry_run:
                     print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка GUI компонентов НЕ выполняется")
@@ -10444,19 +10433,15 @@ def main():
                     gui_install_success = install_gui_components()
                 
                 if gui_install_success:
-                    print("[SUCCESS] GUI компоненты установлены успешно!")
-                    logger.log_info("GUI компоненты установлены успешно")
-                    print("[INFO] Перезапустите скрипт для запуска GUI:")
-                    print("       bash astra_install.sh")
-                    print("[INFO] Теперь доступен графический интерфейс!")
+                    print("[SUCCESS] GUI компоненты установлены успешно!", channels=["gui_log"])
                 else:
                     print("[ERROR] Установка GUI компонентов завершена с ошибками")
-                    logger.log_error("Установка GUI компонентов завершена с ошибками")
+                    print("[ERROR] Установка GUI компонентов завершена с ошибками", channels=["gui_log"])
                     
             elif start_mode == "console_forced":
                 # Принудительный консольный режим - но мы в GUI режиме!
                 print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме")
-                logger.log_error("Противоречие: bash выбрал console_forced, но Python в GUI режиме")
+                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", channels=["gui_log"])
                 print("[INFO] Перезапустите с флагом --console:")
                 print("       bash astra_install.sh --console")
                 sys.exit(1)
@@ -10464,24 +10449,22 @@ def main():
             else:
                 # Неизвестный режим - пытаемся запустить GUI
                 print("[WARNING] Неизвестный режим: %s" % start_mode)
-                logger.log_warning("Неизвестный режим: %s - пытаемся запустить GUI" % start_mode)
+                print(f"[WARNING] Неизвестный режим: {start_mode} - пытаемся запустить GUI", channels=["gui_log"])
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
                     if gui_success:
-                        print("[OK] GUI мониторинг завершен")
-                        logger.log_info("GUI мониторинг завершен успешно")
+                        print("[OK] GUI мониторинг завершен", channels=["gui_log"])
                     else:
-                        print("[ERROR] Ошибка GUI мониторинга")
-                        logger.log_error("Ошибка GUI мониторинга")
+                        print("[ERROR] Ошибка GUI мониторинга", channels=["gui_log"])
                 except Exception as gui_error:
-                    logger.log_error(gui_error, "Критическая ошибка GUI")
+                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", channels=["gui_log"])
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                logger.log_info("Очистка блокировок")
+                print("[INFO] Очистка блокировок", channels=["gui_log"])
             return
     
         # Консольный режим (только если указан --console)
-        logger.log_info("Запускаем консольный режим")
+        print("[INFO] Запускаем консольный режим", channels=["gui_log"])
         print("=" * 60)
         if dry_run:
             print("FSA-AstraInstall Automation (РЕЖИМ ТЕСТИРОВАНИЯ)")
@@ -10494,21 +10477,21 @@ def main():
         
         try:
             # Проверяем системные требования (БЕЗ установки GUI пакетов)
-            logger.log_info("Проверяем системные требования")
+            print("[INFO] Проверяем системные требования", channels=["gui_log"])
             if not check_system_requirements():
-                logger.log_error("Системные требования не выполнены")
+                print("[ERROR] Системные требования не выполнены", channels=["gui_log"])
                 sys.exit(1)
         
             # Умная логика консольного режима на основе start_mode от bash
             if start_mode == "console_forced":
                 # Принудительный консольный режим - полное обновление системы
-                logger.log_info("КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)")
+                print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)", channels=["gui_log"])
                 print("\n[CONSOLE] Консольный режим - обновление системы...")
                 
                 # Обновляем систему
-                logger.log_info("Запускаем обновление системы")
+                print("[INFO] Запускаем обновление системы", channels=["gui_log"])
                 print("\n[UPDATE] Обновление системы...")
-                universal_runner = get_universal_runner()
+                universal_runner = get_global_universal_runner()
                 updater = SystemUpdater(universal_runner)
             
             if dry_run:
@@ -10519,7 +10502,7 @@ def main():
                 # Проверяем системные ресурсы
                 if not updater.check_system_resources():
                     print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-                    logger.log_error("Системные ресурсы не соответствуют требованиям для обновления")
+                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", channels=["gui_log"])
                     sys.exit(1)
                 
                 # Запускаем обновление
@@ -10533,7 +10516,7 @@ def main():
             if repo_success and stats_success and interactive_success and update_success:
                 if dry_run:
                     print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                    logger.log_info("Автоматизация завершена успешно в режиме тестирования")
+                    print("[INFO] Автоматизация завершена успешно в режиме тестирования", channels=["gui_log"])
                     print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
                     print("=============================")
                     print("[OK] Все проверки пройдены успешно")
@@ -10542,43 +10525,43 @@ def main():
                     print("[START] Для реальной установки запустите без --dry-run")
                 else:
                     print("\n[SUCCESS] Автоматизация завершена успешно!")
-                    logger.log_info("Автоматизация завершена успешно")
+                    print("[INFO] Автоматизация завершена успешно", channels=["gui_log"])
             else:
                 print("\n[ERROR] Автоматизация завершена с ошибками")
-                logger.log_error("Автоматизация завершена с ошибками")
+                print("[ERROR] Автоматизация завершена с ошибками", channels=["gui_log"])
             
             # Неожиданный режим в консольном режиме
             print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
-            logger.log_error("Неожиданный режим в консольном режиме: %s" % start_mode)
+            print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", channels=["gui_log"])
             print("[INFO] Ожидался режим: console_forced")
             sys.exit(1)
             
         except KeyboardInterrupt:
-            logger.log_warning("Программа остановлена пользователем (Ctrl+C)")
+            print("[WARNING] Программа остановлена пользователем (Ctrl+C)", channels=["gui_log"])
             print("\n[STOP] Остановлено пользователем")
             # Очищаем блокирующие файлы при прерывании
-            logger.log_info("Очистка блокировок")
+            print("[INFO] Очистка блокировок", channels=["gui_log"])
             sys.exit(1)
         except Exception as e:
-            logger.log_error("Критическая ошибка в консольном режиме: %s" % str(e))
+            print(f"[ERROR] Критическая ошибка в консольном режиме: {e}", channels=["gui_log"])
             print("\n[ERROR] Критическая ошибка: %s" % str(e))
             # Очищаем блокирующие файлы при ошибке
-            logger.log_info("Очистка блокировок")
+            print("[INFO] Очистка блокировок", channels=["gui_log"])
             sys.exit(1)
         finally:
             # Очищаем временные файлы
             if temp_dir:
                 cleanup_temp_files(temp_dir)
-            logger.log_info("Программа завершена")
+            print("[INFO] Программа завершена", channels=["gui_log"])
             
     except Exception as main_error:
         # Критическая ошибка на уровне main()
-        logger.log_error("Критическая ошибка в main(): %s" % str(main_error))
+        print(f"[ERROR] Критическая ошибка в main(): {main_error}", channels=["gui_log"])
         print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
         print("Проверьте лог файл: %s" % logger.get_log_path())
         # Очищаем блокирующие файлы при критической ошибке
         try:
-            logger.log_info("Очистка блокировок")
+            print("[INFO] Очистка блокировок", channels=["gui_log"])
         except:
             pass
 

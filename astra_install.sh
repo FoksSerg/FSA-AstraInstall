@@ -556,10 +556,21 @@ log_message "Лог файл: $LOG_FILE"
         
         # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
         # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        echo "   [DEBUG] Определяем PID терминала для закрытия..."
+        echo "   [DEBUG] PID текущего bash скрипта: $$"
+        echo "   [DEBUG] PID родителя bash скрипта: $PPID"
         
-        log_message "PID bash скрипта: $PPID"
+        TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        echo "   [DEBUG] PID родителя родителя (терминал): $TERM_PID"
+        
+        # Дополнительная отладка - показываем дерево процессов
+        echo "   [DEBUG] Дерево процессов:"
+        ps -o pid,ppid,comm -p $$,$PPID,$TERM_PID 2>/dev/null || echo "   [DEBUG] Не удалось получить дерево процессов"
+        
+        log_message "PID bash скрипта: $$"
+        log_message "PID родителя bash скрипта: $PPID"
         log_message "PID окна терминала: $TERM_PID"
+        log_message "Команда запуска Python: python3 astra_automation.py --log-file \"$LOG_FILE\" --close-terminal \"$TERM_PID\" --mode \"$START_MODE\" $@"
         
         # Запускаем GUI с передачей PID терминала для автозакрытия
         nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
