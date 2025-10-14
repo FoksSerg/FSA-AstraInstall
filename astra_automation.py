@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from __future__ import print_function
+
 """
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
+Версия: V2025.10.14
 """
 
-from __future__ import print_function
+# Версия приложения
+APP_VERSION = "V2025.10.14"
 import os
 import sys
 import tempfile
@@ -3338,7 +3342,7 @@ Icon=
 Name=Astra IDE (Wine)
 Path=
 StartupNotify=true
-Terminal=false
+Terminal=true
 Type=Application
 """ % self.home
             
@@ -5239,7 +5243,11 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title("FSA-AstraInstall Automation")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION}")
+        
+        # Делаем окно всплывающим поверх других окон на 3 секунды
+        self.root.attributes('-topmost', True)
+        self.root.after(3000, lambda: self.root.attributes('-topmost', False))
         
         # Создаем стили для цветных прогресс-баров
         style = ttk.Style()
@@ -5408,7 +5416,6 @@ class AutomationGUI(object):
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
-    
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
         print("[INFO] GUI закрывается", channels=["gui_log"])
@@ -5482,8 +5489,8 @@ class AutomationGUI(object):
         except Exception as e:
             pass  # Игнорируем ошибки обновления
         
-        # Повторяем каждые 1000ms (1 секунда)
-        self.root.after(1000, self._update_system_display)
+        # Повторяем каждые 500ms (0.5 секунды) для более частого обновления
+        self.root.after(500, self._update_system_display)
     
     def _add_copy_menu(self, text_widget):
         """Добавление контекстного меню для копирования текста"""
@@ -5538,11 +5545,11 @@ class AutomationGUI(object):
         
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.main_frame, text=" Управление ")
+        self.notebook.add(self.main_frame, text=" Обновление ОС ")
         
         # Вкладка Wine & Astra.IDE
         self.wine_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.wine_frame, text=" Wine & Astra.IDE ")
+        self.notebook.add(self.wine_frame, text=" Установка Программ ")
         
         # Вкладка Репозитории
         self.repos_frame = self.tk.Frame(self.notebook)
@@ -6045,30 +6052,33 @@ class AutomationGUI(object):
         resources_frame = self.tk.LabelFrame(self.system_info_frame, text="Системные ресурсы")
         resources_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        # Дисковое пространство
-        disk_frame = self.tk.Frame(resources_frame)
-        disk_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(disk_frame, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.disk_space_label = self.tk.Label(disk_frame, text="Проверка...", font=('Arial', 9))
+        # Строка 1: Диск слева, Мониторинг справа
+        row1_frame = self.tk.Frame(resources_frame)
+        row1_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row1_frame, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.disk_space_label = self.tk.Label(row1_frame, text="Проверка...", font=('Arial', 9))
         self.disk_space_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Доступная память
-        memory_frame = self.tk.Frame(resources_frame)
-        memory_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(memory_frame, text="Доступная память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.memory_label = self.tk.Label(memory_frame, text="Проверка...", font=('Arial', 9))
+        self.sysmon_button = self.tk.Button(row1_frame, text="Системный монитор", 
+                                           command=self.open_system_monitor, width=15)
+        self.sysmon_button.pack(side=self.tk.RIGHT, padx=5)
+        
+        # Строка 2: Память слева, Ярлык справа
+        row2_frame = self.tk.Frame(resources_frame)
+        row2_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row2_frame, text="Доступная память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.memory_label = self.tk.Label(row2_frame, text="Проверка...", font=('Arial', 9))
         self.memory_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Мониторинг
-        monitor_frame = self.tk.Frame(resources_frame)
-        monitor_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(monitor_frame, text="Мониторинг:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.sysmon_button = self.tk.Button(monitor_frame, text="Системный монитор", 
-                                           command=self.open_system_monitor)
-        self.sysmon_button.pack(side=self.tk.LEFT, padx=5)
+        self.shortcut_button = self.tk.Button(row2_frame, text="Проверка...", 
+                                             command=self.toggle_desktop_shortcut, width=15)
+        self.shortcut_button.pack(side=self.tk.RIGHT, padx=5)
         
         # Предупреждения о ресурсах
         self.resources_warning_label = self.tk.Label(resources_frame, text="", font=('Arial', 8))
+        
+        # Проверяем статус ярлыка при запуске
+        self.root.after(1000, self.check_desktop_shortcut_status)
         
         # Информация о Linux
         linux_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о Linux")
@@ -6252,7 +6262,7 @@ class AutomationGUI(object):
             free_gb = free / (1024**3)
             total_gb = total / (1024**3)
             
-            disk_text = "%.1f ГБ свободно из %.1f ГБ" % (free_gb, total_gb)
+            disk_text = "%.2f ГБ свободно из %.2f ГБ" % (free_gb, total_gb)
             
             # Цветовая индикация дискового пространства
             if free_gb < 2.0:
@@ -6268,13 +6278,54 @@ class AutomationGUI(object):
             # Обновляем только если элемент существует (на новой вкладке)
             if hasattr(self, 'disk_space_label'):
                 self.disk_space_label.config(text=disk_text, fg=disk_color)
-            # Проверяем память (упрощенная версия)
-            memory_text = "Информация недоступна"
-            memory_color = 'gray'
+                # Принудительно обновляем GUI если открыта вкладка "Система"
+                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 2:
+                    self.root.update_idletasks()
+            # Проверяем память
+            try:
+                with open('/proc/meminfo', 'r') as f:
+                    meminfo = f.read()
+                
+                # Извлекаем информацию о памяти
+                lines = meminfo.split('\n')
+                mem_total = 0
+                mem_available = 0
+                
+                for line in lines:
+                    if line.startswith('MemTotal:'):
+                        mem_total = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                    elif line.startswith('MemAvailable:'):
+                        mem_available = int(line.split()[1]) // 1024  # Конвертируем в МБ
+                
+                if mem_total > 0 and mem_available > 0:
+                    mem_total_gb = mem_total / 1024
+                    mem_available_gb = mem_available / 1024
+                    memory_text = "%.2f ГБ доступно из %.2f ГБ" % (mem_available_gb, mem_total_gb)
+                    
+                    # Цветовая индикация памяти
+                    if mem_available_gb < 0.5:
+                        memory_text += " [CRITICAL]"
+                        memory_color = 'red'
+                    elif mem_available_gb < 1.0:
+                        memory_text += " [WARNING]"
+                        memory_color = 'orange'
+                    else:
+                        memory_text += " [OK]"
+                        memory_color = 'green'
+                else:
+                    memory_text = "Информация недоступна"
+                    memory_color = 'gray'
+                    
+            except Exception as e:
+                memory_text = "Информация недоступна"
+                memory_color = 'gray'
             
             # Обновляем только если элемент существует (на новой вкладке)
             if hasattr(self, 'memory_label'):
                 self.memory_label.config(text=memory_text, fg=memory_color)
+                # Принудительно обновляем GUI если открыта вкладка "Система"
+                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 2:
+                    self.root.update_idletasks()
             
             # Обновляем CPU и сеть с цветовой индикацией (если элементы существуют)
             if hasattr(self, 'wine_cpu_progress'):
@@ -7603,6 +7654,98 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[ERROR] Ошибка запуска системного монитора: {e}", channels=["gui_log"])
             self.wine_status_label.config(text="Ошибка запуска монитора", fg='red')
+    
+    def check_desktop_shortcut_status(self):
+        """Проверка статуса ярлыка на рабочем столе"""
+        try:
+            import os
+            import subprocess
+            
+            # Получаем путь к рабочему столу
+            desktop_path = os.path.expanduser("~/Desktop")
+            if not os.path.exists(desktop_path):
+                # Альтернативные пути для рабочего стола
+                desktop_paths = [
+                    os.path.expanduser("~/Рабочий стол"),
+                    os.path.expanduser("~/Desktop"),
+                    "/home/$USER/Desktop",
+                    "/home/$USER/Рабочий стол"
+                ]
+                for path in desktop_paths:
+                    if os.path.exists(path):
+                        desktop_path = path
+                        break
+            
+            # Ищем ярлык
+            shortcut_name = "astra_install.desktop"
+            shortcut_path = os.path.join(desktop_path, shortcut_name)
+            
+            if os.path.exists(shortcut_path):
+                self.shortcut_button.config(text="Удалить Ярлык", fg='red')
+                print(f"[SHORTCUT] Ярлык найден: {shortcut_path}", channels=["gui_log"])
+            else:
+                self.shortcut_button.config(text="Создать Ярлык", fg='green')
+                print(f"[SHORTCUT] Ярлык не найден в: {desktop_path}", channels=["gui_log"])
+                
+        except Exception as e:
+            self.shortcut_button.config(text="Ошибка проверки", fg='orange')
+            print(f"[ERROR] Ошибка проверки ярлыка: {e}", channels=["gui_log"])
+    
+    def toggle_desktop_shortcut(self):
+        """Создание или удаление ярлыка на рабочем столе"""
+        try:
+            import os
+            import subprocess
+            
+            # Получаем путь к рабочему столу
+            desktop_path = os.path.expanduser("~/Desktop")
+            if not os.path.exists(desktop_path):
+                desktop_path = os.path.expanduser("~/Рабочий стол")
+            
+            if not os.path.exists(desktop_path):
+                print("[ERROR] Не удалось найти папку рабочего стола", channels=["gui_log"])
+                return
+            
+            # Получаем путь к скрипту
+            script_path = os.path.abspath("astra_install.sh")
+            if not os.path.exists(script_path):
+                print(f"[ERROR] Скрипт не найден: {script_path}", channels=["gui_log"])
+                return
+            
+            shortcut_name = "astra_install.desktop"
+            shortcut_path = os.path.join(desktop_path, shortcut_name)
+            
+            if os.path.exists(shortcut_path):
+                # Удаляем ярлык
+                os.remove(shortcut_path)
+                self.shortcut_button.config(text="Создать Ярлык", fg='green')
+                print("[SUCCESS] Ярлык удален с рабочего стола", channels=["gui_log"])
+            else:
+                # Создаем ярлык
+                desktop_content = f"""[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Автоустановка {APP_VERSION}
+Comment=Автоматическое обновление Linux, установка Wine и Astra.IDE
+Exec=bash "{script_path}"
+Icon=system-software-install
+Terminal=true
+Categories=Development;
+Path={os.path.dirname(script_path)}
+"""
+                
+                with open(shortcut_path, 'w', encoding='utf-8') as f:
+                    f.write(desktop_content)
+                
+                # Делаем файл исполняемым
+                os.chmod(shortcut_path, 0o755)
+                
+                self.shortcut_button.config(text="Удалить Ярлык", fg='red')
+                print("[SUCCESS] Ярлык создан на рабочем столе", channels=["gui_log"])
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка работы с ярлыком: {e}", channels=["gui_log"])
+            self.shortcut_button.config(text="Ошибка", fg='red')
         
     def log_message(self, message):
         """Добавление сообщения в лог через UniversalProcessRunner"""
@@ -7752,16 +7895,29 @@ class AutomationGUI(object):
             
             if hasattr(self, 'detail_label'):
                 self.detail_label.config(text=progress_data['details'])
+                # Принудительно обновляем GUI только если открыта вкладка "Управление"
+                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
+                    self.root.update_idletasks()
             
             if hasattr(self, 'speed_label'):
                 speed_text = progress_data['speed']
-                time_text = progress_data['time_remaining']
-                if speed_text and time_text:
-                    self.speed_label.config(text=f"{speed_text} | {time_text}")
-                elif speed_text:
-                    self.speed_label.config(text=speed_text)
-                elif time_text:
-                    self.speed_label.config(text=time_text)
+                time_remaining = progress_data['time_remaining']
+                time_elapsed = progress_data.get('time_elapsed', '')
+                disk_usage = progress_data.get('disk_usage', '')
+                
+                # Формируем текст для отображения
+                display_parts = []
+                if time_elapsed:
+                    display_parts.append(time_elapsed)
+                if disk_usage:
+                    display_parts.append(disk_usage)
+                if speed_text:
+                    display_parts.append(speed_text)
+                if time_remaining:
+                    display_parts.append(time_remaining)
+                
+                if display_parts:
+                    self.speed_label.config(text=" | ".join(display_parts))
                 else:
                     self.speed_label.config(text="")
             
@@ -8261,36 +8417,30 @@ class ProgressStages:
         'reading_lists': {
             'name': 'Чтение списков пакетов',
             'start': 0,
-            'end': 5,
+            'end': 2,
             'description': 'Получение информации о доступных пакетах'
         },
         'building_deps': {
             'name': 'Построение дерева зависимостей',
-            'start': 5,
-            'end': 10,
+            'start': 2,
+            'end': 5,
             'description': 'Анализ зависимостей между пакетами'
         },
         'downloading': {
             'name': 'Скачивание пакетов',
-            'start': 10,
-            'end': 70,
+            'start': 5,
+            'end': 85,
             'description': 'Загрузка пакетов из репозиториев'
         },
-        'unpacking': {
-            'name': 'Распаковка пакетов',
-            'start': 70,
-            'end': 85,
-            'description': 'Извлечение файлов из пакетов'
-        },
-        'configuring': {
-            'name': 'Настройка пакетов',
+        'unpacking_configuring': {
+            'name': 'Распаковка и настройка пакетов',
             'start': 85,
-            'end': 95,
-            'description': 'Конфигурация установленных пакетов'
+            'end': 98,
+            'description': 'Извлечение файлов и конфигурация пакетов'
         },
         'cleaning': {
             'name': 'Очистка системы',
-            'start': 95,
+            'start': 98,
             'end': 100,
             'description': 'Удаление временных файлов и зависимостей'
         }
@@ -8327,6 +8477,67 @@ class SystemUpdater(object):
         # Минимальные требования системы
         self.min_free_space_gb = 2.0  # Минимум 2 ГБ свободного места
         self.min_free_memory_mb = 512  # Минимум 512 МБ свободной памяти
+        
+        # Счетчики для накопительного прогресса
+        self.package_counter = 0
+        self.total_packages = 1600  # Примерное количество пакетов
+        self.current_stage = None
+        self.unpack_counter = 0
+        self.config_counter = 0
+        
+        # Мониторинг времени и дискового пространства
+        self.start_time = None
+        self.initial_disk_space = None
+        self.current_disk_space = None
+    
+    def start_monitoring(self):
+        """Начать мониторинг времени и дискового пространства"""
+        import time
+        import shutil
+        
+        self.start_time = time.time()
+        
+        # Получаем начальное дисковое пространство
+        try:
+            disk_usage = shutil.disk_usage('/')
+            self.initial_disk_space = disk_usage.free  # Свободное место в байтах
+            print(f"[INFO] Начальное свободное место: {self.initial_disk_space / (1024**3):.2f} ГБ")
+        except Exception as e:
+            print(f"[WARNING] Не удалось получить дисковое пространство: {e}")
+            self.initial_disk_space = 0
+    
+    def get_current_stats(self):
+        """Получить текущую статистику времени и дискового пространства"""
+        import time
+        import shutil
+        
+        if not self.start_time:
+            return "Время: 0 мин 0 сек", "Использовано: 0 МБ"
+        
+        # Вычисляем прошедшее время
+        elapsed_time = time.time() - self.start_time
+        minutes = int(elapsed_time // 60)
+        seconds = int(elapsed_time % 60)
+        time_text = f"Время: {minutes} мин {seconds} сек"
+        
+        # Вычисляем изменение дискового пространства
+        try:
+            disk_usage = shutil.disk_usage('/')
+            current_free = disk_usage.free
+            disk_change = self.initial_disk_space - current_free
+            
+            if disk_change > 0:
+                # Место занято (использовано)
+                size_mb = disk_change / (1024**2)
+                disk_text = f"Использовано: {size_mb:.1f} МБ"
+            else:
+                # Место освобождено (очистка)
+                size_mb = abs(disk_change) / (1024**2)
+                disk_text = f"Освобождено: {size_mb:.1f} МБ"
+        except Exception as e:
+            disk_text = "Использовано: 0 МБ"
+        
+        return time_text, disk_text
     
     def detect_interactive_prompt(self, output):
         """Обнаружение интерактивного запроса в выводе"""
@@ -8473,7 +8684,7 @@ class SystemUpdater(object):
             pass
     
     def parse_unpack_progress(self, line, stage_type):
-        """Парсинг прогресса распаковки пакетов"""
+        """Парсинг прогресса распаковки пакетов с накопительным прогрессом"""
         try:
             import re
             
@@ -8482,21 +8693,25 @@ class SystemUpdater(object):
             if ":" in line:
                 package_name = line.split(":")[0].strip()
             
-            # Определяем прогресс на основе типа операции
+            # Увеличиваем счетчик пакетов для распаковки
+            self.unpack_counter += 1
+            
+            # Вычисляем накопительный прогресс в рамках этапа (0-50% для распаковки)
+            stage_progress = min(50, (self.unpack_counter / self.total_packages) * 50)
+            
+            # Определяем детали на основе типа операции
             if stage_type == "preparing":
-                stage_progress = 10
                 details = f"Подготовка: {package_name}"
             else:  # unpacking
-                stage_progress = 50
                 details = f"Распаковка: {package_name}"
             
-            self.send_stage_update("unpacking", stage_progress, details, "")
+            self.send_stage_update("unpacking_configuring", stage_progress, details, "")
             
         except Exception as e:
             pass
     
     def parse_config_progress(self, line):
-        """Парсинг прогресса настройки пакетов"""
+        """Парсинг прогресса настройки пакетов с накопительным прогрессом"""
         try:
             import re
             
@@ -8505,8 +8720,14 @@ class SystemUpdater(object):
             if ":" in line:
                 package_name = line.split(":")[0].strip()
             
+            # Увеличиваем счетчик пакетов для настройки
+            self.config_counter += 1
+            
+            # Вычисляем накопительный прогресс в рамках этапа (50-100% для настройки)
+            stage_progress = 50 + min(50, (self.config_counter / self.total_packages) * 50)
+            
             details = f"Настройка: {package_name}"
-            self.send_stage_update("configuring", 50, details, "")
+            self.send_stage_update("unpacking_configuring", stage_progress, details, "")
             
         except Exception as e:
             pass
@@ -8537,6 +8758,9 @@ class SystemUpdater(object):
             # ОТЛАДКА: Логируем детали прогресса
             print(debug_info)
             
+            # Получаем текущую статистику времени и дискового пространства
+            time_text, disk_text = self.get_current_stats()
+            
             # Формируем данные для GUI
             progress_data = {
                 'stage_name': stage_info['name'],
@@ -8545,6 +8769,8 @@ class SystemUpdater(object):
                 'details': details,
                 'speed': speed,
                 'time_remaining': self.calculate_time_remaining(stage_progress),
+                'time_elapsed': time_text,
+                'disk_usage': disk_text,
                 'debug_info': debug_info  # Добавляем отладочную информацию
             }
             
@@ -9198,6 +9424,10 @@ class SystemUpdater(object):
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
         print("[PACKAGE] Обновление системы...")
+        
+        # Начинаем мониторинг времени и дискового пространства
+        if hasattr(self, 'system_updater') and self.system_updater:
+            self.system_updater.start_monitoring()
         
         if dry_run:
             print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
@@ -10220,6 +10450,7 @@ def main():
     print(f"[INFO] Аргументы командной строки: {sys.argv}", channels=["gui_log"])
     print(f"[INFO] Количество аргументов: {len(sys.argv)}", channels=["gui_log"])
     print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", channels=["gui_log"])
+    print(f"[INFO] FSA-AstraInstall версия: {APP_VERSION}", channels=["gui_log"])
     print(f"[INFO] Python версия: {sys.version}", channels=["gui_log"])
     
     # КРИТИЧНО: Обрабатываем --close-terminal СРАЗУ после создания лог файла

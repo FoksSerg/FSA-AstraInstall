@@ -1,12 +1,35 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
+# Версия: V2025.10.14
 
 # ============================================================
 # БЛОК 1: ИНИЦИАЛИЗАЦИЯ ЛОГОВ И ФУНКЦИЙ
 # ============================================================
 
+# Версия скрипта
+SCRIPT_VERSION="V2025.10.14"
+
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# КРИТИЧНО: Принудительно переходим в каталог скрипта
+# Это решает проблему запуска из ярлыка на рабочем столе
+echo "FSA-AstraInstall Automation $SCRIPT_VERSION"
+echo "Переходим в каталог скрипта: $SCRIPT_DIR"
+cd "$SCRIPT_DIR" || {
+    echo "ОШИБКА: Не удалось перейти в каталог скрипта: $SCRIPT_DIR"
+    exit 1
+}
+echo "Текущий каталог: $(pwd)"
+
+# Проверяем наличие основных файлов
+if [ ! -f "astra_automation.py" ]; then
+    echo "ОШИБКА: Файл astra_automation.py не найден в каталоге: $(pwd)"
+    echo "Список файлов в каталоге:"
+    ls -la
+    exit 1
+fi
+
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR="$SCRIPT_DIR/Log"
 mkdir -p "$LOG_DIR"
@@ -531,6 +554,7 @@ else
     log_message "Запускаем графический интерфейс"
 fi
 
+log_message "FSA-AstraInstall Automation $SCRIPT_VERSION"
 log_message "Передаем управление Python скрипту: astra_automation.py"
 log_message "Лог файл: $LOG_FILE"
 
@@ -601,6 +625,13 @@ log_message "Лог файл: $LOG_FILE"
         log_message "PID родителя bash скрипта: $PPID"
         log_message "PID окна терминала: $TERM_PID"
         log_message "Команда запуска Python: python3 astra_automation.py --log-file \"$LOG_FILE\" --close-terminal \"$TERM_PID\" --mode \"$START_MODE\" $@"
+        
+        # Сворачиваем терминал перед запуском GUI
+        echo "   [i] Сворачиваем терминал перед запуском GUI"
+        log_message "Сворачиваем терминал перед запуском GUI"
+        
+        # Сворачиваем окно терминала (работает на большинстве терминалов)
+        wmctrl -r :ACTIVE: -b add,hidden 2>/dev/null || true
         
         # Запускаем GUI с передачей PID терминала для автозакрытия
         nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
