@@ -6,11 +6,11 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2025.10.14
+Версия: V2.2.58 (2025.10.15)
 """
 
 # Версия приложения
-APP_VERSION = "V2025.10.14"
+APP_VERSION = "V2.2.58"
 import os
 import sys
 import tempfile
@@ -1056,8 +1056,8 @@ class SystemStats(object):
                 self.updatable_packages = len(lines) - 1 if len(lines) > 1 else 0
                 self.packages_to_update = self.updatable_packages
                 
-                # Сохраняем первые несколько пакетов для показа
-                self.updatable_list = lines[1:6] if len(lines) > 1 else []
+                # Сохраняем ВСЕ пакеты для отображения в GUI
+                self.updatable_list = lines[1:] if len(lines) > 1 else []
                 
                 print("   [OK] Найдено %d пакетов для обновления" % self.packages_to_update)
                 return True
@@ -5563,12 +5563,19 @@ class AutomationGUI(object):
         self.system_info_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.system_info_frame, text=" Информация о Системе ")
         
+        # Вкладка Пакеты
+        self.packages_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.packages_frame, text=" Пакеты ")
+        
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
         self.system_info_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
         
         # Создаем элементы основной вкладки
         self.create_main_tab()
+        
+        # Создаем элементы вкладки пакетов
+        self.create_packages_tab()
         
         # Создаем элементы вкладки Wine
         self.create_wine_tab()
@@ -5736,22 +5743,247 @@ class AutomationGUI(object):
         stats_inner = self.tk.Frame(stats_frame)
         stats_inner.pack(fill=self.tk.X, padx=5, pady=3)
         
-        # Колонки статистики
-        self.tk.Label(stats_inner, text="Репозитории:").grid(row=0, column=0, sticky=self.tk.W)
-        self.repo_label = self.tk.Label(stats_inner, text="Не проверены")
-        self.repo_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 20))
+        # Расширенная статистика - строка 1 (4 элемента)
+        self.tk.Label(stats_inner, text="Скачано:").grid(row=0, column=0, sticky=self.tk.W)
+        self.downloaded_label = self.tk.Label(stats_inner, text="0/0 (0%)")
+        self.downloaded_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 15))
         
-        self.tk.Label(stats_inner, text="Обновления:").grid(row=0, column=2, sticky=self.tk.W)
-        self.update_label = self.tk.Label(stats_inner, text="Не проверены")
-        self.update_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 20))
+        self.tk.Label(stats_inner, text="Распаковано:").grid(row=0, column=2, sticky=self.tk.W)
+        self.unpacked_label = self.tk.Label(stats_inner, text="0/0 (0%)")
+        self.unpacked_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 15))
         
-        self.tk.Label(stats_inner, text="Пакеты:").grid(row=1, column=0, sticky=self.tk.W)
-        self.package_label = self.tk.Label(stats_inner, text="Не проверены")
-        self.package_label.grid(row=1, column=1, sticky=self.tk.W, padx=(5, 20))
+        self.tk.Label(stats_inner, text="Настроено:").grid(row=0, column=4, sticky=self.tk.W)
+        self.configured_label = self.tk.Label(stats_inner, text="0/0 (0%)")
+        self.configured_label.grid(row=0, column=5, sticky=self.tk.W, padx=(5, 15))
+        
+        self.tk.Label(stats_inner, text="Размер:").grid(row=0, column=6, sticky=self.tk.W)
+        self.size_label = self.tk.Label(stats_inner, text="0 MB")
+        self.size_label.grid(row=0, column=7, sticky=self.tk.W, padx=(5, 15))
+        
+        # Расширенная статистика - строка 2 (2 элемента)
+        self.tk.Label(stats_inner, text="Скорость:").grid(row=1, column=0, sticky=self.tk.W)
+        self.speed_label = self.tk.Label(stats_inner, text="0 MB/s")
+        self.speed_label.grid(row=1, column=1, sticky=self.tk.W, padx=(5, 15))
         
         self.tk.Label(stats_inner, text="Статус:").grid(row=1, column=2, sticky=self.tk.W)
         self.status_detail_label = self.tk.Label(stats_inner, text="Ожидание")
-        self.status_detail_label.grid(row=1, column=3, sticky=self.tk.W, padx=(5, 20))
+        self.status_detail_label.grid(row=1, column=3, sticky=self.tk.W, padx=(5, 15))
+        
+        # Инициализируем статистику
+        self.update_extended_statistics()
+        
+        # Запускаем периодическое обновление статистики
+        self.root.after(1000, self.periodic_stats_update)
+    
+    def update_extended_statistics(self):
+        """Обновление расширенной статистики в GUI"""
+        try:
+            # Получаем статистику от SystemUpdater
+            if hasattr(self, 'system_updater') and self.system_updater:
+                stats = self.system_updater.get_extended_statistics()
+                
+                # Обновляем поля статистики
+                if hasattr(self, 'downloaded_label'):
+                    self.downloaded_label.config(text=stats['downloaded'])
+                if hasattr(self, 'unpacked_label'):
+                    self.unpacked_label.config(text=stats['unpacked'])
+                if hasattr(self, 'configured_label'):
+                    self.configured_label.config(text=stats['configured'])
+                if hasattr(self, 'size_label'):
+                    self.size_label.config(text=stats['downloaded_size'])
+                if hasattr(self, 'speed_label'):
+                    self.speed_label.config(text=stats['download_speed'])
+                    
+        except Exception as e:
+            # Игнорируем ошибки обновления статистики
+            pass
+    
+    def periodic_stats_update(self):
+        """Периодическое обновление статистики"""
+        try:
+            self.update_extended_statistics()
+        except Exception as e:
+            pass
+        
+        # Повторяем каждые 2 секунды
+        self.root.after(2000, self.periodic_stats_update)
+    
+    def create_packages_tab(self):
+        """Создание вкладки управления пакетами"""
+        # Заголовок
+        title_frame = self.tk.LabelFrame(self.packages_frame, text="Список пакетов для обновления")
+        title_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        info_label = self.tk.Label(title_frame, 
+                                   text="Отслеживание статуса пакетов в процессе обновления",
+                                   font=('Arial', 10))
+        info_label.pack(padx=10, pady=5)
+        
+        # Создаем фрейм для таблицы пакетов с прокруткой
+        table_frame = self.tk.Frame(self.packages_frame)
+        table_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем Treeview для таблицы пакетов
+        self.packages_tree = self.ttk.Treeview(table_frame, 
+                                             columns=('package', 'downloaded', 'unpacked', 'configured'),
+                                             show='headings',
+                                             height=15)
+        
+        # Настраиваем заголовки столбцов с сортировкой
+        self.packages_tree.heading('package', text='Имя пакета', command=lambda: self.sort_packages('package'))
+        self.packages_tree.heading('downloaded', text='Скачан', command=lambda: self.sort_packages('downloaded'))
+        self.packages_tree.heading('unpacked', text='Распакован', command=lambda: self.sort_packages('unpacked'))
+        self.packages_tree.heading('configured', text='Настроен', command=lambda: self.sort_packages('configured'))
+        
+        # Настраиваем ширину столбцов
+        self.packages_tree.column('package', width=300, minwidth=200)
+        self.packages_tree.column('downloaded', width=80, minwidth=60)
+        self.packages_tree.column('unpacked', width=80, minwidth=60)
+        self.packages_tree.column('configured', width=80, minwidth=60)
+        
+        # Создаем вертикальную прокрутку
+        packages_scrollbar = self.ttk.Scrollbar(table_frame, orient=self.tk.VERTICAL, command=self.packages_tree.yview)
+        self.packages_tree.configure(yscrollcommand=packages_scrollbar.set)
+        
+        # Размещаем Treeview и Scrollbar
+        self.packages_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+        packages_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+        
+        # Настраиваем теги для цветовой индикации
+        self.packages_tree.tag_configure('not_processed', foreground='gray')
+        self.packages_tree.tag_configure('downloaded', foreground='blue')
+        self.packages_tree.tag_configure('unpacked', foreground='purple')
+        self.packages_tree.tag_configure('configured', foreground='green')
+        
+        # Статистика пакетов
+        stats_frame = self.tk.LabelFrame(self.packages_frame, text="Статистика пакетов")
+        stats_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        stats_inner = self.tk.Frame(stats_frame)
+        stats_inner.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        self.tk.Label(stats_inner, text="Всего пакетов:").grid(row=0, column=0, sticky=self.tk.W)
+        self.total_packages_label = self.tk.Label(stats_inner, text="0")
+        self.total_packages_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 20))
+        
+        self.tk.Label(stats_inner, text="Обработано:").grid(row=0, column=2, sticky=self.tk.W)
+        self.processed_packages_label = self.tk.Label(stats_inner, text="0")
+        self.processed_packages_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 20))
+        
+        # Легенда цветов
+        legend_frame = self.tk.LabelFrame(self.packages_frame, text="Легенда")
+        legend_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        legend_inner = self.tk.Frame(legend_frame)
+        legend_inner.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        self.tk.Label(legend_inner, text="- - не обработан", fg="gray").pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(legend_inner, text="YES - скачан", fg="blue").pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(legend_inner, text="YES - распакован", fg="purple").pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(legend_inner, text="YES - настроен", fg="green").pack(side=self.tk.LEFT, padx=5)
+    
+    def update_packages_list(self, packages_list):
+        """Обновление списка пакетов в GUI с таблицей статусов"""
+        try:
+            if hasattr(self, 'packages_tree'):
+                # Очищаем таблицу
+                for item in self.packages_tree.get_children():
+                    self.packages_tree.delete(item)
+                
+                # Добавляем пакеты в таблицу
+                for i, package in enumerate(packages_list):
+                    # Извлекаем короткое имя пакета (до первого /)
+                    package_name = package.split('/')[0] if '/' in package else package
+                    
+                    # Добавляем строку в таблицу
+                    item_id = self.packages_tree.insert('', 'end', 
+                                                       values=(package_name, '-', '-', '-'),
+                                                       tags=('not_processed',))
+                    
+                    # Сохраняем полное имя пакета в теге для обновления статуса
+                    self.packages_tree.set(item_id, 'package', package_name)
+                
+                # Обновляем статистику
+                if hasattr(self, 'total_packages_label'):
+                    self.total_packages_label.config(text=str(len(packages_list)))
+                    
+        except Exception as e:
+            pass  # Игнорируем ошибки обновления списка
+    
+    def update_package_status(self, package_name, status):
+        """Обновление статуса конкретного пакета в таблице"""
+        try:
+            if hasattr(self, 'packages_tree'):
+                # Ищем пакет в таблице
+                for item in self.packages_tree.get_children():
+                    table_package = self.packages_tree.item(item, 'values')[0]
+                    if table_package == package_name:
+                        # Обновляем статус в зависимости от этапа
+                        if status == 'downloaded':
+                            self.packages_tree.set(item, 'downloaded', 'YES')
+                            self.packages_tree.item(item, tags=('downloaded',))
+                            print(f"[DEBUG] Обновлен статус пакета {package_name}: скачан", channels=["gui_log"])
+                        elif status == 'unpacked':
+                            self.packages_tree.set(item, 'unpacked', 'YES')
+                            self.packages_tree.item(item, tags=('unpacked',))
+                            print(f"[DEBUG] Обновлен статус пакета {package_name}: распакован", channels=["gui_log"])
+                        elif status == 'configured':
+                            self.packages_tree.set(item, 'configured', 'YES')
+                            self.packages_tree.item(item, tags=('configured',))
+                            print(f"[DEBUG] Обновлен статус пакета {package_name}: настроен", channels=["gui_log"])
+                        
+                        # Принудительно обновляем GUI
+                        self.root.update_idletasks()
+                        break
+                        
+        except Exception as e:
+            print(f"[ERROR] Ошибка обновления статуса пакета {package_name}: {e}", channels=["gui_log"])
+    
+    def sort_packages(self, column):
+        """Сортировка пакетов по выбранному столбцу"""
+        try:
+            if hasattr(self, 'packages_tree'):
+                # Получаем все элементы
+                items = [(self.packages_tree.set(child, column), child) for child in self.packages_tree.get_children('')]
+                
+                # Определяем направление сортировки
+                if hasattr(self, '_sort_reverse'):
+                    self._sort_reverse = not self._sort_reverse
+                else:
+                    self._sort_reverse = False
+                
+                # Сортируем элементы
+                if column == 'package':
+                    # Для имени пакета - алфавитная сортировка
+                    items.sort(key=lambda x: x[0].lower(), reverse=self._sort_reverse)
+                else:
+                    # Для статусов - сначала YES, потом -, потом по алфавиту
+                    def sort_key(item):
+                        value = item[0]
+                        if value == 'YES':
+                            return (0, value)
+                        elif value == '-':
+                            return (1, value)
+                        else:
+                            return (2, value)
+                    
+                    items.sort(key=sort_key, reverse=self._sort_reverse)
+                
+                # Перестраиваем таблицу
+                for index, (value, child) in enumerate(items):
+                    self.packages_tree.move(child, '', index)
+                
+                # Обновляем заголовок с указанием направления сортировки
+                direction = "↓" if self._sort_reverse else "↑"
+                current_text = self.packages_tree.heading(column, 'text')
+                if current_text.endswith('↑') or current_text.endswith('↓'):
+                    current_text = current_text[:-1]
+                self.packages_tree.heading(column, text=f"{current_text} {direction}")
+                
+                print(f"[DEBUG] Сортировка по столбцу '{column}' выполнена", channels=["gui_log"])
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка сортировки: {e}", channels=["gui_log"])
     
     def create_repos_tab(self):
         """Создание вкладки управления репозиториями"""
@@ -8153,6 +8385,11 @@ Path={os.path.dirname(script_path)}
                 
                 stats.display_statistics()
                 
+                # Передаем список пакетов в GUI для отображения
+                if hasattr(stats, 'updatable_list') and stats.updatable_list:
+                    self.update_packages_list(stats.updatable_list)
+                    print(f"[INFO] Передан список из {len(stats.updatable_list)} пакетов в GUI", channels=["gui_log"])
+                
                 if self.dry_run.get():
                     print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
                 else:
@@ -8485,6 +8722,18 @@ class SystemUpdater(object):
         self.unpack_counter = 0
         self.config_counter = 0
         
+        # Счетчики для расширенной статистики
+        self.downloaded_packages = 0
+        self.unpacked_packages = 0
+        self.configured_packages = 0
+        self.installed_packages = 0
+        self.downloaded_size_mb = 0
+        self.download_speed_mb = 0
+        
+        # Список пакетов для отслеживания
+        self.packages_list = []
+        self.packages_status = {}  # Словарь статусов пакетов
+        
         # Мониторинг времени и дискового пространства
         self.start_time = None
         self.initial_disk_space = None
@@ -8652,17 +8901,26 @@ class SystemUpdater(object):
                     else:
                         size_mb = 0
                     
-                    # Извлекаем название пакета
+                    # Извлекаем название пакета (исправленный алгоритм)
                     package_name = ""
                     parts = line.split()
                     for i, part in enumerate(parts):
                         if part.endswith('amd64') or part.endswith('all'):
+                            # Ищем слово ПЕРЕД архитектурой, которое является именем пакета
                             if i > 0:
-                                package_name = parts[i-1]
-                            break
+                                candidate = parts[i-1]
+                                # Проверяем что это не URL и не версия
+                                if not candidate.startswith('http') and not candidate.startswith('1.7_x86-64'):
+                                    package_name = candidate
+                                    break
                     
-                    # Вычисляем прогресс скачивания (примерно)
-                    stage_progress = min(100, (package_num / 10) * 100)  # Примерная оценка
+                    # Вычисляем прогресс скачивания (правильно)
+                    stage_progress = min(100, (package_num / self.total_packages) * 100)  # Правильная формула
+                    
+                    # Обновляем статистику скачивания
+                    self.downloaded_packages = package_num
+                    self.downloaded_size_mb += size_mb
+                    self.download_speed_mb = size_mb  # Последняя скорость
                     
                     # ОТЛАДКА: Логируем детали скачивания
                     if hasattr(self, 'universal_runner') and self.universal_runner:
@@ -8670,13 +8928,17 @@ class SystemUpdater(object):
                             f"[DEBUG_DOWNLOAD] Пакет {package_num}: {package_name} | "
                             f"Размер: {size_value} {size_unit} | "
                             f"Этапный прогресс: {stage_progress:.1f}% | "
-                            f"Формула: (package_num={package_num} / 10) * 100"
+                            f"Формула: (package_num={package_num} / {self.total_packages}) * 100"
                         )
                         # ОТЛАДКА: Логируем детали скачивания
                         print(debug_download)
                     
                     details = f"Пакет {package_num}: {package_name} ({size_value} {size_unit})"
                     speed = f"{size_mb:.1f} MB"
+                    
+                    # Обновляем статус пакета в GUI
+                    if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
+                        self.gui_instance.update_package_status(package_name, 'downloaded')
                     
                     self.send_stage_update("downloading", stage_progress, details, speed)
                     
@@ -8696,14 +8958,21 @@ class SystemUpdater(object):
             # Увеличиваем счетчик пакетов для распаковки
             self.unpack_counter += 1
             
-            # Вычисляем накопительный прогресс в рамках этапа (0-50% для распаковки)
-            stage_progress = min(50, (self.unpack_counter / self.total_packages) * 50)
+            # Обновляем статистику распаковки
+            self.unpacked_packages = self.unpack_counter
+            
+            # Вычисляем накопительный прогресс в рамках этапа (0-100% для распаковки)
+            stage_progress = min(100, (self.unpack_counter / self.total_packages) * 100)
             
             # Определяем детали на основе типа операции
             if stage_type == "preparing":
                 details = f"Подготовка: {package_name}"
             else:  # unpacking
                 details = f"Распаковка: {package_name}"
+            
+            # Обновляем статус пакета в GUI
+            if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
+                self.gui_instance.update_package_status(package_name, 'unpacked')
             
             self.send_stage_update("unpacking_configuring", stage_progress, details, "")
             
@@ -8723,10 +8992,18 @@ class SystemUpdater(object):
             # Увеличиваем счетчик пакетов для настройки
             self.config_counter += 1
             
-            # Вычисляем накопительный прогресс в рамках этапа (50-100% для настройки)
-            stage_progress = 50 + min(50, (self.config_counter / self.total_packages) * 50)
+            # Обновляем статистику настройки
+            self.configured_packages = self.config_counter
+            
+            # Вычисляем накопительный прогресс в рамках этапа (0-100% для настройки)
+            stage_progress = min(100, (self.config_counter / self.total_packages) * 100)
             
             details = f"Настройка: {package_name}"
+            
+            # Обновляем статус пакета в GUI
+            if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
+                self.gui_instance.update_package_status(package_name, 'configured')
+            
             self.send_stage_update("unpacking_configuring", stage_progress, details, "")
             
         except Exception as e:
@@ -8743,20 +9020,11 @@ class SystemUpdater(object):
             # Вычисляем глобальный прогресс
             global_progress = ProgressStages.calculate_global_progress(stage_name, stage_progress)
             
-            # ОТЛАДКА: Логируем все значения прогресс-баров
+            # Получаем timestamp для таблицы прогресса
             timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            debug_info = (
-                f"[DEBUG_PROGRESS] {timestamp} | "
-                f"Этап: {stage_name} | "
-                f"Этапный прогресс: {stage_progress}% | "
-                f"Глобальный прогресс: {global_progress:.1f}% | "
-                f"Диапазон этапа: {stage_info['start']}-{stage_info['end']}% | "
-                f"Детали: {details} | "
-                f"Скорость: {speed}"
-            )
             
-            # ОТЛАДКА: Логируем детали прогресса
-            print(debug_info)
+            # Записываем в таблицу прогресса
+            self.write_progress_table(timestamp, stage_name, stage_progress, global_progress, details)
             
             # Получаем текущую статистику времени и дискового пространства
             time_text, disk_text = self.get_current_stats()
@@ -8770,18 +9038,92 @@ class SystemUpdater(object):
                 'speed': speed,
                 'time_remaining': self.calculate_time_remaining(stage_progress),
                 'time_elapsed': time_text,
-                'disk_usage': disk_text,
-                'debug_info': debug_info  # Добавляем отладочную информацию
+                'disk_usage': disk_text
             }
             
             # Отправляем в GUI через universal_runner
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(progress_data))
                 
+                # Обновляем статистику в GUI
+                if hasattr(self, 'universal_runner') and self.universal_runner and hasattr(self.universal_runner, 'gui_instance'):
+                    gui_instance = self.universal_runner.gui_instance
+                    if gui_instance and hasattr(gui_instance, 'update_extended_statistics'):
+                        gui_instance.update_extended_statistics()
+                    
+                    # Обновляем счетчик обработанных пакетов
+                    if gui_instance and hasattr(gui_instance, 'processed_packages_label'):
+                        total_processed = self.downloaded_packages + self.unpacked_packages + self.configured_packages
+                        gui_instance.processed_packages_label.config(text=str(total_processed))
+                
         except Exception as e:
             # Логируем ошибки отладки
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.add_output(f"[DEBUG_ERROR] Ошибка в send_stage_update: {e}", level="ERROR")
+    
+    def write_progress_table(self, timestamp, stage_name, stage_progress, global_progress, details):
+        """Запись прогресса в отдельную таблицу для анализа"""
+        try:
+            import os
+            
+            # Получаем путь к файлу прогресса
+            log_dir = os.path.dirname(self.universal_runner.log_file) if hasattr(self, 'universal_runner') and self.universal_runner else "."
+            progress_file = os.path.join(log_dir, "progress_table.txt")
+            
+            print(f"[DEBUG] Записываем в таблицу прогресса: {progress_file}", channels=["gui_log"])
+            
+            # Извлекаем номер пакета из деталей
+            package_num = ""
+            if "Пакет" in details and ":" in details:
+                try:
+                    package_num = details.split("Пакет")[1].split(":")[0].strip()
+                except:
+                    package_num = ""
+            
+            # Формируем строку таблицы
+            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}\n"
+            
+            # Записываем в файл
+            with open(progress_file, 'a', encoding='utf-8') as f:
+                # Добавляем заголовок если файл пустой
+                if os.path.getsize(progress_file) == 0:
+                    header = "Время     | Этап           | Этапный% | Глобальный% | Пакет\n"
+                    f.write(header)
+                    f.write("-" * 60 + "\n")
+                f.write(table_line)
+                
+            print(f"[DEBUG] Строка записана в таблицу: {table_line.strip()}", channels=["gui_log"])
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка записи в таблицу прогресса: {e}", channels=["gui_log"])
+    
+    def get_extended_statistics(self):
+        """Получение расширенной статистики для GUI"""
+        try:
+            # Вычисляем проценты
+            downloaded_pct = (self.downloaded_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
+            unpacked_pct = (self.unpacked_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
+            configured_pct = (self.configured_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
+            
+            # Формируем статистику
+            stats = {
+                'downloaded': f"{self.downloaded_packages}/{self.total_packages} ({downloaded_pct:.1f}%)",
+                'unpacked': f"{self.unpacked_packages}/{self.total_packages} ({unpacked_pct:.1f}%)",
+                'configured': f"{self.configured_packages}/{self.total_packages} ({configured_pct:.1f}%)",
+                'downloaded_size': f"{self.downloaded_size_mb:.1f} MB",
+                'download_speed': f"{self.download_speed_mb:.1f} MB/s"
+            }
+            
+            return stats
+            
+        except Exception as e:
+            return {
+                'downloaded': "0/0 (0%)",
+                'unpacked': "0/0 (0%)",
+                'configured': "0/0 (0%)",
+                'downloaded_size': "0 MB",
+                'download_speed': "0 MB/s"
+            }
     
     def calculate_time_remaining(self, progress):
         """Вычисление оставшегося времени (упрощенная версия)"""
