@@ -6,11 +6,11 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.2.60 (2025.10.15)
+Версия: V2.2.6061 (2025.10.16)
 """
 
 # Версия приложения
-APP_VERSION = "V2.2.60"
+APP_VERSION = "V2.2.6061"
 import os
 import sys
 import tempfile
@@ -352,21 +352,27 @@ class UniversalProcessRunner(object):
     Поддерживает все каналы логирования и неблокирующее выполнение
     """
     
-    def __init__(self, logger=None, gui_callback=None):
+    def __init__(self, logger=None, gui_callback=None, gui_instance=None):
         """
         Инициализация универсального обработчика процессов
         
         Args:
             logger: Экземпляр Logger для записи в файл
             gui_callback: Функция для отправки сообщений в GUI терминал
+            gui_instance: Ссылка на экземпляр GUI
         """
         self.logger = logger
         self.gui_callback = gui_callback
+        self.gui_instance = gui_instance
         self.output_buffer = []
         self.is_running = False
         self.log_file_path = None  # Путь к лог-файлу
         self.output_queue = queue.Queue()  # Очередь для быстрой обработки
         self.gui_filter_enabled = False  # ВРЕМЕННО ОТКЛЮЧЕНА фильтрация для GUI лога
+        
+        # Отслеживание текущего этапа обновления для единого прогресса
+        self.current_update_phase = "update"  # update, dist-upgrade, autoremove
+        self.update_phase_start_stage = "reading_lists"  # Начальный этап для текущей фазы
         
         # Тестовое сообщение будет отправлено при активации перехвата
     
@@ -635,9 +641,27 @@ class UniversalProcessRunner(object):
             
         self.is_running = True
         
+        # Определяем фазу обновления для единого прогресса
+        cmd_str = ' '.join(command) if isinstance(command, list) else str(command)
+        if 'apt-get update' in cmd_str:
+            self.current_update_phase = "update"
+            self.update_phase_start_stage = "reading_lists"
+        elif 'apt-get dist-upgrade' in cmd_str:
+            self.current_update_phase = "dist-upgrade"
+            self.update_phase_start_stage = "downloading"
+        elif 'apt-get autoremove' in cmd_str:
+            self.current_update_phase = "autoremove"
+            self.update_phase_start_stage = "cleaning"
+        
+        # Передаем информацию о текущей фазе в ProcessProgressManager
+        if hasattr(self, 'gui_instance') and self.gui_instance:
+            if hasattr(self.gui_instance, 'system_updater') and self.gui_instance.system_updater:
+                progress_manager = self.gui_instance.system_updater.progress_manager
+                progress_manager.current_update_phase = self.current_update_phase
+                progress_manager.update_phase_start_stage = self.update_phase_start_stage
+        
         try:
             # Логируем начало процесса
-            cmd_str = ' '.join(command) if isinstance(command, list) else str(command)
             self._log("Начало выполнения: %s" % cmd_str, "INFO", channels)
             
             # Запускаем процесс
@@ -662,6 +686,9 @@ class UniversalProcessRunner(object):
                 if line_clean:
                     self._log("  %s" % line_clean, "INFO", channels)
                     output_buffer += line
+                    
+                    # Парсинг прогресса теперь обрабатывается в SystemUpdater.run_command_with_interactive_handling()
+                    # Старый парсер удален - используем ProcessProgressManager
                 
                 # Проверяем на интерактивные запросы
                 if self._detect_interactive_prompt(output_buffer):
@@ -5243,11 +5270,11 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.15)")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.16)")
         
-        # Делаем окно всплывающим поверх других окон на 3 секунды
+        # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
-        self.root.after(3000, lambda: self.root.attributes('-topmost', False))
+        self.root.after(7000, lambda: self.root.attributes('-topmost', False))
         
         # Создаем стили для цветных прогресс-баров
         style = ttk.Style()
@@ -5311,7 +5338,8 @@ class AutomationGUI(object):
         # Инициализируем UniversalProcessRunner для перехвата всех сообщений
         self.universal_runner = UniversalProcessRunner(
             logger=None,  # Будет установлен позже из main
-            gui_callback=self.add_terminal_output
+            gui_callback=self.add_terminal_output,
+            gui_instance=self  # Передаем ссылку на GUI
         )
         
         # Лог-файл (будет установлен позже из main)
@@ -5331,8 +5359,14 @@ class AutomationGUI(object):
         # Создаем универсальный обработчик процессов (logger будет установлен позже)
         self.process_runner = UniversalProcessRunner(
             logger=None,  # Будет установлен позже
-            gui_callback=self.add_terminal_output
+            gui_callback=self.add_terminal_output,
+            gui_instance=self  # Передаем ссылку на GUI
         )
+        
+        # Создаем SystemUpdater сразу для доступности ProcessProgressManager
+        self.system_updater = SystemUpdater(self.universal_runner)
+        self.system_updater.gui_instance = self  # Передаем ссылку на GUI
+        print("[SYSTEM_UPDATER] SystemUpdater создан в __init__ GUI!")
         
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
@@ -5358,9 +5392,9 @@ class AutomationGUI(object):
             self.root.after(0, self._update_wine_status)
         else:
             # Обычное сообщение - логируем
-            if hasattr(self, 'main_log_file') and self.main_log_file:
+            if GLOBAL_LOG_FILE:
                 try:
-                    with open(self.main_log_file, 'a', encoding='utf-8') as f:
+                    with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
                         f.write(f"[COMPONENT] {message}\n")
                 except:
                     pass
@@ -5686,10 +5720,7 @@ class AutomationGUI(object):
                                          command=self.stop_automation, state=self.tk.DISABLED)
         self.stop_button.pack(side=self.tk.LEFT, padx=2)
         
-        # Кнопка переключения вкладок
-        self.terminal_button = self.tk.Button(button_frame, text="Системный терминал", 
-                                             command=self.toggle_terminal)
-        self.terminal_button.pack(side=self.tk.LEFT, padx=2)
+        
         
         # Лог выполнения (на основной вкладке) - уменьшенный размер
         log_frame = self.tk.LabelFrame(self.main_frame, text="Лог выполнения")
@@ -6381,17 +6412,9 @@ class AutomationGUI(object):
         log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
         log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
-        log_path = self.main_log_file
-        self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_path, 
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+        self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_file, 
                                           font=('Courier', 8), fg='blue')
         self.log_path_label.pack(padx=5, pady=3)
         
@@ -7000,11 +7023,11 @@ class AutomationGUI(object):
                     success = parts[2].lower() == "true" if len(parts) > 2 else True
                     self.root.after(0, lambda: self.set_component_completed(component, success))
             
-            # Получаем logger из main_log_file
+            # Получаем logger из глобального лог-файла
             logger = None
-            if hasattr(self, 'main_log_file') and self.main_log_file:
+            if GLOBAL_LOG_FILE:
                 logger = UniversalProcessRunner()
-                logger.set_log_file(self.main_log_file)
+                logger.set_log_file(GLOBAL_LOG_FILE)
             
             # Получаем выбранные компоненты из таблицы
             selected = self.get_selected_wine_components()
@@ -7415,11 +7438,11 @@ class AutomationGUI(object):
             def update_callback(message):
                 self.root.after(0, lambda: self._update_install_status(message))
             
-            # Получаем logger из main_log_file
+            # Получаем logger из глобального лог-файла
             logger = None
-            if hasattr(self, 'main_log_file') and self.main_log_file:
+            if GLOBAL_LOG_FILE:
                 logger = UniversalProcessRunner()
-                logger.set_log_file(self.main_log_file)
+                logger.set_log_file(GLOBAL_LOG_FILE)
             
             # Создаем деинсталлятор с полной очисткой
             uninstaller = WineUninstaller(
@@ -7481,11 +7504,11 @@ class AutomationGUI(object):
                         # При ошибке удаления показываем ошибку
                         self.root.after(0, lambda: self.set_component_completed(component, False))
             
-            # Получаем logger из main_log_file
+            # Получаем logger из глобального лог-файла
             logger = None
-            if hasattr(self, 'main_log_file') and self.main_log_file:
+            if GLOBAL_LOG_FILE:
                 logger = UniversalProcessRunner()
-                logger.set_log_file(self.main_log_file)
+                logger.set_log_file(GLOBAL_LOG_FILE)
             
             # Определяем что удалять на основе выбранных компонентов
             remove_wine = any(c in selected_components for c in ['Wine Astraregul', 'Wine 9.0'])
@@ -8108,6 +8131,7 @@ Path={os.path.dirname(script_path)}
             data_str = message.replace("[ADVANCED_PROGRESS] ", "")
             progress_data = ast.literal_eval(data_str)
             
+            
             # Обновляем глобальный прогресс (внизу формы)
             if hasattr(self, 'wine_progress'):
                 if "Система актуальна" in progress_data['stage_name']:
@@ -8130,7 +8154,8 @@ Path={os.path.dirname(script_path)}
                 # Принудительно обновляем GUI только если открыта вкладка "Управление"
                 if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
                     self.root.update_idletasks()
-            
+                else:
+                    pass
             if hasattr(self, 'speed_label'):
                 speed_text = progress_data['speed']
                 time_remaining = progress_data['time_remaining']
@@ -8171,10 +8196,12 @@ Path={os.path.dirname(script_path)}
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.process_queue()
             
-            # Обрабатываем все сообщения из очереди
-            while not self.terminal_queue.empty():
+            # Обрабатываем сообщения из очереди (максимум 10 за раз для защиты от зависания)
+            processed_count = 0
+            while not self.terminal_queue.empty() and processed_count < 10:
                 try:
                     message = self.terminal_queue.get_nowait()
+                    processed_count += 1
                     
                     # Обрабатываем специальные сообщения прогресса
                     if message.startswith("[ADVANCED_PROGRESS]"):
@@ -8194,8 +8221,61 @@ Path={os.path.dirname(script_path)}
         except Exception as e:
             pass
         finally:
-            # Повторяем через 100 мс (постоянный мониторинг очереди)
-            self.root.after(100, self.process_terminal_queue)
+            # Повторяем через 200 мс для стабильности GUI
+            self.root.after(200, self.process_terminal_queue)
+        
+    def reset_progress_bars(self):
+        """Сброс всех прогресс-баров в начальное состояние"""
+        try:
+            # Сбрасываем глобальный прогресс (внизу формы)
+            if hasattr(self, 'wine_progress'):
+                self.wine_progress['value'] = 0
+            
+            # Сбрасываем детальный прогресс (на вкладке Управление)
+            if hasattr(self, 'stage_progress'):
+                self.stage_progress['value'] = 0
+            
+            # Сбрасываем метки
+            if hasattr(self, 'stage_label'):
+                self.stage_label.config(text="Подготовка...")
+            
+            if hasattr(self, 'detail_label'):
+                self.detail_label.config(text="")
+            
+            if hasattr(self, 'speed_label'):
+                self.speed_label.config(text="")
+            
+            # Сбрасываем время и размер
+            if hasattr(self, 'wine_time_label'):
+                self.wine_time_label.config(text="0 мин 0 сек")
+            
+            if hasattr(self, 'wine_size_label'):
+                self.wine_size_label.config(text="0 MB")
+            
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Подготовка...", fg='blue')
+            
+            # Сбрасываем статистику
+            if hasattr(self, 'downloaded_packages_label'):
+                self.downloaded_packages_label.config(text="0/0 (0%)")
+            
+            if hasattr(self, 'unpacked_packages_label'):
+                self.unpacked_packages_label.config(text="0/0 (0%)")
+            
+            if hasattr(self, 'configured_packages_label'):
+                self.configured_packages_label.config(text="0/0 (0%)")
+            
+            if hasattr(self, 'processed_packages_label'):
+                self.processed_packages_label.config(text="0")
+            
+            if hasattr(self, 'size_label'):
+                self.size_label.config(text="0 MB")
+            
+            if hasattr(self, 'speed_label'):
+                self.speed_label.config(text="")
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
         
     def start_automation(self):
         """Запуск автоматизации"""
@@ -8211,49 +8291,31 @@ Path={os.path.dirname(script_path)}
         self.start_button.config(state=self.tk.DISABLED)
         self.stop_button.config(state=self.tk.NORMAL)
         
+        # Сбрасываем прогресс-бары в ноль сразу при нажатии кнопки
+        self.reset_progress_bars()
+        
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
         
         # Запускаем автоматизацию в отдельном потоке
+        print("[AUTOMATION] Запускаем поток автоматизации...")
         import threading
         self.process_thread = threading.Thread(target=self.run_automation)
         self.process_thread.daemon = True
         self.process_thread.start()
+        print("[AUTOMATION] Поток автоматизации запущен!")
         
     def stop_automation(self):
         """Остановка автоматизации"""
         self.is_running = False
         self.start_button.config(state=self.tk.NORMAL)
         self.stop_button.config(state=self.tk.DISABLED)
-        self.update_status("Остановлено пользователем")
-        print(f"[INFO] Процесс остановлен пользователем")
-        
-        # Ждем завершения потока (с таймаутом)
-        if self.process_thread and self.process_thread.is_alive():
-            print(f"[INFO] Ожидаем завершения потока...")
-            self.process_thread.join(timeout=5.0)  # Ждем максимум 5 секунд
-            if self.process_thread.is_alive():
-                print(f"[WARNING] Поток не завершился за 5 секунд")
-            else:
-                print(f"[INFO] Поток успешно завершен")
-        
-    def toggle_terminal(self):
-        """Переключение на вкладку терминала"""
-        self.notebook.select(1)  # Переключаемся на вкладку "Терминал"
+    
     
     def open_log_file(self):
         """Открытие лог файла в системном редакторе"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
-        log_path = self.main_log_file
-        
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
         try:
             import subprocess
             import platform
@@ -8264,33 +8326,30 @@ Path={os.path.dirname(script_path)}
                 editors = ['xdg-open', 'gedit', 'kate', 'nano', 'vim']
                 for editor in editors:
                     try:
-                        subprocess.Popen([editor, log_path])
+                        subprocess.Popen([editor, log_file])
                         break
                     except:
                         continue
                 else:
                     # Если ничего не сработало, показываем путь
-                    print(f"Не удалось открыть лог файл. Путь: {log_path}", channels=["gui_log"])
+                    print(f"Не удалось открыть лог файл. Путь: {log_file}", channels=["gui_log"])
             else:
                 # Для других систем
-                subprocess.Popen(['open', log_path] if system == "Darwin" else ['notepad', log_path])
+                subprocess.Popen(['open', log_file] if system == "Darwin" else ['notepad', log_file])
                 
         except Exception as e:
             print(f"[ERROR] Ошибка открытия лог файла: %s" % str(e))
             print(f"Ошибка открытия лог файла: {e}", channels=["gui_log"])
-            print(f"Путь к логу: {log_path}", channels=["gui_log"])
+            print(f"Путь к логу: {log_file}", channels=["gui_log"])
         
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        print("[AUTOMATION] run_automation() начал выполнение!")
         
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+        
+
         
         try:
             print("[INFO] Начинаем автоматизацию в GUI режиме")
@@ -8415,22 +8474,23 @@ Path={os.path.dirname(script_path)}
                 return
             
             try:
-                # Используем класс SystemUpdater с передачей universal_runner
-                updater = SystemUpdater(self.universal_runner)
-                updater.gui_instance = self  # Передаем ссылку на GUI для проверки флага остановки
-                updater.simulate_update_scenarios()
+                # SystemUpdater уже создан в __init__, используем существующий
+                print("[SYSTEM_UPDATER] Используем существующий SystemUpdater...")
+                print("[SYSTEM_UPDATER] Запускаем симуляцию сценариев...")
+                self.system_updater.simulate_update_scenarios()
+                print("[SYSTEM_UPDATER] Симуляция сценариев завершена!")
                 
                 if not self.dry_run.get():
                     print("[TOOL] Тест реального обновления системы...", channels=["gui_log"])
                     print("[INFO] Запускаем реальное обновление системы", channels=["gui_log"])
-                    success = updater.update_system(self.dry_run.get())
+                    success = self.system_updater.update_system(self.dry_run.get())
                     if success:
                         print("[OK] Обновление системы завершено успешно", channels=["gui_log"])
                     else:
                         print("[ERROR] Обновление системы завершено с ошибкой", channels=["gui_log"])
                 else:
                     print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", channels=["gui_log"])
-                    updater.update_system(self.dry_run.get())
+                    self.system_updater.update_system(self.dry_run.get())
                     
             except Exception as update_error:
                 print(f"[ERROR] Критическая ошибка в модуле обновления: {update_error}", channels=["gui_log"])
@@ -8451,7 +8511,7 @@ Path={os.path.dirname(script_path)}
                 
         except Exception as e:
             print(f"[ERROR] Критическая ошибка в GUI автоматизации: {e}", channels=["gui_log"])
-            print(f"Проверьте лог файл: {self.main_log_file}", channels=["gui_log"])
+            print(f"Проверьте лог файл: {GLOBAL_LOG_FILE}", channels=["gui_log"])
             # Очищаем блокирующие файлы при критической ошибке
             print("[INFO] Очистка блокировок", channels=["gui_log"])
             
@@ -8635,73 +8695,311 @@ class InteractiveHandler(object):
             
         except Exception as e:
             print("   [ERROR] Ошибка в simulate_interactive_scenarios: %s" % str(e))
-            # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+            # Используем глобальный лог-файл
+            log_file = GLOBAL_LOG_FILE
         
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
             print(f"[ERROR] Ошибка в simulate_interactive_scenarios: {e}")
             return False
 
-class ProgressStages:
-    """Система этапов прогресса для умного отображения"""
+class ProcessProgressManager:
+    """Универсальный менеджер прогресса для любых процессов"""
     
-    STAGES = {
-        'reading_lists': {
-            'name': 'Чтение списков пакетов',
-            'start': 0,
-            'end': 2,
-            'description': 'Получение информации о доступных пакетах'
+    # Определения для разных типов процессов
+    PROCESS_DEFINITIONS = {
+        "system_update": {
+            "name": "Обновление системы",
+            "phases": [
+                {
+                    "name": "apt-get update", 
+                    "weight": 0.2, 
+                    "stages": {
+                        "reading_lists": {"name": "Чтение списков пакетов", "weight": 0.3},
+                        "analyzing": {"name": "Анализ системы", "weight": 0.7}
+                    }
+                },
+                {
+                    "name": "apt-get dist-upgrade", 
+                    "weight": 0.6, 
+                    "stages": {
+                        "downloading": {"name": "Скачивание пакетов", "weight": 0.4},
+                        "installing": {"name": "Установка пакетов", "weight": 0.6}
+                    }
+                },
+                {
+                    "name": "apt-get autoremove", 
+                    "weight": 0.2, 
+                    "stages": {
+                        "cleaning": {"name": "Очистка системы", "weight": 1.0}
+                    }
+                }
+            ]
         },
-        'building_deps': {
-            'name': 'Построение дерева зависимостей',
-            'start': 2,
-            'end': 5,
-            'description': 'Анализ зависимостей между пакетами'
+        
+        "wine_install": {
+            "name": "Установка Wine",
+            "phases": [
+                {
+                    "name": "Подготовка", 
+                    "weight": 0.1, 
+                    "stages": {
+                        "checking_deps": {"name": "Проверка зависимостей", "weight": 0.5},
+                        "downloading_wine": {"name": "Скачивание Wine", "weight": 0.5}
+                    }
+                },
+                {
+                    "name": "Установка Wine", 
+                    "weight": 0.7, 
+                    "stages": {
+                        "installing_wine": {"name": "Установка Wine", "weight": 0.6},
+                        "configuring_wine": {"name": "Настройка Wine", "weight": 0.4}
+                    }
+                },
+                {
+                    "name": "Настройка", 
+                    "weight": 0.2, 
+                    "stages": {
+                        "testing_wine": {"name": "Тестирование Wine", "weight": 0.5},
+                        "finalizing": {"name": "Завершение", "weight": 0.5}
+                    }
+                }
+            ]
         },
-        'downloading': {
-            'name': 'Скачивание пакетов',
-            'start': 5,
-            'end': 85,
-            'description': 'Загрузка пакетов из репозиториев'
-        },
-        'unpacking_configuring': {
-            'name': 'Распаковка и настройка пакетов',
-            'start': 85,
-            'end': 98,
-            'description': 'Извлечение файлов и конфигурация пакетов'
-        },
-        'cleaning': {
-            'name': 'Очистка системы',
-            'start': 98,
-            'end': 100,
-            'description': 'Удаление временных файлов и зависимостей'
+        
+        "app_install": {
+            "name": "Установка приложения",
+            "phases": [
+                {
+                    "name": "Подготовка", 
+                    "weight": 0.15, 
+                    "stages": {
+                        "checking_app": {"name": "Проверка приложения", "weight": 0.4},
+                        "downloading_app": {"name": "Скачивание приложения", "weight": 0.6}
+                    }
+                },
+                {
+                    "name": "Установка", 
+                    "weight": 0.7, 
+                    "stages": {
+                        "installing_app": {"name": "Установка приложения", "weight": 0.7},
+                        "configuring_app": {"name": "Настройка приложения", "weight": 0.3}
+                    }
+                },
+                {
+                    "name": "Завершение", 
+                    "weight": 0.15, 
+                    "stages": {
+                        "testing_app": {"name": "Тестирование приложения", "weight": 0.6},
+                        "cleanup": {"name": "Очистка", "weight": 0.4}
+                    }
+                }
+            ]
         }
     }
     
-    @classmethod
-    def get_stage_info(cls, stage_name):
-        """Получить информацию об этапе"""
-        return cls.STAGES.get(stage_name, {
-            'name': 'Неизвестный этап',
-            'start': 0,
-            'end': 100,
-            'description': 'Выполнение операции'
-        })
+    def __init__(self, gui_callback=None):
+        """
+        Инициализация менеджера прогресса
+        
+        Args:
+            gui_callback: Функция для отправки обновлений в GUI
+        """
+        self.gui_callback = gui_callback
+        self.current_process = None
+        self.current_phase_index = 0
+        self.current_stage_index = 0
+        self.global_progress = 0.0
+        self.process_start_progress = 0.0
+        self.gui_instance = None  # Добавляем ссылку на GUI
+        self.current_update_phase = None  # Текущая фаза обновления
+        self.update_phase_start_stage = None  # Начальный этап для текущей фазы
+        
+    def start_process(self, process_type, process_name=None):
+        """
+        Начать отслеживание нового процесса
+        
+        Args:
+            process_type: Тип процесса (system_update, wine_install, app_install)
+            process_name: Название процесса (опционально)
+        """
+        if process_type not in self.PROCESS_DEFINITIONS:
+            raise ValueError(f"Неизвестный тип процесса: {process_type}")
+        
+        self.current_process = process_type
+        self.current_phase_index = 0
+        self.current_stage_index = 0
+        self.global_progress = 0.0
+        self.process_start_progress = 0.0
+        
+        process_info = self.PROCESS_DEFINITIONS[process_type]
+        display_name = process_name or process_info["name"]
+        
+        print(f"[PROGRESS_MANAGER] Начинаем процесс: {display_name}")
+        print(f"[PROGRESS_MANAGER] ProcessProgressManager успешно запущен и отслеживает процесс")
+        
+    def update_local_progress(self, stage_name, local_progress, details=""):
+        """
+        Обновить локальный прогресс этапа
+        
+        Args:
+            stage_name: Название этапа
+            local_progress: Локальный прогресс этапа (0-100)
+            details: Дополнительные детали
+        """
+        
+        if not self.current_process:
+            print("[WARNING] Процесс не инициализирован")
+            return
+        
+        process_def = self.PROCESS_DEFINITIONS[self.current_process]
+        phases = process_def["phases"]
+        
+        # Находим текущую фазу и этап
+        current_phase = phases[self.current_phase_index]
+        stage_info = current_phase["stages"].get(stage_name)
+        
+        if not stage_info:
+            print(f"[WARNING] Этап {stage_name} не найден в текущей фазе")
+            return
+        
+        # Вычисляем глобальный прогресс
+        phase_weight = current_phase["weight"]
+        stage_weight = stage_info["weight"]
+        
+        # Прогресс текущего этапа в рамках фазы (0-1)
+        stage_progress_in_phase = (local_progress / 100.0) * stage_weight
+        
+        # Прогресс текущей фазы в рамках всего процесса
+        phase_progress = stage_progress_in_phase
+        
+        # Обновляем глобальный прогресс (ограничиваем 100%)
+        self.global_progress = min(100.0, (self.process_start_progress + phase_progress) * 100.0)
+        
+        
+        # Отправляем обновление в GUI
+        self.send_progress_update(
+            self.global_progress,
+            stage_name,
+            local_progress,
+            stage_info["name"],
+            details
+        )
+        
+        print(f"[PROGRESS] {stage_info['name']}: {local_progress:.1f}% | Глобальный: {self.global_progress:.1f}%")
+        
+    def finish_current_phase(self):
+        """Завершить текущую фазу и перейти к следующей"""
+        if not self.current_process:
+            return
+        
+        process_def = self.PROCESS_DEFINITIONS[self.current_process]
+        phases = process_def["phases"]
+        
+        if self.current_phase_index < len(phases) - 1:
+            # Обновляем стартовый прогресс для следующей фазы
+            current_phase = phases[self.current_phase_index]
+            self.process_start_progress += current_phase["weight"]
+            self.current_phase_index += 1
+            self.current_stage_index = 0
+            
+            print(f"[PROGRESS] Переход к фазе: {phases[self.current_phase_index]['name']}")
+        
+    def finish_process(self):
+        """Завершить текущий процесс"""
+        if not self.current_process:
+            return
+        
+        # Устанавливаем глобальный прогресс в 100%
+        self.global_progress = 100.0
+        
+        process_info = self.PROCESS_DEFINITIONS[self.current_process]
+        
+        self.send_progress_update(
+            self.global_progress,
+            "finished",
+            100,
+            "Процесс завершен",
+            f"{process_info['name']} успешно завершен"
+        )
+        
+        print(f"[PROGRESS] Процесс {process_info['name']} завершен")
+        
+        # Сбрасываем состояние
+        self.current_process = None
+        self.current_phase_index = 0
+        self.current_stage_index = 0
+        self.global_progress = 0.0
+        self.process_start_progress = 0.0
+        
+    def send_progress_update(self, global_progress, stage_name, stage_progress, stage_display_name, details):
+        """Отправить обновление прогресса в GUI"""
+        
+        # Записываем в файл прогресса
+        self.write_progress_to_file(global_progress, stage_name, stage_progress, stage_display_name, details)
+        
+        if self.gui_callback:
+            # Отправляем в оригинальном формате (как было до изменений)
+            self.gui_callback({
+                'global_progress': global_progress,
+                'stage_name': stage_name,
+                'stage_progress': stage_progress,
+                'stage_display_name': stage_display_name,
+                'details': details
+            })
+        else:
+            pass
+
+    def write_progress_to_file(self, global_progress, stage_name, stage_progress, stage_display_name, details):
+        """Запись прогресса в файл progress_table"""
+        try:
+            import os
+            import datetime
+            
+            # Используем глобальный лог-файл
+            log_file_path = GLOBAL_LOG_FILE
+            
+            # Создаем путь к файлу прогресса
+            log_dir = os.path.dirname(log_file_path)
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            
+            # Создаем имя файла прогресса на основе основного лог-файла
+            main_log_name = os.path.basename(log_file_path)
+            progress_file_name = main_log_name.replace("astra_automation_", "progress_table_").replace(".log", ".txt")
+            progress_file = os.path.join(log_dir, progress_file_name)
+            
+            # Получаем timestamp
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            
+            # Извлекаем номер пакета из деталей
+            package_num = ""
+            if "Пакет" in details and ":" in details:
+                try:
+                    package_num = details.split("Пакет")[1].split(":")[0].strip()
+                except:
+                    package_num = ""
+            
+            # Формируем строку таблицы
+            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}\n"
+            
+            # Записываем в файл
+            with open(progress_file, 'a', encoding='utf-8') as f:
+                # Добавляем заголовок если файл пустой
+                if os.path.getsize(progress_file) == 0:
+                    header = "Время     | Этап           | Этапный% | Глобальный% | Пакет\n"
+                    f.write(header)
+                    f.write("-" * 60 + "\n")
+                f.write(table_line)
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка записи в файл прогресса: {e}")
     
-    @classmethod
-    def calculate_global_progress(cls, stage_name, stage_progress):
-        """Вычислить глобальный прогресс на основе этапа и его прогресса"""
-        stage_info = cls.get_stage_info(stage_name)
-        stage_range = stage_info['end'] - stage_info['start']
-        global_progress = stage_info['start'] + (stage_progress * stage_range / 100)
-        return min(100, max(0, global_progress))
+    def get_global_progress(self):
+        """Получить текущий глобальный прогресс"""
+        return self.global_progress
 
-
+# ============================================================================
+# ОБНОВЛЕНИЕ СИСТЕМЫ
+# ============================================================================
 class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
@@ -8715,12 +9013,17 @@ class SystemUpdater(object):
         self.min_free_space_gb = 2.0  # Минимум 2 ГБ свободного места
         self.min_free_memory_mb = 512  # Минимум 512 МБ свободной памяти
         
-        # Счетчики для накопительного прогресса
+        # Счетчики для накопительного прогресса (DEPRECATED - используем ProcessProgressManager)
         self.package_counter = 0
         self.total_packages = 1600  # Примерное количество пакетов
         self.current_stage = None
         self.unpack_counter = 0
         self.config_counter = 0
+        
+        # Новый менеджер прогресса
+        self.progress_manager = ProcessProgressManager(gui_callback=self.send_progress_to_gui)
+        self.progress_manager.gui_instance = self  # Устанавливаем ссылку на GUI
+        print("[PROGRESS_MANAGER] ProcessProgressManager успешно инициализирован и готов к работе")
         
         # Счетчики для расширенной статистики
         self.downloaded_packages = 0
@@ -8796,254 +9099,104 @@ class SystemUpdater(object):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
     
-    def parse_apt_progress_advanced(self, line):
-        """Расширенный парсинг прогресса apt-get для умного отображения"""
+    def start_log_monitoring(self, log_file_path=None):
+        """Запуск мониторинга лог-файла в отдельном потоке"""
         try:
-            import re
+            # Используем переданный путь к лог-файлу или глобальный
+            if log_file_path:
+                self.log_file_path = log_file_path
+            else:
+                self.log_file_path = GLOBAL_LOG_FILE
+            
+            # Запоминаем текущую позицию в лог-файле
+            if os.path.exists(self.log_file_path):
+                self.log_start_position = os.path.getsize(self.log_file_path)
+            else:
+                self.log_start_position = 0
+                
+            # Запускаем мониторинг в отдельном потоке
+            import threading
+            self.log_monitor_thread = threading.Thread(target=self._monitor_log_file)
+            self.log_monitor_thread.daemon = True
+            self.log_monitor_thread.start()
+            
+            print(f"[LOG_MONITOR] Мониторинг лог-файла запущен: {self.log_file_path}")
+            print(f"[LOG_MONITOR] Начальная позиция: {self.log_start_position}")
+        except Exception as e:
+            print(f"[LOG_MONITOR] Ошибка запуска мониторинга: {e}")
+    
+    def _monitor_log_file(self):
+        """Мониторинг лог-файла построчно"""
+        try:
             import time
             
-            # Этап 1: Чтение списков пакетов
-            if "Чтение списков пакетов" in line:
-                # ОТЛАДКА: Логируем переход к этапу
-                print(f"[DEBUG_STAGE] Переход к этапу: reading_lists (100%)")
-                self.send_stage_update("reading_lists", 100, "Получение списков пакетов", "")
-                return
-            
-            # Этап 2: Построение дерева зависимостей
-            elif "Построение дерева зависимостей" in line:
-                # ОТЛАДКА: Логируем переход к этапу
-                print(f"[DEBUG_STAGE] Переход к этапу: building_deps (100%)")
-                self.send_stage_update("building_deps", 100, "Анализ зависимостей", "")
-                return
-            
-            # Этап 3: Чтение состояния пакетов
-            elif "Чтение информации о состоянии" in line or "Чтение состояния пакетов" in line:
-                # ОТЛАДКА: Логируем переход к этапу
-                print(f"[DEBUG_STAGE] Переход к этапу: building_deps (50%)")
-                self.send_stage_update("building_deps", 50, "Чтение состояния пакетов", "")
-                return
-            
-            # Этап 4: Скачивание пакетов
-            elif line.startswith("Пол:"):
-                self.parse_download_progress(line)
-                return
-            
-            # Этап 5: Подготовка к распаковке
-            elif "Подготовка к распаковке" in line:
-                self.parse_unpack_progress(line, "preparing")
-                return
-            
-            # Этап 6: Распаковка пакетов
-            elif "Распаковывается" in line or "Распаковка" in line:
-                self.parse_unpack_progress(line, "unpacking")
-                return
-            
-            # Этап 7: Настройка пакетов
-            elif "Настраивается" in line or "Настройка" in line:
-                self.parse_config_progress(line)
-                return
-            
-            # Этап 8: Очистка системы
-            elif "Очистка" in line or "Удаление" in line:
-                self.send_stage_update("cleaning", 100, "Очистка системы", "")
-                return
-            
-            # Этап 9: Завершение (когда обновлений нет)
-            elif "Обновлено 0 пакетов" in line and "установлено 0 новых пакетов" in line:
-                self.send_stage_update("cleaning", 100, "Система актуальна - обновлений не требуется", "")
-                return
-            
-            # Этап 10: Расчёт обновлений
-            elif "Расчёт обновлений" in line:
-                self.send_stage_update("building_deps", 90, "Расчёт обновлений", "")
-                return
-            
-            # Этап 11: Успешное завершение обновления
-            elif "Обновлено" in line and "пакетов" in line and "установлено" in line:
-                # Определяем количество обновленных пакетов
-                import re
-                match = re.search(r'Обновлено (\d+) пакетов', line)
-                if match:
-                    updated_count = int(match.group(1))
-                    if updated_count == 0:
-                        self.send_stage_update("cleaning", 100, "Система актуальна - обновлений не требуется", "")
-                    else:
-                        self.send_stage_update("cleaning", 100, f"Обновлено {updated_count} пакетов", "")
-                return
+            with open(self.log_file_path, 'r', encoding='utf-8') as f:
+                # Переходим к позиции начала процесса
+                f.seek(self.log_start_position)
+                
+                while True:
+                    line = f.readline()
+                    if not line:
+                        time.sleep(0.1)  # Ждем новые строки
+                        continue
+                    
+                    # Обрабатываем строку через ProcessProgressManager
+                    self._process_log_line(line.rstrip())
                 
         except Exception as e:
-            # Игнорируем ошибки парсинга
-            pass
+            print(f"[LOG_MONITOR] Ошибка мониторинга: {e}")
     
-    def parse_download_progress(self, line):
-        """Парсинг прогресса скачивания пакетов"""
+    def _process_log_line(self, line):
+        """Обработка строки лог-файла через ProcessProgressManager"""
         try:
-            import re
-            
-            # Извлекаем номер пакета
-            match = re.match(r'Пол:(\d+)', line)
-            if match:
-                package_num = int(match.group(1))
-                
-                # Извлекаем размер пакета
-                size_match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
-                if size_match:
-                    size_value = float(size_match.group(1).replace(',', '.'))
-                    size_unit = size_match.group(2)
-                    
-                    # Конвертируем в MB
-                    if size_unit == 'KB':
-                        size_mb = size_value / 1024
-                    elif size_unit == 'MB':
-                        size_mb = size_value
-                    elif size_unit == 'GB':
-                        size_mb = size_value * 1024
-                    else:
-                        size_mb = 0
-                    
-                    # Извлекаем название пакета (исправленный алгоритм)
-                    package_name = ""
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part.endswith('amd64') or part.endswith('all'):
-                            # Ищем слово ПЕРЕД архитектурой, которое является именем пакета
-                            if i > 0:
-                                candidate = parts[i-1]
-                                # Проверяем что это не URL и не версия
-                                if not candidate.startswith('http') and not candidate.startswith('1.7_x86-64'):
-                                    package_name = candidate
-                                    break
-                    
-                    # Вычисляем прогресс скачивания (правильно)
-                    stage_progress = min(100, (package_num / self.total_packages) * 100)  # Правильная формула
-                    
-                    # Обновляем статистику скачивания
-                    self.downloaded_packages = package_num
-                    self.downloaded_size_mb += size_mb
-                    self.download_speed_mb = size_mb  # Последняя скорость
-                    
-                    # ОТЛАДКА: Логируем детали скачивания
-                    if hasattr(self, 'universal_runner') and self.universal_runner:
-                        debug_download = (
-                            f"[DEBUG_DOWNLOAD] Пакет {package_num}: {package_name} | "
-                            f"Размер: {size_value} {size_unit} | "
-                            f"Этапный прогресс: {stage_progress:.1f}% | "
-                            f"Формула: (package_num={package_num} / {self.total_packages}) * 100"
-                        )
-                        # ОТЛАДКА: Логируем детали скачивания
-                        print(debug_download)
-                    
-                    details = f"Пакет {package_num}: {package_name} ({size_value} {size_unit})"
-                    speed = f"{size_mb:.1f} MB"
-                    
-                    # Обновляем статус пакета в GUI
-                    if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
-                        self.gui_instance.update_package_status(package_name, 'downloaded')
-                    
-                    self.send_stage_update("downloading", stage_progress, details, speed)
-                    
+            if hasattr(self, 'progress_manager') and self.progress_manager:
+                # Используем наш новый класс для обработки строк
+                if "Чтение списков пакетов" in line:
+                    self.progress_manager.update_local_progress("reading_lists", 100, "Получение списков пакетов")
+                elif "Построение дерева зависимостей" in line:
+                    self.progress_manager.update_local_progress("analyzing", 0, "Анализ зависимостей")
+                elif "Чтение информации о состоянии" in line:
+                    self.progress_manager.update_local_progress("analyzing", 50, "Чтение состояния пакетов")
+                elif "Расчёт обновлений" in line:
+                    self.progress_manager.update_local_progress("analyzing", 100, "Расчёт обновлений")
+                elif "Обновлено 0 пакетов" in line:
+                    # Для системы без обновлений проходим все этапы плавно
+                    self.progress_manager.update_local_progress("downloading", 100, "Скачивание не требуется")
+                    self.progress_manager.update_local_progress("installing", 100, "Установка не требуется")
+                elif "Очистка" in line or "Удаление" in line:
+                    self.progress_manager.update_local_progress("cleaning", 100, "Очистка системы")
+                elif "Команда выполнена успешно" in line:
+                    # Завершаем текущую фазу
+                    self.progress_manager.finish_current_phase()
         except Exception as e:
-            pass
+            pass  # Игнорируем ошибки парсинга
     
-    def parse_unpack_progress(self, line, stage_type):
-        """Парсинг прогресса распаковки пакетов с накопительным прогрессом"""
-        try:
-            import re
-            
-            # Извлекаем название пакета
-            package_name = ""
-            if ":" in line:
-                package_name = line.split(":")[0].strip()
-            
-            # Увеличиваем счетчик пакетов для распаковки
-            self.unpack_counter += 1
-            
-            # Обновляем статистику распаковки
-            self.unpacked_packages = self.unpack_counter
-            
-            # Вычисляем накопительный прогресс в рамках этапа (0-100% для распаковки)
-            stage_progress = min(100, (self.unpack_counter / self.total_packages) * 100)
-            
-            # Определяем детали на основе типа операции
-            if stage_type == "preparing":
-                details = f"Подготовка: {package_name}"
-            else:  # unpacking
-                details = f"Распаковка: {package_name}"
-            
-            # Обновляем статус пакета в GUI
-            if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
-                self.gui_instance.update_package_status(package_name, 'unpacked')
-            
-            self.send_stage_update("unpacking_configuring", stage_progress, details, "")
-            
-        except Exception as e:
-            pass
-    
-    def parse_config_progress(self, line):
-        """Парсинг прогресса настройки пакетов с накопительным прогрессом"""
-        try:
-            import re
-            
-            # Извлекаем название пакета
-            package_name = ""
-            if ":" in line:
-                package_name = line.split(":")[0].strip()
-            
-            # Увеличиваем счетчик пакетов для настройки
-            self.config_counter += 1
-            
-            # Обновляем статистику настройки
-            self.configured_packages = self.config_counter
-            
-            # Вычисляем накопительный прогресс в рамках этапа (0-100% для настройки)
-            stage_progress = min(100, (self.config_counter / self.total_packages) * 100)
-            
-            details = f"Настройка: {package_name}"
-            
-            # Обновляем статус пакета в GUI
-            if hasattr(self, 'gui_instance') and self.gui_instance and package_name:
-                self.gui_instance.update_package_status(package_name, 'configured')
-            
-            self.send_stage_update("unpacking_configuring", stage_progress, details, "")
-            
-        except Exception as e:
-            pass
-    
-    def send_stage_update(self, stage_name, stage_progress, details, speed):
-        """Отправка обновления этапа в GUI"""
+    def send_progress_to_gui(self, progress_data):
+        """Отправка обновления прогресса в GUI через ProcessProgressManager"""
         try:
             import datetime
             
-            # Получаем информацию об этапе
-            stage_info = ProgressStages.get_stage_info(stage_name)
-            
-            # Вычисляем глобальный прогресс
-            global_progress = ProgressStages.calculate_global_progress(stage_name, stage_progress)
-            
             # Получаем timestamp для таблицы прогресса
             timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            
-            # Записываем в таблицу прогресса
-            self.write_progress_table(timestamp, stage_name, stage_progress, global_progress, details)
             
             # Получаем текущую статистику времени и дискового пространства
             time_text, disk_text = self.get_current_stats()
             
             # Формируем данные для GUI
-            progress_data = {
-                'stage_name': stage_info['name'],
-                'stage_progress': stage_progress,
-                'global_progress': global_progress,
-                'details': details,
-                'speed': speed,
-                'time_remaining': self.calculate_time_remaining(stage_progress),
+            gui_data = {
+                'stage_name': progress_data['stage_display_name'],
+                'stage_progress': progress_data['stage_progress'],
+                'global_progress': progress_data['global_progress'],
+                'details': progress_data['details'],
+                'speed': "",  # Будет заполнено позже
+                'time_remaining': self.calculate_time_remaining(progress_data['stage_progress']),
                 'time_elapsed': time_text,
                 'disk_usage': disk_text
             }
             
             # Отправляем в GUI через universal_runner
             if hasattr(self, 'universal_runner') and self.universal_runner:
-                self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(progress_data))
+                self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(gui_data))
                 
                 # Обновляем статистику в GUI
                 if hasattr(self, 'universal_runner') and self.universal_runner and hasattr(self.universal_runner, 'gui_instance'):
@@ -9059,43 +9212,7 @@ class SystemUpdater(object):
         except Exception as e:
             # Логируем ошибки отладки
             if hasattr(self, 'universal_runner') and self.universal_runner:
-                self.universal_runner.add_output(f"[DEBUG_ERROR] Ошибка в send_stage_update: {e}", level="ERROR")
-    
-    def write_progress_table(self, timestamp, stage_name, stage_progress, global_progress, details):
-        """Запись прогресса в отдельную таблицу для анализа"""
-        try:
-            import os
-            
-            # Получаем путь к файлу прогресса
-            log_dir = os.path.dirname(self.universal_runner.log_file) if hasattr(self, 'universal_runner') and self.universal_runner else "."
-            progress_file = os.path.join(log_dir, "progress_table.txt")
-            
-            print(f"[DEBUG] Записываем в таблицу прогресса: {progress_file}", channels=["gui_log"])
-            
-            # Извлекаем номер пакета из деталей
-            package_num = ""
-            if "Пакет" in details and ":" in details:
-                try:
-                    package_num = details.split("Пакет")[1].split(":")[0].strip()
-                except:
-                    package_num = ""
-            
-            # Формируем строку таблицы
-            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}\n"
-            
-            # Записываем в файл
-            with open(progress_file, 'a', encoding='utf-8') as f:
-                # Добавляем заголовок если файл пустой
-                if os.path.getsize(progress_file) == 0:
-                    header = "Время     | Этап           | Этапный% | Глобальный% | Пакет\n"
-                    f.write(header)
-                    f.write("-" * 60 + "\n")
-                f.write(table_line)
-                
-            print(f"[DEBUG] Строка записана в таблицу: {table_line.strip()}", channels=["gui_log"])
-                
-        except Exception as e:
-            print(f"[ERROR] Ошибка записи в таблицу прогресса: {e}", channels=["gui_log"])
+                self.universal_runner.add_output(f"[DEBUG_ERROR] Ошибка в send_progress_to_gui: {e}", level="ERROR")
     
     def get_extended_statistics(self):
         """Получение расширенной статистики для GUI"""
@@ -9142,15 +9259,9 @@ class SystemUpdater(object):
     
     def check_system_resources(self):
         """Проверка системных ресурсов перед обновлением"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         print("[SYSTEM] Проверка системных ресурсов...")
         print("[INFO] Начинаем проверку системных ресурсов")
         
@@ -9297,15 +9408,9 @@ class SystemUpdater(object):
     
     def _fix_dpkg_issues(self):
         """Автоматическое исправление проблем dpkg"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         print("   [TOOL] Исправляем проблемы dpkg...")
         print("[INFO] Начинаем исправление проблем dpkg")
         
@@ -9460,15 +9565,9 @@ class SystemUpdater(object):
     
     def _force_remove_broken_packages(self, broken_packages):
         """Принудительное удаление неработоспособных пакетов"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         
         try:
             for package in broken_packages[:3]:  # Обрабатываем максимум 3 пакета
@@ -9549,6 +9648,27 @@ class SystemUpdater(object):
         
         print(f"[START] Выполнение команды с автоматическими ответами: {cmd}", channels=["gui_log"])
         
+        # Определяем фазу обновления для парсера
+        cmd_str = ' '.join(cmd) if isinstance(cmd, list) else str(cmd)
+        if 'apt-get update' in cmd_str:
+            current_phase = "update"
+        elif 'apt-get dist-upgrade' in cmd_str:
+            current_phase = "dist-upgrade"
+        elif 'apt-get autoremove' in cmd_str:
+            current_phase = "autoremove"
+        else:
+            current_phase = None
+        
+        # Передаем информацию о текущей фазе в ProcessProgressManager
+        if hasattr(self, 'progress_manager') and self.progress_manager:
+            self.progress_manager.current_update_phase = current_phase
+            if current_phase == "update":
+                self.progress_manager.update_phase_start_stage = "reading_lists"
+            elif current_phase == "dist-upgrade":
+                self.progress_manager.update_phase_start_stage = "downloading"
+            elif current_phase == "autoremove":
+                self.progress_manager.update_phase_start_stage = "cleaning"
+        
         # Определяем тип команды для лога GUI
         if 'apt-get update' in ' '.join(cmd):
             print("[INFO] Обновление списков пакетов...", channels=["gui_log"])
@@ -9609,8 +9729,8 @@ class SystemUpdater(object):
                 # Выводим строку
                 print("   %s" % line.rstrip())
                 
-                # Парсим прогресс apt-get для обновления GUI
-                self.parse_apt_progress_advanced(line.rstrip())
+                # Парсинг теперь обрабатывается через мониторинг лог-файла
+                # Старый парсинг удален - используем ProcessProgressManager
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
@@ -9698,15 +9818,9 @@ class SystemUpdater(object):
     
     def _recover_from_segfault(self):
         """Восстановление системы после ошибки сегментации"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         print("   [RECOVERY] Начинаем восстановление системы...")
         print("[INFO] Начинаем восстановление системы после ошибки сегментации")
         
@@ -9754,18 +9868,44 @@ class SystemUpdater(object):
             print("   [ERROR] Ошибка восстановления системы: %s" % str(e))
             return False
     
+    def reset_progress_bars(self):
+        """Сброс всех прогресс-баров в начальное состояние"""
+        try:
+            # Отправляем сброс прогресса в GUI
+            reset_data = {
+                'stage_name': 'Подготовка...',
+                'stage_progress': 0,
+                'global_progress': 0,
+                'details': '',
+                'speed': '',
+                'time_remaining': '',
+                'time_elapsed': '0 мин 0 сек',
+                'disk_usage': '0 MB'
+            }
+            
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(reset_data))
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
+    
     def update_system(self, dry_run=False):
         """Обновление системы"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
         
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
         print("[PACKAGE] Обновление системы...")
+        
+        # Инициализируем менеджер прогресса для обновления системы
+        self.progress_manager.start_process("system_update", "Обновление системы")
+        
+        # Запускаем мониторинг лог-файла с правильным путем
+        self.start_log_monitoring(log_file)
+        
+        # Сбрасываем счетчики статистики
+        self.downloaded_packages = 0
+        self.unpacked_packages = 0
+        self.configured_packages = 0
         
         # Начинаем мониторинг времени и дискового пространства
         if hasattr(self, 'system_updater') and self.system_updater:
@@ -9795,6 +9935,10 @@ class SystemUpdater(object):
         update_cmd = ['apt-get', 'update']
         result = self.run_command_with_interactive_handling(update_cmd, dry_run, gui_terminal=True)
         
+        # Завершаем фазу apt-get update
+        if result == 0:
+            self.progress_manager.finish_current_phase()
+        
         if result != 0:
             print("[ERROR] Ошибка обновления списков пакетов")
             return False
@@ -9813,6 +9957,10 @@ class SystemUpdater(object):
                       '-o', 'Dpkg::Options::=--force-confold',
                       '-o', 'Dpkg::Options::=--force-confmiss']
         result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
+        
+        # Завершаем фазу apt-get dist-upgrade
+        if result == 0:
+            self.progress_manager.finish_current_phase()
         
         # Обрабатываем результат обновления
         if result == 0:
@@ -9833,7 +9981,10 @@ class SystemUpdater(object):
                             '-o', 'Dpkg::Options::=--force-confmiss']
             autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run, gui_terminal=True)
             
+            # Завершаем фазу apt-get autoremove и весь процесс
             if autoremove_result == 0:
+                self.progress_manager.finish_current_phase()
+                self.progress_manager.finish_process()
                 print("[OK] Ненужные пакеты успешно удалены")
             else:
                 print("[WARNING] Предупреждение: не удалось удалить ненужные пакеты")
@@ -9900,15 +10051,9 @@ class SystemUpdater(object):
     
     def _safe_update_retry(self):
         """Безопасное повторное обновление после ошибки сегментации"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         print("[SAFE] Безопасное повторное обновление...")
         print("[INFO] Начинаем безопасное повторное обновление")
         
@@ -9951,15 +10096,9 @@ class SystemUpdater(object):
     
     def auto_fix_dpkg_errors(self):
         """Автоматическое исправление ошибок dpkg"""
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         print("[TOOL] Автоматическое исправление ошибок dpkg...")
         print("[INFO] Начинаем автоматическое исправление ошибок dpkg")
         
@@ -10377,21 +10516,19 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         gui = AutomationGUI(console_mode=False, close_terminal_pid=close_terminal_pid)
         
         # Устанавливаем лог-файл для GUI
-        # Создаем лог-файл напрямую
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
-        
-        # Создаем директорию Log если нужно
-        log_dir = os.path.dirname(log_file)
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        # Используем глобальный лог-файл
+        log_file = GLOBAL_LOG_FILE
+
         gui.main_log_file = log_file
         
         print("   [OK] GUI создан успешно, настраиваем universal_runner...")
         
         # Передаем единый logger в GUI
         gui.universal_runner = get_global_universal_runner()
+        
+        # Устанавливаем путь к лог-файлу в universal_runner (переданный от bash)
+        gui.universal_runner.set_log_file(log_file)
+        print(f"[LOG_FILE] Установлен путь к лог-файлу в universal_runner: {log_file}")
         gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
         gui.universal_runner.gui_log_callback = gui.add_gui_log_output  # УСТАНАВЛИВАЕМ GUI LOG CALLBACK!
         gui.universal_runner.setup_print_redirect()  # ВКЛЮЧЕНО: рекурсия исправлена
@@ -10756,17 +10893,27 @@ def main():
     """Основная функция"""
     # Проверяем аргументы командной строки для лог-файла
     log_file = None
+    print(f"[DEBUG_ARGS] Все аргументы: {sys.argv}")
     if len(sys.argv) > 1:
         for i, arg in enumerate(sys.argv):
+            print(f"[DEBUG_ARGS] Аргумент {i}: '{arg}'")
             if arg == '--log-file' and i + 1 < len(sys.argv):
                 log_file = sys.argv[i + 1]
+                print(f"[DEBUG_ARGS] Найден лог-файл: '{log_file}'")
                 break
+    
+    print(f"[DEBUG_ARGS] Итоговый log_file: '{log_file}'")
     
     # Если не передан, создаем автоматически
     if log_file is None:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         script_dir = os.path.dirname(os.path.abspath(__file__))
         log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+    
+    # Создаем глобальную переменную для лог-файла
+    global GLOBAL_LOG_FILE
+    GLOBAL_LOG_FILE = log_file
+    print(f"[GLOBAL_LOG] Установлен глобальный лог-файл: {GLOBAL_LOG_FILE}")
     
     # Создаем директорию Log если нужно
     log_dir = os.path.dirname(log_file)

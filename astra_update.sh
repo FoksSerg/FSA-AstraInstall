@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.2.60 (2025.10.15)
+# Версия: V2.2.6061 (2025.10.16)
 
 # Функция логирования
 log_message() {
@@ -125,8 +125,6 @@ log_message "Все файлы успешно скопированы!"
 # Очищаем логи
 log_message "Очистка старых логов..."
 rm -rf "$LINUX_ASTRA_PATH/Log" 2>/dev/null
-rm -f "$LINUX_ASTRA_PATH/astra_automation_*.log" 2>/dev/null
-rm -f "$LINUX_ASTRA_PATH/progress_table.txt" 2>/dev/null
 log_message "Старые логи удалены"
 
 # Устанавливаем права
