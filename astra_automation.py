@@ -6,11 +6,11 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.2.58 (2025.10.15)
+Версия: V2.2.59 (2025.10.15)
 """
 
 # Версия приложения
-APP_VERSION = "V2.2.58"
+APP_VERSION = "V2.2.59"
 import os
 import sys
 import tempfile
@@ -5243,7 +5243,7 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION}")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.15)")
         
         # Делаем окно всплывающим поверх других окон на 3 секунды
         self.root.attributes('-topmost', True)
