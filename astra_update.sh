@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.2.59 (2025.10.15)
+# Версия: V2.2.60 (2025.10.15)
 
 # Функция логирования
 log_message() {
@@ -21,11 +21,55 @@ FILES_TO_COPY=(
 
 log_message "Запуск обновления FSA-AstraInstall"
 
+# Определяем PID терминала ДО запуска с sudo
+TERMINAL_PID=""
+
+# Список методов определения PID (по приоритету)
+methods=(
+    "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
+    "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
+    "\$PPID"                                                             # Метод 3 - простой fallback
+    "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
+    "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
+    "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
+)
+
+# Проверяем каждый метод по очереди
+for i in "${!methods[@]}"; do
+    method="${methods[$i]}"
+    candidate_pid=$(eval "$method" 2>/dev/null)
+    
+    # Проверяем существование и тип процесса
+    if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
+        process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
+        
+        # Проверяем что это терминал
+        if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
+            TERMINAL_PID="$candidate_pid"
+            break  # ВЫХОДИМ ИЗ ЦИКЛА!
+        fi
+    fi
+done
+
+# Fallback если ничего не найдено
+if [ -z "$TERMINAL_PID" ]; then
+    TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+fi
+
+export TERMINAL_PID
+
 # Проверяем права root
 if [ "$EUID" -ne 0 ]; then
-    log_message "Запуск с правами root..."
-    sudo "$0" "$@" 2>/dev/null
+    log_message "Запуск с правами root (передаем PID терминала через аргумент)..."
+    sudo "$0" --terminal-pid "$TERMINAL_PID" "$@" 2>/dev/null
     exit $?
+fi
+
+# КРИТИЧНО: Если мы получили PID через аргумент, используем его (НЕ перезапускаем поиск!)
+if [ ! -z "$1" ] && [[ "$1" == "--terminal-pid" ]]; then
+    TERMINAL_PID="$2"
+    log_message "Используем переданный PID терминала: $TERMINAL_PID"
+    shift 2  # Убираем --terminal-pid и значение из аргументов
 fi
 
 # Проверяем доступность сервера
@@ -95,8 +139,8 @@ log_message "Права установлены"
 log_message "Запуск установки..."
 cd "$LINUX_ASTRA_PATH" 2>/dev/null
 if [ -f "astra_install.sh" ]; then
-    log_message "Запускаем: ./astra_install.sh"
-    ./astra_install.sh
+    log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID"
+    ./astra_install.sh --terminal-pid "$TERMINAL_PID"
 else
     log_message "ОШИБКА: Файл astra_install.sh не найден"
     echo "Ошибка Обновления"

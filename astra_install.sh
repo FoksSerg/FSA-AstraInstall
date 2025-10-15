@@ -1,13 +1,13 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.2.59 (2025.10.15)
+# Версия: V2.2.60 (2025.10.15)
 
 # ============================================================
 # БЛОК 1: ИНИЦИАЛИЗАЦИЯ ЛОГОВ И ФУНКЦИЙ
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.2.59"
+SCRIPT_VERSION="V2.2.60"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -178,6 +178,7 @@ echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
 echo "Аргументы командной строки: $*" >> "$LOG_FILE"
 echo "============================================================" >> "$LOG_FILE"
 
+
 echo "============================================================"
 echo "ASTRA AUTOMATION - АВТОМАТИЧЕСКАЯ УСТАНОВКА И ЗАПУСК"
 echo "============================================================"
@@ -190,6 +191,7 @@ log_message "Начинаем выполнение astra_install.sh"
 # Обрабатываем аргументы командной строки
 CONSOLE_MODE=false
 DRY_RUN=false
+TERMINAL_PID_ARG=""
 
 for arg in "$@"; do
     case $arg in
@@ -203,12 +205,31 @@ for arg in "$@"; do
             echo "[i] Режим: ТЕСТИРОВАНИЕ (dry-run)"
             log_message "Включен режим тестирования (--dry-run)"
             ;;
+        --terminal-pid=*)
+            TERMINAL_PID_ARG="${arg#*=}"
+            log_message "Получен PID терминала через аргумент: $TERMINAL_PID_ARG"
+            ;;
+        --terminal-pid)
+            # Обрабатываем следующий аргумент как PID терминала
+            shift
+            TERMINAL_PID_ARG="$1"
+            log_message "Получен PID терминала через аргумент: $TERMINAL_PID_ARG"
+            ;;
+        [0-9]*)
+            # Пропускаем числовые аргументы (это PID терминала после --terminal-pid)
+            log_message "Пропускаем числовой аргумент: $arg"
+            ;;
         *)
-            echo "[!] Неизвестный аргумент: $arg"
             log_message "Неизвестный аргумент: $arg"
             ;;
     esac
 done
+
+# КРИТИЧНО: Если получен PID терминала через аргумент, используем его
+if [ ! -z "$TERMINAL_PID_ARG" ]; then
+    TERMINAL_PID="$TERMINAL_PID_ARG"
+    log_message "Используем PID терминала из аргумента: $TERMINAL_PID"
+fi
 
 # Проверяем права root и автоматически перезапускаемся через sudo если нужно
 if [ "$EUID" -ne 0 ]; then
@@ -577,6 +598,13 @@ log_message "Лог файл: $LOG_FILE"
         # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
         log_message "Начинаем поиск PID терминала с проверкой процессов"
         
+        # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
+        if [ ! -z "$TERMINAL_PID" ]; then
+            log_message "Используем переданный PID терминала: $TERMINAL_PID"
+            # TERMINAL_PID уже установлен, не нужно переприсваивать
+        else
+            log_message "Переданный PID терминала не найден, используем алгоритм поиска"
+        
         # Список методов определения PID (по приоритету)
         methods=(
             "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
@@ -590,57 +618,45 @@ log_message "Лог файл: $LOG_FILE"
         # Проверяем каждый метод по очереди
         for i in "${!methods[@]}"; do
             method="${methods[$i]}"
-            # Проверяем каждый метод (детали только в лог)
+            # Проверяем каждый метод
             candidate_pid=$(eval "$method" 2>/dev/null)
-            log_message "Метод $((i+1)) определения PID: $candidate_pid"
             
             # Проверяем существование и тип процесса
             if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
                 process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
-                log_message "Процесс $candidate_pid существует, имя: $process_name"
                 
                 # Проверяем что это терминал
                 if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
-                    TERM_PID="$candidate_pid"
-                    echo "   [OK] Найден терминал: PID=$candidate_pid, имя=$process_name"
-                    log_message "[OK] НАЙДЕН ТЕРМИНАЛ: PID=$candidate_pid, имя=$process_name"
+                    TERMINAL_PID="$candidate_pid"
+                    log_message "Найден терминал: PID=$candidate_pid, имя=$process_name"
                     break  # ВЫХОДИМ ИЗ ЦИКЛА!
-                else
-                    log_message "Процесс $candidate_pid не является терминалом"
                 fi
-            else
-                log_message "Процесс $candidate_pid не существует"
             fi
         done
         
         # Fallback если ничего не найдено
-        if [ -z "$TERM_PID" ]; then
-            echo "   [WARNING] Терминал не найден, используем первый метод как fallback"
-            log_message "WARNING: Терминал не найден, используем первый метод как fallback"
-            TERM_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+        if [ -z "$TERMINAL_PID" ]; then
+            log_message "Терминал не найден, используем первый метод как fallback"
+            TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
         fi
         
+        fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
         
-        log_message "PID bash скрипта: $$"
-        log_message "PID родителя bash скрипта: $PPID"
-        log_message "PID окна терминала: $TERM_PID"
-        log_message "Команда запуска Python: python3 astra_automation.py --log-file \"$LOG_FILE\" --close-terminal \"$TERM_PID\" --mode \"$START_MODE\" $@"
+        
+        log_message "PID окна терминала: $TERMINAL_PID"
         
         # Сворачиваем терминал перед запуском GUI
-        echo "   [i] Сворачиваем терминал перед запуском GUI"
         log_message "Сворачиваем терминал перед запуском GUI"
         
         # Сворачиваем окно терминала (работает на большинстве терминалов)
         wmctrl -r :ACTIVE: -b add,hidden 2>/dev/null || true
         
         # Запускаем GUI с передачей PID терминала для автозакрытия
-        nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERM_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+        nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
         PYTHON_PID=$!
         
-        echo "   [OK] GUI запущен (PID: $PYTHON_PID)"
-        echo "   [i] Терминал закроется автоматически после полного запуска GUI"
         log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
-        log_message "GUI закроет терминал (PID: $TERM_PID) после полного запуска"
+        log_message "GUI закроет терминал (PID: $TERMINAL_PID) после полного запуска"
         
         PYTHON_EXIT_CODE=0
     fi
