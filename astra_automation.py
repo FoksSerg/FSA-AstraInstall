@@ -6,11 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.2.61 (2025.10.16)
+Версия: V2.2.65 (2025.10.16)
+Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.2.61"
+APP_VERSION = "V2.2.65"
 import os
 import sys
 import tempfile
@@ -9105,13 +9106,13 @@ class SystemUpdater(object):
             # Используем переданный путь к лог-файлу или глобальный
             if log_file_path:
                 self.log_file_path = log_file_path
-            else:
+                    else:
                 self.log_file_path = GLOBAL_LOG_FILE
             
             # Запоминаем текущую позицию в лог-файле
             if os.path.exists(self.log_file_path):
                 self.log_start_position = os.path.getsize(self.log_file_path)
-            else:
+                    else:
                 self.log_start_position = 0
                 
             # Запускаем мониторинг в отдельном потоке
@@ -9142,7 +9143,7 @@ class SystemUpdater(object):
                     
                     # Обрабатываем строку через ProcessProgressManager
                     self._process_log_line(line.rstrip())
-                
+            
         except Exception as e:
             print(f"[LOG_MONITOR] Ошибка мониторинга: {e}")
     
