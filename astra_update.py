@@ -3,7 +3,7 @@
 """
 Скрипт автоматического обновления FSA-AstraInstall для macOS
 Использует AppleScript для обхода ограничений карантина
-Версия: V2.3.71 (2025.10.23)
+Версия: V2.3.72 (2025.10.24)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
@@ -125,8 +125,8 @@ def show_message(title, message):
         button = tk.Button(dialog, text="OK", command=lambda: root.quit(), width=10)
         button.pack(pady=10)
         
-        # Автозакрытие через 2 секунды
-        dialog.after(2000, lambda: root.quit())
+        # Автозакрытие через 0,5 секунды
+        dialog.after(500, lambda: root.quit())
         
         # Показываем окно
         root.mainloop()
