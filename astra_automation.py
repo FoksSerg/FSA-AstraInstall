@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.2.6566 (2025.10.16)
+Версия: V2.2.6866 (2025.10.23)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.2.6566"
+APP_VERSION = "V2.2.6866"
 import os
 import sys
 import tempfile
@@ -5271,7 +5271,7 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.16)")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.23)")
         
         # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
@@ -5367,6 +5367,14 @@ class AutomationGUI(object):
         # Создаем SystemUpdater сразу для доступности ProcessProgressManager
         self.system_updater = SystemUpdater(self.universal_runner)
         self.system_updater.gui_instance = self  # Передаем ссылку на GUI
+        
+        # Передаем ссылки на детальные бары для прямого обновления
+        self.system_updater.download_progress = self.download_progress
+        self.system_updater.unpack_progress = self.unpack_progress
+        self.system_updater.config_progress = self.config_progress
+        self.system_updater.download_label = self.download_label
+        self.system_updater.unpack_label = self.unpack_label
+        self.system_updater.config_label = self.config_label
         print("[SYSTEM_UPDATER] SystemUpdater создан в __init__ GUI!")
         
         # Перенаправляем stdout и stderr на встроенный терминал GUI
@@ -5598,19 +5606,12 @@ class AutomationGUI(object):
         self.system_info_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.system_info_frame, text=" Информация о Системе ")
         
-        # Вкладка Пакеты
-        self.packages_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.packages_frame, text=" Пакеты ")
-        
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
         self.system_info_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
         
         # Создаем элементы основной вкладки
         self.create_main_tab()
-        
-        # Создаем элементы вкладки пакетов
-        self.create_packages_tab()
         
         # Создаем элементы вкладки Wine
         self.create_wine_tab()
@@ -5747,9 +5748,33 @@ class AutomationGUI(object):
                                        font=("Arial", 10, "bold"), fg="blue")
         self.stage_label.pack(anchor=self.tk.W, padx=5, pady=(5, 2))
         
-        # Этапный прогресс-бар
-        self.stage_progress = self.tk.ttk.Progressbar(detail_frame, length=400, mode='determinate')
-        self.stage_progress.pack(fill=self.tk.X, padx=5, pady=2)
+        # Три этапных прогресс-бара
+        # Загрузка
+        download_frame = self.tk.Frame(detail_frame)
+        download_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        self.tk.Label(download_frame, text="Загрузка:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.download_label = self.tk.Label(download_frame, text="0/0 (0%)", font=('Arial', 9))
+        self.download_label.pack(side=self.tk.LEFT, padx=(5, 10))
+        self.download_progress = self.ttk.Progressbar(download_frame, mode='determinate')
+        self.download_progress.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=(0, 5))
+        
+        # Распаковка
+        unpack_frame = self.tk.Frame(detail_frame)
+        unpack_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        self.tk.Label(unpack_frame, text="Распаковка:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.unpack_label = self.tk.Label(unpack_frame, text="0/0 (0%)", font=('Arial', 9))
+        self.unpack_label.pack(side=self.tk.LEFT, padx=(5, 10))
+        self.unpack_progress = self.ttk.Progressbar(unpack_frame, mode='determinate')
+        self.unpack_progress.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=(0, 5))
+        
+        # Настройка
+        config_frame = self.tk.Frame(detail_frame)
+        config_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        self.tk.Label(config_frame, text="Настройка:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.config_label = self.tk.Label(config_frame, text="0/0 (0%)", font=('Arial', 9))
+        self.config_label.pack(side=self.tk.LEFT, padx=(5, 10))
+        self.config_progress = self.ttk.Progressbar(config_frame, mode='determinate')
+        self.config_progress.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=(0, 5))
         
         # Детали операции
         self.detail_label = self.tk.Label(detail_frame, text="", 
@@ -5839,183 +5864,6 @@ class AutomationGUI(object):
         
         # Повторяем каждые 2 секунды
         self.root.after(2000, self.periodic_stats_update)
-    
-    def create_packages_tab(self):
-        """Создание вкладки управления пакетами"""
-        # Заголовок
-        title_frame = self.tk.LabelFrame(self.packages_frame, text="Список пакетов для обновления")
-        title_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        info_label = self.tk.Label(title_frame, 
-                                   text="Отслеживание статуса пакетов в процессе обновления",
-                                   font=('Arial', 10))
-        info_label.pack(padx=10, pady=5)
-        
-        # Создаем фрейм для таблицы пакетов с прокруткой
-        table_frame = self.tk.Frame(self.packages_frame)
-        table_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
-        
-        # Создаем Treeview для таблицы пакетов
-        self.packages_tree = self.ttk.Treeview(table_frame, 
-                                             columns=('package', 'downloaded', 'unpacked', 'configured'),
-                                             show='headings',
-                                             height=15)
-        
-        # Настраиваем заголовки столбцов с сортировкой
-        self.packages_tree.heading('package', text='Имя пакета', command=lambda: self.sort_packages('package'))
-        self.packages_tree.heading('downloaded', text='Скачан', command=lambda: self.sort_packages('downloaded'))
-        self.packages_tree.heading('unpacked', text='Распакован', command=lambda: self.sort_packages('unpacked'))
-        self.packages_tree.heading('configured', text='Настроен', command=lambda: self.sort_packages('configured'))
-        
-        # Настраиваем ширину столбцов
-        self.packages_tree.column('package', width=300, minwidth=200)
-        self.packages_tree.column('downloaded', width=80, minwidth=60)
-        self.packages_tree.column('unpacked', width=80, minwidth=60)
-        self.packages_tree.column('configured', width=80, minwidth=60)
-        
-        # Создаем вертикальную прокрутку
-        packages_scrollbar = self.ttk.Scrollbar(table_frame, orient=self.tk.VERTICAL, command=self.packages_tree.yview)
-        self.packages_tree.configure(yscrollcommand=packages_scrollbar.set)
-        
-        # Размещаем Treeview и Scrollbar
-        self.packages_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
-        packages_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
-        
-        # Настраиваем теги для цветовой индикации
-        self.packages_tree.tag_configure('not_processed', foreground='gray')
-        self.packages_tree.tag_configure('downloaded', foreground='blue')
-        self.packages_tree.tag_configure('unpacked', foreground='purple')
-        self.packages_tree.tag_configure('configured', foreground='green')
-        
-        # Статистика пакетов
-        stats_frame = self.tk.LabelFrame(self.packages_frame, text="Статистика пакетов")
-        stats_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        stats_inner = self.tk.Frame(stats_frame)
-        stats_inner.pack(fill=self.tk.X, padx=5, pady=5)
-        
-        self.tk.Label(stats_inner, text="Всего пакетов:").grid(row=0, column=0, sticky=self.tk.W)
-        self.total_packages_label = self.tk.Label(stats_inner, text="0")
-        self.total_packages_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 20))
-        
-        self.tk.Label(stats_inner, text="Обработано:").grid(row=0, column=2, sticky=self.tk.W)
-        self.processed_packages_label = self.tk.Label(stats_inner, text="0")
-        self.processed_packages_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 20))
-        
-        # Легенда цветов
-        legend_frame = self.tk.LabelFrame(self.packages_frame, text="Легенда")
-        legend_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        legend_inner = self.tk.Frame(legend_frame)
-        legend_inner.pack(fill=self.tk.X, padx=5, pady=5)
-        
-        self.tk.Label(legend_inner, text="- - не обработан", fg="gray").pack(side=self.tk.LEFT, padx=5)
-        self.tk.Label(legend_inner, text="YES - скачан", fg="blue").pack(side=self.tk.LEFT, padx=5)
-        self.tk.Label(legend_inner, text="YES - распакован", fg="purple").pack(side=self.tk.LEFT, padx=5)
-        self.tk.Label(legend_inner, text="YES - настроен", fg="green").pack(side=self.tk.LEFT, padx=5)
-    
-    def update_packages_list(self, packages_list):
-        """Обновление списка пакетов в GUI с таблицей статусов"""
-        try:
-            if hasattr(self, 'packages_tree'):
-                # Очищаем таблицу
-                for item in self.packages_tree.get_children():
-                    self.packages_tree.delete(item)
-                
-                # Добавляем пакеты в таблицу
-                for i, package in enumerate(packages_list):
-                    # Извлекаем короткое имя пакета (до первого /)
-                    package_name = package.split('/')[0] if '/' in package else package
-                    
-                    # Добавляем строку в таблицу
-                    item_id = self.packages_tree.insert('', 'end', 
-                                                       values=(package_name, '-', '-', '-'),
-                                                       tags=('not_processed',))
-                    
-                    # Сохраняем полное имя пакета в теге для обновления статуса
-                    self.packages_tree.set(item_id, 'package', package_name)
-                
-                # Обновляем статистику
-                if hasattr(self, 'total_packages_label'):
-                    self.total_packages_label.config(text=str(len(packages_list)))
-                    
-        except Exception as e:
-            pass  # Игнорируем ошибки обновления списка
-    
-    def update_package_status(self, package_name, status):
-        """Обновление статуса конкретного пакета в таблице"""
-        try:
-            if hasattr(self, 'packages_tree'):
-                # Ищем пакет в таблице
-                for item in self.packages_tree.get_children():
-                    table_package = self.packages_tree.item(item, 'values')[0]
-                    if table_package == package_name:
-                        # Обновляем статус в зависимости от этапа
-                        if status == 'downloaded':
-                            self.packages_tree.set(item, 'downloaded', 'YES')
-                            self.packages_tree.item(item, tags=('downloaded',))
-                            print(f"[DEBUG] Обновлен статус пакета {package_name}: скачан", channels=["gui_log"])
-                        elif status == 'unpacked':
-                            self.packages_tree.set(item, 'unpacked', 'YES')
-                            self.packages_tree.item(item, tags=('unpacked',))
-                            print(f"[DEBUG] Обновлен статус пакета {package_name}: распакован", channels=["gui_log"])
-                        elif status == 'configured':
-                            self.packages_tree.set(item, 'configured', 'YES')
-                            self.packages_tree.item(item, tags=('configured',))
-                            print(f"[DEBUG] Обновлен статус пакета {package_name}: настроен", channels=["gui_log"])
-                        
-                        # Принудительно обновляем GUI
-                        self.root.update_idletasks()
-                        break
-                        
-        except Exception as e:
-            print(f"[ERROR] Ошибка обновления статуса пакета {package_name}: {e}", channels=["gui_log"])
-    
-    def sort_packages(self, column):
-        """Сортировка пакетов по выбранному столбцу"""
-        try:
-            if hasattr(self, 'packages_tree'):
-                # Получаем все элементы
-                items = [(self.packages_tree.set(child, column), child) for child in self.packages_tree.get_children('')]
-                
-                # Определяем направление сортировки
-                if hasattr(self, '_sort_reverse'):
-                    self._sort_reverse = not self._sort_reverse
-                else:
-                    self._sort_reverse = False
-                
-                # Сортируем элементы
-                if column == 'package':
-                    # Для имени пакета - алфавитная сортировка
-                    items.sort(key=lambda x: x[0].lower(), reverse=self._sort_reverse)
-                else:
-                    # Для статусов - сначала YES, потом -, потом по алфавиту
-                    def sort_key(item):
-                        value = item[0]
-                        if value == 'YES':
-                            return (0, value)
-                        elif value == '-':
-                            return (1, value)
-                        else:
-                            return (2, value)
-                    
-                    items.sort(key=sort_key, reverse=self._sort_reverse)
-                
-                # Перестраиваем таблицу
-                for index, (value, child) in enumerate(items):
-                    self.packages_tree.move(child, '', index)
-                
-                # Обновляем заголовок с указанием направления сортировки
-                direction = "↓" if self._sort_reverse else "↑"
-                current_text = self.packages_tree.heading(column, 'text')
-                if current_text.endswith('↑') or current_text.endswith('↓'):
-                    current_text = current_text[:-1]
-                self.packages_tree.heading(column, text=f"{current_text} {direction}")
-                
-                print(f"[DEBUG] Сортировка по столбцу '{column}' выполнена", channels=["gui_log"])
-                
-        except Exception as e:
-            print(f"[ERROR] Ошибка сортировки: {e}", channels=["gui_log"])
     
     def create_repos_tab(self):
         """Создание вкладки управления репозиториями"""
@@ -8144,12 +7992,6 @@ Path={os.path.dirname(script_path)}
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text=progress_data['stage_name'])
             
-            if hasattr(self, 'stage_progress'):
-                if "Система актуальна" in progress_data['stage_name']:
-                    self.stage_progress['value'] = 100  # Полный прогресс для актуальной системы
-                else:
-                    self.stage_progress['value'] = progress_data['stage_progress']
-            
             if hasattr(self, 'detail_label'):
                 self.detail_label.config(text=progress_data['details'])
                 # Принудительно обновляем GUI только если открыта вкладка "Управление"
@@ -8190,6 +8032,103 @@ Path={os.path.dirname(script_path)}
             # Игнорируем ошибки парсинга
             pass
     
+    def handle_universal_progress(self, message):
+        """Обработка универсального прогресса от нового парсера"""
+        try:
+            # Если message уже словарь - используем его напрямую
+            if isinstance(message, dict):
+                progress_data = message
+            else:
+                # Если строка - парсим её
+                import ast
+                data_str = message.replace("[UNIVERSAL_PROGRESS] ", "")
+                
+                # Проверяем что это словарь (начинается с {)
+                if not data_str.strip().startswith('{'):
+                    return
+                    
+                try:
+                    progress_data = ast.literal_eval(data_str)
+                except Exception as e:
+                    return
+            
+            
+            # Обновляем детальные бары если есть данные
+            if hasattr(self, 'system_updater') and self.system_updater and 'download_progress' in progress_data:
+                self.system_updater.update_detailed_bars(progress_data)
+            
+            # Обновляем старые элементы для совместимости
+            if hasattr(self, 'stage_label'):
+                self.stage_label.config(text=progress_data['stage_name'])
+            if hasattr(self, 'detail_label'):
+                self.detail_label.config(text=progress_data['details'])
+                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
+                    self.root.update_idletasks()
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
+                
+        except Exception as e:
+            pass
+
+    def handle_real_time_progress(self, message):
+        """Обработка прогресса в реальном времени от нового парсера"""
+        try:
+            import ast
+            
+            
+            # Извлекаем данные прогресса
+            data_str = message.replace("[REAL_TIME_PROGRESS] ", "")
+            progress_data = ast.literal_eval(data_str)
+            
+            # Обновляем глобальный прогресс (внизу формы)
+            if hasattr(self, 'wine_progress'):
+                self.wine_progress['value'] = progress_data['global_progress']
+            
+            # Обновляем детальные бары если есть данные
+            if hasattr(self, 'system_updater') and self.system_updater and 'download_progress' in progress_data:
+                self.system_updater.update_detailed_bars(progress_data)
+            
+            # Обновляем детальный прогресс (на вкладке Управление)
+            if hasattr(self, 'stage_label'):
+                self.stage_label.config(text=progress_data['stage_name'])
+            
+            
+            if hasattr(self, 'detail_label'):
+                self.detail_label.config(text=progress_data['details'])
+                # Принудительно обновляем GUI только если открыта вкладка "Управление"
+                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
+                    self.root.update_idletasks()
+            
+            if hasattr(self, 'speed_label'):
+                speed_text = progress_data['speed']
+                time_remaining = progress_data['time_remaining']
+                time_elapsed = progress_data.get('time_elapsed', '')
+                disk_usage = progress_data.get('disk_usage', '')
+                
+                # Формируем текст для отображения
+                display_parts = []
+                if time_elapsed:
+                    display_parts.append(time_elapsed)
+                if disk_usage:
+                    display_parts.append(disk_usage)
+                if speed_text:
+                    display_parts.append(speed_text)
+                if time_remaining:
+                    display_parts.append(time_remaining)
+                
+                if display_parts:
+                    self.speed_label.config(text=" | ".join(display_parts))
+                else:
+                    self.speed_label.config(text="")
+            
+            # Обновляем статус
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
+            
+                
+        except Exception as e:
+            print(f"[GUI_REAL_TIME] Ошибка обработки прогресса: {e}")
+    
     def process_terminal_queue(self):
         """Обработка очереди сообщений терминала (вызывается из главного потока)"""
         try:
@@ -8205,7 +8144,11 @@ Path={os.path.dirname(script_path)}
                     processed_count += 1
                     
                     # Обрабатываем специальные сообщения прогресса
-                    if message.startswith("[ADVANCED_PROGRESS]"):
+                    if message.startswith("[UNIVERSAL_PROGRESS]"):
+                        self.handle_universal_progress(message)
+                    elif message.startswith("[REAL_TIME_PROGRESS]"):
+                        self.handle_real_time_progress(message)
+                    elif message.startswith("[ADVANCED_PROGRESS]"):
                         self.handle_advanced_progress(message)
                     elif message.startswith("[PROGRESS]"):
                         self.handle_apt_progress(message)
@@ -8233,8 +8176,7 @@ Path={os.path.dirname(script_path)}
                 self.wine_progress['value'] = 0
             
             # Сбрасываем детальный прогресс (на вкладке Управление)
-            if hasattr(self, 'stage_progress'):
-                self.stage_progress['value'] = 0
+            self._reset_detailed_bars()
             
             # Сбрасываем метки
             if hasattr(self, 'stage_label'):
@@ -8312,7 +8254,6 @@ Path={os.path.dirname(script_path)}
         self.start_button.config(state=self.tk.NORMAL)
         self.stop_button.config(state=self.tk.DISABLED)
     
-    
     def open_log_file(self):
         """Открытие лог файла в системном редакторе"""
         # Используем глобальный лог-файл
@@ -8349,8 +8290,6 @@ Path={os.path.dirname(script_path)}
         
         # Используем глобальный лог-файл
         log_file = GLOBAL_LOG_FILE
-        
-
         
         try:
             print("[INFO] Начинаем автоматизацию в GUI режиме")
@@ -8447,8 +8386,7 @@ Path={os.path.dirname(script_path)}
                 
                 # Передаем список пакетов в GUI для отображения
                 if hasattr(stats, 'updatable_list') and stats.updatable_list:
-                    self.update_packages_list(stats.updatable_list)
-                    print(f"[INFO] Передан список из {len(stats.updatable_list)} пакетов в GUI", channels=["gui_log"])
+                    print(f"[INFO] Найдено {len(stats.updatable_list)} пакетов для обновления", channels=["gui_log"])
                 
                 if self.dry_run.get():
                     print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
@@ -8553,6 +8491,24 @@ Path={os.path.dirname(script_path)}
             self.update_status("Тест интерактивных запросов...", "Интерактивные")
         elif "Запуск обновления системы" in line:
             self.update_status("Обновление системы...", "Обновление")
+    
+    
+    def _reset_detailed_bars(self):
+        """Сброс детальных баров при запуске"""
+        if hasattr(self, 'download_progress'):
+            self.download_progress['value'] = 0
+        if hasattr(self, 'download_label'):
+            self.download_label.config(text="0/0 (0%)")
+            
+        if hasattr(self, 'unpack_progress'):
+            self.unpack_progress['value'] = 0
+        if hasattr(self, 'unpack_label'):
+            self.unpack_label.config(text="0/0 (0%)")
+            
+        if hasattr(self, 'config_progress'):
+            self.config_progress['value'] = 0
+        if hasattr(self, 'config_label'):
+            self.config_label.config(text="0/0 (0%)")
             
     def run(self):
         """Запуск GUI"""
@@ -8702,8 +8658,504 @@ class InteractiveHandler(object):
             print(f"[ERROR] Ошибка в simulate_interactive_scenarios: {e}")
             return False
 
+class UniversalProgressManager:
+    """Универсальный менеджер прогресса для всех процессов проекта"""
+    
+    def __init__(self, universal_runner=None, gui_callback=None):
+        """
+        Инициализация универсального менеджера прогресса
+        
+        Args:
+            universal_runner: Ссылка на UniversalProcessRunner для отправки данных в GUI
+            gui_callback: Callback функция для отправки данных в GUI
+        """
+        self.universal_runner = universal_runner or get_global_universal_runner()
+        self.gui_callback = gui_callback
+        
+        # Текущее состояние
+        self.current_process = None
+        self.current_stage = None
+        self.stage_progress = 0.0
+        self.global_progress = 0.0
+        self.stage_name = "Ожидание"
+        self.details = ""
+        
+        print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
+    
+    def update_progress(self, process_type, stage_name, stage_progress, global_progress, details="", **kwargs):
+        """
+        Универсальный метод обновления прогресса
+        
+        Args:
+            process_type: Тип процесса (system_update, wine_install, etc.)
+            stage_name: Название текущего этапа
+            stage_progress: Прогресс этапа (0-100)
+            global_progress: Глобальный прогресс (0-100)
+            details: Детальная информация
+            **kwargs: Дополнительные параметры (download_progress, unpack_progress, etc.)
+        """
+        self.current_process = process_type
+        self.current_stage = stage_name
+        self.stage_progress = stage_progress
+        self.global_progress = global_progress
+        self.stage_name = stage_name
+        self.details = details
+        
+        # Сохраняем дополнительные параметры
+        self.extra_data = kwargs
+        
+        # Отправляем обновление в GUI
+        self._send_progress_update()
+        
+        # Записываем в лог для анализа
+        self._write_progress_to_file()
+    
+    def update_statistics(self, process_type, stats_data):
+        """
+        Универсальный метод обновления статистики
+        
+        Args:
+            process_type: Тип процесса
+            stats_data: Словарь со статистикой (cpu, memory, network, time, etc.)
+        """
+        # Отправляем статистику в GUI
+        if hasattr(self.universal_runner, 'send_message'):
+            message = f"[STATISTICS] {process_type}: {stats_data}"
+            self.universal_runner.send_message(message)
+    
+    def _send_progress_update(self):
+        """Отправка обновления прогресса в GUI"""
+        try:
+            progress_data = {
+                'process_type': self.current_process,
+                'stage_name': self.stage_name,
+                'stage_progress': self.stage_progress,
+                'global_progress': self.global_progress,
+                'details': self.details,
+                'timestamp': datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            }
+            
+            # Добавляем дополнительные данные из kwargs
+            if hasattr(self, 'extra_data') and self.extra_data:
+                progress_data.update(self.extra_data)
+            
+            # Отправляем через gui_callback если доступен
+            if self.gui_callback:
+                self.gui_callback(progress_data)
+            
+            # Также отправляем через UniversalProcessRunner для совместимости
+            if hasattr(self.universal_runner, 'send_message'):
+                message = f"[UNIVERSAL_PROGRESS] {progress_data}"
+                self.universal_runner.send_message(message)
+                
+        except Exception as e:
+            pass
+    
+    def _write_progress_to_file(self):
+        """Запись прогресса в файл для анализа"""
+        try:
+            import os
+            import datetime
+            if hasattr(self.universal_runner, 'log_file') and self.universal_runner.log_file:
+                main_log_path = self.universal_runner.log_file
+            else:
+                main_log_path = GLOBAL_LOG_FILE
+            log_dir = os.path.dirname(main_log_path)
+            main_log_name = os.path.basename(main_log_path)
+            progress_file_name = main_log_name.replace("astra_automation_", "universal_progress_").replace(".log", ".txt")
+            progress_file = os.path.join(log_dir, progress_file_name)
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            table_line = f"{timestamp} | {self.stage_name:<20} | {self.stage_progress:>6.1f}% | {self.global_progress:>8.1f}% | {self.details[:50]}\n"
+            with open(progress_file, 'a', encoding='utf-8') as f:
+                if os.path.getsize(progress_file) == 0:
+                    header = "Время     | Этап                 | Этапный% | Глобальный% | Детали\n"
+                    f.write(header)
+                    f.write("-" * 80 + "\n")
+                f.write(table_line)
+        except Exception as e:
+            print(f"[UNIVERSAL_PROGRESS] Ошибка записи в файл прогресса: {e}")
+
+
+class SystemUpdateParser:
+    """ПАРСЕР С ТАБЛИЦЕЙ ПАКЕТОВ: ТОЧНЫЙ РАСЧЕТ ГЛОБАЛЬНОГО ПРОГРЕССА БЕЗ СКАЧКОВ"""
+    
+    def __init__(self, universal_manager=None, system_updater=None):
+        """
+        Инициализация парсера обновления системы
+        
+        Args:
+            universal_manager: Ссылка на UniversalProgressManager
+            system_updater: Ссылка на SystemUpdater для прямого обновления детальных баров
+        """
+        self.universal_manager = universal_manager
+        self.system_updater = system_updater
+        
+        # Таблица пакетов с детальной информацией
+        self.packages_table = {}
+        self.total_packages = 0
+        self.max_packages_found = 0
+        
+        # Флаги состояния
+        self.is_finished = False
+        self.main_cycle_found = False
+        
+        # Кэш для оптимизации
+        self._progress_cache_valid = False
+        self._cached_progress = 0.0
+    
+    def parse_line(self, line):
+        """Парсинг строки вывода команды"""
+        if self.is_finished:
+            return
+            
+        original_line = line
+        line = line.strip()
+        if not line:
+            return
+        
+        try:
+            # Убираем временные метки для поиска паттернов
+            clean_line = re.sub(r'^\[[^\]]+\]\s*', '', line)
+            
+            # Этап 1: Получение списка пакетов
+            if "Обновлено" in clean_line and "пакетов" in clean_line and "установлено" in clean_line:
+                self._parse_package_list(clean_line)
+                return
+            
+            # Этап 2: Скачивание пакетов
+            elif clean_line.startswith("Пол:"):
+                self._parse_download_progress(clean_line)
+                return
+            
+            # Этап 3: Распаковка пакетов
+            elif "Распаковывается" in clean_line:
+                self._parse_unpacking(clean_line)
+                return
+            
+            # Этап 4: Настройка пакетов
+            elif "Настраивается" in clean_line:
+                self._parse_configuring(clean_line)
+                return
+            
+            # Этап 5: Завершение
+            elif "Обрабатываются триггеры" in clean_line:
+                self._parse_triggers(clean_line)
+                return
+            
+        except Exception as e:
+            # Игнорируем ошибки парсинга
+            pass
+    
+    def _parse_package_list(self, line):
+        """Парсинг списка пакетов - находим максимальный цикл"""
+        updated_match = re.search(r'Обновлено (\d+) пакетов', line)
+        installed_match = re.search(r'установлено (\d+) новых пакетов', line)
+        
+        updated = int(updated_match.group(1)) if updated_match else 0
+        installed = int(installed_match.group(1)) if installed_match else 0
+        current_total = updated + installed
+        
+        # Ищем максимальный цикл
+        if current_total > self.max_packages_found:
+            self.max_packages_found = current_total
+            self.total_packages = current_total
+            self.total_updated = updated
+            self.total_installed = installed
+            
+            # Сбрасываем все при новом большом цикле
+            self.packages_table.clear()
+            
+            # Сбрасываем кэш
+            self._progress_cache_valid = False
+            self._cached_progress = 0.0
+        
+        # Добавляем строку только если это основной цикл
+        if current_total == self.max_packages_found:
+            self.main_cycle_found = True
+            
+            # Обновляем прогресс
+            if self.universal_manager:
+                detailed_progress = self._calculate_detailed_progress()
+                
+                # Обновляем детальные бары напрямую
+                if self.system_updater:
+                    self.system_updater.update_detailed_bars(detailed_progress)
+                
+                # Обновляем общий прогресс через universal_manager
+                self.universal_manager.update_progress(
+                    "system_update",
+                    "Получение списка пакетов",
+                    100,
+                    0,
+                    f"Найдено {current_total} пакетов (обновлено: {updated}, новых: {installed})",
+                    **detailed_progress
+                )
+    
+    def _parse_download_progress(self, line):
+        """Этап 1: ЗАГРУЗКА (0-33.3%)"""
+        # Проверяем что это реальное скачивание (должно содержать "Пол:")
+        if "Пол:" not in line:
+            return
+            
+        # Убираем проверку main_cycle_found - обрабатываем все строки
+        match = re.match(r'Пол:(\d+)', line)
+        if not match:
+            return
+        
+        package_num = int(match.group(1))
+        package_name = self._extract_package_name(line)
+        package_size = self._extract_size(line)
+        
+        # Добавляем пакет в таблицу
+        if package_name not in self.packages_table:
+            self.packages_table[package_name] = {
+                "status": "downloading",
+                "package_num": package_num,
+                "size": package_size,
+                "download_time": None,
+                "unpack_time": None,
+                "configure_time": None
+            }
+            # Инвалидируем кэш при изменении статуса
+            self._progress_cache_valid = False
+        
+        if self.max_packages_found > 0:
+            # Рассчитываем прогресс на основе таблицы пакетов
+            stage_progress = (package_num / self.max_packages_found) * 100
+            global_progress = self._calculate_global_progress()
+            
+            # Обновляем прогресс
+            if self.universal_manager:
+                detailed_progress = self._calculate_detailed_progress()
+                
+                # Обновляем детальные бары напрямую
+                if self.system_updater:
+                    self.system_updater.update_detailed_bars(detailed_progress)
+                
+                # Обновляем общий прогресс через universal_manager
+                self.universal_manager.update_progress(
+                    "system_update",
+                    "Загрузка пакетов",
+                    stage_progress,
+                    global_progress,
+                    f"Скачивается {package_name} ({package_size}) - {package_num}/{self.max_packages_found}",
+                    **detailed_progress
+                )
+    
+    def _parse_unpacking(self, line):
+        """Этап 2: РАСПАКОВКА (33.3-66.7%)"""
+        # Убираем проверку main_cycle_found - обрабатываем все строки
+        package_name = self._extract_package_name_from_unpack(line)
+        
+        if package_name in self.packages_table:
+            self.packages_table[package_name]["status"] = "unpacked"
+            # Инвалидируем кэш при изменении статуса
+            self._progress_cache_valid = False
+        
+        if self.max_packages_found > 0:
+            # Рассчитываем прогресс на основе таблицы пакетов
+            unpacked_count = sum(1 for pkg in self.packages_table.values() 
+                               if pkg["status"] in ["unpacked", "configured"])
+            stage_progress = (unpacked_count / self.max_packages_found) * 100
+            global_progress = self._calculate_global_progress()
+            
+            # Обновляем прогресс
+            if self.universal_manager:
+                detailed_progress = self._calculate_detailed_progress()
+                
+                # Обновляем детальные бары напрямую
+                if self.system_updater:
+                    self.system_updater.update_detailed_bars(detailed_progress)
+                
+                # Обновляем общий прогресс через universal_manager
+                self.universal_manager.update_progress(
+                    "system_update",
+                    "Распаковка пакетов",
+                    stage_progress,
+                    global_progress,
+                    f"Распаковывается {package_name} - {unpacked_count}/{self.max_packages_found}",
+                    **detailed_progress
+                )
+    
+    def _parse_configuring(self, line):
+        """Этап 3: НАСТРОЙКА (66.7-100%)"""
+        # Убираем проверку main_cycle_found - обрабатываем все строки
+        package_name = self._extract_package_name_from_config(line)
+        
+        if package_name in self.packages_table:
+            self.packages_table[package_name]["status"] = "configured"
+            # Инвалидируем кэш при изменении статуса
+            self._progress_cache_valid = False
+        
+        if self.max_packages_found > 0:
+            # Рассчитываем прогресс на основе таблицы пакетов
+            configured_count = sum(1 for pkg in self.packages_table.values() 
+                                 if pkg["status"] == "configured")
+            stage_progress = (configured_count / self.max_packages_found) * 100
+            global_progress = self._calculate_global_progress()
+            
+            # Обновляем прогресс
+            if self.universal_manager:
+                detailed_progress = self._calculate_detailed_progress()
+                
+                # Обновляем детальные бары напрямую
+                if self.system_updater:
+                    self.system_updater.update_detailed_bars(detailed_progress)
+                
+                # Обновляем общий прогресс через universal_manager
+                self.universal_manager.update_progress(
+                    "system_update",
+                    "Настройка пакетов",
+                    stage_progress,
+                    global_progress,
+                    f"Настраивается {package_name} - {configured_count}/{self.max_packages_found}",
+                    **detailed_progress
+                )
+    
+    def _parse_triggers(self, line):
+        """Обработка триггеров - финальный этап"""
+        # Убираем проверку main_cycle_found - обрабатываем все строки
+        # Финальный прогресс
+        if self.universal_manager:
+            detailed_progress = self._calculate_detailed_progress()
+            
+            # Обновляем детальные бары напрямую
+            if self.system_updater:
+                self.system_updater.update_detailed_bars(detailed_progress)
+            
+            # Обновляем общий прогресс через universal_manager
+            self.universal_manager.update_progress(
+                "system_update",
+                "Завершение",
+                100,
+                100,
+                "Обработка триггеров системы",
+                **detailed_progress
+            )
+    
+    def _calculate_global_progress(self):
+        """ТОЧНЫЙ расчет глобального прогресса на основе таблицы пакетов"""
+        # Используем кэш если он валиден
+        if self._progress_cache_valid:
+            return self._cached_progress
+        
+        if self.max_packages_found == 0:
+            return 0.0
+        
+        total_operations = self.max_packages_found * 3  # 1651 * 3 = 4953
+        completed_operations = 0
+        
+        # Проходим по каждому пакету в таблице
+        for package_name, package_info in self.packages_table.items():
+            # Операция 1: Скачивание (всегда выполнена, если пакет в таблице)
+            completed_operations += 1
+            
+            # Операция 2: Распаковка (выполнена если статус unpacked или configured)
+            if package_info["status"] in ["unpacked", "configured"]:
+                completed_operations += 1
+            
+            # Операция 3: Настройка (выполнена только если статус configured)
+            if package_info["status"] == "configured":
+                completed_operations += 1
+        
+        # Кэшируем результат
+        self._cached_progress = (completed_operations / total_operations) * 100
+        self._progress_cache_valid = True
+        
+        return self._cached_progress
+    
+    def _calculate_detailed_progress(self):
+        """Расчет детализированного прогресса для трех этапов"""
+        if self.max_packages_found == 0:
+            return {
+                'download_progress': 0.0,
+                'unpack_progress': 0.0,
+                'config_progress': 0.0,
+                'download_count': 0,
+                'unpack_count': 0,
+                'config_count': 0,
+                'total_packages': 0
+            }
+        
+        # Подсчитываем пакеты по статусам
+        downloaded_count = len(self.packages_table)
+        unpacked_count = sum(1 for pkg in self.packages_table.values() 
+                           if pkg["status"] in ["unpacked", "configured"])
+        configured_count = sum(1 for pkg in self.packages_table.values() 
+                             if pkg["status"] == "configured")
+        
+        # Рассчитываем прогресс каждого этапа
+        download_progress = (downloaded_count / self.max_packages_found) * 100
+        unpack_progress = (unpacked_count / self.max_packages_found) * 100
+        config_progress = (configured_count / self.max_packages_found) * 100
+        
+        return {
+            'download_progress': download_progress,
+            'unpack_progress': unpack_progress,
+            'config_progress': config_progress,
+            'download_count': downloaded_count,
+            'unpack_count': unpacked_count,
+            'config_count': configured_count,
+            'total_packages': self.max_packages_found
+        }
+    
+    def _extract_package_name(self, line):
+        """Извлечение имени пакета из строки скачивания"""
+        parts = line.split()
+        for i, part in enumerate(parts):
+            if part == 'amd64' and i + 2 < len(parts) and parts[i + 2] == 'amd64':
+                return parts[i + 1]
+        
+        for i, part in enumerate(parts):
+            if part == 'amd64' and i + 1 < len(parts):
+                next_part = parts[i + 1]
+                if not re.match(r'^\d+\.\d+', next_part):
+                    return next_part
+        
+        return "unknown"
+    
+    def _extract_size(self, line):
+        """Извлечение размера пакета"""
+        match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
+        if match:
+            return f"{match.group(1)} {match.group(2)}"
+        return "unknown"
+    
+    def _extract_package_name_from_unpack(self, line):
+        """Извлечение имени пакета из строки распаковки"""
+        match = re.search(r'Распаковывается ([^(]+)', line)
+        if match:
+            name = match.group(1).strip()
+            if ':' in name:
+                name = name.split(':')[0]
+            return name
+        return "unknown"
+    
+    def _extract_package_name_from_config(self, line):
+        """Извлечение имени пакета из строки настройки"""
+        match = re.search(r'Настраивается пакет ([^(]+)', line)
+        if match:
+            name = match.group(1).strip()
+            if ':' in name:
+                name = name.split(':')[0]
+            return name
+        return "unknown"
+    
+    def finish_parsing(self):
+        """Завершение парсинга"""
+        self.is_finished = True
+        if self.universal_manager:
+            self.universal_manager.update_progress(
+                "system_update",
+                "Завершено",
+                100,
+                100,
+                "Процесс обновления завершен успешно"
+            )
+
+
 class ProcessProgressManager:
-    """Универсальный менеджер прогресса для любых процессов"""
+    """СТАРЫЙ менеджер прогресса - БУДЕТ УДАЛЕН"""
     
     # Определения для разных типов процессов
     PROCESS_DEFINITIONS = {
@@ -8999,6 +9451,7 @@ class ProcessProgressManager:
         return self.global_progress
 
 # ============================================================================
+# ============================================================================
 # ОБНОВЛЕНИЕ СИСТЕМЫ
 # ============================================================================
 class SystemUpdater(object):
@@ -9021,15 +9474,74 @@ class SystemUpdater(object):
         self.unpack_counter = 0
         self.config_counter = 0
         
+        # Определяем send_progress_to_gui ПЕРЕД созданием менеджеров
+        def send_progress_to_gui(progress_data):
+            """Отправка обновления прогресса в GUI через ProcessProgressManager"""
+            try:
+                import datetime
+                
+                # Получаем timestamp для таблицы прогресса
+                timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                
+                # Получаем текущую статистику времени и дискового пространства
+                time_text, disk_text = self.get_current_stats()
+                
+                # Формируем данные для GUI
+                gui_data = {
+                    'stage_name': progress_data.get('stage_display_name', progress_data.get('stage_name', 'Неизвестно')),
+                    'stage_progress': progress_data.get('stage_progress', 0),
+                    'global_progress': progress_data.get('global_progress', 0),
+                    'details': progress_data.get('details', ''),
+                    'speed': "",  # Будет заполнено позже
+                    'time_remaining': self.calculate_time_remaining(progress_data.get('stage_progress', 0)),
+                    'time_elapsed': time_text,
+                    'disk_usage': disk_text
+                }
+                
+                # Отправляем в GUI через universal_runner
+                if hasattr(self, 'universal_runner') and self.universal_runner:
+                    self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(gui_data))
+                    
+                    # Обновляем статистику в GUI
+                    if hasattr(self, 'universal_runner') and self.universal_runner and hasattr(self.universal_runner, 'gui_instance'):
+                        gui_instance = self.universal_runner.gui_instance
+                        if gui_instance and hasattr(gui_instance, 'update_statistics'):
+                            gui_instance.update_statistics(gui_data)
+                            
+            except Exception as e:
+                print(f"[ERROR] Ошибка в send_progress_to_gui: {e}")
+        
+        # Привязываем метод к экземпляру
+        self.send_progress_to_gui = send_progress_to_gui
+        
         # Новый менеджер прогресса
         self.progress_manager = ProcessProgressManager(gui_callback=self.send_progress_to_gui)
         self.progress_manager.gui_instance = self  # Устанавливаем ссылку на GUI
         print("[PROGRESS_MANAGER] ProcessProgressManager успешно инициализирован и готов к работе")
         
+        # НОВЫЙ универсальный менеджер прогресса
+        self.universal_progress_manager = UniversalProgressManager(universal_runner=self.universal_runner, gui_callback=self.send_progress_to_gui)
+        
+        # НОВЫЙ парсер обновления системы
+        self.system_update_parser = SystemUpdateParser(universal_manager=self.universal_progress_manager, system_updater=self)
+        
+        # Связываем парсер с менеджером прогресса
+        self.universal_progress_manager.system_update_parser = self.system_update_parser
+        
+        print("[SYSTEM_UPDATER] Новые парсеры успешно инициализированы")
+        
         # Счетчики для расширенной статистики
         self.downloaded_packages = 0
         self.unpacked_packages = 0
         self.configured_packages = 0
+        
+        # Инициализируем ссылки на детальные бары как None
+        self.download_progress = None
+        self.unpack_progress = None
+        self.config_progress = None
+        self.download_label = None
+        self.unpack_label = None
+        self.config_label = None
         self.installed_packages = 0
         self.downloaded_size_mb = 0
         self.download_speed_mb = 0
@@ -9042,6 +9554,31 @@ class SystemUpdater(object):
         self.start_time = None
         self.initial_disk_space = None
         self.current_disk_space = None
+    
+    def update_detailed_bars(self, detailed_progress):
+        """Прямое обновление детальных баров из SystemUpdateParser"""
+        try:
+            # Обновляем бары
+            if self.download_progress and 'download_progress' in detailed_progress:
+                self.download_progress['value'] = detailed_progress['download_progress']
+            if self.unpack_progress and 'unpack_progress' in detailed_progress:
+                self.unpack_progress['value'] = detailed_progress['unpack_progress']
+            if self.config_progress and 'config_progress' in detailed_progress:
+                self.config_progress['value'] = detailed_progress['config_progress']
+            
+            # Обновляем лейблы
+            if self.download_label and all(key in detailed_progress for key in ['download_count', 'total_packages', 'download_progress']):
+                text = f"{detailed_progress['download_count']}/{detailed_progress['total_packages']} ({detailed_progress['download_progress']:.1f}%)"
+                self.download_label.config(text=text)
+            if self.unpack_label and all(key in detailed_progress for key in ['unpack_count', 'total_packages', 'unpack_progress']):
+                text = f"{detailed_progress['unpack_count']}/{detailed_progress['total_packages']} ({detailed_progress['unpack_progress']:.1f}%)"
+                self.unpack_label.config(text=text)
+            if self.config_label and all(key in detailed_progress for key in ['config_count', 'total_packages', 'config_progress']):
+                text = f"{detailed_progress['config_count']}/{detailed_progress['total_packages']} ({detailed_progress['config_progress']:.1f}%)"
+                self.config_label.config(text=text)
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка обновления детальных баров: {e}")
     
     def start_monitoring(self):
         """Начать мониторинг времени и дискового пространства"""
@@ -9106,13 +9643,13 @@ class SystemUpdater(object):
             # Используем переданный путь к лог-файлу или глобальный
             if log_file_path:
                 self.log_file_path = log_file_path
-                    else:
+            else:
                 self.log_file_path = GLOBAL_LOG_FILE
             
             # Запоминаем текущую позицию в лог-файле
             if os.path.exists(self.log_file_path):
                 self.log_start_position = os.path.getsize(self.log_file_path)
-                    else:
+            else:
                 self.log_start_position = 0
                 
             # Запускаем мониторинг в отдельном потоке
@@ -9141,79 +9678,12 @@ class SystemUpdater(object):
                         time.sleep(0.1)  # Ждем новые строки
                         continue
                     
-                    # Обрабатываем строку через ProcessProgressManager
-                    self._process_log_line(line.rstrip())
+                    # Обрабатываем строку через новый SystemUpdateParser
+                    if hasattr(self, 'system_update_parser') and self.system_update_parser:
+                        self.system_update_parser.parse_line(line.rstrip())
             
         except Exception as e:
             print(f"[LOG_MONITOR] Ошибка мониторинга: {e}")
-    
-    def _process_log_line(self, line):
-        """Обработка строки лог-файла через ProcessProgressManager"""
-        try:
-            if hasattr(self, 'progress_manager') and self.progress_manager:
-                # Используем наш новый класс для обработки строк
-                if "Чтение списков пакетов" in line:
-                    self.progress_manager.update_local_progress("reading_lists", 100, "Получение списков пакетов")
-                elif "Построение дерева зависимостей" in line:
-                    self.progress_manager.update_local_progress("analyzing", 0, "Анализ зависимостей")
-                elif "Чтение информации о состоянии" in line:
-                    self.progress_manager.update_local_progress("analyzing", 50, "Чтение состояния пакетов")
-                elif "Расчёт обновлений" in line:
-                    self.progress_manager.update_local_progress("analyzing", 100, "Расчёт обновлений")
-                elif "Обновлено 0 пакетов" in line:
-                    # Для системы без обновлений проходим все этапы плавно
-                    self.progress_manager.update_local_progress("downloading", 100, "Скачивание не требуется")
-                    self.progress_manager.update_local_progress("installing", 100, "Установка не требуется")
-                elif "Очистка" in line or "Удаление" in line:
-                    self.progress_manager.update_local_progress("cleaning", 100, "Очистка системы")
-                elif "Команда выполнена успешно" in line:
-                    # Завершаем текущую фазу
-                    self.progress_manager.finish_current_phase()
-        except Exception as e:
-            pass  # Игнорируем ошибки парсинга
-    
-    def send_progress_to_gui(self, progress_data):
-        """Отправка обновления прогресса в GUI через ProcessProgressManager"""
-        try:
-            import datetime
-            
-            # Получаем timestamp для таблицы прогресса
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            
-            # Получаем текущую статистику времени и дискового пространства
-            time_text, disk_text = self.get_current_stats()
-            
-            # Формируем данные для GUI
-            gui_data = {
-                'stage_name': progress_data['stage_display_name'],
-                'stage_progress': progress_data['stage_progress'],
-                'global_progress': progress_data['global_progress'],
-                'details': progress_data['details'],
-                'speed': "",  # Будет заполнено позже
-                'time_remaining': self.calculate_time_remaining(progress_data['stage_progress']),
-                'time_elapsed': time_text,
-                'disk_usage': disk_text
-            }
-            
-            # Отправляем в GUI через universal_runner
-            if hasattr(self, 'universal_runner') and self.universal_runner:
-                self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(gui_data))
-                
-                # Обновляем статистику в GUI
-                if hasattr(self, 'universal_runner') and self.universal_runner and hasattr(self.universal_runner, 'gui_instance'):
-                    gui_instance = self.universal_runner.gui_instance
-                    if gui_instance and hasattr(gui_instance, 'update_extended_statistics'):
-                        gui_instance.update_extended_statistics()
-                    
-                    # Обновляем счетчик обработанных пакетов
-                    if gui_instance and hasattr(gui_instance, 'processed_packages_label'):
-                        total_processed = self.downloaded_packages + self.unpacked_packages + self.configured_packages
-                        gui_instance.processed_packages_label.config(text=str(total_processed))
-                
-        except Exception as e:
-            # Логируем ошибки отладки
-            if hasattr(self, 'universal_runner') and self.universal_runner:
-                self.universal_runner.add_output(f"[DEBUG_ERROR] Ошибка в send_progress_to_gui: {e}", level="ERROR")
     
     def get_extended_statistics(self):
         """Получение расширенной статистики для GUI"""
@@ -9673,8 +10143,16 @@ class SystemUpdater(object):
         # Определяем тип команды для лога GUI
         if 'apt-get update' in ' '.join(cmd):
             print("[INFO] Обновление списков пакетов...", channels=["gui_log"])
+            # Запускаем парсер для update
+            if hasattr(self, 'system_update_parser') and self.system_update_parser:
+                if not self.system_update_parser.is_finished:
+                    print("[SYSTEM_UPDATER] Парсер готов к работе")
         elif 'apt-get dist-upgrade' in ' '.join(cmd):
             print("[INFO] Обновление системы...", channels=["gui_log"])
+            # Для dist-upgrade парсер уже должен быть готов
+            if hasattr(self, 'system_update_parser') and self.system_update_parser:
+                if not self.system_update_parser.is_finished:
+                    print("[SYSTEM_UPDATER] Парсер готов к работе")
         elif 'apt-get autoremove' in ' '.join(cmd):
             print("[INFO] Очистка системы...", channels=["gui_log"])
         else:
@@ -9730,8 +10208,9 @@ class SystemUpdater(object):
                 # Выводим строку
                 print("   %s" % line.rstrip())
                 
-                # Парсинг теперь обрабатывается через мониторинг лог-файла
-                # Старый парсинг удален - используем ProcessProgressManager
+                # НОВЫЙ ПАРСИНГ В РЕАЛЬНОМ ВРЕМЕНИ
+                if hasattr(self, 'system_update_parser') and self.system_update_parser:
+                    self.system_update_parser.parse_line(line.rstrip())
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
@@ -9771,6 +10250,11 @@ class SystemUpdater(object):
             
             if return_code == 0:
                 print("[OK] Команда выполнена успешно", channels=["gui_log"])
+                
+                # Завершаем парсинг для dist-upgrade
+                if 'apt-get dist-upgrade' in ' '.join(cmd):
+                    if hasattr(self, 'system_update_parser') and self.system_update_parser:
+                        self.system_update_parser.finish_parsing()
                 
                 # Определяем тип команды для лога GUI
                 if 'apt-get update' in ' '.join(cmd):
@@ -9897,9 +10381,6 @@ class SystemUpdater(object):
         
         print("[PACKAGE] Обновление системы...")
         
-        # Инициализируем менеджер прогресса для обновления системы
-        self.progress_manager.start_process("system_update", "Обновление системы")
-        
         # Запускаем мониторинг лог-файла с правильным путем
         self.start_log_monitoring(log_file)
         
@@ -9936,10 +10417,6 @@ class SystemUpdater(object):
         update_cmd = ['apt-get', 'update']
         result = self.run_command_with_interactive_handling(update_cmd, dry_run, gui_terminal=True)
         
-        # Завершаем фазу apt-get update
-        if result == 0:
-            self.progress_manager.finish_current_phase()
-        
         if result != 0:
             print("[ERROR] Ошибка обновления списков пакетов")
             return False
@@ -9958,10 +10435,6 @@ class SystemUpdater(object):
                       '-o', 'Dpkg::Options::=--force-confold',
                       '-o', 'Dpkg::Options::=--force-confmiss']
         result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
-        
-        # Завершаем фазу apt-get dist-upgrade
-        if result == 0:
-            self.progress_manager.finish_current_phase()
         
         # Обрабатываем результат обновления
         if result == 0:
@@ -9982,10 +10455,7 @@ class SystemUpdater(object):
                             '-o', 'Dpkg::Options::=--force-confmiss']
             autoremove_result = self.run_command_with_interactive_handling(autoremove_cmd, dry_run, gui_terminal=True)
             
-            # Завершаем фазу apt-get autoremove и весь процесс
             if autoremove_result == 0:
-                self.progress_manager.finish_current_phase()
-                self.progress_manager.finish_process()
                 print("[OK] Ненужные пакеты успешно удалены")
             else:
                 print("[WARNING] Предупреждение: не удалось удалить ненужные пакеты")

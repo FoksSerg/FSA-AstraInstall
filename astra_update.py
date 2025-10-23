@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 Скрипт автоматического обновления FSA-AstraInstall для macOS
-Копирует файлы в подключенный том
-Версия: V2.2.6566 (2025.10.16)
+Использует AppleScript для обхода ограничений карантина
+Версия: V2.5.6569 (2025.10.23)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 import os
 import sys
-import shutil
-import stat
+import subprocess
 import tkinter as tk
+from datetime import datetime
 
 def main():
     """Основная функция для macOS"""
@@ -30,38 +30,68 @@ def main():
     try:
         # Проверяем папку проекта
         if not os.path.exists(source_path):
-            show_message("Ошибка", "Папка проекта не найдена")
+            error_msg = f"Папка проекта не найдена: {source_path}"
+            show_message("Ошибка", error_msg)
             return 1
         
         # Проверяем подключенный том
         if not os.path.exists(network_path):
-            show_message("Ошибка", "Том Install не подключен")
+            error_msg = f"Том Install не подключен: {network_path}"
+            show_message("Ошибка", error_msg)
             return 1
         
-        # Копируем файлы
+        # Используем AppleScript для копирования файлов
+        copied_files = []
         for file_name in files_to_copy:
             source_file = os.path.join(source_path, file_name)
-            dest_file = os.path.join(network_path, file_name)
             
-            if os.path.exists(source_file):
-                shutil.copy2(source_file, dest_file)
-            else:
-                show_message("Ошибка", f"Файл не найден {file_name}")
+            if not os.path.exists(source_file):
+                error_msg = f"Файл не найден: {file_name}"
+                show_message("Ошибка", error_msg)
+                return 1
+            
+            # Создаем AppleScript для замены файла
+            applescript = f'''
+tell application "Finder"
+    set sourceFile to POSIX file "{source_file}"
+    set destFile to POSIX file "{network_path}/{file_name}"
+    
+    -- Удаляем старый файл если существует
+    try
+        delete destFile
+    end try
+    
+    -- Копируем новый файл
+    duplicate sourceFile to POSIX file "{network_path}/"
+end tell
+'''
+            
+            try:
+                result = subprocess.run([
+                    'osascript', '-e', applescript
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    copied_files.append(file_name)
+                else:
+                    error_msg = f"Ошибка копирования {file_name}: {result.stderr}"
+                    show_message("Ошибка", error_msg)
+                    return 1
+                    
+            except Exception as e:
+                error_msg = f"Ошибка выполнения AppleScript для {file_name}: {e}"
+                show_message("Ошибка", error_msg)
                 return 1
         
-        # Устанавливаем права на выполнение
-        for file_name in ["astra_install.sh", "astra_update.sh"]:
-            file_path = os.path.join(network_path, file_name)
-            if os.path.exists(file_path):
-                os.chmod(file_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH)
-        
         # Показываем окно успеха
-        show_message("Обновление", "Обновлено")
+        success_msg = f"Обновление завершено!\n\nОбновлено файлов: {len(copied_files)}\n{', '.join(copied_files)}"
+        show_message("Обновление", success_msg)
         return 0
         
     except Exception as e:
         # Показываем окно с ошибкой
-        show_message("Ошибка", str(e))
+        error_msg = f"Общая ошибка: {str(e)}"
+        show_message("Ошибка", error_msg)
         return 1
 
 def show_message(title, message):
@@ -73,7 +103,7 @@ def show_message(title, message):
         # Создаем диалог
         dialog = tk.Toplevel(root)
         dialog.title(title)
-        dialog.geometry("300x150")
+        dialog.geometry("400x200")
         dialog.resizable(False, False)
         
         # Делаем окно поверх всех
@@ -83,12 +113,12 @@ def show_message(title, message):
         
         # Центрируем окно
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (300 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (150 // 2)
-        dialog.geometry(f"300x150+{x}+{y}")
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (200 // 2)
+        dialog.geometry(f"400x200+{x}+{y}")
         
         # Добавляем содержимое
-        label = tk.Label(dialog, text=message, font=("Arial", 12), wraplength=250)
+        label = tk.Label(dialog, text=message, font=("Arial", 12), wraplength=350)
         label.pack(expand=True, padx=20, pady=20)
         
         # Добавляем кнопку OK
@@ -113,7 +143,7 @@ def show_message(title, message):
         
     except:
         # Fallback - просто выводим в консоль
-        print(message)
+        print(f"[MESSAGE] {title}: {message}")
 
 if __name__ == "__main__":
     sys.exit(main())
