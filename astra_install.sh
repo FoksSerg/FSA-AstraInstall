@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.3.70 (2025.10.16)
+# Версия: V2.3.71 (2025.10.23)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,7 +8,7 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.3.70"
+SCRIPT_VERSION="V2.3.71"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +35,21 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_DIR="$SCRIPT_DIR/Log"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
+
+# Исправляем права доступа для обычного пользователя
+if [ -d "$LOG_DIR" ]; then
+    # Получаем имя реального пользователя (не root)
+    REAL_USER=$(who am i | awk '{print $1}')
+    if [ -z "$REAL_USER" ]; then
+        REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
+    fi
+    
+    if [ ! -z "$REAL_USER" ]; then
+        chown -R "$REAL_USER:$REAL_USER" "$LOG_DIR" 2>/dev/null
+        chmod -R 755 "$LOG_DIR" 2>/dev/null
+        echo "[i] Установлены права доступа для пользователя: $REAL_USER"
+    fi
+fi
 
 # Функция логирования
 log_message() {

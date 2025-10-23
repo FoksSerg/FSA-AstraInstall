@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.70 (2025.10.23)
+Версия: V2.3.71 (2025.10.23)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.70"
+APP_VERSION = "V2.3.71"
 import os
 import sys
 import tempfile
@@ -23,6 +23,14 @@ import threading
 import traceback
 import hashlib
 import queue
+
+# Попытка импорта tkinter (может быть не установлен)
+try:
+    import tkinter as tk
+    from tkinter import ttk
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
 
 # Попытка импорта psutil (может быть не установлен)
 try:
@@ -375,7 +383,51 @@ class UniversalProcessRunner(object):
         self.current_update_phase = "update"  # update, dist-upgrade, autoremove
         self.update_phase_start_stage = "reading_lists"  # Начальный этап для текущей фазы
         
+        # Отслеживание дочерних процессов для принудительного завершения
+        self.child_processes = []  # Список PID дочерних процессов
+        self.process_pid = None    # PID текущего процесса
+        
         # Тестовое сообщение будет отправлено при активации перехвата
+    
+    def force_kill_child_processes(self):
+        """Принудительное завершение всех дочерних процессов"""
+        try:
+            if not self.child_processes:
+                return
+            
+            print(f"[FORCE_KILL] Завершаем {len(self.child_processes)} дочерних процессов...")
+            
+            for pid in self.child_processes:
+                try:
+                    # Сначала пробуем мягкое завершение
+                    subprocess.run(['kill', '-TERM', str(pid)], timeout=3)
+                    print(f"[FORCE_KILL] Отправлен SIGTERM процессу {pid}")
+                except:
+                    pass
+            
+            # Ждем 2 секунды
+            import time
+            time.sleep(2)
+            
+            # Проверяем какие процессы еще живы и принудительно завершаем
+            for pid in self.child_processes:
+                try:
+                    result = subprocess.run(['kill', '-0', str(pid)], 
+                                           capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        # Процесс еще жив, принудительно завершаем
+                        subprocess.run(['kill', '-KILL', str(pid)], timeout=3)
+                        print(f"[FORCE_KILL] Принудительно завершен процесс {pid}")
+                except:
+                    pass
+            
+            # Очищаем список
+            self.child_processes.clear()
+            self.process_pid = None
+            print("[FORCE_KILL] Все дочерние процессы завершены")
+            
+        except Exception as e:
+            print(f"[FORCE_KILL] Ошибка завершения процессов: {e}")
     
     def should_show_in_gui_log(self, message):
         """Определяет, должно ли сообщение отображаться в логе GUI"""
@@ -675,6 +727,11 @@ class UniversalProcessRunner(object):
                 bufsize=1
             )
             
+            # Отслеживаем PID процесса для принудительного завершения
+            self.process_pid = process.pid
+            self.child_processes.append(process.pid)
+            self._log(f"Запущен процесс PID: {process.pid}", "DEBUG", channels)
+            
             # Читаем вывод построчно в реальном времени
             output_buffer = ""
             while True:
@@ -787,13 +844,17 @@ class UniversalProcessRunner(object):
             channels: Список каналов ["file", "terminal", "gui"]
         """
         # Лог файл (всегда, если есть logger)
-        if "file" in channels and self.logger:
-            if level == "ERROR":
-                print(f"[ERROR] {message}")
-            elif level == "WARNING":
-                print(f"[WARNING] {message}")
+        if "file" in channels:
+            if self.logger:
+                if level == "ERROR":
+                    self.logger.error(message)
+                elif level == "WARNING":
+                    self.logger.warning(message)
+                else:
+                    self.logger.info(message)
             else:
-                print(f"[INFO] {message}")
+                # Если logger не установлен, используем print() через наш перехватчик
+                print(f"[{level}] {message}")
         
         # GUI терминал
         if "terminal" in channels and self.gui_callback:
@@ -1064,33 +1125,26 @@ class SystemStats(object):
         }
     
     def get_updatable_packages(self):
-        """Анализ доступных обновлений"""
+        """Быстрый анализ доступных обновлений (только количество)"""
         print("[PACKAGE] Анализ доступных обновлений...")
         
         try:
-            # Получаем список обновляемых пакетов
-            cmd = ['apt', 'list', '--upgradable']
-            result = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True  # Добавляем для совместимости с Python 3.7
-            )
-            stdout, stderr = result.communicate()
+            # Получаем только количество пакетов (быстро!)
+            cmd = ['bash', '-c', 'apt list --upgradable 2>/dev/null | wc -l']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
-                lines = stdout.strip().split('\n')
-                # Первая строка - заголовок, остальные - пакеты
-                self.updatable_packages = len(lines) - 1 if len(lines) > 1 else 0
+                count = int(result.stdout.strip()) - 1  # -1 для заголовка
+                self.updatable_packages = max(0, count)
                 self.packages_to_update = self.updatable_packages
                 
-                # Сохраняем ВСЕ пакеты для отображения в GUI
-                self.updatable_list = lines[1:] if len(lines) > 1 else []
+                # НЕ сохраняем список пакетов - он не используется в парсинге!
+                self.updatable_list = []
                 
                 print("   [OK] Найдено %d пакетов для обновления" % self.packages_to_update)
                 return True
             else:
-                print("   [ERROR] Ошибка получения списка обновлений: %s" % stderr.strip())
+                print("   [ERROR] Ошибка получения списка обновлений")
                 return False
                 
         except Exception as e:
@@ -1215,12 +1269,6 @@ class SystemStats(object):
         # Обновление системы
         print("\n[PACKAGE] Обновление системы:")
         print("   • Пакетов для обновления: %d" % self.packages_to_update)
-        
-        if self.packages_to_update > 0 and self.updatable_list:
-            print("   • Первые пакеты:")
-            for package in self.updatable_list:
-                if package.strip():
-                    print("     - %s" % package.strip())
         
         # Очистка системы
         print("\n[CLEANUP] Очистка системы:")
@@ -3244,105 +3292,6 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
             self._log("Ошибка создания скрипта: %s" % str(e), "ERROR")
             return False
     
-    def install_astra_ide(self):
-        """Установка Astra.IDE"""
-        self._log("\n" + "=" * 60)
-        self._log("ШАГ 6: УСТАНОВКА ASTRA.IDE")
-        self._log("=" * 60)
-        
-        # Настраиваем переменные окружения
-        env = os.environ.copy()
-        env['WINEPREFIX'] = self.wineprefix
-        env['WINEDEBUG'] = '-all'
-        env['WINE'] = '/opt/wine-astraregul/bin/wine'
-        
-        # КРИТИЧЕСКИ ВАЖНО: Устанавливаем правильную архитектуру для Astra.IDE
-        env['WINEARCH'] = 'win64'
-        env['WINEBUILD'] = 'x86_64'
-        
-        # Дополнительные параметры для стабильности Astra.IDE
-        env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
-        env['WINEDLLPATH'] = '/opt/wine-astraregul/lib64/wine'
-        
-        # Отключаем GUI диалоги Wine (rundll32, winemenubuilder и т.д.)
-        env['DISPLAY'] = ':0'
-        
-        self._log("Запуск установщика Astra.IDE...")
-        self._log("Путь к установщику: %s" % self.astra_ide_exe)
-        self._log("ВНИМАНИЕ: Установка может занять 5-10 минут")
-        self._log("WINEDLLOVERRIDES: отключены GUI диалоги Wine")
-        
-        try:
-            # КРИТИЧЕСКИ ВАЖНО: Astra.IDE НЕ МОЖЕТ устанавливаться от root!
-            # Запускаем от имени реального пользователя через su
-            real_user = os.environ.get('SUDO_USER')
-            if not real_user or real_user == 'root':
-                self._log("ОШИБКА: Не удалось определить реального пользователя для установки Astra.IDE", "ERROR")
-                self._log("Astra.IDE не может устанавливаться от root!", "ERROR")
-                return False
-            
-            self._log("Запускаем установку Astra.IDE от пользователя: %s" % real_user)
-            
-            # Формируем команду для выполнения от имени пользователя
-            wine_cmd = [env['WINE'], self.astra_ide_exe]
-            
-            # Создаем команду su для выполнения от имени пользователя
-            su_cmd = ['su', real_user, '-c']
-            
-            # Формируем строку команды с переменными окружения
-            env_str = ' '.join(['%s="%s"' % (k, v) for k, v in env.items()])
-            cmd_str = '%s %s' % (env_str, ' '.join(wine_cmd))
-            
-            su_cmd.append(cmd_str)
-            
-            self._log("Выполняем команду: %s" % ' '.join(su_cmd))
-            
-            # Дополнительная диагностика архитектуры
-            self._log("Проверка архитектуры Wine перед установкой...")
-            arch_check_cmd = ['su', real_user, '-c', 'export WINEPREFIX="%s" && export WINEARCH=win64 && %s winecfg --version' % (self.wineprefix, env['WINE'])]
-            arch_result = subprocess.run(arch_check_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=False)
-            if arch_result.returncode == 0:
-                self._log("Wine архитектура: %s" % arch_result.stdout.strip())
-            else:
-                self._log("Предупреждение: не удалось проверить архитектуру Wine", "WARNING")
-            
-            # Запускаем установку от имени пользователя
-            result = subprocess.run(
-                su_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                errors='replace',
-                check=False
-            )
-            
-            if result.returncode == 0:
-                self._log("Установщик Astra.IDE завершен успешно")
-            else:
-                self._log("Установщик завершился с кодом: %d" % result.returncode)
-                self._log("Вывод stdout: %s" % result.stdout)
-                self._log("Вывод stderr: %s" % result.stderr)
-                
-                # Проверяем на специфические ошибки Wine
-                if "page fault" in result.stderr.lower():
-                    self._log("ОШИБКА: Обнаружена ошибка доступа к памяти Wine!", "ERROR")
-                    self._log("Это может быть связано с неправильной архитектурой WINEPREFIX", "ERROR")
-                    self._log("Рекомендация: удалите WINEPREFIX и переустановите компоненты", "ERROR")
-                    return False
-                elif "package" in result.stderr.lower() and "temp" in result.stderr.lower():
-                    self._log("ОШИБКА: Проблема с временными файлами установщика", "ERROR")
-                    self._log("Рекомендация: очистите временные файлы и попробуйте снова", "ERROR")
-                    return False
-            
-            # Даем время на завершение установки
-            import time
-            time.sleep(3)
-            
-            return True
-        
-        except Exception as e:
-            self._log("Ошибка установки Astra.IDE: %s" % str(e), "ERROR")
-            return False
     
     def create_desktop_shortcut(self):
         """Создание ярлыка на рабочем столе"""
@@ -5357,12 +5306,8 @@ class AutomationGUI(object):
         # Устанавливаем глобальную ссылку на GUI для перенаправления print()
         sys._gui_instance = self
         
-        # Создаем универсальный обработчик процессов (logger будет установлен позже)
-        self.process_runner = UniversalProcessRunner(
-            logger=None,  # Будет установлен позже
-            gui_callback=self.add_terminal_output,
-            gui_instance=self  # Передаем ссылку на GUI
-        )
+        # Используем уже созданный universal_runner как process_runner
+        self.process_runner = self.universal_runner
         
         # Создаем SystemUpdater сразу для доступности ProcessProgressManager
         self.system_updater = SystemUpdater(self.universal_runner)
@@ -5387,11 +5332,6 @@ class AutomationGUI(object):
         # Автоматически запускаем проверку компонентов при инициализации GUI
         if not console_mode:
             self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
-        
-        # АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ ЧЕРЕЗ 10 СЕКУНД ДЛЯ ОТЛАДКИ
-        
-        # ТЕСТОВОЕ СООБЩЕНИЕ ПОСЛЕ ПЛАНИРОВАНИЯ process_terminal_queue
-        self.root.after(2000, lambda: print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале"))
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -5400,13 +5340,8 @@ class AutomationGUI(object):
             # Обновляем GUI в главном потоке
             self.root.after(0, self._update_wine_status)
         else:
-            # Обычное сообщение - логируем
-            if GLOBAL_LOG_FILE:
-                try:
-                    with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
-                        f.write(f"[COMPONENT] {message}\n")
-                except:
-                    pass
+            # Обычное сообщение - логируем через универсальный обработчик
+            print(f"[COMPONENT] {message}")
         
         # Запускаем обработку очереди терминала с задержкой
         self.root.after(1000, self.process_terminal_queue)
@@ -5459,9 +5394,554 @@ class AutomationGUI(object):
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
+    def _find_all_install_processes(self):
+        """Находит ВСЕ процессы установки независимо от принадлежности"""
+        try:
+            import subprocess
+            
+            # Расширенный поиск всех процессов установки
+            process_patterns = [
+                'apt', 'dpkg', 'apt-get', 'apt-cache', 'apt-config',
+                'unattended-upgrade', 'apt.systemd.daily', 'aptd',
+                'wine', 'winetricks', 'msiexec', 'setup.exe'
+            ]
+            
+            all_processes = []
+            
+            for pattern in process_patterns:
+                try:
+                    result = subprocess.run(['pgrep', '-f', pattern], 
+                                          capture_output=True, text=True, timeout=3)
+                    if result.returncode == 0:
+                        pids = [pid.strip() for pid in result.stdout.strip().split('\n') if pid.strip()]
+                        all_processes.extend(pids)
+                        print(f"[SHUTDOWN] Найдено {len(pids)} процессов для '{pattern}'")
+                except:
+                    pass
+            
+            # Удаляем дубликаты
+            all_processes = list(set(all_processes))
+            
+            # Получаем детальную информацию о процессах
+            process_info = []
+            for pid in all_processes:
+                try:
+                    result = subprocess.run(['ps', '-p', pid, '-o', 'pid,cmd', '--no-headers'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0:
+                        cmd = result.stdout.strip()
+                        process_info.append({
+                            'pid': pid,
+                            'cmd': cmd,
+                            'short_cmd': cmd[:60] + '...' if len(cmd) > 60 else cmd
+                        })
+                except:
+                    process_info.append({
+                        'pid': pid,
+                        'cmd': 'Ошибка получения информации',
+                        'short_cmd': 'Ошибка получения информации'
+                    })
+            
+            print(f"[SHUTDOWN] Всего найдено {len(all_processes)} процессов установки")
+            
+            # Детальная диагностика найденных процессов
+            for proc_info in process_info:
+                print(f"[SHUTDOWN] Найден процесс: PID {proc_info['pid']} - {proc_info['short_cmd']}")
+            
+            return process_info
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка поиска процессов установки: {e}")
+            return []
+    
+    def _create_shutdown_dialog(self):
+        """Создает модальное окно для отображения процесса закрытия"""
+        if not TKINTER_AVAILABLE:
+            print("[ERROR] tkinter недоступен для создания окна закрытия")
+            return None
+            
+        try:
+            # Создаем модальное окно
+            shutdown_window = tk.Toplevel(self.root)
+            shutdown_window.title("Закрытие программы")
+            shutdown_window.geometry("400x200")
+            shutdown_window.resizable(False, False)
+            
+            # Делаем окно модальным
+            shutdown_window.transient(self.root)
+            shutdown_window.grab_set()
+            
+            # Центрируем окно
+            shutdown_window.update_idletasks()
+            x = (shutdown_window.winfo_screenwidth() // 2) - (400 // 2)
+            y = (shutdown_window.winfo_screenheight() // 2) - (200 // 2)
+            shutdown_window.geometry(f"400x200+{x}+{y}")
+            
+            # Заголовок
+            title_label = tk.Label(shutdown_window, text="Закрытие программы", 
+                                 font=("Arial", 14, "bold"))
+            title_label.pack(pady=10)
+            
+            # Статус
+            self.shutdown_status_label = tk.Label(shutdown_window, 
+                                                 text="Завершаем фоновые процессы...", 
+                                                 font=("Arial", 9))
+            self.shutdown_status_label.pack(pady=5)
+            
+            # Прогресс бар
+            self.shutdown_progress = ttk.Progressbar(shutdown_window, 
+                                                   mode='indeterminate')
+            self.shutdown_progress.pack(pady=10, padx=20, fill='x')
+            self.shutdown_progress.start()
+            
+            # Список процессов
+            self.shutdown_processes_text = tk.Text(shutdown_window, height=8, width=50, font=("Courier", 8))
+            self.shutdown_processes_text.pack(pady=5, padx=20, fill='both', expand=True)
+            
+            # Кнопки управления
+            button_frame = tk.Frame(shutdown_window)
+            button_frame.pack(pady=5)
+            
+            force_close_btn = tk.Button(button_frame, text="Принудительно закрыть", 
+                                       command=lambda: self._force_close_all(shutdown_window),
+                                       bg='#ff6b6b', fg='white')
+            force_close_btn.pack(side=tk.LEFT, padx=5)
+            
+            close_with_tails_btn = tk.Button(button_frame, text="Закрыть с Хвостами", 
+                                            command=lambda: self._close_with_tails(shutdown_window),
+                                            bg='#ffa500', fg='white')
+            close_with_tails_btn.pack(side=tk.LEFT, padx=5)
+            
+            return shutdown_window
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка создания окна закрытия: {e}")
+            return None
+    
+    def _force_close_all(self, shutdown_window):
+        """Принудительно закрывает все процессы и окно"""
+        try:
+            print("[FORCE_CLOSE] Принудительное закрытие всех процессов")
+            self.shutdown_status_label.config(text="Принудительное закрытие...")
+            
+            # Принудительно завершаем все процессы
+            if hasattr(self, 'process_runner') and self.process_runner:
+                self.process_runner.force_kill_child_processes()
+            
+            # Закрываем окно закрытия
+            shutdown_window.destroy()
+            
+            # Закрываем основное окно
+            self.root.destroy()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка принудительного закрытия: {e}")
+            self.root.destroy()
+    
+    def _close_with_tails(self, shutdown_window):
+        """Закрывает окно даже если остались процессы (с хвостами)"""
+        try:
+            print("[CLOSE_WITH_TAILS] Закрытие с оставшимися процессами")
+            self.shutdown_status_label.config(text="⚠️ Закрытие с оставшимися процессами...")
+            self.shutdown_processes_text.insert(tk.END, "\n\n[WARNING] Закрытие с оставшимися процессами!")
+            self.shutdown_processes_text.insert(tk.END, "\n[WARNING] Процессы могут продолжить работу в фоне!")
+            self.root.update()
+            import time
+            time.sleep(2)
+            shutdown_window.destroy()
+            self.root.destroy()
+        except Exception as e:
+            print(f"[ERROR] Ошибка закрытия с хвостами: {e}")
+    
+    def _start_cyclic_process_check(self, shutdown_window):
+        """Запускает циклическую проверку процессов каждые 5 секунд"""
+        def check_processes():
+            try:
+                remaining_processes = self._find_all_install_processes()
+                if not remaining_processes:
+                    # Процессы завершились - закрываем окно
+                    self.shutdown_status_label.config(text="✅ Процессы завершились, закрываем окно...")
+                    self.shutdown_processes_text.insert(tk.END, "\n\n[AUTO_CLOSE] Все процессы завершились, закрываем окно автоматически")
+                    self.root.update()
+                    import time
+                    time.sleep(2)
+                    shutdown_window.destroy()
+                    self.root.destroy()
+                else:
+                    # Процессы все еще есть - обновляем информацию
+                    self.shutdown_status_label.config(text=f"🔄 Проверка: {len(remaining_processes)} процессов остались")
+                    
+                    # Очищаем старый список и добавляем новый
+                    self.shutdown_processes_text.delete(1.0, tk.END)
+                    self.shutdown_processes_text.insert(tk.END, f"[LIVE_UPDATE] Активные процессы ({len(remaining_processes)}):\n")
+                    
+                    for i, proc_info in enumerate(remaining_processes, 1):
+                        status_icon = "🔥" if "apt" in proc_info['cmd'] else "⚙️"
+                        self.shutdown_processes_text.insert(tk.END, f"{status_icon} {i}. PID {proc_info['pid']} - {proc_info['short_cmd']}\n")
+                    
+                    self.shutdown_processes_text.insert(tk.END, f"\n[LIVE_UPDATE] Борьба с хвостами продолжается...")
+                    self.shutdown_processes_text.insert(tk.END, f"\n[LIVE_UPDATE] Следующая проверка через 5 секунд")
+                    self.shutdown_processes_text.see(tk.END)
+                    self.root.update()
+                    
+                    # Планируем следующую проверку через 5 секунд
+                    self.root.after(5000, check_processes)
+                    
+            except Exception as e:
+                print(f"[ERROR] Ошибка циклической проверки: {e}")
+                # В случае ошибки закрываем окно
+                shutdown_window.destroy()
+                self.root.destroy()
+        
+        # Запускаем первую проверку через 5 секунд
+        self.root.after(5000, check_processes)
+    
+    def _confirm_process_interruption(self, processes):
+        """Показывает диалог подтверждения прерывания процессов"""
+        try:
+            import tkinter.messagebox as msgbox
+            
+            # Создаем список процессов для отображения
+            process_list = []
+            for i, proc_info in enumerate(processes[:5], 1):  # Показываем первые 5
+                process_list.append(f"{i}. PID {proc_info['pid']} - {proc_info['short_cmd']}")
+            
+            if len(processes) > 5:
+                process_list.append(f"... и еще {len(processes) - 5} процессов")
+            
+            process_text = "\n".join(process_list)
+            
+            message = f"""Обнаружены активные процессы установки ({len(processes)} шт.):
+
+{process_text}
+
+Вы уверены, что хотите прервать процессы установки?
+
+⚠️ ВНИМАНИЕ: Прерывание может привести к:
+• Неполной установке пакетов
+• Повреждению системы
+• Необходимости ручного восстановления
+
+Рекомендуется дождаться завершения установки."""
+            
+            result = msgbox.askyesno(
+                title="Подтверждение прерывания",
+                message=message,
+                icon="warning"
+            )
+            
+            return result
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка диалога подтверждения: {e}")
+            # В случае ошибки разрешаем закрытие
+            return True
+    
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
         print("[INFO] GUI закрывается", channels=["gui_log"])
+        
+        # Ищем ВСЕ процессы установки независимо от принадлежности
+        all_install_processes = self._find_all_install_processes()
+        
+        if not all_install_processes:
+            # Нет активных процессов установки - закрываем сразу
+            print("[INFO] Нет активных процессов установки, закрываем GUI", channels=["gui_log"])
+            self.root.destroy()
+            return
+        
+        # Есть активные процессы установки - запрашиваем подтверждение
+        print(f"[INFO] Найдено {len(all_install_processes)} активных процессов установки, запрашиваем подтверждение", channels=["gui_log"])
+        
+        # Показываем диалог подтверждения
+        if not self._confirm_process_interruption(all_install_processes):
+            # Пользователь отменил закрытие
+            print("[INFO] Пользователь отменил закрытие программы", channels=["gui_log"])
+            return
+        
+        # Пользователь подтвердил - показываем окно закрытия
+        shutdown_window = self._create_shutdown_dialog()
+        if not shutdown_window:
+            # Не удалось создать окно - закрываем принудительно
+            self._force_close_all(None)
+            return
+        
+        # Запускаем процесс закрытия в отдельном потоке
+        import threading
+        shutdown_thread = threading.Thread(target=self._shutdown_processes, 
+                                          args=(shutdown_window, all_install_processes))
+        shutdown_thread.daemon = True
+        shutdown_thread.start()
+    
+    def _shutdown_processes(self, shutdown_window, all_install_processes):
+        """Пошаговое закрытие процессов с отображением прогресса"""
+        try:
+            import time
+            import subprocess
+            
+            # Обновляем статус
+            self.shutdown_status_label.config(text=f"Завершаем {len(all_install_processes)} процессов...")
+            
+            # Отображаем список процессов
+            processes_info = []
+            for process_info in all_install_processes:
+                pid = process_info['pid']
+                short_cmd = process_info['short_cmd']
+                processes_info.append(f"PID {pid}: {short_cmd}")
+            
+            # Показываем процессы в окне
+            self.shutdown_processes_text.delete(1.0, tk.END)
+            self.shutdown_processes_text.insert(tk.END, "\n".join(processes_info))
+            
+            # Этап 1: Мягкое завершение (SIGTERM)
+            self.shutdown_status_label.config(text="Отправляем сигналы завершения...")
+            terminated_processes = []
+            
+            for process_info in all_install_processes:
+                pid = process_info['pid']
+                try:
+                    subprocess.run(['kill', '-TERM', str(pid)], timeout=3)
+                    terminated_processes.append(pid)
+                    self.shutdown_processes_text.insert(tk.END, f"\n[TERM] Отправлен SIGTERM процессу {pid}")
+                    
+                    # Сразу проверяем - завершился ли процесс
+                    try:
+                        result = subprocess.run(['kill', '-0', str(pid)], capture_output=True, timeout=1)
+                        if result.returncode == 0:
+                            self.shutdown_processes_text.insert(tk.END, f"\n[WARNING] Процесс {pid} НЕ завершился после SIGTERM!")
+                            self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] 🔥 Процесс {pid} сопротивляется SIGTERM!")
+                        else:
+                            self.shutdown_processes_text.insert(tk.END, f"\n[OK] Процесс {pid} завершился после SIGTERM")
+                            self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] ✅ Процесс {pid} завершился мягко")
+                    except:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[CHECK] Не удалось проверить статус процесса {pid}")
+                    
+                    self.shutdown_processes_text.see(tk.END)
+                    self.root.update()
+                    
+                except:
+                    self.shutdown_processes_text.insert(tk.END, f"\n[ERROR] Не удалось отправить SIGTERM процессу {pid}")
+            
+            # Ждем 3 секунды
+            self.shutdown_status_label.config(text="Ждем завершения процессов (3 сек)...")
+            time.sleep(3)
+            
+            # Этап 2: Проверяем какие процессы еще живы
+            self.shutdown_status_label.config(text="Проверяем завершенные процессы...")
+            still_running = []
+            
+            for process_info in all_install_processes:
+                pid = process_info['pid']
+                try:
+                    result = subprocess.run(['kill', '-0', str(pid)], 
+                                          capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        still_running.append(pid)
+                        self.shutdown_processes_text.insert(tk.END, f"\n[ALIVE] Процесс {pid} все еще работает")
+                    else:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[OK] Процесс {pid} завершен")
+                except:
+                    still_running.append(pid)
+                    self.shutdown_processes_text.insert(tk.END, f"\n[ERROR] Ошибка проверки процесса {pid}")
+            
+            # Этап 3: Принудительное завершение (SIGKILL)
+            if still_running:
+                self.shutdown_status_label.config(text=f"Принудительно завершаем {len(still_running)} процессов...")
+                
+                for pid in still_running:
+                    try:
+                        subprocess.run(['kill', '-KILL', str(pid)], timeout=3)
+                        self.shutdown_processes_text.insert(tk.END, f"\n[KILL] Принудительно завершен процесс {pid}")
+                        
+                        # Проверяем что процесс действительно завершился после SIGKILL
+                        try:
+                            result = subprocess.run(['kill', '-0', str(pid)], capture_output=True, timeout=1)
+                            if result.returncode == 0:
+                                self.shutdown_processes_text.insert(tk.END, f"\n[CRITICAL] Процесс {pid} НЕ завершился даже после SIGKILL!")
+                                self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] 💀 Процесс {pid} НЕУБИВАЕМЫЙ! Требует ручного вмешательства!")
+                            else:
+                                self.shutdown_processes_text.insert(tk.END, f"\n[SUCCESS] Процесс {pid} завершился после SIGKILL")
+                                self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] ⚡ Процесс {pid} убит принудительно!")
+                        except:
+                            self.shutdown_processes_text.insert(tk.END, f"\n[CHECK] Не удалось проверить статус процесса {pid} после SIGKILL")
+                        
+                        self.shutdown_processes_text.see(tk.END)
+                        self.root.update()
+                        
+                    except:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[ERROR] Не удалось принудительно завершить процесс {pid}")
+                
+                time.sleep(2)  # Увеличиваем время ожидания
+            
+            # Финальная проверка с детальной диагностикой
+            self.shutdown_status_label.config(text="Финальная проверка...")
+            final_check = []
+            
+            print(f"[SHUTDOWN] Финальная проверка {len(all_install_processes)} процессов...")
+            
+            for process_info in all_install_processes:
+                pid = process_info['pid']
+                cmd = process_info['cmd']
+                try:
+                    result = subprocess.run(['kill', '-0', str(pid)], 
+                                          capture_output=True, timeout=1)
+                    if result.returncode == 0:
+                        final_check.append(pid)
+                        print(f"[SHUTDOWN] ПРОЦЕСС НЕ ЗАВЕРШЕН: PID {pid} - {cmd[:50]}...")
+                        self.shutdown_processes_text.insert(tk.END, f"\n[FINAL] PID {pid} ВСЕ ЕЩЕ РАБОТАЕТ!")
+                    else:
+                        print(f"[SHUTDOWN] Процесс завершен: PID {pid}")
+                        self.shutdown_processes_text.insert(tk.END, f"\n[FINAL] PID {pid} завершен")
+                except Exception as e:
+                    print(f"[SHUTDOWN] Ошибка проверки PID {pid}: {e}")
+                    final_check.append(pid)
+            
+            print(f"[SHUTDOWN] Финальная проверка: {len(final_check)} процессов не завершились")
+            
+            # Дополнительная диагностика: проверяем не появились ли новые процессы
+            print("[SHUTDOWN] Проверяем не появились ли новые процессы установки...")
+            self.shutdown_status_label.config(text="Проверяем новые процессы...")
+            new_processes = self._find_all_install_processes()
+            if new_processes:
+                print(f"[SHUTDOWN] ВНИМАНИЕ: Найдено {len(new_processes)} НОВЫХ процессов после закрытия!")
+                self.shutdown_processes_text.insert(tk.END, f"\n\n[CRITICAL] Найдено {len(new_processes)} НОВЫХ процессов!")
+                for proc_info in new_processes:
+                    print(f"[SHUTDOWN] Новый процесс: PID {proc_info['pid']} - {proc_info['short_cmd']}")
+                    self.shutdown_processes_text.insert(tk.END, f"\n[CRITICAL] Новый процесс: PID {proc_info['pid']} - {proc_info['short_cmd']}")
+                
+                # Пытаемся завершить новые процессы тоже
+                self.shutdown_processes_text.insert(tk.END, f"\n[ACTION] Завершаем новые процессы...")
+                for proc_info in new_processes:
+                    pid = proc_info['pid']
+                    try:
+                        subprocess.run(['kill', '-KILL', str(pid)], timeout=3)
+                        self.shutdown_processes_text.insert(tk.END, f"\n[KILL_NEW] Завершен новый процесс {pid}")
+                        
+                        # Обновляем список в реальном времени
+                        self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] Процесс {pid} завершен ✅")
+                        self.shutdown_processes_text.see(tk.END)
+                        self.root.update()
+                        
+                    except:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[ERROR_NEW] Не удалось завершить новый процесс {pid}")
+            else:
+                print("[SHUTDOWN] Новых процессов установки не найдено")
+                self.shutdown_processes_text.insert(tk.END, "\n[OK] Новых процессов установки не найдено")
+            
+            # Очищаем список процессов в process_runner
+            if hasattr(self, 'process_runner') and self.process_runner:
+                self.process_runner.child_processes.clear()
+                self.process_runner.process_pid = None
+            
+            # Завершаем с дополнительными проверками
+            if final_check:
+                self.shutdown_status_label.config(text=f"ВНИМАНИЕ: {len(final_check)} процессов не завершились!")
+                self.shutdown_processes_text.insert(tk.END, f"\n\n[WARNING] Не удалось завершить процессы: {final_check}")
+                time.sleep(2)
+            else:
+                self.shutdown_status_label.config(text="Все процессы успешно завершены!")
+                self.shutdown_processes_text.insert(tk.END, "\n\n[SUCCESS] Все процессы завершены успешно!")
+                
+                # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: ждем еще 2 секунды и проверяем снова
+                self.shutdown_status_label.config(text="Финальная проверка через 2 секунды...")
+                time.sleep(2)
+                
+                # Проверяем еще раз - не появились ли новые процессы
+                final_verification = self._find_all_install_processes()
+                if final_verification:
+                    self.shutdown_status_label.config(text=f"ВНИМАНИЕ: Найдено {len(final_verification)} новых процессов!")
+                    self.shutdown_processes_text.insert(tk.END, f"\n\n[CRITICAL] После завершения найдены новые процессы:")
+                    for proc_info in final_verification:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[CRITICAL] Новый процесс: PID {proc_info['pid']} - {proc_info['short_cmd']}")
+                    
+                    # Пытаемся завершить новые процессы
+                    self.shutdown_processes_text.insert(tk.END, f"\n[ACTION] Завершаем новые процессы...")
+                    for proc_info in final_verification:
+                        pid = proc_info['pid']
+                        try:
+                            subprocess.run(['kill', '-KILL', str(pid)], timeout=3)
+                            self.shutdown_processes_text.insert(tk.END, f"\n[KILL_FINAL] Завершен новый процесс {pid}")
+                        except:
+                            self.shutdown_processes_text.insert(tk.END, f"\n[ERROR_FINAL] Не удалось завершить новый процесс {pid}")
+                    
+                    time.sleep(2)
+                else:
+                    self.shutdown_status_label.config(text="✅ Все процессы действительно завершены!")
+                    self.shutdown_processes_text.insert(tk.END, "\n[FINAL_OK] Финальная проверка: новых процессов не найдено")
+                
+                # Показываем победу дольше
+                self.shutdown_status_label.config(text="🎉 ВСЕХ ПОБЕДИЛИ! 🎉")
+                self.shutdown_processes_text.insert(tk.END, "\n\n🎉🎉🎉 ВСЕХ ПОБЕДИЛИ! 🎉🎉🎉")
+                self.shutdown_processes_text.insert(tk.END, "\n[VICTORY] Все процессы установки успешно завершены!")
+                self.shutdown_processes_text.see(tk.END)
+                self.root.update()
+                time.sleep(5)  # Показываем победу 5 секунд
+            
+            # ПОСЛЕДНЯЯ ПРОВЕРКА перед закрытием окна
+            self.shutdown_status_label.config(text="Последняя проверка перед закрытием...")
+            self.shutdown_processes_text.insert(tk.END, "\n\n[FINAL_CHECK] Последняя проверка процессов...")
+            self.root.update()
+            
+            # Ждем еще 1 секунду и проверяем в последний раз
+            time.sleep(1)
+            last_check = self._find_all_install_processes()
+            if last_check:
+                self.shutdown_status_label.config(text=f"⚠️ Найдено {len(last_check)} процессов в последней проверке!")
+                self.shutdown_processes_text.insert(tk.END, f"\n[LAST_CHECK] Найдены процессы в последней проверке:")
+                for proc_info in last_check:
+                    self.shutdown_processes_text.insert(tk.END, f"\n[LAST_CHECK] PID {proc_info['pid']} - {proc_info['short_cmd']}")
+                
+                # Принудительно завершаем в последний раз
+                for proc_info in last_check:
+                    pid = proc_info['pid']
+                    try:
+                        subprocess.run(['kill', '-KILL', str(pid)], timeout=2)
+                        self.shutdown_processes_text.insert(tk.END, f"\n[LAST_KILL] Завершен процесс {pid}")
+                        self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] 🎯 Последний удар по процессу {pid}!")
+                        self.shutdown_processes_text.see(tk.END)
+                        self.root.update()
+                    except:
+                        self.shutdown_processes_text.insert(tk.END, f"\n[LIVE] ❌ Не удалось убить процесс {pid}")
+                
+                time.sleep(1)
+                
+                # ПРОВЕРЯЕМ ЕЩЕ РАЗ - если процессы все еще есть, НЕ закрываем окно
+                final_final_check = self._find_all_install_processes()
+                if final_final_check:
+                    self.shutdown_status_label.config(text=f"🚫 Остались процессы! Используйте кнопки ниже")
+                    self.shutdown_processes_text.insert(tk.END, f"\n\n[CRITICAL] Остались процессы: {len(final_final_check)}")
+                    self.shutdown_processes_text.insert(tk.END, f"\n[CRITICAL] Окно НЕ закроется автоматически!")
+                    self.shutdown_processes_text.insert(tk.END, f"\n[CRITICAL] Используйте кнопки 'Принудительно закрыть' или 'Закрыть с Хвостами'")
+                    
+                    # Показываем список оставшихся процессов
+                    self.shutdown_processes_text.insert(tk.END, f"\n\n[FINAL_LIST] Упрямые процессы:")
+                    for i, proc_info in enumerate(final_final_check, 1):
+                        self.shutdown_processes_text.insert(tk.END, f"\n{i}. 🔥 PID {proc_info['pid']} - {proc_info['short_cmd']}")
+                    
+                    self.shutdown_processes_text.insert(tk.END, f"\n\n[LIVE] Борьба с хвостами начинается!")
+                    self.shutdown_processes_text.see(tk.END)
+                    self.root.update()
+                    
+                    # НЕ закрываем окно - ждем действий пользователя
+                    # Запускаем циклическую проверку процессов
+                    self._start_cyclic_process_check(shutdown_window)
+                    return
+                else:
+                    self.shutdown_processes_text.insert(tk.END, "\n[LAST_OK] После последней попытки: процессов не найдено")
+            else:
+                self.shutdown_processes_text.insert(tk.END, "\n[LAST_OK] Последняя проверка: процессов не найдено")
+            
+            # Закрываем окна только если процессов действительно нет
+            self.shutdown_status_label.config(text="✅ Все процессы завершены, закрываем окно...")
+            time.sleep(1)
+            shutdown_window.destroy()
+            self.root.destroy()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка в процессе закрытия: {e}")
+            self.shutdown_processes_text.insert(tk.END, f"\n[ERROR] Ошибка: {e}")
+            time.sleep(2)
+            shutdown_window.destroy()
         self.root.destroy()
     
     def _on_window_resize(self, event):
@@ -8707,8 +9187,10 @@ class UniversalProgressManager:
         # Отправляем обновление в GUI
         self._send_progress_update()
         
-        # Записываем в лог для анализа
-        self._write_progress_to_file()
+        # Записываем в лог для анализа через универсальный обработчик
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        table_line = f"{timestamp} | {self.stage_name:<20} | {self.stage_progress:>6.1f}% | {self.global_progress:>8.1f}% | {self.details[:50]}"
+        print(f"[PROGRESS] {table_line}")
     
     def update_statistics(self, process_type, stats_data):
         """
@@ -8751,31 +9233,6 @@ class UniversalProgressManager:
         except Exception as e:
             pass
     
-    def _write_progress_to_file(self):
-        """Запись прогресса в файл для анализа"""
-        try:
-            import os
-            import datetime
-            if hasattr(self.universal_runner, 'log_file') and self.universal_runner.log_file:
-                main_log_path = self.universal_runner.log_file
-            else:
-                main_log_path = GLOBAL_LOG_FILE
-            log_dir = os.path.dirname(main_log_path)
-            main_log_name = os.path.basename(main_log_path)
-            progress_file_name = main_log_name.replace("astra_automation_", "universal_progress_").replace(".log", ".txt")
-            progress_file = os.path.join(log_dir, progress_file_name)
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            table_line = f"{timestamp} | {self.stage_name:<20} | {self.stage_progress:>6.1f}% | {self.global_progress:>8.1f}% | {self.details[:50]}\n"
-            with open(progress_file, 'a', encoding='utf-8') as f:
-                if os.path.getsize(progress_file) == 0:
-                    header = "Время     | Этап                 | Этапный% | Глобальный% | Детали\n"
-                    f.write(header)
-                    f.write("-" * 80 + "\n")
-                f.write(table_line)
-        except Exception as e:
-            print(f"[UNIVERSAL_PROGRESS] Ошибка записи в файл прогресса: {e}")
-
-
 class SystemUpdateParser:
     """ПАРСЕР С ТАБЛИЦЕЙ ПАКЕТОВ: ТОЧНЫЙ РАСЧЕТ ГЛОБАЛЬНОГО ПРОГРЕССА БЕЗ СКАЧКОВ"""
     
@@ -8803,6 +9260,21 @@ class SystemUpdateParser:
         self._progress_cache_valid = False
         self._cached_progress = 0.0
     
+    def reset_parser(self):
+        """Сброс состояния парсера для нового запуска"""
+        # Сбрасываем все счетчики
+        self.packages_table.clear()
+        self.total_packages = 0
+        self.max_packages_found = 0
+        
+        # Сбрасываем флаги состояния
+        self.is_finished = False
+        self.main_cycle_found = False
+        
+        # Сбрасываем кэш
+        self._progress_cache_valid = False
+        self._cached_progress = 0.0
+    
     def parse_line(self, line):
         """Парсинг строки вывода команды"""
         if self.is_finished:
@@ -8817,6 +9289,7 @@ class SystemUpdateParser:
             # Убираем временные метки для поиска паттернов
             clean_line = re.sub(r'^\[[^\]]+\]\s*', '', line)
             
+            # Отладочная информация для важных строк
             # Этап 1: Получение списка пакетов
             if "Обновлено" in clean_line and "пакетов" in clean_line and "установлено" in clean_line:
                 self._parse_package_list(clean_line)
@@ -8824,6 +9297,7 @@ class SystemUpdateParser:
             
             # Этап 2: Скачивание пакетов
             elif clean_line.startswith("Пол:"):
+                print(f"[PARSER] ОБРАБАТЫВАЕМ ЗАГРУЗКУ: {clean_line}")
                 self._parse_download_progress(clean_line)
                 return
             
@@ -8873,22 +9347,19 @@ class SystemUpdateParser:
         if current_total == self.max_packages_found:
             self.main_cycle_found = True
             
-            # Обновляем прогресс
+            # ИСПРАВЛЕНИЕ: НЕ обновляем детальный прогресс здесь!
+            # Прогресс будет обновляться только при реальном скачивании
+            # в _parse_download_progress()
+            
+            # Только логируем информацию о найденных пакетах
             if self.universal_manager:
-                detailed_progress = self._calculate_detailed_progress()
-                
-                # Обновляем детальные бары напрямую
-                if self.system_updater:
-                    self.system_updater.update_detailed_bars(detailed_progress)
-                
-                # Обновляем общий прогресс через universal_manager
                 self.universal_manager.update_progress(
                     "system_update",
                     "Получение списка пакетов",
-                    100,
-                    0,
-                    f"Найдено {current_total} пакетов (обновлено: {updated}, новых: {installed})",
-                    **detailed_progress
+                    100,  # Этап завершен
+                    0,    # Глобальный прогресс = 0 (еще не начали скачивать)
+                    f"Найдено {current_total} пакетов (обновлено: {updated}, новых: {installed})"
+                    # НЕ передаем detailed_progress - детальные бары остаются на 0%
                 )
     
     def _parse_download_progress(self, line):
@@ -9077,17 +9548,34 @@ class SystemUpdateParser:
                 'total_packages': 0
             }
         
-        # Подсчитываем пакеты по статусам
-        downloaded_count = len(self.packages_table)
+        # ИСПРАВЛЕНИЕ: Подсчитываем пакеты по статусам правильно
+        # downloaded_count = количество пакетов со статусом "downloading" или выше
+        # НО ТОЛЬКО если они имеют номер пакета (реально начали скачиваться)
+        downloaded_count = sum(1 for pkg in self.packages_table.values() 
+                              if pkg["status"] in ["downloading", "unpacked", "configured"] 
+                              and pkg.get("package_num", 0) > 0)
         unpacked_count = sum(1 for pkg in self.packages_table.values() 
-                           if pkg["status"] in ["unpacked", "configured"])
+                           if pkg["status"] in ["unpacked", "configured"]
+                           and pkg.get("package_num", 0) > 0)
         configured_count = sum(1 for pkg in self.packages_table.values() 
-                             if pkg["status"] == "configured")
+                             if pkg["status"] == "configured"
+                             and pkg.get("package_num", 0) > 0)
         
         # Рассчитываем прогресс каждого этапа
         download_progress = (downloaded_count / self.max_packages_found) * 100
         unpack_progress = (unpacked_count / self.max_packages_found) * 100
         config_progress = (configured_count / self.max_packages_found) * 100
+        
+        # ЛОГИРУЕМ РАСЧЕТЫ ДЛЯ АНАЛИЗА
+        if hasattr(self, 'system_updater') and self.system_updater:
+            log_message = f"CALCULATION: packages_table_size={len(self.packages_table)}, downloaded_count={downloaded_count}, unpacked_count={unpacked_count}, configured_count={configured_count}, max_packages={self.max_packages_found}"
+            print(f"[DETAILED_PROGRESS] {log_message}")
+            
+            # Логируем детали каждого пакета
+            for pkg_name, pkg_info in self.packages_table.items():
+                if pkg_info.get("package_num", 0) > 0:
+                    pkg_log = f"PACKAGE: {pkg_name} - status={pkg_info['status']}, package_num={pkg_info.get('package_num', 'N/A')}"
+                    print(f"[DETAILED_PROGRESS] {pkg_log}")
         
         return {
             'download_progress': download_progress,
@@ -9432,16 +9920,10 @@ class ProcessProgressManager:
                     package_num = ""
             
             # Формируем строку таблицы
-            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}\n"
+            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}"
             
-            # Записываем в файл
-            with open(progress_file, 'a', encoding='utf-8') as f:
-                # Добавляем заголовок если файл пустой
-                if os.path.getsize(progress_file) == 0:
-                    header = "Время     | Этап           | Этапный% | Глобальный% | Пакет\n"
-                    f.write(header)
-                    f.write("-" * 60 + "\n")
-                f.write(table_line)
+            # Записываем через универсальный обработчик
+            print(f"[PROGRESS] {table_line}")
                 
         except Exception as e:
             print(f"[ERROR] Ошибка записи в файл прогресса: {e}")
@@ -9558,6 +10040,20 @@ class SystemUpdater(object):
     def update_detailed_bars(self, detailed_progress):
         """Прямое обновление детальных баров из SystemUpdateParser"""
         try:
+            # ЗАПИСЫВАЕМ ВСЕ ВХОДЯЩИЕ ДАННЫЕ В ЛОГ ДЛЯ АНАЛИЗА
+            log_message = f"DETAILED_PROGRESS: download_count={detailed_progress.get('download_count', 'N/A')}, unpack_count={detailed_progress.get('unpack_count', 'N/A')}, config_count={detailed_progress.get('config_count', 'N/A')}, total_packages={detailed_progress.get('total_packages', 'N/A')}"
+            print(f"[DETAILED_PROGRESS] {log_message}")
+            
+            # ИСПРАВЛЕНИЕ: Обновляем детальные бары ТОЛЬКО если есть реальный прогресс скачивания
+            # Проверяем что это не просто получение списка пакетов
+            if 'download_count' in detailed_progress and detailed_progress['download_count'] > 0:
+                # Дополнительная проверка: есть ли реальные пакеты в процессе скачивания
+                # Это гарантирует что мы обновляем прогресс только при реальном скачивании
+                
+                # ЗАПИСЫВАЕМ ОБНОВЛЕНИЕ БАРОВ В ЛОГ
+                update_message = f"UPDATING_BARS: download={detailed_progress.get('download_progress', 0):.1f}%, unpack={detailed_progress.get('unpack_progress', 0):.1f}%, config={detailed_progress.get('config_progress', 0):.1f}%"
+                print(f"[DETAILED_PROGRESS] {update_message}")
+                
             # Обновляем бары
             if self.download_progress and 'download_progress' in detailed_progress:
                 self.download_progress['value'] = detailed_progress['download_progress']
@@ -9576,8 +10072,33 @@ class SystemUpdater(object):
             if self.config_label and all(key in detailed_progress for key in ['config_count', 'total_packages', 'config_progress']):
                 text = f"{detailed_progress['config_count']}/{detailed_progress['total_packages']} ({detailed_progress['config_progress']:.1f}%)"
                 self.config_label.config(text=text)
+            else:
+                # ЗАПИСЫВАЕМ СБРОС БАРОВ В ЛОГ
+                reset_message = f"RESETTING_BARS: download_count={detailed_progress.get('download_count', 'N/A')} (no real progress)"
+                print(f"[DETAILED_PROGRESS] {reset_message}")
+                
+                # Если нет реального прогресса скачивания - сбрасываем бары в 0
+                if self.download_progress:
+                    self.download_progress['value'] = 0
+                if self.unpack_progress:
+                    self.unpack_progress['value'] = 0
+                if self.config_progress:
+                    self.config_progress['value'] = 0
+                
+                # Сбрасываем лейблы
+                if self.download_label and 'total_packages' in detailed_progress:
+                    text = f"0/{detailed_progress['total_packages']} (0.0%)"
+                    self.download_label.config(text=text)
+                if self.unpack_label and 'total_packages' in detailed_progress:
+                    text = f"0/{detailed_progress['total_packages']} (0.0%)"
+                    self.unpack_label.config(text=text)
+                if self.config_label and 'total_packages' in detailed_progress:
+                    text = f"0/{detailed_progress['total_packages']} (0.0%)"
+                    self.config_label.config(text=text)
                 
         except Exception as e:
+            error_message = f"ERROR in update_detailed_bars: {e}"
+            print(f"[DETAILED_PROGRESS] {error_message}")
             print(f"[ERROR] Ошибка обновления детальных баров: {e}")
     
     def start_monitoring(self):
@@ -9649,8 +10170,10 @@ class SystemUpdater(object):
             # Запоминаем текущую позицию в лог-файле
             if os.path.exists(self.log_file_path):
                 self.log_start_position = os.path.getsize(self.log_file_path)
+                print(f"[LOG_MONITOR] Начальная позиция в лог-файле: {self.log_start_position}")
             else:
                 self.log_start_position = 0
+                print(f"[LOG_MONITOR] Лог-файл не существует, начинаем с позиции 0")
                 
             # Запускаем мониторинг в отдельном потоке
             import threading
@@ -9658,32 +10181,46 @@ class SystemUpdater(object):
             self.log_monitor_thread.daemon = True
             self.log_monitor_thread.start()
             
-            print(f"[LOG_MONITOR] Мониторинг лог-файла запущен: {self.log_file_path}")
-            print(f"[LOG_MONITOR] Начальная позиция: {self.log_start_position}")
         except Exception as e:
-            print(f"[LOG_MONITOR] Ошибка запуска мониторинга: {e}")
+            pass
     
     def _monitor_log_file(self):
         """Мониторинг лог-файла построчно"""
         try:
             import time
+            import re
             
             with open(self.log_file_path, 'r', encoding='utf-8') as f:
                 # Переходим к позиции начала процесса
                 f.seek(self.log_start_position)
+                print(f"[LOG_MONITOR] Начинаем чтение с позиции: {self.log_start_position}")
                 
+                line_count = 0
                 while True:
                     line = f.readline()
                     if not line:
                         time.sleep(0.1)  # Ждем новые строки
                         continue
                     
+                    line_count += 1
+                    
+                    # Отладка первых строк
+                    if line_count <= 5:
+                        print(f"[LOG_MONITOR] Строка {line_count}: {line.rstrip()}")
+                    
                     # Обрабатываем строку через новый SystemUpdateParser
                     if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                        self.system_update_parser.parse_line(line.rstrip())
+                        # Убираем временные метки из строки лог-файла
+                        clean_line = re.sub(r'^\[[^\]]+\]\s*', '', line.rstrip())
+                        
+                        # Минимальная отладка для строк загрузки
+                        if clean_line.startswith("Пол:"):
+                            print(f"[LOG_MONITOR] НАЙДЕНА ЗАГРУЗКА: {clean_line}")
+                        
+                        self.system_update_parser.parse_line(clean_line)
             
         except Exception as e:
-            print(f"[LOG_MONITOR] Ошибка мониторинга: {e}")
+            pass
     
     def get_extended_statistics(self):
         """Получение расширенной статистики для GUI"""
@@ -9818,10 +10355,82 @@ class SystemUpdater(object):
             return False
     
     def _check_dpkg_status(self):
-        """Проверка состояния dpkg"""
+        """Проверка состояния dpkg с улучшенной диагностикой и автоматическим исправлением"""
         try:
-            # Сначала проверяем, не заблокирован ли dpkg быстро
-            print("   [DPKG] Быстрая проверка состояния dpkg...")
+            print("   [DPKG] Проверка состояния dpkg...")
+            
+            # Проверяем фоновые процессы apt
+            print("   [BACKGROUND] Проверяем фоновые процессы apt...")
+            try:
+                # Ищем все процессы apt/dpkg
+                apt_processes = []
+                try:
+                    result = subprocess.run(['pgrep', '-f', 'apt'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        apt_processes.extend(result.stdout.strip().split('\n'))
+                except:
+                    pass
+                
+                try:
+                    result = subprocess.run(['pgrep', '-f', 'dpkg'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        apt_processes.extend(result.stdout.strip().split('\n'))
+                except:
+                    pass
+                
+                if apt_processes:
+                    print(f"   [BACKGROUND] Найдено {len(apt_processes)} фоновых процессов apt/dpkg:")
+                    for pid in apt_processes:
+                        if pid.strip():
+                            try:
+                                # Получаем информацию о процессе
+                                ps_result = subprocess.run(['ps', '-p', pid.strip(), '-o', 'pid,ppid,cmd', '--no-headers'], 
+                                                         capture_output=True, text=True, timeout=3)
+                                if ps_result.returncode == 0:
+                                    print(f"     PID {pid.strip()}: {ps_result.stdout.strip()}")
+                                else:
+                                    print(f"     PID {pid.strip()}: процесс не найден")
+                            except:
+                                print(f"     PID {pid.strip()}: ошибка получения информации")
+                    
+                    print("   [BACKGROUND] Возможно, предыдущее обновление продолжается в фоне!")
+                    print("   [BACKGROUND] Ждем завершения фоновых процессов...")
+                    
+                    # Ждем завершения процессов
+                    import time
+                    max_wait = 12  # Максимум 12 секунд
+                    wait_time = 0
+                    while wait_time < max_wait:
+                        time.sleep(2)
+                        wait_time += 2
+                        
+                        # Проверяем, завершились ли процессы
+                        still_running = []
+                        for pid in apt_processes:
+                            if pid.strip():
+                                try:
+                                    result = subprocess.run(['kill', '-0', pid.strip()], 
+                                                          capture_output=True, timeout=1)
+                                    if result.returncode == 0:
+                                        still_running.append(pid.strip())
+                                except:
+                                    pass
+                        
+                        if not still_running:
+                            print(f"   [BACKGROUND] Все фоновые процессы завершились за {wait_time} секунд")
+                            break
+                        else:
+                            print(f"   [BACKGROUND] Ожидание завершения {len(still_running)} процессов... ({wait_time}s)")
+                    
+                    if wait_time >= max_wait:
+                        print("   [BACKGROUND] Таймаут ожидания фоновых процессов")
+                else:
+                    print("   [BACKGROUND] Фоновых процессов apt/dpkg не найдено")
+                    
+            except Exception as e:
+                print(f"   [BACKGROUND] Ошибка проверки фоновых процессов: {e}")
             
             # Проверяем наличие блокирующих файлов
             lock_files = [
@@ -9831,28 +10440,222 @@ class SystemUpdater(object):
                 '/var/lib/apt/lists/lock'
             ]
             
-            locked = False
+            locked_processes = []
+            locked_files = []
+            
             for lock_file in lock_files:
                 if os.path.exists(lock_file):
+                    locked_files.append(lock_file)
                     print("   [WARNING] Найден блокирующий файл: %s" % lock_file)
-                    locked = True
+                    
+                    # Находим процесс, который держит блокировку
+                    try:
+                        result = subprocess.run(['lsof', lock_file], 
+                                              capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0 and result.stdout:
+                            locked_processes.append(f"{lock_file}: {result.stdout.strip()}")
+                            print("   [WARNING] Блокирующий процесс: %s" % result.stdout.strip())
+                    except:
+                        locked_processes.append(f"{lock_file}: процесс не определен")
             
-            if locked:
-                print("   [WARNING] dpkg заблокирован, очищаем блокировки...")
+            # Если найдены блокирующие процессы - принудительно их завершаем
+            if locked_processes:
+                print("   [WARNING] Найдены блокирующие процессы dpkg!")
+                print("   [INFO] Принудительное завершение блокирующих процессов...")
                 print("[INFO] Очистка блокировок", channels=["gui_log"])
-                print("   [OK] Блокировки очищены")
+                
+                if self._force_unlock_dpkg():
+                    print("   [OK] Блокирующие процессы завершены")
+                else:
+                    print("   [ERROR] Не удалось завершить блокирующие процессы")
+                    return False
+            elif locked_files:
+                print("   [WARNING] Найдены блокирующие файлы, но процессы не обнаружены")
+                print("   [INFO] Удаляем блокирующие файлы...")
+                print("[INFO] Очистка блокировок", channels=["gui_log"])
+                
+                for lock_file in locked_files:
+                    try:
+                        os.remove(lock_file)
+                        print("   [OK] Удален блокирующий файл: %s" % lock_file)
+                    except Exception as e:
+                        print("   [WARNING] Не удалось удалить %s: %s" % (lock_file, e))
             
-            # Проверяем состояние пакетов быстро
+            # Проверяем состояние пакетов
             print("   [DPKG] Проверяем состояние пакетов...")
             result = subprocess.run(['dpkg', '--audit'], 
                                  capture_output=True, text=True, timeout=10)
             
             if result.returncode == 0:
-                # Нет проблемных пакетов
                 print("   [OK] dpkg в нормальном состоянии")
+                
+                # Если были блокировки - принудительно обновляем списки и диагностируем
+                if locked_processes or locked_files:
+                    print("   [INFO] После разблокировки принудительно обновляем списки пакетов...")
+                    try:
+                        update_result = subprocess.run(['apt-get', 'update'], 
+                                                     capture_output=True, text=True, timeout=30)
+                        if update_result.returncode == 0:
+                            print("   [OK] Списки пакетов принудительно обновлены после разблокировки")
+                            
+                            # Расширенная очистка буферов apt
+                            print("   [DIAGNOSTIC] Расширенная очистка буферов apt...")
+                            
+                            # 1. Очистка кэша пакетов
+                            try:
+                                clean_result = subprocess.run(['apt-get', 'clean'], 
+                                                            capture_output=True, text=True, timeout=10)
+                                if clean_result.returncode == 0:
+                                    print("   [DIAGNOSTIC] Кэш пакетов очищен")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось очистить кэш пакетов")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка очистки кэша пакетов: {e}")
+                            
+                            # 2. Удаление устаревших пакетов из кэша
+                            try:
+                                autoclean_result = subprocess.run(['apt-get', 'autoclean'], 
+                                                               capture_output=True, text=True, timeout=10)
+                                if autoclean_result.returncode == 0:
+                                    print("   [DIAGNOSTIC] Устаревшие пакеты удалены из кэша")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось удалить устаревшие пакеты")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка autoclean: {e}")
+                            
+                            # 3. Очистка кэша метаданных
+                            try:
+                                cache_clean_result = subprocess.run(['apt-cache', 'clean'], 
+                                                                  capture_output=True, text=True, timeout=10)
+                                if cache_clean_result.returncode == 0:
+                                    print("   [DIAGNOSTIC] Кэш метаданных очищен")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось очистить кэш метаданных")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка очистки кэша метаданных: {e}")
+                            
+                            # 4. Принудительное удаление скачанных пакетов при повторном запуске
+                            print("   [DIAGNOSTIC] Проверяем скачанные пакеты для принудительного удаления...")
+                            try:
+                                # Проверяем есть ли скачанные пакеты
+                                downloaded_result = subprocess.run(['ls', '/var/cache/apt/archives/'], 
+                                                                capture_output=True, text=True, timeout=5)
+                                if downloaded_result.returncode == 0:
+                                    downloaded_files = [f for f in downloaded_result.stdout.split('\n') 
+                                                       if f.strip() and f.endswith('.deb')]
+                                    if downloaded_files:
+                                        print(f"   [DIAGNOSTIC] Найдено {len(downloaded_files)} скачанных пакетов")
+                                        print("   [DIAGNOSTIC] Принудительно удаляем скачанные пакеты для повторной загрузки...")
+                                        
+                                        # Удаляем все .deb файлы
+                                        for deb_file in downloaded_files:
+                                            try:
+                                                subprocess.run(['rm', '-f', f'/var/cache/apt/archives/{deb_file}'], 
+                                                             timeout=2)
+                                            except:
+                                                pass
+                                        
+                                        print("   [DIAGNOSTIC] Скачанные пакеты удалены")
+                                    else:
+                                        print("   [DIAGNOSTIC] Скачанных пакетов не найдено")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось проверить скачанные пакеты")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка удаления скачанных пакетов: {e}")
+                            
+                            # 5. Принудительное обновление списков после очистки
+                            print("   [DIAGNOSTIC] Принудительное обновление списков после очистки...")
+                            try:
+                                update_after_clean_result = subprocess.run(['apt-get', 'update'], 
+                                                                         capture_output=True, text=True, timeout=30)
+                                if update_after_clean_result.returncode == 0:
+                                    print("   [DIAGNOSTIC] Списки обновлены после очистки")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось обновить списки после очистки")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка обновления списков после очистки: {e}")
+                            
+                            # Дополнительная диагностика после обновления списков
+                            print("   [DIAGNOSTIC] Проверяем доступные обновления...")
+                            try:
+                                # Проверяем upgradable пакеты
+                                upgrade_result = subprocess.run(['apt', 'list', '--upgradable'], 
+                                                             capture_output=True, text=True, timeout=10)
+                                if upgrade_result.returncode == 0:
+                                    upgradable_lines = [line for line in upgrade_result.stdout.split('\n') 
+                                                      if line.strip() and not line.startswith('Listing...')]
+                                    print(f"   [DIAGNOSTIC] Найдено {len(upgradable_lines)} пакетов для обновления")
+                                    if len(upgradable_lines) > 0:
+                                        print("   [DIAGNOSTIC] Первые 5 пакетов для обновления:")
+                                        for i, line in enumerate(upgradable_lines[:5]):
+                                            print(f"     {i+1}. {line}")
+                                        
+                                        # Детальная диагностика почему пакеты не обновляются
+                                        print("   [DIAGNOSTIC] Проверяем почему пакеты не обновляются...")
+                                        try:
+                                            # Проверяем с dry-run что произойдет при обновлении
+                                            dry_run_result = subprocess.run(['apt-get', 'dist-upgrade', '--dry-run'], 
+                                                                           capture_output=True, text=True, timeout=15)
+                                            if dry_run_result.returncode == 0:
+                                                print("   [DIAGNOSTIC] Dry-run обновления:")
+                                                lines = dry_run_result.stdout.split('\n')
+                                                for line in lines:
+                                                    if any(keyword in line.lower() for keyword in ['обновлено', 'установлено', 'удалено', 'не обновлено', 'заблокирован', 'зависимость', 'конфликт']):
+                                                        print(f"     {line}")
+                                            else:
+                                                print("   [DIAGNOSTIC] Не удалось выполнить dry-run")
+                                                
+                                            # Проверяем заблокированные пакеты
+                                            print("   [DIAGNOSTIC] Проверяем заблокированные пакеты...")
+                                            try:
+                                                hold_result = subprocess.run(['dpkg', '--get-selections'], 
+                                                                           capture_output=True, text=True, timeout=10)
+                                                if hold_result.returncode == 0:
+                                                    hold_lines = [line for line in hold_result.stdout.split('\n') 
+                                                                if 'hold' in line.lower()]
+                                                    if hold_lines:
+                                                        print(f"   [DIAGNOSTIC] Найдено {len(hold_lines)} заблокированных пакетов:")
+                                                        for line in hold_lines[:3]:  # Показываем первые 3
+                                                            print(f"     {line}")
+                                                    else:
+                                                        print("   [DIAGNOSTIC] Заблокированных пакетов не найдено")
+                                                else:
+                                                    print("   [DIAGNOSTIC] Не удалось проверить заблокированные пакеты")
+                                            except Exception as e:
+                                                print(f"   [DIAGNOSTIC] Ошибка проверки заблокированных пакетов: {e}")
+                                                
+                                        except Exception as e:
+                                            print(f"   [DIAGNOSTIC] Ошибка детальной диагностики: {e}")
+                                    else:
+                                        print("   [DIAGNOSTIC] Система действительно не нуждается в обновлениях")
+                                        
+                                        # Проверяем версии репозиториев
+                                        print("   [DIAGNOSTIC] Проверяем версии репозиториев...")
+                                        try:
+                                            sources_result = subprocess.run(['apt-cache', 'policy'], 
+                                                                          capture_output=True, text=True, timeout=15)
+                                            if sources_result.returncode == 0:
+                                                print("   [DIAGNOSTIC] Информация о репозиториях получена")
+                                                # Показываем только первые несколько строк для диагностики
+                                                lines = sources_result.stdout.split('\n')[:10]
+                                                for line in lines:
+                                                    if line.strip():
+                                                        print(f"     {line}")
+                                            else:
+                                                print("   [DIAGNOSTIC] Не удалось получить информацию о репозиториях")
+                                        except Exception as e:
+                                            print(f"   [DIAGNOSTIC] Ошибка проверки репозиториев: {e}")
+                                else:
+                                    print("   [DIAGNOSTIC] Не удалось проверить upgradable пакеты")
+                            except Exception as e:
+                                print(f"   [DIAGNOSTIC] Ошибка диагностики обновлений: {e}")
+                        else:
+                            print("   [WARNING] Не удалось обновить списки пакетов после разблокировки")
+                    except Exception as e:
+                        print(f"   [WARNING] Ошибка обновления списков после разблокировки: {e}")
+                
                 return True
             else:
-                # Есть проблемные пакеты
                 print("   [WARNING] Найдены проблемные пакеты:")
                 for line in result.stdout.split('\n'):
                     if line.strip():
@@ -9876,6 +10679,174 @@ class SystemUpdater(object):
             print("   [ERROR] Ошибка проверки dpkg: %s" % str(e))
             print("   [TOOL] Пробуем исправить проблемы dpkg...")
             return self._fix_dpkg_issues()
+    
+    def _force_unlock_dpkg(self):
+        """Принудительная разблокировка dpkg"""
+        try:
+            print("   [INFO] Принудительная разблокировка dpkg...")
+            
+            # 1. Расширенный поиск блокирующих процессов
+            blocking_processes = []
+            
+            # Ищем все процессы связанные с apt/dpkg
+            process_patterns = [
+                'apt', 'dpkg', 'apt-get', 'apt-cache', 'apt-config',
+                'unattended-upgrade', 'apt.systemd.daily'
+            ]
+            
+            for pattern in process_patterns:
+                try:
+                    result = subprocess.run(['pgrep', '-f', pattern], 
+                                          capture_output=True, text=True, timeout=3)
+                    if result.returncode == 0:
+                        pids = [pid.strip() for pid in result.stdout.strip().split('\n') if pid.strip()]
+                        blocking_processes.extend(pids)
+                        print(f"   [INFO] Найдено {len(pids)} процессов для '{pattern}'")
+                except:
+                    pass
+            
+            # Удаляем дубликаты
+            blocking_processes = list(set(blocking_processes))
+            
+            # 2. Показываем информацию о процессах
+            if blocking_processes:
+                print(f"   [INFO] Найдено {len(blocking_processes)} блокирующих процессов")
+                
+                # Показываем информацию о процессах
+                for pid in blocking_processes:
+                    try:
+                        result = subprocess.run(['ps', '-p', pid, '-o', 'pid,cmd', '--no-headers'], 
+                                              capture_output=True, text=True, timeout=2)
+                        if result.returncode == 0:
+                            cmd = result.stdout.strip()
+                            print(f"   [INFO] PID {pid}: {cmd[:60]}...")
+                    except:
+                        print(f"   [INFO] PID {pid}: ошибка получения информации")
+                
+                # 3. Этап 1: Мягкое завершение
+                print("   [INFO] Отправляем SIGTERM всем блокирующим процессам...")
+                for pid in blocking_processes:
+                    try:
+                        subprocess.run(['kill', '-TERM', pid], timeout=3)
+                        print(f"   [INFO] Отправлен SIGTERM процессу {pid}")
+                    except:
+                        pass
+                
+                # 4. Ждем завершения
+                import time
+                time.sleep(5)
+                
+                # 5. Этап 2: Проверяем какие процессы еще живы
+                still_running = []
+                for pid in blocking_processes:
+                    try:
+                        result = subprocess.run(['kill', '-0', pid], 
+                                              capture_output=True, timeout=1)
+                        if result.returncode == 0:
+                            still_running.append(pid)
+                    except:
+                        pass
+                
+                # 6. Этап 3: Принудительное завершение
+                if still_running:
+                    print(f"   [WARNING] {len(still_running)} процессов не завершились, принудительное завершение...")
+                    for pid in still_running:
+                        try:
+                            subprocess.run(['kill', '-KILL', pid], timeout=3)
+                            print(f"   [INFO] Принудительно завершен процесс {pid}")
+                        except:
+                            pass
+                    time.sleep(2)
+                
+                # 7. Этап 4: Финальная проверка
+                final_running = []
+                for pid in blocking_processes:
+                    try:
+                        result = subprocess.run(['kill', '-0', pid], 
+                                              capture_output=True, timeout=1)
+                        if result.returncode == 0:
+                            final_running.append(pid)
+                    except:
+                        pass
+                
+                if final_running:
+                    print(f"   [WARNING] Не удалось завершить процессы: {final_running}")
+                else:
+                    print("   [OK] Все блокирующие процессы завершены")
+            else:
+                print("   [INFO] Блокирующие процессы не найдены")
+            
+            # 8. Усиленная очистка блокирующих файлов с повторными попытками
+            lock_files = [
+                '/var/lib/dpkg/lock-frontend',
+                '/var/lib/dpkg/lock',
+                '/var/cache/apt/archives/lock',
+                '/var/lib/apt/lists/lock'
+            ]
+            
+            print("   [INFO] Усиленная очистка блокирующих файлов...")
+            for attempt in range(3):  # 3 попытки
+                if attempt > 0:
+                    print(f"   [INFO] Попытка {attempt + 1} очистки блокирующих файлов...")
+                    time.sleep(2)  # Ждем между попытками
+                
+                removed_files = []
+                for lock_file in lock_files:
+                    if os.path.exists(lock_file):
+                        try:
+                            os.remove(lock_file)
+                            removed_files.append(lock_file)
+                            print(f"   [OK] Удален блокирующий файл: {lock_file}")
+                        except Exception as e:
+                            print(f"   [WARNING] Не удалось удалить {lock_file}: {e}")
+                
+                if not removed_files:
+                    print("   [INFO] Блокирующие файлы не найдены")
+                    break
+                
+                # Проверяем что файлы действительно удалены
+                still_exist = []
+                for lock_file in lock_files:
+                    if os.path.exists(lock_file):
+                        still_exist.append(lock_file)
+                
+                if not still_exist:
+                    print("   [OK] Все блокирующие файлы успешно удалены")
+                    break
+                else:
+                    print(f"   [WARNING] Файлы все еще существуют: {still_exist}")
+            
+            # 9. Проверяем результат
+            time.sleep(1)
+            try:
+                result = subprocess.run(['dpkg', '--audit'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    print("   [OK] dpkg успешно разблокирован")
+                    
+                    # 8. Принудительно обновляем списки пакетов после разблокировки
+                    print("   [INFO] Принудительное обновление списков пакетов...")
+                    try:
+                        update_result = subprocess.run(['apt-get', 'update'], 
+                                                     capture_output=True, text=True, timeout=30)
+                        if update_result.returncode == 0:
+                            print("   [OK] Списки пакетов принудительно обновлены")
+                        else:
+                            print("   [WARNING] Не удалось обновить списки пакетов")
+                    except Exception as e:
+                        print(f"   [WARNING] Ошибка обновления списков: {e}")
+                    
+                    return True
+                else:
+                    print("   [WARNING] dpkg все еще имеет проблемы, но блокировки сняты")
+                    return True
+            except:
+                print("   [WARNING] Не удалось проверить состояние dpkg, но блокировки сняты")
+                return True
+            
+        except Exception as e:
+            print(f"   [ERROR] Ошибка принудительной разблокировки: {e}")
+            return False
     
     def _fix_dpkg_issues(self):
         """Автоматическое исправление проблем dpkg"""
@@ -10149,10 +11120,10 @@ class SystemUpdater(object):
                     print("[SYSTEM_UPDATER] Парсер готов к работе")
         elif 'apt-get dist-upgrade' in ' '.join(cmd):
             print("[INFO] Обновление системы...", channels=["gui_log"])
-            # Для dist-upgrade парсер уже должен быть готов
+            # Для dist-upgrade СБРАСЫВАЕМ парсер для нового запуска
             if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                if not self.system_update_parser.is_finished:
-                    print("[SYSTEM_UPDATER] Парсер готов к работе")
+                self.system_update_parser.reset_parser()
+                print("[SYSTEM_UPDATER] Парсер сброшен и готов к новой работе")
         elif 'apt-get autoremove' in ' '.join(cmd):
             print("[INFO] Очистка системы...", channels=["gui_log"])
         else:
@@ -10175,108 +11146,21 @@ class SystemUpdater(object):
             env.pop('UCF_FORCE_CONFFOLD', None)
             env.pop('UCF_FORCE_CONFFNEW', None)
             
-            # Запускаем процесс с дополнительной защитой
-            process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-                preexec_fn=None,  # Отключаем preexec_fn для безопасности
-                env=env  # Передаем очищенные переменные окружения
-            )
-            
-            # Читаем вывод построчно с увеличенным буфером для многострочных запросов
-            output_buffer = ""
-            full_output = ""
-            max_buffer_lines = 20  # Увеличенный буфер для распознавания многострочных запросов
-            buffer_line_count = 0
-            
-            while True:
-                # Проверяем флаг остановки в цикле чтения
-                if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
-                    print("[STOP] Процесс остановлен пользователем")
-                    print("[INFO] Процесс остановлен пользователем")
-                    process.terminate()  # Завершаем процесс
-                    return -1
-                
-                line = process.stdout.readline()
-                if not line:
-                    break
-                
-                # Выводим строку
-                print("   %s" % line.rstrip())
-                
-                # НОВЫЙ ПАРСИНГ В РЕАЛЬНОМ ВРЕМЕНИ
-                if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                    self.system_update_parser.parse_line(line.rstrip())
-                
-                # Добавляем в буфер для анализа
-                output_buffer += line
-                full_output += line
-                buffer_line_count += 1
-                
-                # Ограничиваем размер буфера (последние N строк)
-                if buffer_line_count > max_buffer_lines:
-                    lines = output_buffer.split('\n')
-                    output_buffer = '\n'.join(lines[-max_buffer_lines:])
-                    buffer_line_count = max_buffer_lines
-                
-                # Проверяем на интерактивные запросы
-                prompt_type = self.detect_interactive_prompt(output_buffer)
-                if prompt_type:
-                    response = self.get_auto_response(prompt_type)
-                    if response == '':
-                        print("   [AUTO] Автоматический ответ: Enter (пустой ответ) для %s" % prompt_type)
-                        print(f"[INFO] Автоматический ответ: Enter для {prompt_type}")
-                    else:
-                        print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
-                        print(f"[INFO] Автоматический ответ: {response} для {prompt_type}")
-                    
-                    # Отправляем ответ
-                    process.stdin.write(response + '\n')
-                    process.stdin.flush()
-                    
-                    # Очищаем буфер
-                    output_buffer = ""
-                    buffer_line_count = 0
-            
-            # Ждем завершения процесса
-            return_code = process.wait()
-            
-            # Логируем результат команды
-            print(f"[INFO] Команда: {cmd}, код возврата: {return_code}")
-            
-            if return_code == 0:
-                print("[OK] Команда выполнена успешно", channels=["gui_log"])
-                
-                # Завершаем парсинг для dist-upgrade
-                if 'apt-get dist-upgrade' in ' '.join(cmd):
-                    if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                        self.system_update_parser.finish_parsing()
-                
-                # Определяем тип команды для лога GUI
-                if 'apt-get update' in ' '.join(cmd):
-                    print("[INFO] ✅ Списки пакетов обновлены", channels=["gui_log"])
-                elif 'apt-get dist-upgrade' in ' '.join(cmd):
-                    print("[INFO] ✅ Система обновлена", channels=["gui_log"])
-                elif 'apt-get autoremove' in ' '.join(cmd):
-                    print("[INFO] ✅ Система очищена", channels=["gui_log"])
+            # Используем UniversalProcessRunner для отслеживания процессов
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                # Используем существующий universal_runner
+                runner = self.universal_runner
             else:
-                print(f"[ERROR] Команда завершилась с ошибкой (код: {return_code})", channels=["gui_log"])
-                
-            # Проверяем на ошибки dpkg
-            if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
-                print("[WARNING] Обнаружена ошибка dpkg, запускаем автоматическое исправление", channels=["gui_log"])
-                
-                try:
-                    if self.auto_fix_dpkg_errors():
-                        print("[OK] Ошибки dpkg исправлены автоматически", channels=["gui_log"])
-                    else:
-                        print("[WARNING] Не удалось автоматически исправить ошибки dpkg", channels=["gui_log"])
-                except Exception as fix_error:
-                    print(f"[ERROR] Ошибка при исправлении dpkg: {fix_error}", channels=["gui_log"])
+                # Создаем временный runner
+                runner = UniversalProcessRunner()
+            
+            # Запускаем процесс через UniversalProcessRunner
+            return_code = runner.run_process(
+                cmd,
+                process_type="system_update",
+                channels=["file", "terminal", "gui"],
+                timeout=None
+            )
             
             return return_code
             
@@ -10383,6 +11267,11 @@ class SystemUpdater(object):
         
         # Запускаем мониторинг лог-файла с правильным путем
         self.start_log_monitoring(log_file)
+        
+        # Сбрасываем парсер для нового запуска
+        if hasattr(self, 'system_update_parser') and self.system_update_parser:
+            self.system_update_parser.reset_parser()
+            print("[SYSTEM_UPDATER] Парсер сброшен для нового запуска обновления")
         
         # Сбрасываем счетчики статистики
         self.downloaded_packages = 0
@@ -11360,6 +12249,32 @@ class DirectoryMonitor(object):
         
         return "\n".join(output) if output else "Изменений не обнаружено"
 
+def check_log_file_size(log_file_path, max_size_mb=50):
+    """Проверяет размер лог-файла и обрезает его если нужно"""
+    try:
+        if not os.path.exists(log_file_path):
+            return
+            
+        # Получаем размер файла в мегабайтах
+        file_size_mb = os.path.getsize(log_file_path) / (1024 * 1024)
+        
+        if file_size_mb > max_size_mb:
+            # Читаем последние строки файла
+            with open(log_file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Оставляем только последние 1000 строк
+            if len(lines) > 1000:
+                lines = lines[-1000:]
+                
+                # Перезаписываем файл
+                with open(log_file_path, 'w', encoding='utf-8') as f:
+                    f.write(f"[LOG_TRUNCATED] Файл обрезан с {file_size_mb:.1f}MB до {max_size_mb}MB\n")
+                    f.writelines(lines)
+                    
+    except Exception as e:
+        pass  # Игнорируем ошибки обрезки логов
+
 def main():
     """Основная функция"""
     # Проверяем аргументы командной строки для лог-файла
@@ -11391,9 +12306,75 @@ def main():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
+    # Проверяем размер существующих лог-файлов
+    try:
+        for filename in os.listdir(log_dir):
+            if filename.startswith("astra_automation_") and filename.endswith(".log"):
+                file_path = os.path.join(log_dir, filename)
+                check_log_file_size(file_path)
+    except Exception as e:
+        pass  # Игнорируем ошибки проверки логов
+    
+    # Устанавливаем права доступа для обычного пользователя
+    try:
+        import pwd
+        import grp
+        
+        # Получаем реального пользователя (не root)
+        real_user_name = None
+        
+        # Метод 1: из переменной окружения SUDO_USER
+        if 'SUDO_USER' in os.environ:
+            real_user_name = os.environ['SUDO_USER']
+        
+        # Метод 2: из who am i
+        if not real_user_name:
+            try:
+                who_result = subprocess.run(['who', 'am', 'i'], capture_output=True, text=True, timeout=2)
+                if who_result.returncode == 0:
+                    real_user_name = who_result.stdout.strip().split()[0]
+            except:
+                pass
+        
+        # Метод 3: из logname
+        if not real_user_name:
+            try:
+                logname_result = subprocess.run(['logname'], capture_output=True, text=True, timeout=2)
+                if logname_result.returncode == 0:
+                    real_user_name = logname_result.stdout.strip()
+            except:
+                pass
+        
+        if real_user_name:
+            # Получаем UID и GID реального пользователя
+            real_user = pwd.getpwnam(real_user_name)
+            real_group = grp.getgrgid(real_user.pw_gid)
+            
+            # Устанавливаем владельца директории
+            os.chown(log_dir, real_user.pw_uid, real_user.pw_gid)
+            # Устанавливаем права доступа
+            os.chmod(log_dir, 0o755)  # rwxr-xr-x
+            
+            print(f"[LOG_PERMISSIONS] Установлены права доступа для пользователя: {real_user.pw_name}")
+        else:
+            print("[LOG_PERMISSIONS] Не удалось определить реального пользователя")
+            
+    except Exception as e:
+        print(f"[LOG_PERMISSIONS] Не удалось установить права доступа: {e}")
+    
     # Создаем единый universal_runner для всего приложения
     logger = get_global_universal_runner()
     logger.set_log_file(log_file)
+    
+    # Устанавливаем права доступа для лог-файла
+    try:
+        if os.path.exists(log_file) and real_user_name:
+            real_user = pwd.getpwnam(real_user_name)
+            os.chown(log_file, real_user.pw_uid, real_user.pw_gid)
+            os.chmod(log_file, 0o644)  # rw-r--r--
+            print(f"[LOG_PERMISSIONS] Установлены права доступа для лог-файла: {log_file}")
+    except Exception as e:
+        print(f"[LOG_PERMISSIONS] Не удалось установить права для лог-файла: {e}")
     
     # КРИТИЧЕСКОЕ ОТЛАДОЧНОЕ СООБЩЕНИЕ НА СТАРТЕ
     print(f"[DEBUG_START] Python скрипт запущен! Лог файл: {log_file}", channels=["gui_log"])
