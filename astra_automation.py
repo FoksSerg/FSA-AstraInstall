@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.74 (2025.10.24)
+Версия: V2.3.76 (2025.10.25)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.74"
+APP_VERSION = "V2.3.76"
 import os
 import sys
 import tempfile
@@ -246,13 +246,17 @@ def custom_print(*args, **kwargs):
     # Формируем сообщение
     message = ' '.join(str(arg) for arg in args)
     
-    # Если есть GUI экземпляр - используем его
-    if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
-        sys._gui_instance.process_runner.add_output(message, level="INFO", channels=channels)
-    else:
-        # Иначе используем глобальный UniversalProcessRunner
-        global_runner = get_global_universal_runner()
-        global_runner.add_output(message, level="INFO", channels=channels)
+    try:
+        # Если есть GUI экземпляр - используем его
+        if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
+            sys._gui_instance.process_runner.add_output(message, level="INFO", channels=channels)
+        else:
+            # Иначе используем глобальный UniversalProcessRunner
+            global_runner = get_global_universal_runner()
+            global_runner.add_output(message, level="INFO", channels=channels)
+    except Exception as e:
+        # FALLBACK: если что-то пошло не так, используем оригинальный print
+        _original_print(message)
 
 # Переопределяем builtins.print
 builtins.print = custom_print
@@ -261,13 +265,15 @@ builtins.print = custom_print
 # ГЛОБАЛЬНЫЙ UNIVERSALPROCESSRUNNER - ДОСТУПЕН С САМОГО НАЧАЛА
 # ============================================================================
 
-# Создаем глобальный экземпляр UniversalProcessRunner сразу
+# Глобальный экземпляр UniversalProcessRunner будет создан после определения класса
 _global_universal_runner = None
 
 def get_global_universal_runner():
     """Получение глобального экземпляра UniversalProcessRunner"""
     global _global_universal_runner
+    # Глобальный логгер должен быть создан на строке 848, но на всякий случай проверяем
     if _global_universal_runner is None:
+        # Fallback: создаем логгер если он еще не создан (не должно происходить)
         _global_universal_runner = UniversalProcessRunner()
     return _global_universal_runner
 
@@ -5277,7 +5283,7 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.24)")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.25)")
         
         # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
