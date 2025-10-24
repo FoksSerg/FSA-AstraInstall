@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V2.3.76 (2025.10.25)
+# Версия проекта: V2.3.77 ((2025.10.25))
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -164,15 +164,15 @@
    COMMIT_COUNT=$(git rev-list --count HEAD)
    
    # Обновляем версию проекта во всех файлах
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_automation.py
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_install.sh
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_update.sh
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_update.py
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" README.md
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" UPDATE_SCRIPTS_README.md
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" ASSISTANT_RULES.md
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" launch_gui_macos.py
-   sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" OPTIMIZATION_PLAN.md
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_automation.py
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_install.sh
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_update.sh
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_update.py
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" README.md
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" UPDATE_SCRIPTS_README.md
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" launch_gui_macos.py
+   sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" OPTIMIZATION_PLAN.md
+   sed -i "s/# Версия проекта: V2\.3\.[0-9]*/# Версия проекта: V2.3.77$COMMIT_COUNT/g" ASSISTANT_RULES.md
    ```
 
 4. **Добавить все файлы в коммит:**
@@ -201,7 +201,7 @@
 
 ### Формат в файлах:
 ```bash
-# Версия проекта: V2.3.76X
+# Версия проекта: V2.3.77X
 # Дата релиза: YYYY.MM.DD
 ```
 
@@ -215,12 +215,12 @@
 
 ### Примеры:
 ```
-V2.3.76 (2025.10.25) - текущая версия проекта (64 коммита)
-├── astra_automation.py: V2.3.76 (2025.10.25) ← изменен сегодня
-├── astra_install.sh: V2.3.76 (2025.10.25) ← изменен вчера
-├── astra_update.sh: V2.3.76 (2025.10.25) ← изменен позавчера
-├── ASSISTANT_RULES.md: V2.3.76 (2025.10.25) ← изменен сегодня
-└── README.md: V2.3.76 (2025.10.25) ← обновлен сегодня
+V2.3.76 ((2025.10.25)) - текущая версия проекта (64 коммита)
+├── astra_automation.py: V2.3.76 ((2025.10.25)) ← изменен сегодня
+├── astra_install.sh: V2.3.76 ((2025.10.25)) ← изменен вчера
+├── astra_update.sh: V2.3.76 ((2025.10.25)) ← изменен позавчера
+├── ASSISTANT_RULES.md: V2.3.76 ((2025.10.25)) ← изменен сегодня
+└── README.md: V2.3.76 ((2025.10.25)) ← обновлен сегодня
 ```
 
 ## 📁 ПРАВИЛО ДЛЯ ИСТОРИИ КОММИТОВ:
@@ -256,15 +256,15 @@ done
 
 # ШАГ 3: Обновляем версию проекта во ВСЕХ файлах
 COMMIT_COUNT=$(git rev-list --count HEAD)
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_automation.py
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_install.sh
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_update.sh
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" astra_update.py
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" README.md
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" UPDATE_SCRIPTS_README.md
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" ASSISTANT_RULES.md
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" launch_gui_macos.py
-sed -i "s/V2\.3\.[0-9]*/V2.3.76$COMMIT_COUNT/g" OPTIMIZATION_PLAN.md
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_automation.py
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_install.sh
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_update.sh
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" astra_update.py
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" README.md
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" UPDATE_SCRIPTS_README.md
+sed -i "s/# Версия проекта: V2\.3\.[0-9]*/# Версия проекта: V2.3.77$COMMIT_COUNT/g" ASSISTANT_RULES.md
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" launch_gui_macos.py
+sed -i "s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g" OPTIMIZATION_PLAN.md
 
 # ШАГ 4: Добавляем все файлы
 git add .
