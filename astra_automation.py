@@ -391,6 +391,7 @@ class UniversalProcessRunner(object):
             "[OK] Автоматизация",
             "[SUCCESS]",
             "[ERROR]",
+            "[PARSER]",
             "Обновление системы завершено",
             "Автоматизация завершена",
             "Проверка репозиториев завершена",
@@ -767,9 +768,8 @@ class UniversalProcessRunner(object):
                 if "file" in channels:
                     self._write_to_file(f"[{level}] {message}")
                 
-                # Выводим в терминал (с фильтрацией для GUI)
+                # Выводим в терминал (БЕЗ фильтрации - все сообщения попадают в терминал)
                 if "terminal" in channels:
-                    if bypass_filter or self.should_show_in_gui_log(message):
                         self._write_to_terminal(message)
                 
                 # GUI лог - если ЯВНО указан gui_log, НЕ ФИЛЬТРУЕМ!
@@ -5626,6 +5626,11 @@ class AutomationGUI(object):
     def _close_parent_terminal(self):
         """Умная форма подтверждения закрытия с убиванием процессов"""
         try:
+            # Проверяем не открыто ли уже окно
+            if hasattr(self, '_close_dialog_open') and self._close_dialog_open:
+                print("[INFO] Форма закрытия уже открыта - игнорируем повторный вызов")
+                return
+            
             # Сначала проверяем есть ли запущенные процессы
             running_processes = self._get_running_installation_processes()
             
@@ -5637,26 +5642,27 @@ class AutomationGUI(object):
                 self.root.destroy()
                 return
             
+            # Устанавливаем флаг открытого окна
+            self._close_dialog_open = True
+            
             # Есть процессы - показываем форму
             import tkinter as tk
             from tkinter import messagebox
             
-            # Создаем форму подтверждения
+            # Создаем МОДАЛЬНОЕ окно
             dialog = tk.Toplevel(self.root)
             dialog.title("Закрытие с убиванием процессов")
-            dialog.geometry("600x400")
             dialog.resizable(False, False)
             
-            # Делаем окно поверх всех
-            dialog.attributes('-topmost', True)
-            dialog.lift()
-            dialog.focus_force()
+            # ЗАДАЕМ РАЗМЕР ОКНА ПЕРЕД СОЗДАНИЕМ ВИДЖЕТОВ
+            dialog.geometry("600x400")
             
-            # Центрируем окно
-            dialog.update_idletasks()
-            x = (dialog.winfo_screenwidth() // 2) - (600 // 2)
-            y = (dialog.winfo_screenheight() // 2) - (400 // 2)
-            dialog.geometry(f"600x400+{x}+{y}")
+            # Делаем окно модальным
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # СКРЫВАЕМ ОКНО СРАЗУ ПОСЛЕ СОЗДАНИЯ
+            dialog.withdraw()
             
             # Заголовок
             title_label = tk.Label(dialog, text="Обнаружены запущенные процессы установки!", 
@@ -5695,6 +5701,33 @@ class AutomationGUI(object):
             # Статус-лейбл для отображения процесса
             status_label = tk.Label(dialog, text="", font=("Arial", 12))
             status_label.pack(pady=10)
+            
+            # ОБНОВЛЯЕМ ИНФОРМАЦИЮ ОБ ОКНЕ ПОСЛЕ СОЗДАНИЯ ВСЕХ ВИДЖЕТОВ
+            dialog.update_idletasks()
+            
+            # Получаем размеры и позицию главного окна
+            root_x = self.root.winfo_x()
+            root_y = self.root.winfo_y()
+            root_width = self.root.winfo_width()
+            root_height = self.root.winfo_height()
+            
+            # Вычисляем координаты для центрирования ОТНОСИТЕЛЬНО ГЛАВНОГО ОКНА
+            x = root_x + (root_width // 2) - 300  # 600/2 = 300
+            y = root_y + (root_height // 2) - 200  # 400/2 = 200
+            
+            # КОРРЕКТИРУЕМ Y - поднимаем выше центра главного окна
+            y = y - 50
+            
+            # Устанавливаем положение окна
+            dialog.geometry(f"600x400+{x}+{y}")
+            
+            # ПОКАЗЫВАЕМ ОКНО В ПРАВИЛЬНОЙ ПОЗИЦИИ
+            dialog.deiconify()
+            
+            # Делаем окно поверх всех и фокусируем
+            dialog.attributes('-topmost', True)
+            dialog.lift()
+            dialog.focus_set()
             
             def close_and_kill():
                 """Закрыть и убить все процессы"""
@@ -5784,8 +5817,8 @@ class AutomationGUI(object):
                     clean_processes = self._get_running_installation_processes()
                     
                     if clean_processes:
-                        # Все еще есть процессы - показываем что не удалось убить
-                        status_label.config(text=f"Не удалось убить {len(clean_processes)} процессов", fg="#ff0000")
+                        # Все еще есть процессы - НЕ закрываем окно!
+                        status_label.config(text=f"Не удалось убить {len(clean_processes)} процессов. Попробуйте еще раз?", fg="#ff0000")
                         
                         # Обновляем список процессов
                         for widget in processes_frame.winfo_children():
@@ -5796,6 +5829,24 @@ class AutomationGUI(object):
                                                     text=f"PID {process_info['pid']}: {process_info['name']} - {process_info['info'][:50]}...",
                                                     font=("Courier", 9), anchor=tk.W, fg="#ff0000")
                             process_label.pack(fill=tk.X, pady=1)
+                        
+                        # Добавляем кнопку "Попробовать еще раз"
+                        retry_button = tk.Button(button_frame, text="Попробовать еще раз", 
+                                                command=lambda: retry_kill_processes(), 
+                                                bg="#ff8800", fg="white", font=("Arial", 10, "bold"))
+                        retry_button.pack(side=tk.LEFT, padx=5)
+                        
+                        # Добавляем кнопку "Закрыть принудительно"
+                        force_close_button = tk.Button(button_frame, text="Закрыть принудительно", 
+                                                      command=lambda: force_close(), 
+                                                      bg="#ff0000", fg="white", font=("Arial", 10, "bold"))
+                        force_close_button.pack(side=tk.LEFT, padx=5)
+                        
+                        # Разблокируем кнопки
+                        for widget in button_frame.winfo_children():
+                            if isinstance(widget, tk.Button):
+                                widget.config(state=tk.NORMAL)
+                        
                     else:
                         # Всех победили!
                         status_label.config(text="Всех Победили! Процессы установки закрыты!", fg="#00aa00")
@@ -5807,34 +5858,90 @@ class AutomationGUI(object):
                         clean_label = tk.Label(processes_frame, text="✓ Все процессы установки закрыты", 
                                               font=("Arial", 12), fg="#00aa00")
                         clean_label.pack(pady=20)
+                        
+                        # Ждем 3 секунды чтобы пользователь увидел результат
+                        dialog.after(3000, lambda: final_close())
                     
                     dialog.update()
-                    
-                    # Ждем 3 секунды чтобы пользователь увидел результат
-                    dialog.after(3000, lambda: final_close())
                     
                 except Exception as e:
                     print(f"[ERROR] Ошибка показа победы: {e}")
                     dialog.after(1000, lambda: final_close())
             
+            def retry_kill_processes():
+                """Повторная попытка убить процессы"""
+                try:
+                    # Блокируем кнопки
+                    for widget in button_frame.winfo_children():
+                        if isinstance(widget, tk.Button):
+                            widget.config(state=tk.DISABLED)
+                    
+                    status_label.config(text="Повторная попытка убить процессы...", fg="#ff8800")
+                    dialog.update()
+                    
+                    # Получаем текущие процессы
+                    current_processes = self._get_running_installation_processes()
+                    
+                    if current_processes:
+                        # Убиваем процессы
+                        self._kill_all_installation_processes(current_processes)
+                        
+                        # Ждем и проверяем
+                        dialog.after(3000, lambda: check_and_kill_remaining())
+                    else:
+                        # Процессов нет - показываем победу
+                        show_victory()
+                        
+                except Exception as e:
+                    print(f"[ERROR] Ошибка повторной попытки: {e}")
+                    show_victory()
+            
+            def force_close():
+                """Принудительное закрытие по разрешению пользователя"""
+                try:
+                    status_label.config(text="Закрытие по разрешению пользователя...", fg="#ff8800")
+                    dialog.update()
+                    
+                    # Ждем 2 секунды и закрываем
+                    dialog.after(2000, lambda: final_close())
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка принудительного закрытия: {e}")
+                    final_close()
+            
             def final_close():
                 """Финальное закрытие"""
                 try:
+                    # Сбрасываем флаг открытого окна
+                    self._close_dialog_open = False
+                    
                     # Закрываем терминал если есть PID
                     if self.close_terminal_pid:
                         self._close_terminal_process()
                     
                     # Закрываем GUI
+                    dialog.grab_release()
                     dialog.destroy()
                     self.root.quit()
                     
                 except Exception as e:
                     print(f"[ERROR] Ошибка финального закрытия: {e}")
+                    self._close_dialog_open = False
                     dialog.destroy()
             
             def cancel():
                 """Отмена"""
-                dialog.destroy()
+                try:
+                    # Сбрасываем флаг открытого окна
+                    self._close_dialog_open = False
+                    
+                    # Закрываем модальное окно
+                    dialog.grab_release()
+                    dialog.destroy()
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка отмены: {e}")
+                    self._close_dialog_open = False
             
             # Стилизация кнопок
             tk.Button(button_frame, text="Да, убить всех!", command=close_and_kill, 
@@ -6396,8 +6503,252 @@ class AutomationGUI(object):
         # Делаем терминал только для чтения (команды запускаются через GUI)
         self.terminal_text.config(state=self.tk.DISABLED)
         
+        # Панель управления терминалом
+        self.create_terminal_control_panel()
+        
         # Запускаем мониторинг системного вывода
         self.start_terminal_monitoring()
+    
+    def create_terminal_control_panel(self):
+        """Создание панели управления терминалом"""
+        # Панель управления
+        control_frame = self.tk.Frame(self.terminal_frame)
+        control_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Переменные для флажков
+        self.terminal_filter_enabled = self.tk.BooleanVar(value=True)
+        self.terminal_autoscroll_enabled = self.tk.BooleanVar(value=True)
+        self.terminal_timestamp_enabled = self.tk.BooleanVar(value=True)
+        
+        # Переменная для хранения полного содержимого терминала
+        self.terminal_full_content = ""
+        
+        # Флажок фильтрации
+        filter_checkbox = self.tk.Checkbutton(
+            control_frame, 
+            text="Фильтрация", 
+            variable=self.terminal_filter_enabled,
+            command=self.toggle_terminal_filter
+        )
+        filter_checkbox.pack(side=self.tk.LEFT, padx=5)
+        
+        # Флажок автоперемотки
+        autoscroll_checkbox = self.tk.Checkbutton(
+            control_frame, 
+            text="Автоперемотка", 
+            variable=self.terminal_autoscroll_enabled
+        )
+        autoscroll_checkbox.pack(side=self.tk.LEFT, padx=5)
+        
+        # Флажок временных меток
+        timestamp_checkbox = self.tk.Checkbutton(
+            control_frame, 
+            text="Метка времени", 
+            variable=self.terminal_timestamp_enabled,
+            command=self.toggle_terminal_timestamps
+        )
+        timestamp_checkbox.pack(side=self.tk.LEFT, padx=5)
+        
+        # Поле поиска
+        search_frame = self.tk.Frame(control_frame)
+        search_frame.pack(side=self.tk.RIGHT, padx=5)
+        
+        self.terminal_search_var = self.tk.StringVar()
+        self.terminal_search_var.trace('w', self.filter_terminal_by_search)
+        
+        search_entry = self.tk.Entry(
+            search_frame, 
+            textvariable=self.terminal_search_var,
+            width=20,
+            font=('Arial', 9)
+        )
+        search_entry.pack(side=self.tk.LEFT, padx=2)
+        
+        # Кнопка очистки поиска
+        clear_search_button = self.tk.Button(
+            search_frame, 
+            text="×", 
+            width=2,
+            height=1,
+            command=self.clear_terminal_search
+        )
+        clear_search_button.pack(side=self.tk.LEFT, padx=2)
+        
+        # Кнопка загрузки лога
+        load_log_button = self.tk.Button(
+            control_frame, 
+            text="Загрузить лог", 
+            command=self.load_log_to_terminal
+        )
+        load_log_button.pack(side=self.tk.RIGHT, padx=5)
+        
+        # Кнопка очистки терминала
+        clear_button = self.tk.Button(
+            control_frame, 
+            text="Очистить", 
+            command=self.clear_terminal
+        )
+        clear_button.pack(side=self.tk.RIGHT, padx=5)
+    
+    def toggle_terminal_filter(self):
+        """Переключение фильтрации терминала"""
+        # Применяем фильтрацию к существующему содержимому
+        self.apply_terminal_filtering()
+    
+    def toggle_terminal_timestamps(self):
+        """Переключение отображения временных меток"""
+        # Получаем все содержимое терминала
+        content = self.terminal_text.get("1.0", self.tk.END)
+        
+        if self.terminal_timestamp_enabled.get():
+            # Показываем временные метки - ничего не делаем
+            pass
+        else:
+            # Скрываем временные метки - удаляем их из отображения
+            # Это сложная операция, пока оставим заглушку
+            pass
+    
+    def load_log_to_terminal(self):
+        """Загрузка содержимого лог-файла в терминал"""
+        try:
+            import os
+            
+            # Используем ТОЛЬКО глобальную переменную с путем к логу
+            if 'GLOBAL_LOG_FILE' not in globals() or not GLOBAL_LOG_FILE:
+                self.terminal_text.config(state=self.tk.NORMAL)
+                self.terminal_text.insert(self.tk.END, "[ERROR] Глобальная переменная GLOBAL_LOG_FILE не найдена\n")
+                self.terminal_text.config(state=self.tk.DISABLED)
+                return
+            
+            log_file_path = GLOBAL_LOG_FILE
+            
+            # Проверяем что файл существует
+            if not os.path.exists(log_file_path):
+                self.terminal_text.config(state=self.tk.NORMAL)
+                self.terminal_text.insert(self.tk.END, f"[ERROR] Лог-файл не найден: {log_file_path}\n")
+                self.terminal_text.config(state=self.tk.DISABLED)
+                return
+            
+            # Читаем содержимое файла
+            with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                log_content = f.read()
+            
+            # Очищаем терминал
+            self.terminal_text.config(state=self.tk.NORMAL)
+            self.terminal_text.delete("1.0", self.tk.END)
+            
+            # Добавляем заголовок
+            header = f"[INFO] Загружен лог-файл: {os.path.basename(log_file_path)}\n"
+            header += f"[INFO] Путь: {log_file_path}\n"
+            header += "=" * 80 + "\n"
+            self.terminal_text.insert("1.0", header)
+            
+            # Добавляем содержимое лога
+            self.terminal_text.insert(self.tk.END, log_content)
+            
+            # Сохраняем полное содержимое для фильтрации
+            self.terminal_full_content = header + log_content
+            
+            # Применяем текущие фильтры
+            if self.terminal_filter_enabled.get():
+                self.apply_terminal_filtering()
+            
+            # Автопрокрутка если включена
+            if self.terminal_autoscroll_enabled.get():
+                self.terminal_text.see(self.tk.END)
+            
+            self.terminal_text.config(state=self.tk.DISABLED)
+            
+        except Exception as e:
+            self.terminal_text.config(state=self.tk.NORMAL)
+            self.terminal_text.insert(self.tk.END, f"[ERROR] Ошибка загрузки лога: {e}\n")
+            self.terminal_text.config(state=self.tk.DISABLED)
+    
+    def apply_terminal_filtering(self):
+        """Применение фильтрации к содержимому терминала"""
+        try:
+            if not hasattr(self, 'terminal_full_content'):
+                return
+            
+            self.terminal_text.config(state=self.tk.NORMAL)
+            
+            # Получаем текущее содержимое
+            current_content = self.terminal_text.get("1.0", self.tk.END)
+            
+            # Если фильтрация включена - применяем фильтр
+            if self.terminal_filter_enabled.get():
+                lines = self.terminal_full_content.split('\n')
+                filtered_lines = []
+                
+                for line in lines:
+                    if self.should_show_in_gui_log(line):
+                        filtered_lines.append(line)
+                
+                filtered_content = '\n'.join(filtered_lines)
+                
+                # Обновляем содержимое только если оно изменилось
+                if filtered_content != current_content:
+                    self.terminal_text.delete("1.0", self.tk.END)
+                    self.terminal_text.insert("1.0", filtered_content)
+            else:
+                # Если фильтрация выключена - показываем все
+                if self.terminal_full_content != current_content:
+                    self.terminal_text.delete("1.0", self.tk.END)
+                    self.terminal_text.insert("1.0", self.terminal_full_content)
+            
+            self.terminal_text.config(state=self.tk.DISABLED)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка применения фильтрации: {e}")
+    
+    def clear_terminal(self):
+        """Очистка терминала"""
+        self.terminal_text.config(state=self.tk.NORMAL)
+        self.terminal_text.delete("1.0", self.tk.END)
+        self.terminal_text.insert(self.tk.END, "Терминал очищен\n")
+        self.terminal_text.config(state=self.tk.DISABLED)
+        
+        # Очищаем сохраненное содержимое
+        if hasattr(self, 'terminal_full_content'):
+            self.terminal_full_content = "Терминал очищен\n"
+    
+    def filter_terminal_by_search(self, *args):
+        """Фильтрация терминала по поисковому запросу - полная перестройка содержимого"""
+        search_text = self.terminal_search_var.get().lower()
+        
+        # Получаем все содержимое терминала
+        self.terminal_text.config(state=self.tk.NORMAL)
+        content = self.terminal_text.get("1.0", self.tk.END)
+        
+        # Сохраняем полное содержимое если его еще нет или если оно меньше текущего
+        if not hasattr(self, 'terminal_full_content') or len(self.terminal_full_content) < len(content):
+            self.terminal_full_content = content
+        
+        self.terminal_text.delete("1.0", self.tk.END)
+        
+        if not search_text:
+            # Если поиск пустой - показываем все строки из сохраненного содержимого
+            self.terminal_text.insert("1.0", self.terminal_full_content)
+        else:
+            # Фильтруем строки - оставляем только те, что содержат искомый текст
+            lines = self.terminal_full_content.split('\n')
+            filtered_lines = []
+            
+            for line in lines:
+                if line.lower().find(search_text) != -1:
+                    filtered_lines.append(line)
+            
+            # Вставляем отфильтрованное содержимое
+            filtered_content = '\n'.join(filtered_lines)
+            self.terminal_text.insert("1.0", filtered_content)
+        
+        self.terminal_text.config(state=self.tk.DISABLED)
+    
+    def clear_terminal_search(self):
+        """Очистка поискового запроса"""
+        self.terminal_search_var.set("")
+        # Принудительно применяем фильтр для восстановления всех записей
+        self.filter_terminal_by_search()
     
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
@@ -8559,10 +8910,40 @@ Path={os.path.dirname(script_path)}
                     elif message.startswith("[STAGE]"):
                         self.handle_stage_update(message)
                     else:
-                        # Обновляем только терминал (логирование уже в UniversalProcessRunner)
-                        self.terminal_text.config(state=self.tk.NORMAL)
-                        self.terminal_text.insert(self.tk.END, message + "\n")
-                        self.terminal_text.see(self.tk.END)
+                        # Форматируем сообщение
+                        if self.terminal_timestamp_enabled.get():
+                            import datetime
+                            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            formatted_message = f"[{timestamp}] {message}"
+                        else:
+                            formatted_message = message
+                        
+                        # Добавляем в полное содержимое
+                        if hasattr(self, 'terminal_full_content'):
+                            self.terminal_full_content += formatted_message + "\n"
+                        else:
+                            self.terminal_full_content = formatted_message + "\n"
+                        
+                        # Проверяем нужно ли показывать сообщение
+                        should_show = True
+                        
+                        # Проверяем фильтрацию по ключевым словам
+                        if self.terminal_filter_enabled.get():
+                            should_show = self.should_show_in_gui_log(formatted_message)
+                        
+                        # Проверяем поисковый фильтр
+                        search_text = self.terminal_search_var.get().lower()
+                        if search_text and formatted_message.lower().find(search_text) == -1:
+                            should_show = False
+                        
+                        # Показываем сообщение только если оно прошло все фильтры
+                        if should_show:
+                            self.terminal_text.config(state=self.tk.NORMAL)
+                            self.terminal_text.insert(self.tk.END, formatted_message + "\n")
+                            
+                            if self.terminal_autoscroll_enabled.get():
+                                self.terminal_text.see(self.tk.END)
+                            
                         self.terminal_text.config(state=self.tk.DISABLED)
                 except Exception as e:
                     break  # Выходим из цикла при ошибке
@@ -9194,10 +9575,24 @@ class SystemUpdateParser:
         self.universal_manager = universal_manager
         self.system_updater = system_updater
         
-        # Таблица пакетов с детальной информацией
-        self.packages_table = {}
+        # НОВОЕ: Флаги парсинга таблицы пакетов
+        self.parsing_table_started = False
+        self.parsing_install_started = False
+        self.current_status = "UPDATE"  # По умолчанию обновление
+        
+        # Таблица пакетов с детальной информацией (изменена структура)
+        self.packages_table = []  # Список словарей вместо словаря
         self.total_packages = 0
         self.max_packages_found = 0
+        
+        # Статистика пакетов
+        self.stats = {
+            'total_packages': 0,
+            'update_packages': 0,
+            'remove_packages': 0,
+            'install_packages': 0,
+            'autoremove_packages': 0
+        }
         
         # Флаги состояния
         self.is_finished = False
@@ -9208,92 +9603,281 @@ class SystemUpdateParser:
         self._cached_progress = 0.0
     
     def parse_line(self, line):
-        """Парсинг строки вывода команды"""
+        """Парсинг одной строки"""
         if self.is_finished:
             return
             
-        original_line = line
-        line = line.strip()
         if not line:
             return
         
-        try:
-            # Убираем временные метки для поиска паттернов
-            clean_line = re.sub(r'^\[[^\]]+\]\s*', '', line)
+        clean_line = line
+        
+        # ЭТАП 1: Поиск начала парсинга таблицы
+        if "Расчёт обновлений" in clean_line:
+            self.parsing_table_started = True
+            print(f"[PARSER] Начало парсинга таблицы: '{clean_line}'")
+            return
             
-            # Этап 1: Получение списка пакетов
-            if "Обновлено" in clean_line and "пакетов" in clean_line and "установлено" in clean_line:
-                self._parse_package_list(clean_line)
+        # ЭТАП 2: Парсинг таблицы пакетов
+        if self.parsing_table_started and not self.parsing_install_started:
+            
+            # Определяем статус пакетов
+            if "Следующие пакеты будут УДАЛЕНЫ:" in clean_line:
+                self.current_status = "REMOVE"
+                print(f"[PARSER] Статус изменен на REMOVE")
                 return
             
-            # Этап 2: Скачивание пакетов
-            elif clean_line.startswith("Пол:"):
-                self._parse_download_progress(clean_line)
+            elif "Следующие НОВЫЕ пакеты будут установлены:" in clean_line:
+                self.current_status = "INSTALL"
+                print(f"[PARSER] Статус изменен на INSTALL")
                 return
             
-            # Этап 3: Распаковка пакетов
+            elif "больше не требуются:" in clean_line:
+                self.current_status = "AUTOREMOVE"
+                print(f"[PARSER] Статус изменен на AUTOREMOVE")
+                return
+            
+            elif "Следующие пакеты будут обновлены:" in clean_line:
+                self.current_status = "UPDATE"
+                print(f"[PARSER] Статус изменен на UPDATE")
+                return
+            
+            # Завершение парсинга таблицы
+            elif re.search(r'Обновлено \d+ пакетов', clean_line):
+                self.parsing_table_started = False
+                self.parsing_install_started = True
+                print(f"[PARSER] Таблица готова! Начинаем отслеживание установки")
+                return
+            
+            # Парсинг списков пакетов
+            else:
+                self.parse_package_list(clean_line)
+                return
+        
+        # ЭТАП 3: Отслеживание операций установки
+        if self.parsing_install_started:
+            if clean_line.startswith("Пол:"):
+                self.parse_download_operation(clean_line)
             elif "Распаковывается" in clean_line:
-                self._parse_unpacking(clean_line)
-                return
-            
-            # Этап 4: Настройка пакетов
+                self.parse_unpack_operation(clean_line)
             elif "Настраивается" in clean_line:
-                self._parse_configuring(clean_line)
-                return
-            
-            # Этап 5: Завершение
-            elif "Обрабатываются триггеры" in clean_line:
-                self._parse_triggers(clean_line)
-                return
-            
-        except Exception as e:
-            # Игнорируем ошибки парсинга
-            pass
+                self.parse_configure_operation(clean_line)
+            elif "Удаляется" in clean_line:
+                self.parse_remove_operation(clean_line)
     
-    def _parse_package_list(self, line):
-        """Парсинг списка пакетов - находим максимальный цикл"""
-        updated_match = re.search(r'Обновлено (\d+) пакетов', line)
-        installed_match = re.search(r'установлено (\d+) новых пакетов', line)
+    def parse_package_list(self, line):
+        """Парсинг списка пакетов"""
+        # Разбиваем строку на отдельные пакеты
+        packages = line.split()
         
-        updated = int(updated_match.group(1)) if updated_match else 0
-        installed = int(installed_match.group(1)) if installed_match else 0
-        current_total = updated + installed
+        # Фильтруем лишние слова
+        filtered_packages = []
+        for package in packages:
+            package = package.strip()
+            if package and self.is_valid_package_name(package):
+                filtered_packages.append(package)
         
-        # Ищем максимальный цикл
-        if current_total > self.max_packages_found:
-            self.max_packages_found = current_total
-            self.total_packages = current_total
-            self.total_updated = updated
-            self.total_installed = installed
-            
-            # Сбрасываем все при новом большом цикле
-            self.packages_table.clear()
-            
-            # Сбрасываем кэш
-            self._progress_cache_valid = False
-            self._cached_progress = 0.0
+        for package_name in filtered_packages:
+            self.add_package_to_table(package_name, self.current_status)
+            print(f"[PARSER] Добавлен пакет '{package_name}' со статусом '{self.current_status}'")
+    
+    def is_valid_package_name(self, package_name):
+        """Проверка что это валидное имя пакета"""
+        # Исключаем лишние слова
+        invalid_words = {
+            'Для', 'их', 'удаления', 'используйте', '«sudo', 'apt', 'autoremove».',
+            'Следующие', 'пакеты', 'будут', 'УДАЛЕНЫ:', 'НОВЫЕ', 'установлены:',
+            'больше', 'не', 'требуются:', 'обновлены:', 'Обновлено', 'пакетов'
+        }
+        if package_name in invalid_words:
+            return False
+        # Дополнительная проверка на наличие только букв, цифр, '-', '.', '+'
+        if not re.match(r'^[a-zA-Z0-9\-\.\+]+$', package_name):
+            return False
+        return True
+    
+    def add_package_to_table(self, package_name, status, size=None):
+        """Добавление пакета в таблицу"""
+        # Конвертируем размер в байты если он есть
+        size_bytes = self.parse_size_to_bytes(size) if size else 0
         
-        # Добавляем строку только если это основной цикл
-        if current_total == self.max_packages_found:
-            self.main_cycle_found = True
+        package_entry = {
+            'package_name': package_name,
+            'status': status,
+            'size': size,  # Оригинальный размер для отображения
+            'size_bytes': size_bytes,  # Размер в байтах для анализа
+            'flags': {
+                'downloaded': False,
+                'unpacked': False,
+                'configured': False,
+                'removed': False
+            }
+        }
+        
+        self.packages_table.append(package_entry)
+        
+        # Обновляем статистику
+        self.stats['total_packages'] += 1
+        if status == "UPDATE":
+            self.stats['update_packages'] += 1
+        elif status == "REMOVE":
+            self.stats['remove_packages'] += 1
+        elif status == "INSTALL":
+            self.stats['install_packages'] += 1
+        elif status == "AUTOREMOVE":
+            self.stats['autoremove_packages'] += 1
+    
+    def parse_size_to_bytes(self, size_str):
+        """Конвертация размера из текстового формата в байты"""
+        if not size_str:
+            return 0
             
-            # Обновляем прогресс
-            if self.universal_manager:
-                detailed_progress = self._calculate_detailed_progress()
-                
-                # Обновляем детальные бары напрямую
-                if self.system_updater:
-                    self.system_updater.update_detailed_bars(detailed_progress)
-                
-                # Обновляем общий прогресс через universal_manager
-                self.universal_manager.update_progress(
-                    "system_update",
-                    "Получение списка пакетов",
-                    100,
-                    0,
-                    f"Найдено {current_total} пакетов (обновлено: {updated}, новых: {installed})",
-                    **detailed_progress
-                )
+        # Убираем пробелы и приводим к нижнему регистру
+        size_str = size_str.strip().lower()
+        
+        # Заменяем запятую на точку для корректного парсинга
+        size_str = size_str.replace(',', '.')
+        
+        try:
+            if size_str.endswith('b'):
+                # Байты: "9 704 B" -> 9704
+                number_str = size_str[:-1].strip().replace(' ', '')
+                return int(float(number_str))
+            elif size_str.endswith('kb'):
+                # Килобайты: "67,2 kB" -> 67.2 * 1024 = 68812
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024)
+            elif size_str.endswith('mb'):
+                # Мегабайты: "23,1 MB" -> 23.1 * 1024 * 1024 = 24222105
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024 * 1024)
+            elif size_str.endswith('gb'):
+                # Гигабайты: "1,5 GB" -> 1.5 * 1024 * 1024 * 1024
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024 * 1024 * 1024)
+            else:
+                # Пробуем как число без единиц
+                return int(float(size_str.replace(' ', '')))
+        except (ValueError, IndexError):
+            print(f"[WARNING] Не удалось распарсить размер: '{size_str}'")
+            return 0
+    
+    def format_bytes(self, bytes_value):
+        """Форматирование байтов в читаемый вид"""
+        if bytes_value == 0:
+            return "0 B"
+        elif bytes_value < 1024:
+            return f"{bytes_value} B"
+        elif bytes_value < 1024 * 1024:
+            return f"{bytes_value / 1024:.1f} kB"
+        elif bytes_value < 1024 * 1024 * 1024:
+            return f"{bytes_value / (1024 * 1024):.1f} MB"
+        else:
+            return f"{bytes_value / (1024 * 1024 * 1024):.1f} GB"
+    
+    def update_package_size(self, package_name, size):
+        """Обновление размера пакета"""
+        size_bytes = self.parse_size_to_bytes(size)
+        for package in self.packages_table:
+            if package['package_name'] == package_name:
+                package['size'] = size
+                package['size_bytes'] = size_bytes
+                return True
+        return False
+    
+    def update_package_flag(self, package_name, flag_name, value):
+        """Обновление флага пакета"""
+        for package in self.packages_table:
+            if package['package_name'] == package_name:
+                package['flags'][flag_name] = value
+                return True
+        return False
+    
+    def parse_download_operation(self, line):
+        """Парсинг операции скачивания"""
+        # Ищем имя пакета и размер в строке "Пол:1 https://... repository-update 1.7_x86-64/main amd64 package_name amd64 version [size]"
+        # Берем имя пакета после архитектуры (amd64) и размер в квадратных скобках
+        pattern = r'Пол:\d+\s+https://[^\s]+\s+[^\s]+\s+[^\s]+\s+amd64\s+([^\s]+)\s+[^\s]+\s+[^\s]+\s+\[([^\]]+)\]'
+        match = re.search(pattern, line)
+        if match:
+            package_name = match.group(1)
+            package_size = match.group(2)
+            self.update_package_flag(package_name, 'downloaded', True)
+            self.update_package_size(package_name, package_size)
+            print(f"[PARSER] Пакет '{package_name}' скачан, размер: {package_size}")
+    
+    def parse_unpack_operation(self, line):
+        """Парсинг операции распаковки"""
+        # Ищем имя пакета в строке "Распаковывается package_name"
+        pattern = r'Распаковывается\s+([^\s]+)'
+        match = re.search(pattern, line)
+        if match:
+            package_name = match.group(1)
+            self.update_package_flag(package_name, 'unpacked', True)
+            print(f"[PARSER] Пакет '{package_name}' распакован")
+    
+    def parse_configure_operation(self, line):
+        """Парсинг операции настройки"""
+        # Ищем имя пакета в строке "Настраивается package_name"
+        pattern = r'Настраивается\s+([^\s]+)'
+        match = re.search(pattern, line)
+        if match:
+            package_name = match.group(1)
+            self.update_package_flag(package_name, 'configured', True)
+            print(f"[PARSER] Пакет '{package_name}' настроен")
+    
+    def parse_remove_operation(self, line):
+        """Парсинг операции удаления"""
+        # Ищем имя пакета в строке "Удаляется package_name"
+        pattern = r'Удаляется\s+([^\s]+)'
+        match = re.search(pattern, line)
+        if match:
+            package_name = match.group(1)
+            self.update_package_flag(package_name, 'removed', True)
+            print(f"[PARSER] Пакет '{package_name}' удален")
+    
+    def get_size_statistics(self):
+        """Получение статистики по размерам пакетов"""
+        total_size_bytes = 0
+        downloaded_size_bytes = 0
+        downloaded_count = 0
+        
+        for package in self.packages_table:
+            size_bytes = package.get('size_bytes', 0)
+            total_size_bytes += size_bytes
+            
+            if package['flags'].get('downloaded', False):
+                downloaded_size_bytes += size_bytes
+                downloaded_count += 1
+        
+        return {
+            'total_size_bytes': total_size_bytes,
+            'downloaded_size_bytes': downloaded_size_bytes,
+            'downloaded_count': downloaded_count,
+            'remaining_size_bytes': total_size_bytes - downloaded_size_bytes,
+            'remaining_count': len(self.packages_table) - downloaded_count
+        }
+    
+    def estimate_completion_time(self, download_speed_mbps=None):
+        """Оценка времени завершения загрузки"""
+        stats = self.get_size_statistics()
+        
+        if stats['remaining_size_bytes'] == 0:
+            return "Загрузка завершена"
+        
+        if download_speed_mbps:
+            # Конвертируем MB/s в байты/секунду
+            speed_bytes_per_sec = download_speed_mbps * 1024 * 1024
+            remaining_seconds = stats['remaining_size_bytes'] / speed_bytes_per_sec
+            
+            if remaining_seconds < 60:
+                return f"~{remaining_seconds:.0f} сек"
+            elif remaining_seconds < 3600:
+                return f"~{remaining_seconds/60:.1f} мин"
+            else:
+                return f"~{remaining_seconds/3600:.1f} час"
+        else:
+            return "Скорость неизвестна"
     
     def _parse_download_progress(self, line):
         """Этап 1: ЗАГРУЗКА (0-33.3%)"""
@@ -10041,54 +10625,6 @@ class SystemUpdater(object):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
     
-    def start_log_monitoring(self, log_file_path=None):
-        """Запуск мониторинга лог-файла в отдельном потоке"""
-        try:
-            # Используем переданный путь к лог-файлу или глобальный
-            if log_file_path:
-                self.log_file_path = log_file_path
-            else:
-                self.log_file_path = GLOBAL_LOG_FILE
-            
-            # Запоминаем текущую позицию в лог-файле
-            if os.path.exists(self.log_file_path):
-                self.log_start_position = os.path.getsize(self.log_file_path)
-            else:
-                self.log_start_position = 0
-                
-            # Запускаем мониторинг в отдельном потоке
-            import threading
-            self.log_monitor_thread = threading.Thread(target=self._monitor_log_file)
-            self.log_monitor_thread.daemon = True
-            self.log_monitor_thread.start()
-            
-            print(f"[LOG_MONITOR] Мониторинг лог-файла запущен: {self.log_file_path}")
-            print(f"[LOG_MONITOR] Начальная позиция: {self.log_start_position}")
-        except Exception as e:
-            print(f"[LOG_MONITOR] Ошибка запуска мониторинга: {e}")
-    
-    def _monitor_log_file(self):
-        """Мониторинг лог-файла построчно"""
-        try:
-            import time
-            
-            with open(self.log_file_path, 'r', encoding='utf-8') as f:
-                # Переходим к позиции начала процесса
-                f.seek(self.log_start_position)
-                
-                while True:
-                    line = f.readline()
-                    if not line:
-                        time.sleep(0.1)  # Ждем новые строки
-                        continue
-                    
-                    # Обрабатываем строку через новый SystemUpdateParser
-                    if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                        self.system_update_parser.parse_line(line.rstrip())
-            
-        except Exception as e:
-            print(f"[LOG_MONITOR] Ошибка мониторинга: {e}")
-    
     def get_extended_statistics(self):
         """Получение расширенной статистики для GUI"""
         try:
@@ -10725,9 +11261,7 @@ class SystemUpdater(object):
                 # Выводим строку
                 print("   %s" % line.rstrip())
                 
-                # НОВЫЙ ПАРСИНГ В РЕАЛЬНОМ ВРЕМЕНИ
-                if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                    self.system_update_parser.parse_line(line.rstrip())
+                # ПАРСИНГ УЖЕ ПРОИСХОДИТ В UniversalProcessRunner._log() - убираем дублирование
                 
                 # Добавляем в буфер для анализа
                 output_buffer += line
