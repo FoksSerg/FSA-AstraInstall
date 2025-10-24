@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.72 (2025.10.24)
+Версия: V2.3.73 (2025.10.24)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.72"
+APP_VERSION = "V2.3.73"
 import os
 import sys
 import tempfile
@@ -5470,10 +5470,403 @@ class AutomationGUI(object):
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
+    def _get_running_installation_processes(self):
+        """Получение списка запущенных процессов установки"""
+        try:
+            import subprocess
+            
+            # Список процессов для проверки - ТОЛЬКО процессы установки обновлений Linux!
+            processes_to_check = [
+                'apt-get', 'apt', 'dpkg', 'aptd', 'aptd.system', 'aptd.systemd'
+            ]
+            
+            running_processes = []
+            
+            for process_name in processes_to_check:
+                try:
+                    # Ищем процессы по имени
+                    result = subprocess.run(
+                        ['pgrep', '-f', process_name],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False
+                    )
+                    
+                    if result.returncode == 0 and result.stdout.strip():
+                        pids = result.stdout.strip().decode('utf-8').split('\n')
+                        for pid in pids:
+                            if pid.strip():
+                                try:
+                                    # Получаем информацию о процессе
+                                    ps_result = subprocess.run(
+                                        ['ps', '-p', pid.strip(), '-o', 'pid,ppid,cmd', '--no-headers'],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        check=False
+                                    )
+                                    
+                                    if ps_result.returncode == 0 and ps_result.stdout.strip():
+                                        process_info = ps_result.stdout.strip().decode('utf-8')
+                                        running_processes.append({
+                                            'pid': pid.strip(),
+                                            'name': process_name,
+                                            'info': process_info
+                                        })
+                                    
+                                except Exception:
+                                    # Игнорируем ошибки для отдельных процессов
+                                    pass
+                    
+                except Exception:
+                    # Игнорируем ошибки для отдельных процессов
+                    pass
+            
+            return running_processes
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка при получении списка процессов: {e}")
+            return []
+    
+    def _kill_all_installation_processes(self, processes_to_kill=None):
+        """Убивание всех процессов установки в системе"""
+        try:
+            import subprocess
+            import os
+            import signal
+            import time
+            
+            if processes_to_kill is None:
+                # Получаем список процессов
+                processes_to_kill = self._get_running_installation_processes()
+            
+            killed_count = 0
+            
+            # Сначала мягкое завершение всех процессов
+            for process_info in processes_to_kill:
+                try:
+                    pid = int(process_info['pid'])
+                    # Мягкое завершение
+                    os.kill(pid, signal.SIGTERM)
+                    killed_count += 1
+                except (OSError, ValueError):
+                    # Процесс уже не существует или невалидный PID
+                    pass
+            
+            # Ждем 3 секунды для мягкого завершения
+            time.sleep(3)
+            
+            # Проверяем какие процессы еще живы и убиваем жестко
+            for process_info in processes_to_kill:
+                try:
+                    pid = int(process_info['pid'])
+                    # Проверяем что процесс еще жив
+                    try:
+                        os.kill(pid, 0)
+                        # Процесс еще жив - отправляем SIGKILL
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        # Процесс уже завершился
+                        pass
+                except (OSError, ValueError):
+                    # Процесс уже не существует или невалидный PID
+                    pass
+            
+            # Дополнительно убиваем процессы по ключевым словам - ТОЛЬКО обновления Linux!
+            try:
+                subprocess.run(['pkill', '-9', '-f', 'apt'], check=False)
+                subprocess.run(['pkill', '-9', '-f', 'dpkg'], check=False)
+                subprocess.run(['pkill', '-9', '-f', 'aptd'], check=False)
+            except Exception:
+                pass
+            
+            print(f"[INFO] Убито процессов установки: {killed_count}")
+            return killed_count
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка при убивании процессов: {e}")
+            return 0
+    
+    def _close_terminal_process(self):
+        """Закрытие родительского терминала"""
+        if not self.close_terminal_pid:
+            return
+        
+        try:
+            import signal
+            import time
+            
+            pid = int(self.close_terminal_pid)
+            
+            # Проверяем что процесс существует
+            try:
+                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                
+                # Сначала мягкое завершение
+                os.kill(pid, signal.SIGTERM)
+                
+                # Даем время на завершение
+                time.sleep(0.5)
+                
+                # Проверяем что процесс завершился
+                try:
+                    os.kill(pid, 0)
+                    # Процесс еще жив - отправляем SIGKILL
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    # Процесс уже завершился
+                    pass
+                    
+            except OSError as e:
+                # Процесс уже не существует
+                pass
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка закрытия терминала: {e}")
+    
+    def _close_parent_terminal(self):
+        """Умная форма подтверждения закрытия с убиванием процессов"""
+        try:
+            # Сначала проверяем есть ли запущенные процессы
+            running_processes = self._get_running_installation_processes()
+            
+            if not running_processes:
+                # Нет процессов - просто закрываем
+                print("[INFO] Нет запущенных процессов установки - закрываем GUI")
+                if self.close_terminal_pid:
+                    self._close_terminal_process()
+                self.root.destroy()
+                return
+            
+            # Есть процессы - показываем форму
+            import tkinter as tk
+            from tkinter import messagebox
+            
+            # Создаем форму подтверждения
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Закрытие с убиванием процессов")
+            dialog.geometry("600x400")
+            dialog.resizable(False, False)
+            
+            # Делаем окно поверх всех
+            dialog.attributes('-topmost', True)
+            dialog.lift()
+            dialog.focus_force()
+            
+            # Центрируем окно
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (600 // 2)
+            y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+            dialog.geometry(f"600x400+{x}+{y}")
+            
+            # Заголовок
+            title_label = tk.Label(dialog, text="Обнаружены запущенные процессы установки!", 
+                                 font=("Arial", 14, "bold"), fg="#ff4444")
+            title_label.pack(pady=10)
+            
+            # Предупреждение
+            warning_label = tk.Label(dialog, text="Будут закрыты ТОЛЬКО процессы установки обновлений Linux (apt, dpkg)", 
+                                   font=("Arial", 10), fg="#666666")
+            warning_label.pack(pady=5)
+            
+            # Список процессов
+            list_frame = tk.Frame(dialog)
+            list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            
+            # Заголовок списка
+            list_header = tk.Label(list_frame, text="Запущенные процессы:", 
+                                font=("Arial", 12, "bold"))
+            list_header.pack(anchor=tk.W)
+            
+            # Фрейм для списка процессов
+            processes_frame = tk.Frame(list_frame)
+            processes_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+            
+            # Создаем список процессов
+            for i, process_info in enumerate(running_processes):
+                process_label = tk.Label(processes_frame, 
+                                        text=f"PID {process_info['pid']}: {process_info['name']} - {process_info['info'][:50]}...",
+                                        font=("Courier", 9), anchor=tk.W)
+                process_label.pack(fill=tk.X, pady=1)
+            
+            # Кнопки
+            button_frame = tk.Frame(dialog)
+            button_frame.pack(pady=20)
+            
+            # Статус-лейбл для отображения процесса
+            status_label = tk.Label(dialog, text="", font=("Arial", 12))
+            status_label.pack(pady=10)
+            
+            def close_and_kill():
+                """Закрыть и убить все процессы"""
+                try:
+                    # Блокируем кнопки
+                    for widget in button_frame.winfo_children():
+                        widget.config(state=tk.DISABLED)
+                    
+                    # Показываем процесс закрытия
+                    status_label.config(text="Закрываем процессы...", fg="#ff8800")
+                    
+                    # Обновляем интерфейс
+                    dialog.update()
+                    
+                    # ПЕРВЫЙ РАУНД: Убиваем все найденные процессы
+                    killed_count = self._kill_all_installation_processes(running_processes)
+                    
+                    # Ждем 2 секунды
+                    dialog.after(2000, lambda: check_and_kill_remaining())
+                    
+                except Exception as e:
+                    messagebox.showerror("Ошибка", f"Ошибка при закрытии: {e}")
+                    dialog.destroy()
+            
+            def check_and_kill_remaining():
+                """Проверяем и убиваем оставшиеся процессы"""
+                try:
+                    # Обновляем статус
+                    status_label.config(text="Проверяем оставшиеся процессы...", fg="#ff8800")
+                    dialog.update()
+                    
+                    # ПОВТОРНЫЙ ПОИСК: Ищем восстановившиеся процессы
+                    remaining_processes = self._get_running_installation_processes()
+                    
+                    if remaining_processes:
+                        # Есть восстановившиеся - убиваем их
+                        status_label.config(text=f"Найдено {len(remaining_processes)} восстановившихся процессов. Убиваем...", fg="#ff4400")
+                        dialog.update()
+                        
+                        # Убиваем восстановившиеся
+                        self._kill_all_installation_processes(remaining_processes)
+                        
+                        # Ждем еще 2 секунды и проверяем снова
+                        dialog.after(2000, lambda: final_check())
+                    else:
+                        # Все чисто - показываем победу
+                        show_victory()
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка проверки процессов: {e}")
+                    show_victory()
+            
+            def final_check():
+                """Финальная проверка"""
+                try:
+                    # Последняя проверка
+                    final_processes = self._get_running_installation_processes()
+                    
+                    if final_processes:
+                        # Все еще есть процессы - жестко убиваем
+                        status_label.config(text="Жестко убиваем упрямые процессы...", fg="#aa0000")
+                        dialog.update()
+                        
+                        # Жесткое убивание
+                        for process_info in final_processes:
+                            try:
+                                import os, signal
+                                pid = int(process_info['pid'])
+                                os.kill(pid, signal.SIGKILL)
+                            except:
+                                pass
+                        
+                        # Ждем и показываем результат
+                        dialog.after(1000, lambda: show_victory())
+                    else:
+                        # Все чисто
+                        show_victory()
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка финальной проверки: {e}")
+                    show_victory()
+            
+            def show_victory():
+                """Показываем победу"""
+                try:
+                    # Показываем чистый список процессов
+                    clean_processes = self._get_running_installation_processes()
+                    
+                    if clean_processes:
+                        # Все еще есть процессы - показываем что не удалось убить
+                        status_label.config(text=f"Не удалось убить {len(clean_processes)} процессов", fg="#ff0000")
+                        
+                        # Обновляем список процессов
+                        for widget in processes_frame.winfo_children():
+                            widget.destroy()
+                        
+                        for process_info in clean_processes:
+                            process_label = tk.Label(processes_frame, 
+                                                    text=f"PID {process_info['pid']}: {process_info['name']} - {process_info['info'][:50]}...",
+                                                    font=("Courier", 9), anchor=tk.W, fg="#ff0000")
+                            process_label.pack(fill=tk.X, pady=1)
+                    else:
+                        # Всех победили!
+                        status_label.config(text="Всех Победили! Процессы установки закрыты!", fg="#00aa00")
+                        
+                        # Очищаем список процессов
+                        for widget in processes_frame.winfo_children():
+                            widget.destroy()
+                        
+                        clean_label = tk.Label(processes_frame, text="✓ Все процессы установки закрыты", 
+                                              font=("Arial", 12), fg="#00aa00")
+                        clean_label.pack(pady=20)
+                    
+                    dialog.update()
+                    
+                    # Ждем 3 секунды чтобы пользователь увидел результат
+                    dialog.after(3000, lambda: final_close())
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка показа победы: {e}")
+                    dialog.after(1000, lambda: final_close())
+            
+            def final_close():
+                """Финальное закрытие"""
+                try:
+                    # Закрываем терминал если есть PID
+                    if self.close_terminal_pid:
+                        self._close_terminal_process()
+                    
+                    # Закрываем GUI
+                    dialog.destroy()
+                    self.root.quit()
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка финального закрытия: {e}")
+                    dialog.destroy()
+            
+            def cancel():
+                """Отмена"""
+                dialog.destroy()
+            
+            # Стилизация кнопок
+            tk.Button(button_frame, text="Да, убить всех!", command=close_and_kill, 
+                     width=20, bg="#ff4444", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+            tk.Button(button_frame, text="Отмена", command=cancel, 
+                     width=20, bg="#666666", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+            
+            # Автозакрытие через 30 секунд
+            def auto_close():
+                try:
+                    dialog.destroy()
+                except:
+                    pass
+            
+            dialog.after(30000, auto_close)
+            
+            # Обработка закрытия окна
+            dialog.protocol("WM_DELETE_WINDOW", cancel)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка создания формы закрытия: {e}")
+            # Fallback - просто закрываем
+            if self.close_terminal_pid:
+                self._close_terminal_process()
+            self.root.destroy()
+    
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
         print("[INFO] GUI закрывается", channels=["gui_log"])
-        self.root.destroy()
+        
+        # ВСЕГДА показываем форму подтверждения при закрытии GUI
+        self._close_parent_terminal()
     
     def _on_window_resize(self, event):
         """Обработчик изменения размера окна"""
@@ -9780,6 +10173,119 @@ class SystemUpdater(object):
             print("[ERROR] Ошибка проверки системных ресурсов: %s" % str(e))
             return False
     
+    def _cleanup_apt_before_update(self):
+        """Принудительная очистка APT перед обновлением"""
+        try:
+            print("[CLEANUP] Начинаем принудительную очистку APT...")
+            
+            # 1. Удаляем скачанные пакеты из буфера
+            print("   [CLEANUP] Удаляем скачанные пакеты из буфера...")
+            result = subprocess.run(['apt-get', 'clean'], 
+                                 capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                print("   [OK] Буфер пакетов очищен")
+            else:
+                print(f"   [WARNING] Ошибка очистки буфера: {result.stderr}")
+            
+            # 1.1. ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ФАЙЛОВ ПАКЕТОВ ИЗ ВСЕХ БУФЕРОВ
+            print("   [CLEANUP] Принудительно удаляем файлы пакетов из всех буферов...")
+            
+            # Стандартные директории APT для файлов пакетов
+            cache_dirs = [
+                '/var/cache/apt/archives/',      # Основной буфер APT
+                '/var/cache/apt/archives/partial/',  # Частично скачанные файлы
+                '/var/lib/apt/lists/partial/',   # Частично скачанные списки
+                '/tmp/apt-dpkg-install-*',       # Временные файлы dpkg
+            ]
+            
+            total_deleted = 0
+            
+            for cache_dir in cache_dirs:
+                if os.path.exists(cache_dir):
+                    try:
+                        # Удаляем все .deb файлы
+                        deb_files = [f for f in os.listdir(cache_dir) if f.endswith('.deb')]
+                        if deb_files:
+                            print(f"   [CLEANUP] Найдено {len(deb_files)} файлов в {cache_dir}")
+                            for deb_file in deb_files:
+                                try:
+                                    os.remove(os.path.join(cache_dir, deb_file))
+                                    total_deleted += 1
+                                except Exception as e:
+                                    print(f"   [WARNING] Не удалось удалить {deb_file}: {e}")
+                        else:
+                            print(f"   [OK] Файлы пакетов в {cache_dir} не найдены")
+                    except Exception as e:
+                        print(f"   [WARNING] Ошибка проверки {cache_dir}: {e}")
+                else:
+                    print(f"   [INFO] Директория {cache_dir} не существует")
+            
+            # Дополнительно удаляем временные файлы dpkg
+            try:
+                import glob
+                temp_files = glob.glob('/tmp/apt-dpkg-install-*')
+                if temp_files:
+                    print(f"   [CLEANUP] Найдено {len(temp_files)} временных файлов dpkg")
+                    for temp_file in temp_files:
+                        try:
+                            os.remove(temp_file)
+                            total_deleted += 1
+                        except Exception as e:
+                            print(f"   [WARNING] Не удалось удалить {temp_file}: {e}")
+            except Exception as e:
+                print(f"   [WARNING] Ошибка удаления временных файлов: {e}")
+            
+            if total_deleted > 0:
+                print(f"   [OK] Принудительно удалено {total_deleted} файлов пакетов")
+            else:
+                print("   [OK] Файлы пакетов в буферах не найдены")
+            
+            # 2. Очищаем кэш APT
+            print("   [CLEANUP] Очищаем кэш APT...")
+            result = subprocess.run(['apt-get', 'autoclean'], 
+                                 capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                print("   [OK] Кэш APT очищен")
+            else:
+                print(f"   [WARNING] Ошибка очистки кэша: {result.stderr}")
+            
+            # 3. Сбрасываем блокировки dpkg
+            print("   [CLEANUP] Сбрасываем блокировки dpkg...")
+            lock_files = ['/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', 
+                         '/var/cache/apt/archives/lock']
+            for lock_file in lock_files:
+                if os.path.exists(lock_file):
+                    try:
+                        os.remove(lock_file)
+                        print(f"   [OK] Удален блокирующий файл: {lock_file}")
+                    except Exception as e:
+                        print(f"   [WARNING] Не удалось удалить {lock_file}: {e}")
+            
+            # 4. Исправляем сломанные зависимости
+            print("   [CLEANUP] Исправляем сломанные зависимости...")
+            result = subprocess.run(['apt-get', '--fix-broken', 'install', '-y'], 
+                                 capture_output=True, text=True, timeout=120)
+            if result.returncode == 0:
+                print("   [OK] Сломанные зависимости исправлены")
+            else:
+                print(f"   [WARNING] Ошибка исправления зависимостей: {result.stderr}")
+            
+            # 5. Настраиваем dpkg для автоподтверждения
+            print("   [CLEANUP] Настраиваем dpkg для автоподтверждения...")
+            result = subprocess.run(['dpkg', '--configure', '-a'], 
+                                 capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                print("   [OK] dpkg настроен")
+            else:
+                print(f"   [WARNING] Ошибка настройки dpkg: {result.stderr}")
+            
+            print("[OK] Принудительная очистка APT завершена")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка очистки APT: {e}")
+            return False
+    
     def _check_disk_space(self):
         """Проверка свободного места на диске"""
         try:
@@ -10415,6 +10921,11 @@ class SystemUpdater(object):
             print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
             print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
             return False
+        
+        # ПРИНУДИТЕЛЬНАЯ ОЧИСТКА APT ПЕРЕД ОБНОВЛЕНИЕМ
+        print("\n[CLEANUP] Принудительная очистка APT перед обновлением...")
+        if not self._cleanup_apt_before_update():
+            print("[WARNING] Очистка APT завершена с предупреждениями, продолжаем обновление")
         
         # Сначала обновляем списки пакетов
         print("\n[PROCESS] Обновление списков пакетов...")
