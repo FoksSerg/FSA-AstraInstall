@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.78 (2025.10.25)
+Версия: V2.3.79 (2025.10.25)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.78"
+APP_VERSION = "V2.3.79"
 import os
 import sys
 import tempfile
@@ -238,28 +238,37 @@ COMPONENTS_CONFIG = {
 import builtins
 _original_print = builtins.print
 
-def custom_print(*args, **kwargs):
-    """Переопределенная функция print - использует UniversalProcessRunner"""
-    # Извлекаем channels из kwargs если есть
-    channels = kwargs.pop('channels', [])
-    
-    # Формируем сообщение
+def universal_print(*args, **kwargs):
+    """Простая функция перехвата print()"""
     message = ' '.join(str(arg) for arg in args)
+    gui_log = kwargs.pop('gui_log', False)
     
-    try:
-        # Если есть GUI экземпляр - используем его
-        if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'process_runner'):
-            sys._gui_instance.process_runner.add_output(message, level="INFO", channels=channels)
-        else:
-            # Иначе используем глобальный UniversalProcessRunner
-            global_runner = get_global_universal_runner()
-            global_runner.add_output(message, level="INFO", channels=channels)
-    except Exception as e:
-        # FALLBACK: если что-то пошло не так, используем оригинальный print
-        _original_print(message)
+    # ВСЕГДА записываем в файл (если GLOBAL_LOG_FILE определена)
+    if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
+        with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f"[INFO] {message}\n")
+    
+    # В терминал GUI (если готов)
+    if hasattr(sys, '_gui_instance') and sys._gui_instance:
+        try:
+            sys._gui_instance.universal_runner.gui_callback(message)
+        except Exception as e:
+            if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
+                with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
+                    f.write(f"[ERROR] gui_callback failed: {e}\n")
+    
+    # В лог GUI (только если gui_log=True)
+    if gui_log and hasattr(sys, '_gui_instance') and sys._gui_instance:
+        try:
+            if hasattr(sys._gui_instance.universal_runner, 'gui_log_callback'):
+                sys._gui_instance.universal_runner.gui_log_callback(message)
+        except Exception as e:
+            if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
+                with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
+                    f.write(f"[ERROR] gui_log_callback failed: {e}\n")
 
 # Переопределяем builtins.print
-builtins.print = custom_print
+builtins.print = universal_print
 
 # ============================================================================
 # ГЛОБАЛЬНЫЙ UNIVERSALPROCESSRUNNER - ДОСТУПЕН С САМОГО НАЧАЛА
@@ -287,6 +296,9 @@ class InteractiveConfig(object):
     """Общий класс конфигурации для интерактивных запросов"""
     
     def __init__(self):
+        print("[TEST] InteractiveConfig.__init__ - обычный print")
+        print("[TEST] InteractiveConfig.__init__ - GUI log print", gui_log=True)
+        
         # Все паттерны для обнаружения интерактивных запросов
         # Паттерны поддерживают русский и английский языки для универсальности
         self.patterns = {
@@ -359,18 +371,23 @@ class UniversalProcessRunner(object):
     Поддерживает все каналы логирования и неблокирующее выполнение
     """
     
-    def __init__(self, logger=None, gui_callback=None, gui_instance=None, parser=None):
+    def __init__(self, logger=None, gui_callback=None, gui_log_callback=None, gui_instance=None, parser=None):
         """
         Инициализация универсального обработчика процессов
         
         Args:
             logger: Экземпляр Logger для записи в файл
             gui_callback: Функция для отправки сообщений в GUI терминал
+            gui_log_callback: Функция для отправки сообщений в GUI лог
             gui_instance: Ссылка на экземпляр GUI
             parser: Парсер для обработки строк (SystemUpdateParser)
         """
+        print("[TEST] UniversalProcessRunner.__init__ - обычный print")
+        print("[TEST] UniversalProcessRunner.__init__ - GUI log print", gui_log=True)
+        
         self.logger = logger
         self.gui_callback = gui_callback
+        self.gui_log_callback = gui_log_callback
         self.gui_instance = gui_instance
         self.parser = parser  # НОВОЕ: Ссылка на парсер
         self.output_buffer = []
@@ -447,38 +464,8 @@ class UniversalProcessRunner(object):
     
     def setup_print_redirect(self):
         """Настройка перехвата стандартного print()"""
-        import builtins
-        
-        # Сохраняем ОРИГИНАЛЬНУЮ ссылку на print ДО замены
-        if not hasattr(self, '_original_print'):
-            self._original_print = builtins.print
-        
-        def universal_print(*args, **kwargs):
-            """Универсальный print с отправкой в GUI терминал"""
-            message = ' '.join(str(arg) for arg in args)
-            
-            # Используем оригинальный print для gui_callback чтобы избежать рекурсии
-            if self.gui_callback:
-                # Временно восстанавливаем оригинальный print
-                import builtins
-                original_print = builtins.print
-                builtins.print = self._original_print
-                
-                # Вызываем gui_callback (он может использовать print)
-                self.gui_callback(message)
-                
-                # Восстанавливаем наш перехваченный print
-                builtins.print = universal_print
-            
-            # Также записываем в лог файл напрямую
-            self._write_to_file(message)
-        
-        # Заменяем встроенный print
-        builtins.print = universal_print
-        
-        # Отправляем тестовое сообщение о готовности перехвата
-        if self.gui_callback:
-            self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату print()")
+        # Этот метод больше не нужен - print() переопределяется в main()
+        pass
     
     def setup_subprocess_redirect(self):
         """Подмена subprocess.run() на UniversalProcessRunner"""
@@ -859,6 +846,9 @@ class RepoChecker(object):
     """Класс для проверки и настройки репозиториев APT"""
     
     def __init__(self, gui_terminal=None):
+        print("[TEST] RepoChecker.__init__ - обычный print")
+        print("[TEST] RepoChecker.__init__ - GUI log print", gui_log=True)
+        
         self.sources_list = '/etc/apt/sources.list'
         self.backup_file = '/etc/apt/sources.list.backup'
         self.activated_count = 0
@@ -1064,6 +1054,9 @@ class SystemStats(object):
     """Класс для анализа статистики системы и пакетов"""
     
     def __init__(self):
+        print("[TEST] SystemStats.__init__ - обычный print")
+        print("[TEST] SystemStats.__init__ - GUI log print", gui_log=True)
+        
         self.updatable_packages = 0
         self.packages_to_update = 0
         self.packages_to_remove = 0
@@ -1290,6 +1283,9 @@ class WineComponentsChecker(object):
     
     def __init__(self):
         """Инициализация проверки компонентов"""
+        print("[TEST] WineComponentsChecker.__init__ - обычный print")
+        print("[TEST] WineComponentsChecker.__init__ - GUI log print", gui_log=True)
+        
         self.wine_astraregul_path = "/opt/wine-astraregul/bin/wine"
         self.wine_9_path = "/opt/wine-9.0/bin/wine"
         self.ptrace_scope_path = "/proc/sys/kernel/yama/ptrace_scope"
@@ -1714,6 +1710,9 @@ class InstallationMonitor(object):
             wineprefix: Путь к WINEPREFIX директории
             callback: Функция обратного вызова для обновления GUI
         """
+        print("[TEST] InstallationMonitor.__init__ - обычный print")
+        print("[TEST] InstallationMonitor.__init__ - GUI log print", gui_log=True)
+        
         self.wineprefix = wineprefix
         self.callback = callback
         self.start_time = None
@@ -1957,6 +1956,9 @@ class WineInstaller(object):
             winetricks_components: Список компонентов winetricks для установки (если None - устанавливаем все)
             use_minimal_winetricks: Использовать минимальный winetricks (по умолчанию True)
         """
+        print("[TEST] WineInstaller.__init__ - обычный print")
+        print("[TEST] WineInstaller.__init__ - GUI log print", gui_log=True)
+        
         self.logger = logger
         self.callback = callback
         
@@ -3506,6 +3508,9 @@ class WinetricksManager(object):
             astrapack_dir: Путь к директории AstraPack
             use_minimal: Использовать минимальный winetricks (по умолчанию True)
         """
+        print("[TEST] WinetricksManager.__init__ - обычный print")
+        print("[TEST] WinetricksManager.__init__ - GUI log print", gui_log=True)
+        
         self.astrapack_dir = astrapack_dir
         self.use_minimal = use_minimal
         
@@ -3628,6 +3633,9 @@ class MinimalWinetricks(object):
     """Чистая Python-реализация минимального winetricks (6 компонентов)."""
 
     def __init__(self):
+        print("[TEST] MinimalWinetricks.__init__ - обычный print")
+        print("[TEST] MinimalWinetricks.__init__ - GUI log print", gui_log=True)
+        
         self.cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
@@ -3960,6 +3968,9 @@ class WineUninstaller(object):
             remove_ide: Удалять Astra.IDE (по умолчанию True)
             winetricks_components: Список компонентов winetricks для удаления (если None - удаляем WINEPREFIX целиком)
         """
+        print("[TEST] WineUninstaller.__init__ - обычный print")
+        print("[TEST] WineUninstaller.__init__ - GUI log print", gui_log=True)
+        
         self.logger = logger
         self.callback = callback
         
@@ -4448,6 +4459,9 @@ class UniversalInstaller(object):
             logger: Экземпляр класса Logger для логирования
             callback: Функция для обновления статуса в GUI (опционально)
         """
+        print("[TEST] UniversalInstaller.__init__ - обычный print")
+        print("[TEST] UniversalInstaller.__init__ - GUI log print", gui_log=True)
+        
         self.logger = logger
         self.callback = callback
         
@@ -4752,7 +4766,7 @@ class UniversalInstaller(object):
         
         try:
             # Используем универсальный обработчик процессов
-            return_code = self.process_runner.run_process(
+            return_code = self.universal_runner.run_process(
                 ['apt', '-y', 'install', package_path],
                 process_type="install",
                 channels=["file", "terminal"]
@@ -4782,7 +4796,7 @@ class UniversalInstaller(object):
         """Настройка ptrace_scope для Wine"""
         try:
             # Используем универсальный обработчик процессов
-            return_code = self.process_runner.run_process(
+            return_code = self.universal_runner.run_process(
                 ['sysctl', '-w', 'kernel.yama.ptrace_scope=0'],
                 process_type="config",
                 channels=["file", "terminal"]
@@ -4839,7 +4853,7 @@ class UniversalInstaller(object):
         
         try:
             # Используем универсальный обработчик процессов
-            return_code = self.process_runner.run_process(
+            return_code = self.universal_runner.run_process(
                 ['apt-get', 'remove', '-y', package_name],
                 process_type="remove",
                 channels=["file", "terminal"]
@@ -4869,7 +4883,7 @@ class UniversalInstaller(object):
         """Восстановление ptrace_scope (возврат к значению по умолчанию)"""
         try:
             # Используем универсальный обработчик процессов
-            return_code = self.process_runner.run_process(
+            return_code = self.universal_runner.run_process(
                 ['sysctl', '-w', 'kernel.yama.ptrace_scope=1'],
                 process_type="config",
                 channels=["file", "terminal"]
@@ -4926,6 +4940,9 @@ class ComponentStatusManager(object):
             logger: Экземпляр класса Logger для логирования
             callback: Функция для обновления статуса в GUI (опционально)
         """
+        print("[TEST] ComponentStatusManager.__init__ - обычный print")
+        print("[TEST] ComponentStatusManager.__init__ - GUI log print", gui_log=True)
+        
         self.logger = logger
         self.callback = callback
         
@@ -5268,6 +5285,9 @@ class AutomationGUI(object):
     """GUI для мониторинга автоматизации установки Astra.IDE"""
     
     def __init__(self, console_mode=False, close_terminal_pid=None):
+        print("[TEST] AutomationGUI.__init__ - обычный print")
+        print("[TEST] AutomationGUI.__init__ - GUI log print", gui_log=True)
+        
         # Проверяем и устанавливаем зависимости для GUI только если не консольный режим
         if not console_mode:
             if not self._install_gui_dependencies():
@@ -5348,14 +5368,6 @@ class AutomationGUI(object):
         self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
         self.universal_installer = UniversalInstaller(callback=self._component_status_callback)
         
-        # Инициализируем UniversalProcessRunner для перехвата всех сообщений
-        self.universal_runner = UniversalProcessRunner(
-            logger=None,  # Будет установлен позже из main
-            gui_callback=self.add_terminal_output,
-            gui_instance=self,  # Передаем ссылку на GUI
-            parser=None  # ОТКЛЮЧЕНО: Парсер временно отключен для тестирования
-        )
-        
         # Лог-файл (будет установлен позже из main)
         self.main_log_file = None
         
@@ -5369,13 +5381,6 @@ class AutomationGUI(object):
         
         # Устанавливаем глобальную ссылку на GUI для перенаправления print()
         sys._gui_instance = self
-        
-        # Создаем универсальный обработчик процессов (logger будет установлен позже)
-        self.process_runner = UniversalProcessRunner(
-            logger=None,  # Будет установлен позже
-            gui_callback=self.add_terminal_output,
-            gui_instance=self  # Передаем ссылку на GUI
-        )
         
         # Создаем SystemUpdater сразу для доступности ProcessProgressManager
         self.system_updater = SystemUpdater(self.universal_runner)
@@ -5405,11 +5410,11 @@ class AutomationGUI(object):
         if not console_mode:
             self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
         
-        # АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ ЧЕРЕЗ 10 СЕКУНД ДЛЯ ОТЛАДКИ
-        
-        # ТЕСТОВОЕ СООБЩЕНИЕ ПОСЛЕ ПЛАНИРОВАНИЯ process_terminal_queue
-        self.root.after(2000, lambda: print("[TEST] Проверка работы очереди - это сообщение должно появиться в терминале"))
-    
+        # ТЕСТОВАЯ ФУНКЦИЯ: Инициализация всех классов через 2 секунды
+        print("[DEBUG] Запускаем self.root.after(2000, self._test_all_classes_initialization)")
+        self.root.after(2000, self._test_all_classes_initialization)
+        print("[DEBUG] self.root.after() выполнен успешно")
+
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
         if message.startswith("UPDATE_COMPONENT:"):
@@ -5992,6 +5997,75 @@ class AutomationGUI(object):
                 # Игнорируем ошибки при изменении размера
                 pass
     
+    def _test_all_classes_initialization(self):
+        """ТЕСТОВАЯ ФУНКЦИЯ: Инициализация всех классов для проверки print()"""
+        print("[TEST_ALL_CLASSES] Начинаем тестовую инициализацию всех классов...")
+        
+        try:
+            # Инициализируем все классы по очереди
+            print("[TEST_ALL_CLASSES] 1. RepoChecker...")
+            repo_checker = RepoChecker()
+            
+            print("[TEST_ALL_CLASSES] 2. SystemStats...")
+            system_stats = SystemStats()
+            
+            print("[TEST_ALL_CLASSES] 3. MinimalWinetricks...")
+            minimal_winetricks = MinimalWinetricks()
+            
+            print("[TEST_ALL_CLASSES] 4. InstallationMonitor...")
+            installation_monitor = InstallationMonitor("/tmp/test")
+            
+            print("[TEST_ALL_CLASSES] 5. WineInstaller...")
+            wine_installer = WineInstaller()
+            
+            print("[TEST_ALL_CLASSES] 6. WinetricksManager...")
+            winetricks_manager = WinetricksManager("/tmp/test")
+            
+            print("[TEST_ALL_CLASSES] 7. WineUninstaller...")
+            wine_uninstaller = WineUninstaller()
+            
+            print("[TEST_ALL_CLASSES] 8. UniversalInstaller...")
+            universal_installer = UniversalInstaller()
+            
+            print("[TEST_ALL_CLASSES] 9. InteractiveHandler...")
+            interactive_handler = InteractiveHandler()
+            
+            print("[TEST_ALL_CLASSES] 10. UniversalProgressManager...")
+            universal_progress_manager = UniversalProgressManager()
+            
+            print("[TEST_ALL_CLASSES] 11. SystemUpdateParser...")
+            system_update_parser = SystemUpdateParser()
+            
+            print("[TEST_ALL_CLASSES] 12. ProcessProgressManager...")
+            process_progress_manager = ProcessProgressManager()
+            
+            print("[TEST_ALL_CLASSES] 13. SystemUpdater...")
+            system_updater = SystemUpdater()
+            
+            print("[TEST_ALL_CLASSES] 14. DirectorySnapshot...")
+            directory_snapshot = DirectorySnapshot("/tmp/test")
+            
+            print("[TEST_ALL_CLASSES] 15. DirectoryMonitor...")
+            directory_monitor = DirectoryMonitor()
+            
+            print("[TEST_ALL_CLASSES] 16. WineComponentsChecker...")
+            wine_components_checker = WineComponentsChecker()
+            
+            print("[TEST_ALL_CLASSES] 17. InteractiveConfig...")
+            interactive_config = InteractiveConfig()
+            
+            print("[TEST_ALL_CLASSES] 18. UniversalProcessRunner...")
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                print("[TEST] UniversalProcessRunner уже инициализирован")
+            
+            print("[TEST_ALL_CLASSES] 19. ComponentStatusManager...")
+            component_status_manager = ComponentStatusManager(logger=None, callback=None)
+            
+            print("[TEST_ALL_CLASSES] ✅ Все 19 классов успешно инициализированы!")
+            
+        except Exception as e:
+            print(f"[TEST_ALL_CLASSES] ❌ Ошибка при инициализации классов: {e}")
+    
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
         class TerminalRedirector:
@@ -6190,13 +6264,18 @@ class AutomationGUI(object):
         self.wine_stage_label = self.tk.Label(info_panel, text="Ожидание...", font=('Arial', 9), fg='gray')
         self.wine_stage_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Процессы Wine перенесены на вкладку "Информация о Системе"
-        
-        # Этап перенесен в info_panel выше
-        
         # Настройка минимального размера окна
         self.root.minsize(800, 600)
-        
+
+        # Инициализируем UniversalProcessRunner ПОСЛЕ создания всех GUI элементов
+        self.universal_runner = UniversalProcessRunner(
+            logger=None,  # Будет установлен позже из main
+            gui_callback=self.add_terminal_output,
+            gui_log_callback=self.add_gui_log_output,  # Теперь существует!
+            gui_instance=self,  # Передаем ссылку на GUI
+            parser=None  # ОТКЛЮЧЕНО: Парсер временно отключен для тестирования
+        )
+
         # Настройка весов для правильного распределения пространства
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -6208,8 +6287,6 @@ class AutomationGUI(object):
         # Запускаем фоновое обновление системных ресурсов
         self.start_background_resource_update()
         
-        # Заполняем начальными данными ПОСЛЕ создания всех виджетов
-        # Старый метод populate_wine_status_initial() удален - используется новая универсальная архитектура
         
     def create_main_tab(self):
         """Создание основной вкладки"""
@@ -8329,7 +8406,7 @@ class AutomationGUI(object):
         """Выполнение apt-get update через UniversalProcessRunner"""
         try:
             # Используем новый универсальный обработчик
-            return_code = self.process_runner.run_process(
+            return_code = self.universal_runner.run_process(
                 ['apt-get', 'update'],
                 process_type="update",
                 channels=["file", "terminal", "gui"]
@@ -9312,6 +9389,9 @@ class InteractiveHandler(object):
     """Класс для перехвата и автоматических ответов на интерактивные запросы"""
     
     def __init__(self):
+        print("[TEST] InteractiveHandler.__init__ - обычный print")
+        print("[TEST] InteractiveHandler.__init__ - GUI log print", gui_log=True)
+        
         # Используем общий класс конфигурации
         self.config = InteractiveConfig()
     
@@ -9460,7 +9540,10 @@ class UniversalProgressManager:
             universal_runner: Ссылка на UniversalProcessRunner для отправки данных в GUI
             gui_callback: Callback функция для отправки данных в GUI
         """
-        self.universal_runner = universal_runner or get_global_universal_runner()
+        print("[TEST] UniversalProgressManager.__init__ - обычный print")
+        print("[TEST] UniversalProgressManager.__init__ - GUI log print", gui_log=True)
+        
+        self.universal_runner = universal_runner or UniversalProcessRunner()
         self.gui_callback = gui_callback
         
         # Текущее состояние
@@ -9578,6 +9661,9 @@ class SystemUpdateParser:
             universal_manager: Ссылка на UniversalProgressManager
             system_updater: Ссылка на SystemUpdater для прямого обновления детальных баров
         """
+        print("[TEST] SystemUpdateParser.__init__ - обычный print")
+        print("[TEST] SystemUpdateParser.__init__ - GUI log print", gui_log=True)
+        
         self.universal_manager = universal_manager
         self.system_updater = system_updater
         
@@ -10147,9 +10233,17 @@ class SystemUpdateParser:
                 "Процесс обновления завершен успешно"
             )
 
-
 class ProcessProgressManager:
     """СТАРЫЙ менеджер прогресса - БУДЕТ УДАЛЕН"""
+    
+    def __init__(self, gui_callback=None):
+        print("[TEST] ProcessProgressManager.__init__ - обычный print")
+        print("[TEST] ProcessProgressManager.__init__ - GUI log print", gui_log=True)
+        
+        self.gui_callback = gui_callback
+        self.gui_instance = None
+        self.current_update_phase = None
+        self.update_phase_start_stage = None
     
     # Определения для разных типов процессов
     PROCESS_DEFINITIONS = {
@@ -10445,15 +10539,17 @@ class ProcessProgressManager:
         return self.global_progress
 
 # ============================================================================
-# ============================================================================
 # ОБНОВЛЕНИЕ СИСТЕМЫ
 # ============================================================================
 class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
     def __init__(self, universal_runner=None):
+        print("[TEST] SystemUpdater.__init__ - обычный print")
+        print("[TEST] SystemUpdater.__init__ - GUI log print", gui_log=True)
+        
         # Получаем UniversalProcessRunner
-        self.universal_runner = universal_runner or get_global_universal_runner()
+        self.universal_runner = universal_runner or UniversalProcessRunner()
         
         # Используем общий класс конфигурации
         self.config = InteractiveConfig()
@@ -12103,6 +12199,9 @@ class DirectorySnapshot(object):
     """Класс для хранения снимка состояния директории"""
     
     def __init__(self, directory_path):
+        print("[TEST] DirectorySnapshot.__init__ - обычный print")
+        print("[TEST] DirectorySnapshot.__init__ - GUI log print", gui_log=True)
+        
         self.directory_path = directory_path
         self.timestamp = datetime.datetime.now()
         self.files = {}  # {relative_path: (size, mtime, hash)}
@@ -12152,6 +12251,9 @@ class DirectoryMonitor(object):
     """Класс для мониторинга изменений в директории"""
     
     def __init__(self, compact_mode=False):
+        print("[TEST] DirectoryMonitor.__init__ - обычный print")
+        print("[TEST] DirectoryMonitor.__init__ - GUI log print", gui_log=True)
+        
         self.baseline = None  # Базовый снимок
         self.last_snapshot = None  # Последний снимок
         self.monitoring = False
@@ -12424,18 +12526,15 @@ class DirectoryMonitor(object):
 
 def main():
     """Основная функция"""
-    # Проверяем аргументы командной строки для лог-файла
+    print("[DEBUG_MAIN] main() запущен")
+    
+    # КРИТИЧНО: Устанавливаем GLOBAL_LOG_FILE СРАЗУ в начале main()
     log_file = None
-    print(f"[DEBUG_ARGS] Все аргументы: {sys.argv}")
     if len(sys.argv) > 1:
         for i, arg in enumerate(sys.argv):
-            print(f"[DEBUG_ARGS] Аргумент {i}: '{arg}'")
             if arg == '--log-file' and i + 1 < len(sys.argv):
                 log_file = sys.argv[i + 1]
-                print(f"[DEBUG_ARGS] Найден лог-файл: '{log_file}'")
                 break
-    
-    print(f"[DEBUG_ARGS] Итоговый log_file: '{log_file}'")
     
     # Если не передан, создаем автоматически
     if log_file is None:
@@ -12443,7 +12542,7 @@ def main():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
     
-    # Создаем глобальную переменную для лог-файла
+    # Создаем глобальную переменную для лог-файла СРАЗУ
     global GLOBAL_LOG_FILE
     GLOBAL_LOG_FILE = log_file
     print(f"[GLOBAL_LOG] Установлен глобальный лог-файл: {GLOBAL_LOG_FILE}")
@@ -12451,15 +12550,18 @@ def main():
     # Создаем директорию Log если нужно
     log_dir = os.path.dirname(log_file)
     if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+        os.makedirs(log_dir, exist_ok=True)
+    
+    # Проверяем аргументы командной строки для лог-файла
+    print(f"[DEBUG_ARGS] Все аргументы: {sys.argv}")
     
     # Создаем единый universal_runner для всего приложения
-    logger = get_global_universal_runner()
+    logger = UniversalProcessRunner()
     logger.set_log_file(log_file)
     
     # КРИТИЧЕСКОЕ ОТЛАДОЧНОЕ СООБЩЕНИЕ НА СТАРТЕ
-    print(f"[DEBUG_START] Python скрипт запущен! Лог файл: {log_file}", channels=["gui_log"])
-    print(f"[DEBUG_START] Все аргументы: {sys.argv}", channels=["gui_log"])
+    print(f"[DEBUG_START] Python скрипт запущен! Лог файл: {log_file}", gui_log=True)
+    print(f"[DEBUG_START] Все аргументы: {sys.argv}", gui_log=True)
     
     # ДОПОЛНИТЕЛЬНАЯ ОТЛАДКА - обычный print() для гарантии попадания в лог
     _original_print(f"[DEBUG_START_ORIGINAL] Python скрипт запущен! Лог файл: {log_file}")
