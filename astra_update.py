@@ -13,6 +13,70 @@ import subprocess
 import tkinter as tk
 from datetime import datetime
 
+def connect_smb_volume():
+    """Подключает SMB том на macOS"""
+    
+    # Метод 1: Через AppleScript (Finder)
+    try:
+        applescript = '''
+        tell application "Finder"
+            try
+                mount volume "smb://10.10.55.77/Install"
+                return "success"
+            on error errMsg
+                return "error: " & errMsg
+            end try
+        end tell
+        '''
+        
+        result = subprocess.run([
+            'osascript', '-e', applescript
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0 and "success" in result.stdout:
+            print("SMB том подключен через Finder")
+            return True
+        else:
+            print(f"Finder не смог подключить SMB: {result.stderr}")
+            
+    except Exception as e:
+        print(f"Ошибка AppleScript: {e}")
+    
+    # Метод 2: Через командную строку (mount_smbfs)
+    try:
+        print("Пробуем подключить через mount_smbfs...")
+        result = subprocess.run([
+            'mount_smbfs', '//10.10.55.77/Install', '/Volumes/Install'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            print("SMB том подключен через mount_smbfs")
+            return True
+        else:
+            print(f"mount_smbfs не смог подключить: {result.stderr}")
+            
+    except Exception as e:
+        print(f"Ошибка mount_smbfs: {e}")
+    
+    # Метод 3: Через open команду
+    try:
+        print("Пробуем подключить через open...")
+        result = subprocess.run([
+            'open', 'smb://10.10.55.77/Install'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            print("SMB том подключен через open")
+            return True
+        else:
+            print(f"open не смог подключить: {result.stderr}")
+            
+    except Exception as e:
+        print(f"Ошибка open: {e}")
+    
+    print("Все методы подключения SMB не сработали")
+    return False
+
 def main():
     """Основная функция для macOS"""
     
@@ -34,11 +98,24 @@ def main():
             show_message("Ошибка", error_msg)
             return 1
         
-        # Проверяем подключенный том
+        # Проверяем подключенный том и подключаем если нужно
         if not os.path.exists(network_path):
-            error_msg = f"Том Install не подключен: {network_path}"
-            show_message("Ошибка", error_msg)
-            return 1
+            print("Том Install не подключен, пытаемся подключить...")
+            if connect_smb_volume():
+                print("SMB том подключен успешно")
+                # Ждем немного чтобы том успел смонтироваться
+                import time
+                time.sleep(2)
+                
+                # Проверяем еще раз
+                if not os.path.exists(network_path):
+                    error_msg = f"Не удалось подключить том Install: {network_path}"
+                    show_message("Ошибка", error_msg)
+                    return 1
+            else:
+                error_msg = f"Не удалось подключить SMB том smb://10.10.55.77/Install"
+                show_message("Ошибка", error_msg)
+                return 1
         
         # Используем AppleScript для копирования файлов
         copied_files = []
@@ -84,7 +161,7 @@ end tell
                 return 1
         
         # Показываем окно успеха
-        success_msg = f"Обновление завершено!\n\nОбновлено файлов: {len(copied_files)}\n{', '.join(copied_files)}"
+        success_msg = f"Обновление завершено!\n\nОбновлено файлов: {len(copied_files)}\n{', '.join(copied_files)}\n\nSMB том подключен автоматически"
         show_message("Обновление", success_msg)
         return 0
         

@@ -209,6 +209,7 @@ sed -i '1,15s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g' UPDATE_SCRIPTS_README.md
 sed -i '1,15s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g' launch_gui_macos.py
 sed -i '1,15s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g' OPTIMIZATION_PLAN.md
 sed -i '1,15s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g' ASSISTANT_RULES.md
+sed -i '1,15s/V2\.3\.[0-9]*/V2.3.$COMMIT_COUNT/g' PROJECT_ANALYSIS.md
 
 # ШАГ 4: Добавляем все файлы
 git add .

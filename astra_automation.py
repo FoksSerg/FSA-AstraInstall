@@ -296,9 +296,6 @@ class InteractiveConfig(object):
     """Общий класс конфигурации для интерактивных запросов"""
     
     def __init__(self):
-        print("[TEST] InteractiveConfig.__init__ - обычный print")
-        print("[TEST] InteractiveConfig.__init__ - GUI log print", gui_log=True)
-        
         # Все паттерны для обнаружения интерактивных запросов
         # Паттерны поддерживают русский и английский языки для универсальности
         self.patterns = {
@@ -382,8 +379,6 @@ class UniversalProcessRunner(object):
             gui_instance: Ссылка на экземпляр GUI
             parser: Парсер для обработки строк (SystemUpdateParser)
         """
-        print("[TEST] UniversalProcessRunner.__init__ - обычный print")
-        print("[TEST] UniversalProcessRunner.__init__ - GUI log print", gui_log=True)
         
         self.logger = logger
         self.gui_callback = gui_callback
@@ -394,73 +389,11 @@ class UniversalProcessRunner(object):
         self.is_running = False
         self.log_file_path = None  # Путь к лог-файлу
         self.output_queue = queue.Queue()  # Очередь для быстрой обработки
-        self.gui_filter_enabled = False  # ВРЕМЕННО ОТКЛЮЧЕНА фильтрация для GUI лога
-        
         # Отслеживание текущего этапа обновления для единого прогресса
         self.current_update_phase = "update"  # update, dist-upgrade, autoremove
         self.update_phase_start_stage = "reading_lists"  # Начальный этап для текущей фазы
         
         # Тестовое сообщение будет отправлено при активации перехвата
-    
-    def should_show_in_gui_log(self, message):
-        """Определяет, должно ли сообщение отображаться в логе GUI"""
-        if not self.gui_filter_enabled:
-            return True
-            
-        # Показываем только основные этапы
-        gui_keywords = [
-            "[START]",
-            "[INFO] Начинаем",
-            "[OK] Автоматизация",
-            "[SUCCESS]",
-            "[ERROR]",
-            "[PARSER]",
-            "Обновление системы завершено",
-            "Автоматизация завершена",
-            "Проверка репозиториев завершена",
-            "Анализ статистики завершен",
-            "✅ Списки пакетов обновлены",
-            "✅ Система обновлена",
-            "✅ Система очищена"
-        ]
-        
-        # НЕ показываем детали команд
-        skip_keywords = [
-            "Начинаем выполнение команды",
-            "Команда выполнена успешно",
-            "apt-get",
-            "dpkg",
-            "Чтение списков пакетов",
-            "Построение дерева зависимостей",
-            "Чтение информации о состоянии",
-            "Расчёт обновлений",
-            "Обновлено 0 пакетов",
-            "Пол:",
-            "Игн:",
-            "Сущ:",
-            "Время:",
-            "Установлено:",
-            "CPU:",
-            "Сеть:"
-        ]
-        
-        # Проверяем ключевые слова для показа
-        for keyword in gui_keywords:
-            if keyword in message:
-                return True
-        
-        # Проверяем ключевые слова для пропуска
-        for keyword in skip_keywords:
-            if keyword in message:
-                return False
-        
-        # По умолчанию показываем сообщения уровня INFO и выше
-        return (message.startswith("[INFO]") or message.startswith("[OK]") or 
-                message.startswith("[ERROR]") or message.startswith("[SUCCESS]") or
-                message.startswith("[WARNING]") or message.startswith("[LIST]") or
-                message.startswith("[TOOL]") or message.startswith("[PROCESS]") or
-                message.startswith("[AUTO]") or message.startswith("[!]") or
-                message.startswith("[ERR]") or message.startswith("[MinimalWinetricks]"))
     
     def setup_print_redirect(self):
         """Настройка перехвата стандартного print()"""
@@ -617,7 +550,7 @@ class UniversalProcessRunner(object):
             pass
         
     def run_process(self, command, process_type="general", 
-                   channels=["file", "terminal"], callback=None, timeout=None):
+                   channels=["file", "terminal"], callback=None, timeout=None, env=None):
         """
         Универсальный запуск процесса с выводом в реальном времени
         
@@ -668,24 +601,32 @@ class UniversalProcessRunner(object):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
+                env=env  # НОВОЕ: Передаем переменные окружения
             )
             
             # Читаем вывод построчно в реальном времени
             output_buffer = ""
+            
             while True:
                 line = process.stdout.readline()
+                
                 if not line:
                     break
                 
                 # Выводим строку в реальном времени
                 line_clean = line.rstrip()
                 if line_clean:
+                    # Парсер получает СЫРУЮ строку от внешнего процесса
+                    if self.parser:
+                        try:
+                            self.parser.parse_line(line_clean)
+                        except Exception as e:
+                            print(f"[PARSER_ERROR] Ошибка парсинга: {e}", gui_log=True)
+                    
+                    # Наш лог получает ОБРАБОТАННУЮ строку
                     self._log("  %s" % line_clean, "INFO", channels)
                     output_buffer += line
-                    
-                    # Парсинг прогресса теперь обрабатывается в SystemUpdater.run_command_with_interactive_handling()
-                    # Старый парсер удален - используем ProcessProgressManager
                 
                 # Проверяем на интерактивные запросы
                 if self._detect_interactive_prompt(output_buffer):
@@ -740,9 +681,8 @@ class UniversalProcessRunner(object):
             self.gui_callback(message)
     
     def _write_to_gui_log(self, message):
-        """Запись в GUI лог через callback (с фильтрацией)"""
+        """Запись в GUI лог через callback (без фильтрации)"""
         if hasattr(self, 'gui_log_callback') and self.gui_log_callback:
-            if self.should_show_in_gui_log(message):
                 self.gui_log_callback(message)
     
     def process_queue(self):
@@ -781,10 +721,6 @@ class UniversalProcessRunner(object):
             level: Уровень сообщения
             channels: Список каналов ["file", "terminal", "gui"]
         """
-        # НОВОЕ: Параллельная передача в парсер (БЕЗ временных меток!)
-        if self.parser:
-            self.parser.parse_line(message)
-        
         # Лог файл (всегда, если есть logger)
         if "file" in channels and self.logger:
             if level == "ERROR":
@@ -846,9 +782,6 @@ class RepoChecker(object):
     """Класс для проверки и настройки репозиториев APT"""
     
     def __init__(self, gui_terminal=None):
-        print("[TEST] RepoChecker.__init__ - обычный print")
-        print("[TEST] RepoChecker.__init__ - GUI log print", gui_log=True)
-        
         self.sources_list = '/etc/apt/sources.list'
         self.backup_file = '/etc/apt/sources.list.backup'
         self.activated_count = 0
@@ -1054,15 +987,11 @@ class SystemStats(object):
     """Класс для анализа статистики системы и пакетов"""
     
     def __init__(self):
-        print("[TEST] SystemStats.__init__ - обычный print")
-        print("[TEST] SystemStats.__init__ - GUI log print", gui_log=True)
-        
         self.updatable_packages = 0
         self.packages_to_update = 0
         self.packages_to_remove = 0
         self.updatable_list = []
         self.packages_to_install = {
-            'python': 4,
             'utilities': 5,
             'wine': 3,
             'total': 12
@@ -1148,7 +1077,7 @@ class SystemStats(object):
     
     def calculate_install_stats(self):
         """Подсчет пакетов для установки"""
-        print("[LIST] Подсчет пакетов для установки...", channels=["gui_log"])
+        print("[LIST] Подсчет пакетов для установки...", gui_log=True)
         
         # Python и зависимости
         python_packages = ['python3', 'python3-pip', 'python3-apt', 'python3-venv']
@@ -1209,7 +1138,7 @@ class SystemStats(object):
         print("====================")
         
         # Репозитории
-        print("[LIST] Репозитории:", channels=["gui_log"])
+        print("[LIST] Репозитории:", gui_log=True)
         if repo_stats:
             print("   • Активировано: %d рабочих" % repo_stats.get('activated', 0))
             print("   • Деактивировано: %d нерабочих" % repo_stats.get('deactivated', 0))
@@ -1220,12 +1149,6 @@ class SystemStats(object):
         # Обновление системы
         print("\n[PACKAGE] Обновление системы:")
         print("   • Пакетов для обновления: %d" % self.packages_to_update)
-        
-        if self.packages_to_update > 0 and self.updatable_list:
-            print("   • Первые пакеты:")
-            for package in self.updatable_list:
-                if package.strip():
-                    print("     - %s" % package.strip())
         
         # Очистка системы
         print("\n[CLEANUP] Очистка системы:")
@@ -1254,21 +1177,21 @@ def test_system_stats(dry_run=False):
     
     # Проверяем права доступа
     if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными пакетами", channels=["gui_log"])
+        print("[ERROR] Требуются права root для работы с системными пакетами", gui_log=True)
         print("Запустите: sudo python3 system_stats.py")
         return False
     
     # Анализируем обновления
     if not stats.get_updatable_packages():
-        print("[WARNING] Предупреждение: не удалось получить список обновлений", channels=["gui_log"])
+        print("[WARNING] Предупреждение: не удалось получить список обновлений", gui_log=True)
     
     # Анализируем автоудаление
     if not stats.get_autoremove_packages():
-        print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", channels=["gui_log"])
+        print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", gui_log=True)
     
     # Подсчитываем пакеты для установки
     if not stats.calculate_install_stats():
-        print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", channels=["gui_log"])
+        print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", gui_log=True)
     
     # Показываем статистику
     stats.display_statistics()
@@ -1283,8 +1206,6 @@ class WineComponentsChecker(object):
     
     def __init__(self):
         """Инициализация проверки компонентов"""
-        print("[TEST] WineComponentsChecker.__init__ - обычный print")
-        print("[TEST] WineComponentsChecker.__init__ - GUI log print", gui_log=True)
         
         self.wine_astraregul_path = "/opt/wine-astraregul/bin/wine"
         self.wine_9_path = "/opt/wine-9.0/bin/wine"
@@ -1662,18 +1583,18 @@ class WineComponentsChecker(object):
         print("-" * 60)
         
         if self.is_fully_installed():
-            print("[OK] Все компоненты установлены и готовы к работе!", channels=["gui_log"])
+            print("[OK] Все компоненты установлены и готовы к работе!", gui_log=True)
             return True
         elif self.is_wine_installed() and not self.is_astra_ide_installed():
-            print("[!] Wine установлен, но Astra.IDE не установлена", channels=["gui_log"])
-            print("[!] Требуется установка Astra.IDE", channels=["gui_log"])
+            print("[!] Wine установлен, но Astra.IDE не установлена", gui_log=True)
+            print("[!] Требуется установка Astra.IDE", gui_log=True)
             return False
         elif not self.is_wine_installed():
-            print("[ERR] Wine не установлен или настроен неправильно", channels=["gui_log"])
-            print("[ERR] Требуется установка Wine пакетов", channels=["gui_log"])
+            print("[ERR] Wine не установлен или настроен неправильно", gui_log=True)
+            print("[ERR] Требуется установка Wine пакетов", gui_log=True)
             return False
         else:
-            print("[!] Некоторые компоненты отсутствуют", channels=["gui_log"])
+            print("[!] Некоторые компоненты отсутствуют", gui_log=True)
             return False
     
     def get_missing_components(self):
@@ -1710,8 +1631,6 @@ class InstallationMonitor(object):
             wineprefix: Путь к WINEPREFIX директории
             callback: Функция обратного вызова для обновления GUI
         """
-        print("[TEST] InstallationMonitor.__init__ - обычный print")
-        print("[TEST] InstallationMonitor.__init__ - GUI log print", gui_log=True)
         
         self.wineprefix = wineprefix
         self.callback = callback
@@ -1956,8 +1875,6 @@ class WineInstaller(object):
             winetricks_components: Список компонентов winetricks для установки (если None - устанавливаем все)
             use_minimal_winetricks: Использовать минимальный winetricks (по умолчанию True)
         """
-        print("[TEST] WineInstaller.__init__ - обычный print")
-        print("[TEST] WineInstaller.__init__ - GUI log print", gui_log=True)
         
         self.logger = logger
         self.callback = callback
@@ -3508,8 +3425,6 @@ class WinetricksManager(object):
             astrapack_dir: Путь к директории AstraPack
             use_minimal: Использовать минимальный winetricks (по умолчанию True)
         """
-        print("[TEST] WinetricksManager.__init__ - обычный print")
-        print("[TEST] WinetricksManager.__init__ - GUI log print", gui_log=True)
         
         self.astrapack_dir = astrapack_dir
         self.use_minimal = use_minimal
@@ -3633,8 +3548,6 @@ class MinimalWinetricks(object):
     """Чистая Python-реализация минимального winetricks (6 компонентов)."""
 
     def __init__(self):
-        print("[TEST] MinimalWinetricks.__init__ - обычный print")
-        print("[TEST] MinimalWinetricks.__init__ - GUI log print", gui_log=True)
         
         self.cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
         try:
@@ -3671,8 +3584,8 @@ class MinimalWinetricks(object):
         elif expected_sha256 is None:
             # Логируем актуальный хеш для обновления
             actual_hash = self._sha256(dest_path)
-            print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}", channels=["gui_log"])
-        print(f"[MinimalWinetricks] [OK] Скачан {os.path.basename(dest_path)}", channels=["gui_log"])
+            print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}", gui_log=True)
+        print(f"[MinimalWinetricks] [OK] Скачан {os.path.basename(dest_path)}", gui_log=True)
         return dest_path
 
     def _sha256(self, path):
@@ -3767,10 +3680,10 @@ class MinimalWinetricks(object):
             
             # Затем устанавливаем wine-mono если он есть в списке
             if 'wine-mono' in components:
-                print(f"[MinimalWinetricks] Установка wine-mono после инициализации WINEPREFIX...", channels=["gui_log"])
+                print(f"[MinimalWinetricks] Установка wine-mono после инициализации WINEPREFIX...", gui_log=True)
                 ok = self._wine_mono(wineprefix)
                 if ok:
-                    print(f"[MinimalWinetricks] [OK] wine-mono установлен успешно", channels=["gui_log"])
+                    print(f"[MinimalWinetricks] [OK] wine-mono установлен успешно", gui_log=True)
                     if callback:
                         callback(f"[OK] wine-mono установлен")
                         # Запускаем полную проверку всех компонентов
@@ -3822,7 +3735,7 @@ class MinimalWinetricks(object):
             return True
             
         except Exception as e:
-            print(f"[MinimalWinetricks] Критическая ошибка: {e}", channels=["gui_log"])
+            print(f"[MinimalWinetricks] Критическая ошибка: {e}", gui_log=True)
             return False
 
     def _dotnet48(self, wineprefix):
@@ -3968,8 +3881,6 @@ class WineUninstaller(object):
             remove_ide: Удалять Astra.IDE (по умолчанию True)
             winetricks_components: Список компонентов winetricks для удаления (если None - удаляем WINEPREFIX целиком)
         """
-        print("[TEST] WineUninstaller.__init__ - обычный print")
-        print("[TEST] WineUninstaller.__init__ - GUI log print", gui_log=True)
         
         self.logger = logger
         self.callback = callback
@@ -4459,9 +4370,7 @@ class UniversalInstaller(object):
             logger: Экземпляр класса Logger для логирования
             callback: Функция для обновления статуса в GUI (опционально)
         """
-        print("[TEST] UniversalInstaller.__init__ - обычный print")
-        print("[TEST] UniversalInstaller.__init__ - GUI log print", gui_log=True)
-        
+       
         self.logger = logger
         self.callback = callback
         
@@ -4940,9 +4849,7 @@ class ComponentStatusManager(object):
             logger: Экземпляр класса Logger для логирования
             callback: Функция для обновления статуса в GUI (опционально)
         """
-        print("[TEST] ComponentStatusManager.__init__ - обычный print")
-        print("[TEST] ComponentStatusManager.__init__ - GUI log print", gui_log=True)
-        
+       
         self.logger = logger
         self.callback = callback
         
@@ -5285,9 +5192,7 @@ class AutomationGUI(object):
     """GUI для мониторинга автоматизации установки Astra.IDE"""
     
     def __init__(self, console_mode=False, close_terminal_pid=None):
-        print("[TEST] AutomationGUI.__init__ - обычный print")
-        print("[TEST] AutomationGUI.__init__ - GUI log print", gui_log=True)
-        
+      
         # Проверяем и устанавливаем зависимости для GUI только если не консольный режим
         if not console_mode:
             if not self._install_gui_dependencies():
@@ -5382,22 +5287,7 @@ class AutomationGUI(object):
         # Устанавливаем глобальную ссылку на GUI для перенаправления print()
         sys._gui_instance = self
         
-        # Создаем SystemUpdater сразу для доступности ProcessProgressManager
-        self.system_updater = SystemUpdater(self.universal_runner)
-        self.system_updater.gui_instance = self  # Передаем ссылку на GUI
-        
-        # НОВОЕ: Устанавливаем парсер в UniversalProcessRunner после создания SystemUpdater
-        self.universal_runner.parser = self.system_updater.system_update_parser
-        print("[PARSER] Парсер установлен в UniversalProcessRunner!")
-        
-        # Передаем ссылки на детальные бары для прямого обновления
-        self.system_updater.download_progress = self.download_progress
-        self.system_updater.unpack_progress = self.unpack_progress
-        self.system_updater.config_progress = self.config_progress
-        self.system_updater.download_label = self.download_label
-        self.system_updater.unpack_label = self.unpack_label
-        self.system_updater.config_label = self.config_label
-        print("[SYSTEM_UPDATER] SystemUpdater создан в __init__ GUI!")
+        # Передаем ссылки на детальные бары для прямого обновления (будет установлено после создания SystemUpdater)
         
         # Перенаправляем stdout и stderr на встроенный терминал GUI
         if not console_mode:
@@ -5409,12 +5299,7 @@ class AutomationGUI(object):
         # Автоматически запускаем проверку компонентов при инициализации GUI
         if not console_mode:
             self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
-        
-        # ТЕСТОВАЯ ФУНКЦИЯ: Инициализация всех классов через 2 секунды
-        print("[DEBUG] Запускаем self.root.after(2000, self._test_all_classes_initialization)")
-        self.root.after(2000, self._test_all_classes_initialization)
-        print("[DEBUG] self.root.after() выполнен успешно")
-
+    
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
         if message.startswith("UPDATE_COMPONENT:"):
@@ -5926,19 +5811,27 @@ class AutomationGUI(object):
                     # Сбрасываем флаг открытого окна
                     self._close_dialog_open = False
                     
+                    # Закрываем диалог
+                    dialog.grab_release()
+                    dialog.destroy()
+                    
                     # Закрываем терминал если есть PID
                     if self.close_terminal_pid:
                         self._close_terminal_process()
                     
-                    # Закрываем GUI
-                    dialog.grab_release()
-                    dialog.destroy()
-                    self.root.quit()
+                    # Закрываем основное приложение
+                    self.root.destroy()
+                    
+                    print("[INFO] Приложение закрыто", gui_log=True)
                     
                 except Exception as e:
                     print(f"[ERROR] Ошибка финального закрытия: {e}")
                     self._close_dialog_open = False
-                    dialog.destroy()
+                    try:
+                        dialog.destroy()
+                        self.root.destroy()
+                    except:
+                        pass
             
             def cancel():
                 """Отмена"""
@@ -5981,7 +5874,7 @@ class AutomationGUI(object):
     
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
-        print("[INFO] GUI закрывается", channels=["gui_log"])
+        print("[INFO] GUI закрывается", gui_log=True)
         
         # ВСЕГДА показываем форму подтверждения при закрытии GUI
         self._close_parent_terminal()
@@ -5996,75 +5889,6 @@ class AutomationGUI(object):
             except Exception as e:
                 # Игнорируем ошибки при изменении размера
                 pass
-    
-    def _test_all_classes_initialization(self):
-        """ТЕСТОВАЯ ФУНКЦИЯ: Инициализация всех классов для проверки print()"""
-        print("[TEST_ALL_CLASSES] Начинаем тестовую инициализацию всех классов...")
-        
-        try:
-            # Инициализируем все классы по очереди
-            print("[TEST_ALL_CLASSES] 1. RepoChecker...")
-            repo_checker = RepoChecker()
-            
-            print("[TEST_ALL_CLASSES] 2. SystemStats...")
-            system_stats = SystemStats()
-            
-            print("[TEST_ALL_CLASSES] 3. MinimalWinetricks...")
-            minimal_winetricks = MinimalWinetricks()
-            
-            print("[TEST_ALL_CLASSES] 4. InstallationMonitor...")
-            installation_monitor = InstallationMonitor("/tmp/test")
-            
-            print("[TEST_ALL_CLASSES] 5. WineInstaller...")
-            wine_installer = WineInstaller()
-            
-            print("[TEST_ALL_CLASSES] 6. WinetricksManager...")
-            winetricks_manager = WinetricksManager("/tmp/test")
-            
-            print("[TEST_ALL_CLASSES] 7. WineUninstaller...")
-            wine_uninstaller = WineUninstaller()
-            
-            print("[TEST_ALL_CLASSES] 8. UniversalInstaller...")
-            universal_installer = UniversalInstaller()
-            
-            print("[TEST_ALL_CLASSES] 9. InteractiveHandler...")
-            interactive_handler = InteractiveHandler()
-            
-            print("[TEST_ALL_CLASSES] 10. UniversalProgressManager...")
-            universal_progress_manager = UniversalProgressManager()
-            
-            print("[TEST_ALL_CLASSES] 11. SystemUpdateParser...")
-            system_update_parser = SystemUpdateParser()
-            
-            print("[TEST_ALL_CLASSES] 12. ProcessProgressManager...")
-            process_progress_manager = ProcessProgressManager()
-            
-            print("[TEST_ALL_CLASSES] 13. SystemUpdater...")
-            system_updater = SystemUpdater()
-            
-            print("[TEST_ALL_CLASSES] 14. DirectorySnapshot...")
-            directory_snapshot = DirectorySnapshot("/tmp/test")
-            
-            print("[TEST_ALL_CLASSES] 15. DirectoryMonitor...")
-            directory_monitor = DirectoryMonitor()
-            
-            print("[TEST_ALL_CLASSES] 16. WineComponentsChecker...")
-            wine_components_checker = WineComponentsChecker()
-            
-            print("[TEST_ALL_CLASSES] 17. InteractiveConfig...")
-            interactive_config = InteractiveConfig()
-            
-            print("[TEST_ALL_CLASSES] 18. UniversalProcessRunner...")
-            if hasattr(self, 'universal_runner') and self.universal_runner:
-                print("[TEST] UniversalProcessRunner уже инициализирован")
-            
-            print("[TEST_ALL_CLASSES] 19. ComponentStatusManager...")
-            component_status_manager = ComponentStatusManager(logger=None, callback=None)
-            
-            print("[TEST_ALL_CLASSES] ✅ Все 19 классов успешно инициализированы!")
-            
-        except Exception as e:
-            print(f"[TEST_ALL_CLASSES] ❌ Ошибка при инициализации классов: {e}")
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -6273,9 +6097,29 @@ class AutomationGUI(object):
             gui_callback=self.add_terminal_output,
             gui_log_callback=self.add_gui_log_output,  # Теперь существует!
             gui_instance=self,  # Передаем ссылку на GUI
-            parser=None  # ОТКЛЮЧЕНО: Парсер временно отключен для тестирования
+            parser=None  # Будет установлен после создания SystemUpdater
         )
 
+        # Создаем SystemUpdater ПОСЛЕ создания universal_runner
+        self.system_updater = SystemUpdater(self.universal_runner)
+        self.system_updater.gui_instance = self  # Передаем ссылку на GUI
+        
+        # Устанавливаем парсер в UniversalProcessRunner после создания SystemUpdater
+        self.universal_runner.parser = self.system_updater.system_update_parser
+        print("[PARSER] Парсер установлен в UniversalProcessRunner!")
+        
+        # Передаем ссылки на детальные бары для прямого обновления
+        self.system_updater.download_progress = self.download_progress
+        self.system_updater.unpack_progress = self.unpack_progress
+        self.system_updater.config_progress = self.config_progress
+        self.system_updater.download_label = self.download_label
+        self.system_updater.unpack_label = self.unpack_label
+        self.system_updater.config_label = self.config_label
+        print("[SYSTEM_UPDATER] SystemUpdater полностью настроен!")
+        
+        # Запускаем красивый тест прогресс-баров через 3 секунды после полной инициализации
+        self.root.after(3000, self._test_progress_bars_animation)
+        
         # Настройка весов для правильного распределения пространства
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -6599,21 +6443,11 @@ class AutomationGUI(object):
         control_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
         # Переменные для флажков
-        self.terminal_filter_enabled = self.tk.BooleanVar(value=True)
         self.terminal_autoscroll_enabled = self.tk.BooleanVar(value=True)
         self.terminal_timestamp_enabled = self.tk.BooleanVar(value=True)
         
         # Переменная для хранения полного содержимого терминала
         self.terminal_full_content = ""
-        
-        # Флажок фильтрации
-        filter_checkbox = self.tk.Checkbutton(
-            control_frame, 
-            text="Фильтрация", 
-            variable=self.terminal_filter_enabled,
-            command=self.toggle_terminal_filter
-        )
-        filter_checkbox.pack(side=self.tk.LEFT, padx=5)
         
         # Флажок автоперемотки
         autoscroll_checkbox = self.tk.Checkbutton(
@@ -6673,11 +6507,6 @@ class AutomationGUI(object):
         )
         clear_button.pack(side=self.tk.RIGHT, padx=5)
     
-    def toggle_terminal_filter(self):
-        """Переключение фильтрации терминала"""
-        # Применяем фильтрацию к существующему содержимому
-        self.apply_terminal_filtering()
-    
     def toggle_terminal_timestamps(self):
         """Переключение отображения временных меток"""
         # Получаем все содержимое терминала
@@ -6720,21 +6549,8 @@ class AutomationGUI(object):
             self.terminal_text.config(state=self.tk.NORMAL)
             self.terminal_text.delete("1.0", self.tk.END)
             
-            # Добавляем заголовок
-            header = f"[INFO] Загружен лог-файл: {os.path.basename(log_file_path)}\n"
-            header += f"[INFO] Путь: {log_file_path}\n"
-            header += "=" * 80 + "\n"
-            self.terminal_text.insert("1.0", header)
-            
             # Добавляем содержимое лога
             self.terminal_text.insert(self.tk.END, log_content)
-            
-            # Сохраняем полное содержимое для фильтрации
-            self.terminal_full_content = header + log_content
-            
-            # Применяем текущие фильтры
-            if self.terminal_filter_enabled.get():
-                self.apply_terminal_filtering()
             
             # Автопрокрутка если включена
             if self.terminal_autoscroll_enabled.get():
@@ -6746,43 +6562,6 @@ class AutomationGUI(object):
             self.terminal_text.config(state=self.tk.NORMAL)
             self.terminal_text.insert(self.tk.END, f"[ERROR] Ошибка загрузки лога: {e}\n")
             self.terminal_text.config(state=self.tk.DISABLED)
-    
-    def apply_terminal_filtering(self):
-        """Применение фильтрации к содержимому терминала"""
-        try:
-            if not hasattr(self, 'terminal_full_content'):
-                return
-            
-            self.terminal_text.config(state=self.tk.NORMAL)
-            
-            # Получаем текущее содержимое
-            current_content = self.terminal_text.get("1.0", self.tk.END)
-            
-            # Если фильтрация включена - применяем фильтр
-            if self.terminal_filter_enabled.get():
-                lines = self.terminal_full_content.split('\n')
-                filtered_lines = []
-                
-                for line in lines:
-                    if self.should_show_in_gui_log(line):
-                        filtered_lines.append(line)
-                
-                filtered_content = '\n'.join(filtered_lines)
-                
-                # Обновляем содержимое только если оно изменилось
-                if filtered_content != current_content:
-                    self.terminal_text.delete("1.0", self.tk.END)
-                    self.terminal_text.insert("1.0", filtered_content)
-            else:
-                # Если фильтрация выключена - показываем все
-                if self.terminal_full_content != current_content:
-                    self.terminal_text.delete("1.0", self.tk.END)
-                    self.terminal_text.insert("1.0", self.terminal_full_content)
-            
-            self.terminal_text.config(state=self.tk.DISABLED)
-            
-        except Exception as e:
-            print(f"[ERROR] Ошибка применения фильтрации: {e}")
     
     def clear_terminal(self):
         """Очистка терминала"""
@@ -7641,7 +7420,7 @@ class AutomationGUI(object):
         # Проверяем права root
         if os.geteuid() != 0:
             self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
-            print("[ERROR] Для установки Wine требуются права root", channels=["gui_log"])
+            print("[ERROR] Для установки Wine требуются права root", gui_log=True)
             return
         
         # Получаем список выбранных компонентов
@@ -7685,10 +7464,10 @@ class AutomationGUI(object):
         
         if success:
             self.wine_status_label.config(text="Установка завершена успешно", fg='green')
-            print("[OK] Установка компонентов завершена успешно", channels=["gui_log"])
+            print("[OK] Установка компонентов завершена успешно", gui_log=True)
         else:
             self.wine_status_label.config(text="Ошибка установки", fg='red')
-            print("[ERROR] Ошибка установки компонентов", channels=["gui_log"])
+            print("[ERROR] Ошибка установки компонентов", gui_log=True)
         
         # Обновляем статус компонентов
         self._update_wine_status()
@@ -7720,7 +7499,7 @@ class AutomationGUI(object):
             selected = self.get_selected_wine_components()
             
             # Логируем выбранные компоненты
-            self.root.after(0, lambda: print(f"[INFO] Выбранные компоненты: {', '.join(selected) if selected else 'НЕТ'}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[INFO] Выбранные компоненты: {', '.join(selected) if selected else 'НЕТ'}", gui_log=True))
             
             # Определяем что устанавливать на основе выбранных компонентов
             install_wine = any(c in selected for c in ['Wine Astraregul', 'Wine 9.0'])
@@ -7728,15 +7507,15 @@ class AutomationGUI(object):
             install_ide = 'Astra.IDE' in selected
             
             # Логируем план установки
-            self.root.after(0, lambda: print("[INFO] План установки:", channels=["gui_log"]))
-            self.root.after(0, lambda: print(f"[INFO]   - Wine пакеты: {'ДА' if install_wine else 'НЕТ'}", channels=["gui_log"]))
-            self.root.after(0, lambda: print(f"[INFO]   - WINEPREFIX (все компоненты winetricks): {'ДА' if install_winetricks else 'НЕТ'}", channels=["gui_log"]))
-            self.root.after(0, lambda: print(f"[INFO]   - Astra.IDE: {'ДА' if install_ide else 'НЕТ'}", channels=["gui_log"]))
+            self.root.after(0, lambda: print("[INFO] План установки:", gui_log=True))
+            self.root.after(0, lambda: print(f"[INFO]   - Wine пакеты: {'ДА' if install_wine else 'НЕТ'}", gui_log=True))
+            self.root.after(0, lambda: print(f"[INFO]   - WINEPREFIX (все компоненты winetricks): {'ДА' if install_winetricks else 'НЕТ'}", gui_log=True))
+            self.root.after(0, lambda: print(f"[INFO]   - Astra.IDE: {'ДА' if install_ide else 'НЕТ'}", gui_log=True))
             
             # Проверяем что хоть что-то выбрано
             if not install_wine and not install_winetricks and not install_ide:
-                self.root.after(0, lambda: print("[WARNING] Ничего не выбрано для установки!", channels=["gui_log"]))
-                self.root.after(0, lambda: print("[INFO] Отметьте нужные компоненты галочками в таблице", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[WARNING] Ничего не выбрано для установки!", gui_log=True))
+                self.root.after(0, lambda: print("[INFO] Отметьте нужные компоненты галочками в таблице", gui_log=True))
                 self.root.after(0, lambda: self.wine_status_label.config(text="Ничего не выбрано", fg='orange'))
                 self.root.after(0, lambda: self.install_wine_button.config(state=self.tk.NORMAL))
                 self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
@@ -7760,7 +7539,7 @@ class AutomationGUI(object):
             self.install_monitor.start_monitoring()
             
             # Запускаем установку
-            self.root.after(0, lambda: print("[INSTALL] Начало установки Wine и Astra.IDE", channels=["gui_log"]))
+            self.root.after(0, lambda: print("[INSTALL] Начало установки Wine и Astra.IDE", gui_log=True))
             self.root.after(0, lambda: self._reset_progress_panel())
             success = installer.install_all()
             
@@ -7779,7 +7558,7 @@ class AutomationGUI(object):
                 self.install_monitor.stop_monitoring()
             
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
-            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             self.root.after(0, lambda: self.install_wine_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
     
@@ -7922,7 +7701,7 @@ class AutomationGUI(object):
             self.wine_stage_label.config(text="Ошибка установки", fg='red')
         
         # Добавляем в лог
-        print(message, channels=["gui_log"])
+        print(message, gui_log=True)
     
     def _update_all_components(self):
         """Обновление проверки всех компонентов в таблице"""
@@ -7950,14 +7729,14 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
             self.wine_stage_label.config(text="Установка завершена!", fg='green')
             self.wine_progress['value'] = 100
-            print("[SUCCESS] Установка Wine и Astra.IDE завершена успешно", channels=["gui_log"])
+            print("[SUCCESS] Установка Wine и Astra.IDE завершена успешно", gui_log=True)
             
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
             self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
             self.wine_stage_label.config(text="Ошибка установки", fg='red')
-            print("[ERROR] Установка Wine и Astra.IDE прервана", channels=["gui_log"])
+            print("[ERROR] Установка Wine и Astra.IDE прервана", gui_log=True)
         
         # Включаем кнопки обратно
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -8032,7 +7811,7 @@ class AutomationGUI(object):
         # Проверяем права root
         if os.geteuid() != 0:
             self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
-            print("[ERROR] Для удаления Wine требуются права root", channels=["gui_log"])
+            print("[ERROR] Для удаления Wine требуются права root", gui_log=True)
             return
         
         # Получаем список выбранных компонентов
@@ -8082,10 +7861,10 @@ class AutomationGUI(object):
         
         if success:
             self.wine_status_label.config(text="Удаление завершено успешно", fg='green')
-            print("[OK] Удаление компонентов завершено успешно", channels=["gui_log"])
+            print("[OK] Удаление компонентов завершено успешно", gui_log=True)
         else:
             self.wine_status_label.config(text="Ошибка удаления", fg='red')
-            print("[ERROR] Ошибка удаления компонентов", channels=["gui_log"])
+            print("[ERROR] Ошибка удаления компонентов", gui_log=True)
         
         # Обновляем статус компонентов
         self._update_wine_status()
@@ -8149,7 +7928,7 @@ class AutomationGUI(object):
         except Exception as e:
             error_msg = "Ошибка полной очистки: %s" % str(e)
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
-            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             self.root.after(0, lambda: self.full_cleanup_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
     
@@ -8157,13 +7936,13 @@ class AutomationGUI(object):
         """Обработка завершения полной очистки (вызывается из главного потока)"""
         if success:
             self.wine_status_label.config(text="Полная очистка завершена успешно!", fg='green')
-            print("[SUCCESS] Полная очистка Wine завершена успешно", channels=["gui_log"])
+            print("[SUCCESS] Полная очистка Wine завершена успешно", gui_log=True)
             
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
             self.wine_status_label.config(text="Ошибка полной очистки", fg='red')
-            print("[ERROR] Ошибка полной очистки Wine", channels=["gui_log"])
+            print("[ERROR] Ошибка полной очистки Wine", gui_log=True)
         
         # Восстанавливаем кнопки
         self.full_cleanup_button.config(state=self.tk.NORMAL)
@@ -8206,15 +7985,15 @@ class AutomationGUI(object):
             # 1. Если удаляется Wine → нужно удалить WINEPREFIX и Astra.IDE (они зависят от Wine)
             if remove_wine:
                 if not remove_wineprefix:
-                    self.root.after(0, lambda: print("[INFO] Wine удаляется → автоматически удаляется WINEPREFIX", channels=["gui_log"]))
+                    self.root.after(0, lambda: print("[INFO] Wine удаляется → автоматически удаляется WINEPREFIX", gui_log=True))
                     remove_wineprefix = True
                 if not remove_ide:
-                    self.root.after(0, lambda: print("[INFO] Wine удаляется → автоматически удаляется Astra.IDE", channels=["gui_log"]))
+                    self.root.after(0, lambda: print("[INFO] Wine удаляется → автоматически удаляется Astra.IDE", gui_log=True))
                     remove_ide = True
             
             # 2. Если удаляется WINEPREFIX → нужно удалить Astra.IDE (она установлена в WINEPREFIX)
             if remove_wineprefix and not remove_ide:
-                self.root.after(0, lambda: print("[INFO] WINEPREFIX удаляется → автоматически удаляется Astra.IDE", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[INFO] WINEPREFIX удаляется → автоматически удаляется Astra.IDE", gui_log=True))
                 remove_ide = True
             
             # Создаем экземпляр деинсталлятора
@@ -8225,7 +8004,7 @@ class AutomationGUI(object):
                                         winetricks_components=None)
             
             # Запускаем удаление
-            self.root.after(0, lambda: print("[UNINSTALL] Начало удаления Wine и Astra.IDE", channels=["gui_log"]))
+            self.root.after(0, lambda: print("[UNINSTALL] Начало удаления Wine и Astra.IDE", gui_log=True))
             success = uninstaller.uninstall_all()
             
             # Обновляем GUI после удаления
@@ -8234,7 +8013,7 @@ class AutomationGUI(object):
         except Exception as e:
             error_msg = "Ошибка удаления: %s" % str(e)
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
-            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             self.root.after(0, lambda: self.uninstall_wine_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
     
@@ -8242,13 +8021,13 @@ class AutomationGUI(object):
         """Обработка завершения удаления (вызывается из главного потока)"""
         if success:
             self.wine_status_label.config(text="Удаление завершено успешно!", fg='green')
-            print("[SUCCESS] Удаление Wine и Astra.IDE завершено успешно", channels=["gui_log"])
+            print("[SUCCESS] Удаление Wine и Astra.IDE завершено успешно", gui_log=True)
             
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
             self.wine_status_label.config(text="Удаление прервано (см. лог)", fg='red')
-            print("[ERROR] Удаление Wine и Astra.IDE прервано", channels=["gui_log"])
+            print("[ERROR] Удаление Wine и Astra.IDE прервано", gui_log=True)
         
         # Включаем кнопки обратно
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -8276,7 +8055,7 @@ class AutomationGUI(object):
                     lines = f.readlines()
             except PermissionError:
                 self.repos_status_label.config(text="Ошибка: нет прав на чтение", fg='red')
-                print(f"[ERROR] Нет прав на чтение {sources_file}", channels=["gui_log"])
+                print(f"[ERROR] Нет прав на чтение {sources_file}", gui_log=True)
                 self.load_repos_button.config(state=self.tk.NORMAL)
                 return
             
@@ -8338,11 +8117,11 @@ class AutomationGUI(object):
                 fg='green'
             )
             
-            print(f"[REPOS] Загружено {total_count} репозиториев ({active_count} активных, {disabled_count} отключенных)", channels=["gui_log"])
+            print(f"[REPOS] Загружено {total_count} репозиториев ({active_count} активных, {disabled_count} отключенных)", gui_log=True)
             
         except Exception as e:
             self.repos_status_label.config(text="Ошибка загрузки: %s" % str(e), fg='red')
-            print(f"[ERROR] Ошибка загрузки репозиториев: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка загрузки репозиториев: {e}", gui_log=True)
         
         finally:
             self.load_repos_button.config(state=self.tk.NORMAL)
@@ -8361,7 +8140,7 @@ class AutomationGUI(object):
     def _check_repos_availability_thread(self):
         """Проверка доступности репозиториев (в потоке)"""
         try:
-            self.root.after(0, lambda: print("\n[REPOS] Проверка доступности репозиториев...", channels=["gui_log"]))
+            self.root.after(0, lambda: print("\n[REPOS] Проверка доступности репозиториев...", gui_log=True))
             
             # Выполняем apt-get update для проверки
             result = subprocess.run(
@@ -8373,19 +8152,19 @@ class AutomationGUI(object):
             )
             
             if result.returncode == 0:
-                self.root.after(0, lambda: print("[OK] Все репозитории доступны", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[OK] Все репозитории доступны", gui_log=True))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Все репозитории доступны", fg='green'))
             else:
-                self.root.after(0, lambda: print("[ERR] Некоторые репозитории недоступны", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[ERR] Некоторые репозитории недоступны", gui_log=True))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Есть недоступные репозитории", fg='orange'))
                 
                 if result.stderr:
                     for line in result.stderr.strip().split('\n')[:10]:
                         if line.strip():
-                            self.root.after(0, lambda l=line: print(f"  ! {l}", channels=["gui_log"]))
+                            self.root.after(0, lambda l=line: print(f"  ! {l}", gui_log=True))
         
         except Exception as e:
-            self.root.after(0, lambda: print(f"[ERROR] Ошибка проверки: {e}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[ERROR] Ошибка проверки: {e}", gui_log=True))
             self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка проверки", fg='red'))
         
         finally:
@@ -8414,14 +8193,14 @@ class AutomationGUI(object):
             
             # Обновляем GUI в главном потоке
             if return_code == 0:
-                self.root.after(0, lambda: print("[OK] apt-get update завершен успешно", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[OK] apt-get update завершен успешно", gui_log=True))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Списки пакетов обновлены", fg='green'))
             else:
-                self.root.after(0, lambda: print("[ERROR] apt-get update завершился с ошибкой", channels=["gui_log"]))
+                self.root.after(0, lambda: print("[ERROR] apt-get update завершился с ошибкой", gui_log=True))
                 self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
         
         except Exception as e:
-            self.root.after(0, lambda: print(f"[ERROR] Ошибка: {e}", channels=["gui_log"]))
+            self.root.after(0, lambda: print(f"[ERROR] Ошибка: {e}", gui_log=True))
             self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
         
         finally:
@@ -8463,7 +8242,7 @@ class AutomationGUI(object):
             text_widget.insert('1.0', details)
             text_widget.config(state=self.tk.DISABLED)
             
-            print(f"[REPOS] Просмотр деталей: {values[2]}", channels=["gui_log"])
+            print(f"[REPOS] Просмотр деталей: {values[2]}", gui_log=True)
     
     def copy_repo_uri(self):
         """Копировать URI репозитория в буфер обмена"""
@@ -8478,7 +8257,7 @@ class AutomationGUI(object):
             uri = values[2]
             self.root.clipboard_clear()
             self.root.clipboard_append(uri)
-            print(f"[REPOS] URI скопирован в буфер обмена: {uri}", channels=["gui_log"])
+            print(f"[REPOS] URI скопирован в буфер обмена: {uri}", gui_log=True)
             self.repos_status_label.config(text="URI скопирован в буфер обмена", fg='green')
     
     def open_system_monitor(self):
@@ -8494,7 +8273,7 @@ class AutomationGUI(object):
                                           check=False)
                     if result.returncode == 0:
                         # Диагностика - записываем в лог информацию о процессах и окнах
-                        print(f"Найден процесс системного монитора: {monitor}", channels=["gui_log"])
+                        print(f"Найден процесс системного монитора: {monitor}", gui_log=True)
                         
                         # Получаем список всех окон
                         try:
@@ -8504,12 +8283,12 @@ class AutomationGUI(object):
                                                          check=False)
                             if wmctrl_result.returncode == 0:
                                 windows = wmctrl_result.stdout.decode()
-                                print(f"Список окон:\n{windows}", channels=["gui_log"])
+                                print(f"Список окон:\n{windows}", gui_log=True)
                                 
                                 # Ищем окно с именем монитора
                                 for line in windows.split('\n'):
                                     if monitor.lower() in line.lower() or 'monitor' in line.lower() or 'system' in line.lower():
-                                        print(f"Найдено окно: {line}", channels=["gui_log"])
+                                        print(f"Найдено окно: {line}", gui_log=True)
                                         window_id = line.split()[0]
                                         # Пробуем активировать по ID
                                         subprocess.run(['wmctrl', '-i', '-a', window_id], 
@@ -8519,7 +8298,7 @@ class AutomationGUI(object):
                                         self.wine_status_label.config(text="Фокус переведен на окно", fg='green')
                                         return
                         except Exception as e:
-                            print(f"Ошибка wmctrl: {e}", channels=["gui_log"])
+                            print(f"Ошибка wmctrl: {e}", gui_log=True)
                         
                         # Если wmctrl не сработал, пробуем xdotool
                         try:
@@ -8537,12 +8316,12 @@ class AutomationGUI(object):
                                                                check=False)
                                 if xwininfo_result.returncode == 0:
                                     windows_info = xwininfo_result.stdout.decode()
-                                    print(f"Информация об окнах:\n{windows_info}", channels=["gui_log"])
+                                    print(f"Информация об окнах:\n{windows_info}", gui_log=True)
                                     
                                     # Ищем окно системного монитора
                                     for line in windows_info.split('\n'):
                                         if monitor.lower() in line.lower() or 'monitor' in line.lower():
-                                            print(f"Найдено окно в xwininfo: {line}", channels=["gui_log"])
+                                            print(f"Найдено окно в xwininfo: {line}", gui_log=True)
                                             # Извлекаем window ID и пробуем активировать
                                             if '0x' in line:
                                                 window_id = line.split()[0]
@@ -8553,7 +8332,7 @@ class AutomationGUI(object):
                                                 self.wine_status_label.config(text="Фокус переведен через xdotool ID", fg='green')
                                                 return
                             except Exception as e:
-                                print(f"Ошибка xwininfo: {e}", channels=["gui_log"])
+                                print(f"Ошибка xwininfo: {e}", gui_log=True)
                             
                             self.wine_status_label.config(text="Системный монитор уже запущен", fg='blue')
                         return
@@ -8594,7 +8373,7 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Системный монитор не найден", fg='orange')
             
         except Exception as e:
-            print(f"[ERROR] Ошибка запуска системного монитора: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка запуска системного монитора: {e}", gui_log=True)
             self.wine_status_label.config(text="Ошибка запуска монитора", fg='red')
     
     def check_desktop_shortcut_status(self):
@@ -8624,14 +8403,14 @@ class AutomationGUI(object):
             
             if os.path.exists(shortcut_path):
                 self.shortcut_button.config(text="Удалить Ярлык", fg='red')
-                print(f"[SHORTCUT] Ярлык найден: {shortcut_path}", channels=["gui_log"])
+                print(f"[SHORTCUT] Ярлык найден: {shortcut_path}", gui_log=True)
             else:
                 self.shortcut_button.config(text="Создать Ярлык", fg='green')
-                print(f"[SHORTCUT] Ярлык не найден в: {desktop_path}", channels=["gui_log"])
+                print(f"[SHORTCUT] Ярлык не найден в: {desktop_path}", gui_log=True)
                 
         except Exception as e:
             self.shortcut_button.config(text="Ошибка проверки", fg='orange')
-            print(f"[ERROR] Ошибка проверки ярлыка: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка проверки ярлыка: {e}", gui_log=True)
     
     def toggle_desktop_shortcut(self):
         """Создание или удаление ярлыка на рабочем столе"""
@@ -8645,13 +8424,13 @@ class AutomationGUI(object):
                 desktop_path = os.path.expanduser("~/Рабочий стол")
             
             if not os.path.exists(desktop_path):
-                print("[ERROR] Не удалось найти папку рабочего стола", channels=["gui_log"])
+                print("[ERROR] Не удалось найти папку рабочего стола", gui_log=True)
                 return
             
             # Получаем путь к скрипту
             script_path = os.path.abspath("astra_install.sh")
             if not os.path.exists(script_path):
-                print(f"[ERROR] Скрипт не найден: {script_path}", channels=["gui_log"])
+                print(f"[ERROR] Скрипт не найден: {script_path}", gui_log=True)
                 return
             
             shortcut_name = "astra_install.desktop"
@@ -8661,7 +8440,7 @@ class AutomationGUI(object):
                 # Удаляем ярлык
                 os.remove(shortcut_path)
                 self.shortcut_button.config(text="Создать Ярлык", fg='green')
-                print("[SUCCESS] Ярлык удален с рабочего стола", channels=["gui_log"])
+                print("[SUCCESS] Ярлык удален с рабочего стола", gui_log=True)
             else:
                 # Создаем ярлык
                 desktop_content = f"""[Desktop Entry]
@@ -8683,10 +8462,10 @@ Path={os.path.dirname(script_path)}
                 os.chmod(shortcut_path, 0o755)
                 
                 self.shortcut_button.config(text="Удалить Ярлык", fg='red')
-                print("[SUCCESS] Ярлык создан на рабочем столе", channels=["gui_log"])
+                print("[SUCCESS] Ярлык создан на рабочем столе", gui_log=True)
                 
         except Exception as e:
-            print(f"[ERROR] Ошибка работы с ярлыком: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка работы с ярлыком: {e}", gui_log=True)
             self.shortcut_button.config(text="Ошибка", fg='red')
         
     def log_message(self, message):
@@ -8695,7 +8474,7 @@ Path={os.path.dirname(script_path)}
         if hasattr(self, 'universal_runner') and self.universal_runner:
             print(f"[INFO] {message}")
         else:
-            # Fallback - используем старый метод (фильтрация уже в UniversalProcessRunner)
+            # Fallback - добавляем напрямую в GUI лог
             try:
                 self.log_text.insert(self.tk.END, message + "\n")
                 self.log_text.see(self.tk.END)
@@ -8724,7 +8503,7 @@ Path={os.path.dirname(script_path)}
         """Запуск мониторинга системного вывода"""
         try:
             # Добавляем информацию в лог
-            print("[INFO] Мониторинг системного вывода запущен", channels=["gui_log"])
+            print("[INFO] Мониторинг системного вывода запущен", gui_log=True)
             
             # Добавляем сообщение в терминал
             self.terminal_text.config(state=self.tk.NORMAL)
@@ -8733,7 +8512,7 @@ Path={os.path.dirname(script_path)}
             self.terminal_text.config(state=self.tk.DISABLED)
             
         except Exception as e:
-            print(f"[WARNING] Ошибка запуска мониторинга: {e}", channels=["gui_log"])
+            print(f"[WARNING] Ошибка запуска мониторинга: {e}", gui_log=True)
     
     def handle_apt_progress(self, message):
         """Обработка прогресса apt-get"""
@@ -9010,10 +8789,6 @@ Path={os.path.dirname(script_path)}
                         # Проверяем нужно ли показывать сообщение
                         should_show = True
                         
-                        # Проверяем фильтрацию по ключевым словам
-                        if self.terminal_filter_enabled.get():
-                            should_show = self.should_show_in_gui_log(formatted_message)
-                        
                         # Проверяем поисковый фильтр
                         search_text = self.terminal_search_var.get().lower()
                         if search_text and formatted_message.lower().find(search_text) == -1:
@@ -9118,9 +8893,177 @@ Path={os.path.dirname(script_path)}
         
     def stop_automation(self):
         """Остановка автоматизации"""
+        print("[STOP] Попытка мягкой остановки процесса...", gui_log=True)
+        
+        # Сначала пробуем мягкую остановку
         self.is_running = False
+        
+        # Даем время на мягкую остановку
+        import time
+        time.sleep(2)
+        
+        # Проверяем, остановился ли процесс
+        if hasattr(self, 'process_thread') and self.process_thread and self.process_thread.is_alive():
+            print("[STOP] Мягкая остановка не сработала, открываем форму убийцы...", gui_log=True)
+            # Открываем форму убийцы процессов
+            self.show_process_killer_dialog()
+        else:
+            print("[STOP] Процесс остановлен мягко", gui_log=True)
         self.start_button.config(state=self.tk.NORMAL)
         self.stop_button.config(state=self.tk.DISABLED)
+    
+    def show_process_killer_dialog(self):
+        """Показать диалог убийцы процессов (для кнопки Остановить)"""
+        try:
+            # Проверяем не открыто ли уже окно
+            if hasattr(self, '_close_dialog_open') and self._close_dialog_open:
+                print("[INFO] Форма убийцы процессов уже открыта - игнорируем повторный вызов")
+                return
+            
+            # Устанавливаем флаг открытого окна
+            self._close_dialog_open = True
+            
+            # Есть процессы - показываем форму
+            import tkinter as tk
+            from tkinter import messagebox
+            
+            # Создаем МОДАЛЬНОЕ окно
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Принудительное прерывание процесса")
+            dialog.resizable(False, False)
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Скрываем окно пока не настроим
+            dialog.withdraw()
+            
+            # Стилизация
+            dialog.configure(bg="#f0f0f0")
+            
+            # Заголовок
+            title_label = tk.Label(dialog, text="Принудительное прерывание процесса", 
+                                 font=("Arial", 16, "bold"), fg="#000000", bg="#f0f0f0")
+            title_label.pack(pady=20)
+            
+            # Описание
+            desc_label = tk.Label(dialog, text="Процесс не остановился мягко. Принудительно прервать?", 
+                                 font=("Arial", 12), fg="#cc6600", bg="#f0f0f0")
+            desc_label.pack(pady=10)
+            
+            # Список процессов
+            processes_frame = tk.Frame(dialog, bg="#f0f0f0")
+            processes_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            
+            # Получаем список процессов
+            running_processes = self._get_running_installation_processes()
+            
+            if running_processes:
+                for process_info in running_processes:
+                    process_label = tk.Label(processes_frame, 
+                                            text=f"PID {process_info['pid']}: {process_info['name']} - {process_info['info'][:50]}...",
+                                            font=("Courier", 9), anchor=tk.W, fg="#cc0000", bg="#f0f0f0")
+                    process_label.pack(fill=tk.X, pady=1)
+            else:
+                no_processes_label = tk.Label(processes_frame, text="Процессы не найдены", 
+                                            font=("Arial", 12), fg="#006600", bg="#f0f0f0")
+                no_processes_label.pack(pady=20)
+            
+            # Статус
+            status_label = tk.Label(dialog, text="Готов к принудительному прерыванию", 
+                                  font=("Arial", 10), fg="#000000", bg="#f0f0f0")
+            status_label.pack(pady=10)
+            
+            # Кнопки
+            button_frame = tk.Frame(dialog, bg="#f0f0f0")
+            button_frame.pack(pady=20)
+            
+            def kill_and_close():
+                """Убить процессы и закрыть диалог"""
+                try:
+                    # Блокируем кнопки
+                    for widget in button_frame.winfo_children():
+                        widget.config(state=tk.DISABLED)
+                    
+                    # Показываем процесс закрытия
+                    status_label.config(text="Прерываем процессы...", fg="#ff8800")
+                    dialog.update()
+                    
+                    # Убиваем все процессы
+                    self._kill_all_installation_processes(running_processes)
+                    
+                    # Ждем немного
+                    dialog.after(1000, lambda: final_close())
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка убийства процессов: {e}")
+                    final_close()
+            
+            def cancel():
+                """Отмена"""
+                try:
+                    self._close_dialog_open = False
+                    dialog.destroy()
+                except:
+                    pass
+            
+            # Стилизация кнопок
+            tk.Button(button_frame, text="Да, прервать!", command=kill_and_close, 
+                     width=20, bg="#ff4444", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+            tk.Button(button_frame, text="Отмена", command=cancel, 
+                     width=20, bg="#666666", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+            
+            def final_close():
+                """Финальное закрытие диалога"""
+                try:
+                    # Сбрасываем флаг открытого окна
+                    self._close_dialog_open = False
+                    
+                    # Закрываем только диалог, НЕ основную форму
+                    dialog.grab_release()
+                    dialog.destroy()
+                    
+                    # Обновляем состояние кнопок основной формы
+                    self.start_button.config(state=self.tk.NORMAL)
+                    self.stop_button.config(state=self.tk.DISABLED)
+                    
+                    print("[STOP] Процесс принудительно прерван", gui_log=True)
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка финального закрытия: {e}")
+            
+            # ОБНОВЛЯЕМ ИНФОРМАЦИЮ ОБ ОКНЕ ПОСЛЕ СОЗДАНИЯ ВСЕХ ВИДЖЕТОВ
+            dialog.update_idletasks()
+            
+            # Получаем размеры и позицию главного окна
+            root_x = self.root.winfo_x()
+            root_y = self.root.winfo_y()
+            root_width = self.root.winfo_width()
+            root_height = self.root.winfo_height()
+            
+            # Вычисляем координаты для центрирования ОТНОСИТЕЛЬНО ГЛАВНОГО ОКНА
+            x = root_x + (root_width // 2) - 300  # 600/2 = 300
+            y = root_y + (root_height // 2) - 200  # 400/2 = 200
+            
+            # КОРРЕКТИРУЕМ Y - поднимаем выше центра главного окна
+            y = y - 50
+            
+            # Устанавливаем положение окна
+            dialog.geometry(f"600x400+{x}+{y}")
+            
+            # ПОКАЗЫВАЕМ ОКНО В ПРАВИЛЬНОЙ ПОЗИЦИИ
+            dialog.deiconify()
+            
+            # Делаем окно поверх всех и фокусируем
+            dialog.attributes('-topmost', True)
+            dialog.lift()
+            dialog.focus_set()
+            
+            # Обработка закрытия окна
+            dialog.protocol("WM_DELETE_WINDOW", cancel)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка создания диалога убийцы процессов: {e}")
+            self._close_dialog_open = False
     
     def open_log_file(self):
         """Открытие лог файла в системном редакторе"""
@@ -9142,15 +9085,15 @@ Path={os.path.dirname(script_path)}
                         continue
                 else:
                     # Если ничего не сработало, показываем путь
-                    print(f"Не удалось открыть лог файл. Путь: {log_file}", channels=["gui_log"])
+                    print(f"Не удалось открыть лог файл. Путь: {log_file}", gui_log=True)
             else:
                 # Для других систем
                 subprocess.Popen(['open', log_file] if system == "Darwin" else ['notepad', log_file])
                 
         except Exception as e:
             print(f"[ERROR] Ошибка открытия лог файла: %s" % str(e))
-            print(f"Ошибка открытия лог файла: {e}", channels=["gui_log"])
-            print(f"Путь к логу: {log_file}", channels=["gui_log"])
+            print(f"Ошибка открытия лог файла: {e}", gui_log=True)
+            print(f"Путь к логу: {log_file}", gui_log=True)
         
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
@@ -9162,30 +9105,30 @@ Path={os.path.dirname(script_path)}
         try:
             print("[INFO] Начинаем автоматизацию в GUI режиме")
             self.update_status("Запуск автоматизации...")
-            print("=" * 60, channels=["gui_log"])
-            print("FSA-AstraInstall Automation", channels=["gui_log"])
-            print("Автоматизация установки Astra.IDE", channels=["gui_log"])
-            print("=" * 60, channels=["gui_log"])
+            print("=" * 60, gui_log=True)
+            print("FSA-AstraInstall Automation", gui_log=True)
+            print("Автоматизация установки Astra.IDE", gui_log=True)
+            print("=" * 60, gui_log=True)
             
             if self.dry_run.get():
-                print("Режим: ТЕСТИРОВАНИЕ (dry-run)", channels=["gui_log"])
+                print("Режим: ТЕСТИРОВАНИЕ (dry-run)", gui_log=True)
             else:
-                print("Режим: РЕАЛЬНАЯ УСТАНОВКА", channels=["gui_log"])
+                print("Режим: РЕАЛЬНАЯ УСТАНОВКА", gui_log=True)
             
-            print("", channels=["gui_log"])
+            print("", gui_log=True)
             
             # Передаем экземпляр GUI в модули для вывода в терминал
             import sys
             sys._gui_instance = self
             
             # Запускаем модули по очереди
-            print("[INFO] Проверка системных требований...", channels=["gui_log"])
-            print("[OK] Все требования выполнены", channels=["gui_log"])
+            print("[INFO] Проверка системных требований...", gui_log=True)
+            print("[OK] Все требования выполнены", gui_log=True)
             print("[INFO] Системные требования проверены")
             
             # 1. Проверка репозиториев
             self.update_status("Проверка репозиториев...", "Репозитории")
-            print("[START] Запуск автоматизации проверки репозиториев...", channels=["gui_log"])
+            print("[START] Запуск автоматизации проверки репозиториев...", gui_log=True)
             print("[INFO] Начинаем проверку репозиториев")
             
             # Проверяем флаг остановки
@@ -9214,20 +9157,20 @@ Path={os.path.dirname(script_path)}
                         print("[ERROR] Ошибка обработки репозиториев")
                 
                 if repo_success:
-                    print("[OK] Автоматизация репозиториев завершена успешно", channels=["gui_log"])
+                    print("[OK] Автоматизация репозиториев завершена успешно", gui_log=True)
                     print("[INFO] Проверка репозиториев завершена успешно")
                 else:
-                    print("[ERROR] Ошибка автоматизации репозиториев", channels=["gui_log"])
+                    print("[ERROR] Ошибка автоматизации репозиториев", gui_log=True)
                     print("[ERROR] Ошибка автоматизации репозиториев")
                     return
             except Exception as repo_error:
                 print(f"[ERROR] Ошибка в модуле репозиториев: {repo_error}")
-                print(f"[ERROR] Критическая ошибка в модуле репозиториев: {repo_error}", channels=["gui_log"])
+                print(f"[ERROR] Критическая ошибка в модуле репозиториев: {repo_error}", gui_log=True)
                 return
             
             # 2. Статистика системы
             self.update_status("Анализ статистики...", "Статистика")
-            print("[STATS] Запуск анализа статистики системы...", channels=["gui_log"])
+            print("[STATS] Запуск анализа статистики системы...", gui_log=True)
             print("[INFO] Начинаем анализ статистики системы")
             
             # Проверяем флаг остановки
@@ -9239,40 +9182,40 @@ Path={os.path.dirname(script_path)}
                 # Используем класс SystemStats напрямую
                 stats = SystemStats()
                 if not stats.get_updatable_packages():
-                    print("[WARNING] Предупреждение: не удалось получить список обновлений", channels=["gui_log"])
+                    print("[WARNING] Предупреждение: не удалось получить список обновлений", gui_log=True)
                     print("[WARNING] Не удалось получить список обновлений")
                 
                 if not stats.get_autoremove_packages():
-                    print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", channels=["gui_log"])
+                    print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", gui_log=True)
                     print("[WARNING] Не удалось проанализировать автоудаление")
                 
                 if not stats.calculate_install_stats():
-                    print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", channels=["gui_log"])
+                    print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", gui_log=True)
                     print("[WARNING] Не удалось подсчитать пакеты для установки")
                 
                 stats.display_statistics()
                 
                 # Передаем список пакетов в GUI для отображения
                 if hasattr(stats, 'updatable_list') and stats.updatable_list:
-                    print(f"[INFO] Найдено {len(stats.updatable_list)} пакетов для обновления", channels=["gui_log"])
+                    print(f"[INFO] Найдено {len(stats.updatable_list)} пакетов для обновления", gui_log=True)
                 
                 if self.dry_run.get():
-                    print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
+                    print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", gui_log=True)
                 else:
-                    print("[OK] Анализ статистики завершен успешно!", channels=["gui_log"])
+                    print("[OK] Анализ статистики завершен успешно!", gui_log=True)
                     
             except Exception as stats_error:
                 print(f"[ERROR] Ошибка в модуле статистики: {stats_error}")
-                print(f"[ERROR] Ошибка в модуле статистики: {stats_error}", channels=["gui_log"])
+                print(f"[ERROR] Ошибка в модуле статистики: {stats_error}", gui_log=True)
             
             # 3. Тест интерактивных запросов (ОТКЛЮЧЕН - вызывает падения)
             # Временно отключаем тест интерактивных запросов из-за проблем с падением
-            print("[SKIP] Тест интерактивных запросов отключен (избегаем падений)", channels=["gui_log"])
+            print("[SKIP] Тест интерактивных запросов отключен (избегаем падений)", gui_log=True)
             print("[INFO] Тест интерактивных запросов отключен для стабильности")
             
             # 4. Обновление системы
             self.update_status("Обновление системы...", "Обновление")
-            print("[PROCESS] Запуск обновления системы...", channels=["gui_log"])
+            print("[PROCESS] Запуск обновления системы...", gui_log=True)
             print("[INFO] Начинаем обновление системы")
             
             # Проверяем флаг остановки
@@ -9288,39 +9231,39 @@ Path={os.path.dirname(script_path)}
                 print("[SYSTEM_UPDATER] Симуляция сценариев завершена!")
                 
                 if not self.dry_run.get():
-                    print("[TOOL] Тест реального обновления системы...", channels=["gui_log"])
-                    print("[INFO] Запускаем реальное обновление системы", channels=["gui_log"])
+                    print("[TOOL] Тест реального обновления системы...", gui_log=True)
+                    print("[INFO] Запускаем реальное обновление системы", gui_log=True)
                     success = self.system_updater.update_system(self.dry_run.get())
                     if success:
-                        print("[OK] Обновление системы завершено успешно", channels=["gui_log"])
+                        print("[OK] Обновление системы завершено успешно", gui_log=True)
                     else:
-                        print("[ERROR] Обновление системы завершено с ошибкой", channels=["gui_log"])
+                        print("[ERROR] Обновление системы завершено с ошибкой", gui_log=True)
                 else:
-                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", channels=["gui_log"])
+                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", gui_log=True)
                     self.system_updater.update_system(self.dry_run.get())
                     
             except Exception as update_error:
-                print(f"[ERROR] Критическая ошибка в модуле обновления: {update_error}", channels=["gui_log"])
+                print(f"[ERROR] Критическая ошибка в модуле обновления: {update_error}", gui_log=True)
                 # Очищаем блокирующие файлы при ошибке обновления
-                print("[INFO] Очистка блокировок", channels=["gui_log"])
+                print("[INFO] Очистка блокировок", gui_log=True)
             
             # Завершение
             if self.dry_run.get():
                 self.update_status("Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                print("", channels=["gui_log"])
-                print("[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
-                print("[INFO] GUI автоматизация завершена успешно в режиме тестирования", channels=["gui_log"])
+                print("", gui_log=True)
+                print("[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", gui_log=True)
+                print("[INFO] GUI автоматизация завершена успешно в режиме тестирования", gui_log=True)
             else:
                 self.update_status("Автоматизация завершена успешно!")
-                print("", channels=["gui_log"])
-                print("[SUCCESS] Автоматизация завершена успешно!", channels=["gui_log"])
-                print("[INFO] GUI автоматизация завершена успешно", channels=["gui_log"])
+                print("", gui_log=True)
+                print("[SUCCESS] Автоматизация завершена успешно!", gui_log=True)
+                print("[INFO] GUI автоматизация завершена успешно", gui_log=True)
                 
         except Exception as e:
-            print(f"[ERROR] Критическая ошибка в GUI автоматизации: {e}", channels=["gui_log"])
-            print(f"Проверьте лог файл: {GLOBAL_LOG_FILE}", channels=["gui_log"])
+            print(f"[ERROR] Критическая ошибка в GUI автоматизации: {e}", gui_log=True)
+            print(f"Проверьте лог файл: {GLOBAL_LOG_FILE}", gui_log=True)
             # Очищаем блокирующие файлы при критической ошибке
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             
         finally:
             # Сбрасываем флаг только если процесс НЕ был остановлен пользователем
@@ -9378,6 +9321,130 @@ Path={os.path.dirname(script_path)}
         if hasattr(self, 'config_label'):
             self.config_label.config(text="0/0 (0%)")
             
+    def _test_progress_bars_animation(self):
+        """Простая анимация прогресс-баров: 0→100→0"""
+        try:
+            print("[GUI] Запуск простой анимации прогресс-баров...", gui_log=True)
+            
+            # Устанавливаем начальные значения
+            self._set_progress_values(0, 0, 0)
+            
+            # Запускаем анимацию
+            self._animate_simple_progress()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка простой анимации: {e}")
+    
+    def _set_progress_values(self, download_val, unpack_val, config_val):
+        """Установка значений прогресс-баров"""
+        try:
+            # Обновляем детальные бары
+            if hasattr(self, 'download_progress'):
+                self.download_progress['value'] = download_val
+                if hasattr(self, 'download_label'):
+                    self.download_label.config(text=f"{int(download_val * 10)}/1000 ({download_val:.1f}%)")
+            
+            if hasattr(self, 'unpack_progress'):
+                self.unpack_progress['value'] = unpack_val
+                if hasattr(self, 'unpack_label'):
+                    self.unpack_label.config(text=f"{int(unpack_val * 10)}/1000 ({unpack_val:.1f}%)")
+            
+            if hasattr(self, 'config_progress'):
+                self.config_progress['value'] = config_val
+                if hasattr(self, 'config_label'):
+                    self.config_label.config(text=f"{int(config_val * 10)}/1000 ({config_val:.1f}%)")
+            
+            # Обновляем общий прогресс-бар
+            if hasattr(self, 'wine_progress'):
+                total_progress = (download_val + unpack_val + config_val) / 3
+                self.wine_progress['value'] = total_progress
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка установки значений: {e}")
+    
+    def _animate_simple_progress(self):
+        """Простая анимация: четкая последовательность баров"""
+        try:
+            
+            # Инициализируем переменные для хранения текущих значений
+            self.current_download = 0
+            self.current_unpack = 0
+            self.current_config = 0
+            
+            # Устанавливаем начальные значения в прогресс-бары
+            self._set_progress_values(0, 0, 0)
+            
+            # Четкая последовательность: 1→100, 2→100, 3→100, 1→0, 2→0, 3→0
+            self._animate_bar_to_target('download', 0, 100)      # 0-2 сек: Download 0→100
+            self.root.after(2000, lambda: self._animate_bar_to_target('unpack', 0, 100))    # 2-4 сек: Unpack 0→100
+            self.root.after(4000, lambda: self._animate_bar_to_target('config', 0, 100))    # 4-6 сек: Config 0→100
+            self.root.after(6000, lambda: self._animate_bar_to_target('download', 100, 0)) # 6-8 сек: Download 100→0
+            self.root.after(8000, lambda: self._animate_bar_to_target('unpack', 100, 0))    # 8-10 сек: Unpack 100→0
+            self.root.after(10000, lambda: self._animate_bar_to_target('config', 100, 0))  # 10-12 сек: Config 100→0
+            
+            # Финальное сообщение через 12 секунд
+            self.root.after(12000, self._set_final_message)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка четкой анимации: {e}")
+    
+    def _animate_bar_to_target(self, bar_type, start_val, end_val):
+        """Анимация одного бара от start_val до end_val"""
+        try:
+            current_val = start_val
+            step_size = 2 if end_val > start_val else -2  # Шаг 2% в нужном направлении
+            
+            def animate_step():
+                nonlocal current_val
+                
+                # Обновляем переменные и прогресс-бары
+                if bar_type == 'download':
+                    self.current_download = current_val
+                elif bar_type == 'unpack':
+                    self.current_unpack = current_val
+                elif bar_type == 'config':
+                    self.current_config = current_val
+                
+                # Обновляем все прогресс-бары с текущими значениями
+                self._set_progress_values(self.current_download, self.current_unpack, self.current_config)
+                
+                # Изменяем значение
+                current_val += step_size
+                
+                # Проверяем, достигли ли цели
+                if (step_size > 0 and current_val >= end_val) or (step_size < 0 and current_val <= end_val):
+                    current_val = end_val  # Устанавливаем точное значение
+                    
+                    # Финальное обновление с точным значением
+                    if bar_type == 'download':
+                        self.current_download = current_val
+                    elif bar_type == 'unpack':
+                        self.current_unpack = current_val
+                    elif bar_type == 'config':
+                        self.current_config = current_val
+                    
+                    self._set_progress_values(self.current_download, self.current_unpack, self.current_config)
+                    return  # Останавливаем анимацию
+                
+                # Следующий шаг через 50мс
+                self.root.after(50, animate_step)
+            
+            # Запускаем анимацию
+            animate_step()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка анимации {bar_type}: {e}")
+    
+    def _set_final_message(self):
+        """Финальное сообщение после всех анимаций"""
+        try:
+            if hasattr(self, 'detail_label'):
+                self.detail_label.config(text="Тест прогресс-баров завершен! Готов к работе.")
+            print("[ANIMATION] Все анимации завершены!", gui_log=True)
+        except Exception as e:
+            print(f"[ERROR] Ошибка финального сообщения: {e}")
+    
+            
     def run(self):
         """Запуск GUI"""
         self.root.mainloop()
@@ -9389,9 +9456,6 @@ class InteractiveHandler(object):
     """Класс для перехвата и автоматических ответов на интерактивные запросы"""
     
     def __init__(self):
-        print("[TEST] InteractiveHandler.__init__ - обычный print")
-        print("[TEST] InteractiveHandler.__init__ - GUI log print", gui_log=True)
-        
         # Используем общий класс конфигурации
         self.config = InteractiveConfig()
     
@@ -9407,10 +9471,10 @@ class InteractiveHandler(object):
     def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
         if dry_run:
-            print(f"[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция): {cmd}", channels=["gui_log"])
+            print(f"[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция): {cmd}", gui_log=True)
             return 0
         
-        print(f"[START] Выполнение команды с автоматическими ответами: {cmd}", channels=["gui_log"])
+        print(f"[START] Выполнение команды с автоматическими ответами: {cmd}", gui_log=True)
         
         try:
             # Запускаем процесс
@@ -9453,23 +9517,23 @@ class InteractiveHandler(object):
             return_code = process.wait()
             
             if return_code == 0:
-                print("[OK] Команда выполнена успешно", channels=["gui_log"])
+                print("[OK] Команда выполнена успешно", gui_log=True)
             else:
-                print(f"[ERROR] Команда завершилась с ошибкой (код: {return_code})", channels=["gui_log"])
+                print(f"[ERROR] Команда завершилась с ошибкой (код: {return_code})", gui_log=True)
             
             return return_code
             
         except Exception as e:
-            print(f"[ERROR] Ошибка выполнения команды: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка выполнения команды: {e}", gui_log=True)
             return 1
     
     def simulate_interactive_scenarios(self):
         """Симуляция различных интерактивных сценариев для тестирования"""
-        print("[PROCESS] Симуляция интерактивных сценариев...", channels=["gui_log"])
+        print("[PROCESS] Симуляция интерактивных сценариев...", gui_log=True)
         
         try:
             # Тест 1: dpkg конфигурационный файл
-            print("\n[LIST] Тест 1: dpkg конфигурационный файл", channels=["gui_log"])
+            print("\n[LIST] Тест 1: dpkg конфигурационный файл", gui_log=True)
             test_output = """Файл настройки «/etc/ssl/openssl.cnf»
 ==> Изменён с момента установки (вами или сценарием).
 ==> Автор пакета предоставил обновлённую версию.
@@ -9487,7 +9551,7 @@ class InteractiveHandler(object):
                 print("   [ERROR] Запрос не обнаружен")
             
             # Тест 2: настройка клавиатуры
-            print("\n[KEYBOARD] Тест 2: настройка клавиатуры", channels=["gui_log"])
+            print("\n[KEYBOARD] Тест 2: настройка клавиатуры", gui_log=True)
             test_output = """Настройка пакета
 Настраивается keyboard-configuration
 Выберите подходящую раскладку клавиатуры."""
@@ -9504,7 +9568,7 @@ class InteractiveHandler(object):
                 print("   [ERROR] Запрос не обнаружен")
         
             # Тест 3: способ переключения клавиатуры
-            print("\n[PROCESS] Тест 3: способ переключения клавиатуры", channels=["gui_log"])
+            print("\n[PROCESS] Тест 3: способ переключения клавиатуры", gui_log=True)
             test_output = """Вам нужно указать способ переключения клавиатуры между национальной раскладкой и стандартной латинской раскладкой."""
         
             prompt_type = self.detect_interactive_prompt(test_output)
@@ -9540,8 +9604,6 @@ class UniversalProgressManager:
             universal_runner: Ссылка на UniversalProcessRunner для отправки данных в GUI
             gui_callback: Callback функция для отправки данных в GUI
         """
-        print("[TEST] UniversalProgressManager.__init__ - обычный print")
-        print("[TEST] UniversalProgressManager.__init__ - GUI log print", gui_log=True)
         
         self.universal_runner = universal_runner or UniversalProcessRunner()
         self.gui_callback = gui_callback
@@ -9661,8 +9723,6 @@ class SystemUpdateParser:
             universal_manager: Ссылка на UniversalProgressManager
             system_updater: Ссылка на SystemUpdater для прямого обновления детальных баров
         """
-        print("[TEST] SystemUpdateParser.__init__ - обычный print")
-        print("[TEST] SystemUpdateParser.__init__ - GUI log print", gui_log=True)
         
         self.universal_manager = universal_manager
         self.system_updater = system_updater
@@ -9707,7 +9767,7 @@ class SystemUpdateParser:
         # ЭТАП 1: Поиск начала парсинга таблицы
         if "Расчёт обновлений" in clean_line:
             self.parsing_table_started = True
-            print(f"[PARSER] Начало парсинга таблицы: '{clean_line}'")
+            print(f"[PARSER] Начало парсинга таблицы: '{clean_line}'", gui_log=True)
             return
             
         # ЭТАП 2: Парсинг таблицы пакетов
@@ -9716,29 +9776,37 @@ class SystemUpdateParser:
             # Определяем статус пакетов
             if "Следующие пакеты будут УДАЛЕНЫ:" in clean_line:
                 self.current_status = "REMOVE"
-                print(f"[PARSER] Статус изменен на REMOVE")
                 return
             
             elif "Следующие НОВЫЕ пакеты будут установлены:" in clean_line:
                 self.current_status = "INSTALL"
-                print(f"[PARSER] Статус изменен на INSTALL")
                 return
             
             elif "больше не требуются:" in clean_line:
                 self.current_status = "AUTOREMOVE"
-                print(f"[PARSER] Статус изменен на AUTOREMOVE")
                 return
             
             elif "Следующие пакеты будут обновлены:" in clean_line:
                 self.current_status = "UPDATE"
-                print(f"[PARSER] Статус изменен на UPDATE")
                 return
             
             # Завершение парсинга таблицы
             elif re.search(r'Обновлено \d+ пакетов', clean_line):
                 self.parsing_table_started = False
                 self.parsing_install_started = True
-                print(f"[PARSER] Таблица готова! Начинаем отслеживание установки")
+                print(f"[PARSER] Таблица готова! Начинаем отслеживание установки", gui_log=True)
+                # Сохраняем таблицу сразу после создания
+                self.save_table_to_file()
+                return
+            
+            # Дополнительное условие завершения - начало скачивания
+            elif clean_line.startswith("Пол:"):
+                if self.parsing_table_started and not self.parsing_install_started:
+                    self.parsing_table_started = False
+                    self.parsing_install_started = True
+                    print(f"[PARSER] Таблица готова! Начинаем отслеживание установки (по первому 'Пол:')", gui_log=True)
+                    # Сохраняем таблицу сразу после создания
+                    self.save_table_to_file()
                 return
             
             # Парсинг списков пакетов
@@ -9748,17 +9816,23 @@ class SystemUpdateParser:
         
         # ЭТАП 3: Отслеживание операций установки
         if self.parsing_install_started:
-            if clean_line.startswith("Пол:"):
-                self.parse_download_operation(clean_line)
-            elif "Распаковывается" in clean_line:
+            print(f"[PARSER_DEBUG] Отслеживание установки активно: '{clean_line[:50]}...'", gui_log=True)
+            
+            if "Распаковывается" in clean_line:
                 self.parse_unpack_operation(clean_line)
             elif "Настраивается" in clean_line:
                 self.parse_configure_operation(clean_line)
             elif "Удаляется" in clean_line:
                 self.parse_remove_operation(clean_line)
+            elif clean_line.startswith("Пол:"):
+                # Обрабатываем скачивание только если уже в режиме установки
+                self.parse_download_operation(clean_line)
+        else:
+            pass  # Парсинг не активен, игнорируем
     
     def parse_package_list(self, line):
         """Парсинг списка пакетов"""
+        
         # Разбиваем строку на отдельные пакеты
         packages = line.split()
         
@@ -9771,7 +9845,6 @@ class SystemUpdateParser:
         
         for package_name in filtered_packages:
             self.add_package_to_table(package_name, self.current_status)
-            print(f"[PARSER] Добавлен пакет '{package_name}' со статусом '{self.current_status}'")
     
     def is_valid_package_name(self, package_name):
         """Проверка что это валидное имя пакета"""
@@ -9818,6 +9891,10 @@ class SystemUpdateParser:
             self.stats['install_packages'] += 1
         elif status == "AUTOREMOVE":
             self.stats['autoremove_packages'] += 1
+        
+        # Отладочное сообщение каждые 100 пакетов
+        if len(self.packages_table) % 100 == 0:
+            print(f"[PARSER] Добавлено {len(self.packages_table)} пакетов в таблицу", gui_log=True)
     
     def parse_size_to_bytes(self, size_str):
         """Конвертация размера из текстового формата в байты"""
@@ -9894,9 +9971,15 @@ class SystemUpdateParser:
         if match:
             package_name = match.group(1)
             package_size = match.group(2)
-            self.update_package_flag(package_name, 'downloaded', True)
-            self.update_package_size(package_name, package_size)
-            print(f"[PARSER] Пакет '{package_name}' скачан, размер: {package_size}")
+            success = self.update_package_flag(package_name, 'downloaded', True)
+            if success:
+                self.update_package_size(package_name, package_size)
+                print(f"[PARSER] Пакет '{package_name}' скачан, размер: {package_size}", gui_log=True)
+                
+                # Обновляем прогресс-бары
+                self._update_progress_bars()
+            else:
+                print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
     
     def parse_unpack_operation(self, line):
         """Парсинг операции распаковки"""
@@ -9905,8 +9988,14 @@ class SystemUpdateParser:
         match = re.search(pattern, line)
         if match:
             package_name = match.group(1)
-            self.update_package_flag(package_name, 'unpacked', True)
-            print(f"[PARSER] Пакет '{package_name}' распакован")
+            success = self.update_package_flag(package_name, 'unpacked', True)
+            if success:
+                print(f"[PARSER] Пакет '{package_name}' распакован", gui_log=True)
+                
+                # Обновляем прогресс-бары
+                self._update_progress_bars()
+            else:
+                print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
     
     def parse_configure_operation(self, line):
         """Парсинг операции настройки"""
@@ -9915,8 +10004,63 @@ class SystemUpdateParser:
         match = re.search(pattern, line)
         if match:
             package_name = match.group(1)
-            self.update_package_flag(package_name, 'configured', True)
-            print(f"[PARSER] Пакет '{package_name}' настроен")
+            success = self.update_package_flag(package_name, 'configured', True)
+            if success:
+                print(f"[PARSER] Пакет '{package_name}' настроен", gui_log=True)
+                
+                # Обновляем прогресс-бары
+                self._update_progress_bars()
+            else:
+                print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
+    
+    def _update_progress_bars(self):
+        """Обновление прогресс-баров на основе текущего состояния таблицы пакетов"""
+        try:
+            if not self.packages_table:
+                return
+            
+            # Подсчитываем статистику
+            total_packages = len(self.packages_table)
+            downloaded_count = sum(1 for pkg in self.packages_table if pkg['flags']['downloaded'])
+            unpacked_count = sum(1 for pkg in self.packages_table if pkg['flags']['unpacked'])
+            configured_count = sum(1 for pkg in self.packages_table if pkg['flags']['configured'])
+            
+            # Рассчитываем проценты
+            download_progress = (downloaded_count / total_packages) * 100 if total_packages > 0 else 0
+            unpack_progress = (unpacked_count / total_packages) * 100 if total_packages > 0 else 0
+            config_progress = (configured_count / total_packages) * 100 if total_packages > 0 else 0
+            
+            # Подготавливаем данные для обновления
+            detailed_progress = {
+                'download_progress': download_progress,
+                'unpack_progress': unpack_progress,
+                'config_progress': config_progress,
+                'download_count': downloaded_count,
+                'unpack_count': unpacked_count,
+                'config_count': configured_count,
+                'total_packages': total_packages
+            }
+            
+            # Обновляем детальные бары через SystemUpdater
+            if self.system_updater:
+                self.system_updater.update_detailed_bars(detailed_progress)
+            
+            # Обновляем общий прогресс через UniversalProgressManager
+            if self.universal_manager:
+                global_progress = (configured_count / total_packages) * 100 if total_packages > 0 else 0
+                self.universal_manager.update_progress(
+                    "system_update",
+                    "Обновление системы",
+                    global_progress,
+                    global_progress,
+                    f"Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}",
+                    **detailed_progress
+                )
+            
+            print(f"[PARSER] Прогресс обновлен: Скачано {downloaded_count}/{total_packages} ({download_progress:.1f}%), Распаковано {unpacked_count}/{total_packages} ({unpack_progress:.1f}%), Настроено {configured_count}/{total_packages} ({config_progress:.1f}%)", gui_log=True)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка обновления прогресс-баров: {e}")
     
     def parse_remove_operation(self, line):
         """Парсинг операции удаления"""
@@ -9926,7 +10070,6 @@ class SystemUpdateParser:
         if match:
             package_name = match.group(1)
             self.update_package_flag(package_name, 'removed', True)
-            print(f"[PARSER] Пакет '{package_name}' удален")
     
     def get_size_statistics(self):
         """Получение статистики по размерам пакетов"""
@@ -10224,6 +10367,12 @@ class SystemUpdateParser:
     def finish_parsing(self):
         """Завершение парсинга"""
         self.is_finished = True
+        print(f"[PARSER] Парсинг завершен! Создана таблица из {len(self.packages_table)} пакетов", gui_log=True)
+        print(f"[PARSER] Статистика: {self.stats}", gui_log=True)
+        
+        # Сохраняем таблицу в файл
+        self.save_table_to_file()
+        
         if self.universal_manager:
             self.universal_manager.update_progress(
                 "system_update",
@@ -10233,13 +10382,71 @@ class SystemUpdateParser:
                 "Процесс обновления завершен успешно"
             )
 
+    def save_table_to_file(self):
+        """Сохранение таблицы пакетов в файл"""
+        try:
+            import os
+            import json
+            from datetime import datetime
+            
+            # Создаем папку Log если её нет
+            log_dir = os.path.join(os.path.dirname(__file__), 'Log')
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            
+            # Генерируем имя файла с временной меткой
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            table_file = os.path.join(log_dir, f"packages_table_{timestamp}.json")
+            
+            # Подготавливаем данные для сохранения
+            table_data = {
+                'timestamp': timestamp,
+                'total_packages': len(self.packages_table),
+                'stats': self.stats,
+                'size_stats': self.get_size_statistics(),
+                'packages': self.packages_table
+            }
+            
+            # Сохраняем в JSON
+            with open(table_file, 'w', encoding='utf-8') as f:
+                json.dump(table_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"[PARSER] Таблица пакетов сохранена в файл: {table_file}", gui_log=True)
+            
+        except Exception as e:
+            print(f"[PARSER] Ошибка сохранения таблицы: {e}", gui_log=True)
+    
+    def get_packages_table(self):
+        """Получение таблицы пакетов"""
+        return self.packages_table
+    
+    def get_table_stats(self):
+        """Получение статистики таблицы"""
+        return {
+            'total_packages': len(self.packages_table),
+            'stats': self.stats,
+            'size_stats': self.get_size_statistics(),
+            'is_finished': self.is_finished,
+            'parsing_active': self.parsing_table_started
+        }
+    
+    def get_table_summary(self):
+        """Получение краткой сводки таблицы"""
+        stats = self.get_size_statistics()
+        return {
+            'total_packages': len(self.packages_table),
+            'total_size': self.format_bytes(stats['total_size_bytes']),
+            'downloaded_size': self.format_bytes(stats['downloaded_size_bytes']),
+            'downloaded_count': stats['downloaded_count'],
+            'remaining_count': stats['remaining_count'],
+            'completion_percent': (stats['downloaded_count'] / len(self.packages_table) * 100) if self.packages_table else 0
+        }
+
 class ProcessProgressManager:
     """СТАРЫЙ менеджер прогресса - БУДЕТ УДАЛЕН"""
     
     def __init__(self, gui_callback=None):
-        print("[TEST] ProcessProgressManager.__init__ - обычный print")
-        print("[TEST] ProcessProgressManager.__init__ - GUI log print", gui_log=True)
-        
+       
         self.gui_callback = gui_callback
         self.gui_instance = None
         self.current_update_phase = None
@@ -10545,8 +10752,6 @@ class SystemUpdater(object):
     """Класс для обновления системы с автоматическими ответами"""
     
     def __init__(self, universal_runner=None):
-        print("[TEST] SystemUpdater.__init__ - обычный print")
-        print("[TEST] SystemUpdater.__init__ - GUI log print", gui_log=True)
         
         # Получаем UniversalProcessRunner
         self.universal_runner = universal_runner or UniversalProcessRunner()
@@ -10994,7 +11199,7 @@ class SystemUpdater(object):
             
             if locked:
                 print("   [WARNING] dpkg заблокирован, очищаем блокировки...")
-                print("[INFO] Очистка блокировок", channels=["gui_log"])
+                print("[INFO] Очистка блокировок", gui_log=True)
                 print("   [OK] Блокировки очищены")
             
             # Проверяем состояние пакетов быстро
@@ -11043,7 +11248,7 @@ class SystemUpdater(object):
         try:
             # 1. Очищаем блокирующие файлы
             print("   [TOOL] Очищаем блокирующие файлы...")
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             
             # 2. Проверяем, есть ли проблемные пакеты
             print("   [TOOL] Проверяем проблемные пакеты...")
@@ -11265,14 +11470,19 @@ class SystemUpdater(object):
             print("   [WARNING] Быстрая проверка dpkg не удалась: %s" % str(e))
             return False
     
-    def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
+    def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None, timeout=None):
         """Запуск команды с перехватом интерактивных запросов"""
+        
+        # Устанавливаем значение по умолчанию для timeout
+        if timeout is None:
+            timeout = 3600  # 1 час по умолчанию
+            
         if dry_run:
             print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: команда НЕ выполняется (только симуляция)")
-            print(f"[INFO] РЕЖИМ ТЕСТИРОВАНИЯ - команда не выполнена: {cmd}", channels=["gui_log"])
+            print(f"[INFO] РЕЖИМ ТЕСТИРОВАНИЯ - команда не выполнена: {cmd}", gui_log=True)
             return 0
         
-        print(f"[START] Выполнение команды с автоматическими ответами: {cmd}", channels=["gui_log"])
+        print(f"[START] Выполнение команды с автоматическими ответами: {cmd}", gui_log=True)
         
         # Определяем фазу обновления для парсера
         cmd_str = ' '.join(cmd) if isinstance(cmd, list) else str(cmd)
@@ -11297,21 +11507,21 @@ class SystemUpdater(object):
         
         # Определяем тип команды для лога GUI
         if 'apt-get update' in ' '.join(cmd):
-            print("[INFO] Обновление списков пакетов...", channels=["gui_log"])
+            print("[INFO] Обновление списков пакетов...", gui_log=True)
             # Запускаем парсер для update
             if hasattr(self, 'system_update_parser') and self.system_update_parser:
                 if not self.system_update_parser.is_finished:
                     print("[SYSTEM_UPDATER] Парсер готов к работе")
         elif 'apt-get dist-upgrade' in ' '.join(cmd):
-            print("[INFO] Обновление системы...", channels=["gui_log"])
+            print("[INFO] Обновление системы...", gui_log=True)
             # Для dist-upgrade парсер уже должен быть готов
             if hasattr(self, 'system_update_parser') and self.system_update_parser:
                 if not self.system_update_parser.is_finished:
                     print("[SYSTEM_UPDATER] Парсер готов к работе")
         elif 'apt-get autoremove' in ' '.join(cmd):
-            print("[INFO] Очистка системы...", channels=["gui_log"])
+            print("[INFO] Очистка системы...", gui_log=True)
         else:
-            print(f"[INFO] Начинаем выполнение команды: {cmd}", channels=["gui_log"])
+            print(f"[INFO] Начинаем выполнение команды: {cmd}", gui_log=True)
         
         # Проверяем флаг остановки перед выполнением команды
         if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
@@ -11330,107 +11540,17 @@ class SystemUpdater(object):
             env.pop('UCF_FORCE_CONFFOLD', None)
             env.pop('UCF_FORCE_CONFFNEW', None)
             
-            # Запускаем процесс с дополнительной защитой
-            process = subprocess.Popen(
+            # ИСПРАВЛЕНИЕ: Используем universal_runner вместо прямого subprocess.Popen
+            # Это обеспечит передачу данных парсеру!
+            return_code = self.universal_runner.run_process(
                 cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-                preexec_fn=None,  # Отключаем preexec_fn для безопасности
-                env=env  # Передаем очищенные переменные окружения
+                process_type="update",
+                channels=["file", "terminal", "gui"],
+                timeout=timeout,
+                env=env
             )
             
-            # Читаем вывод построчно с увеличенным буфером для многострочных запросов
-            output_buffer = ""
-            full_output = ""
-            max_buffer_lines = 20  # Увеличенный буфер для распознавания многострочных запросов
-            buffer_line_count = 0
-            
-            while True:
-                # Проверяем флаг остановки в цикле чтения
-                if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
-                    print("[STOP] Процесс остановлен пользователем")
-                    print("[INFO] Процесс остановлен пользователем")
-                    process.terminate()  # Завершаем процесс
-                    return -1
-                
-                line = process.stdout.readline()
-                if not line:
-                    break
-                
-                # Выводим строку
-                print("   %s" % line.rstrip())
-                
-                # ПАРСИНГ УЖЕ ПРОИСХОДИТ В UniversalProcessRunner._log() - убираем дублирование
-                
-                # Добавляем в буфер для анализа
-                output_buffer += line
-                full_output += line
-                buffer_line_count += 1
-                
-                # Ограничиваем размер буфера (последние N строк)
-                if buffer_line_count > max_buffer_lines:
-                    lines = output_buffer.split('\n')
-                    output_buffer = '\n'.join(lines[-max_buffer_lines:])
-                    buffer_line_count = max_buffer_lines
-                
-                # Проверяем на интерактивные запросы
-                prompt_type = self.detect_interactive_prompt(output_buffer)
-                if prompt_type:
-                    response = self.get_auto_response(prompt_type)
-                    if response == '':
-                        print("   [AUTO] Автоматический ответ: Enter (пустой ответ) для %s" % prompt_type)
-                        print(f"[INFO] Автоматический ответ: Enter для {prompt_type}")
-                    else:
-                        print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
-                        print(f"[INFO] Автоматический ответ: {response} для {prompt_type}")
-                    
-                    # Отправляем ответ
-                    process.stdin.write(response + '\n')
-                    process.stdin.flush()
-                    
-                    # Очищаем буфер
-                    output_buffer = ""
-                    buffer_line_count = 0
-            
-            # Ждем завершения процесса
-            return_code = process.wait()
-            
-            # Логируем результат команды
-            print(f"[INFO] Команда: {cmd}, код возврата: {return_code}")
-            
-            if return_code == 0:
-                print("[OK] Команда выполнена успешно", channels=["gui_log"])
-                
-                # Завершаем парсинг для dist-upgrade
-                if 'apt-get dist-upgrade' in ' '.join(cmd):
-                    if hasattr(self, 'system_update_parser') and self.system_update_parser:
-                        self.system_update_parser.finish_parsing()
-                
-                # Определяем тип команды для лога GUI
-                if 'apt-get update' in ' '.join(cmd):
-                    print("[INFO] ✅ Списки пакетов обновлены", channels=["gui_log"])
-                elif 'apt-get dist-upgrade' in ' '.join(cmd):
-                    print("[INFO] ✅ Система обновлена", channels=["gui_log"])
-                elif 'apt-get autoremove' in ' '.join(cmd):
-                    print("[INFO] ✅ Система очищена", channels=["gui_log"])
-            else:
-                print(f"[ERROR] Команда завершилась с ошибкой (код: {return_code})", channels=["gui_log"])
-                
-            # Проверяем на ошибки dpkg
-            if "dpkg была прервана" in output_buffer or "dpkg --configure -a" in output_buffer:
-                print("[WARNING] Обнаружена ошибка dpkg, запускаем автоматическое исправление", channels=["gui_log"])
-                
-                try:
-                    if self.auto_fix_dpkg_errors():
-                        print("[OK] Ошибки dpkg исправлены автоматически", channels=["gui_log"])
-                    else:
-                        print("[WARNING] Не удалось автоматически исправить ошибки dpkg", channels=["gui_log"])
-                except Exception as fix_error:
-                    print(f"[ERROR] Ошибка при исправлении dpkg: {fix_error}", channels=["gui_log"])
-            
+            # Возвращаем код сразу, так как universal_runner уже обработал все
             return return_code
             
         except Exception as e:
@@ -11465,7 +11585,7 @@ class SystemUpdater(object):
         try:
             # 1. Очищаем блокирующие файлы
             print("   [RECOVERY] Очищаем блокирующие файлы...")
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             
             # 2. Исправляем конфигурацию dpkg
             print("   [RECOVERY] Исправляем конфигурацию dpkg...")
@@ -11622,30 +11742,30 @@ class SystemUpdater(object):
             
         elif result == 139:
             # Ошибка сегментации - система уже восстановлена
-            print("[WARNING] Обновление завершилось с ошибкой сегментации, но система восстановлена", channels=["gui_log"])
+            print("[WARNING] Обновление завершилось с ошибкой сегментации, но система восстановлена", gui_log=True)
             
             # Пробуем продолжить с более безопасным подходом
-            print("[TOOL] Пробуем безопасное обновление...", channels=["gui_log"])
+            print("[TOOL] Пробуем безопасное обновление...", gui_log=True)
             return self._safe_update_retry()
             
         else:
-            print("[ERROR] Ошибка обновления системы", channels=["gui_log"])
+            print("[ERROR] Ошибка обновления системы", gui_log=True)
             # Пробуем автоматически исправить ошибки dpkg
             if self.auto_fix_dpkg_errors():
-                print("[TOOL] Ошибки dpkg исправлены, повторяем обновление...", channels=["gui_log"])
+                print("[TOOL] Ошибки dpkg исправлены, повторяем обновление...", gui_log=True)
                 # Повторяем обновление после исправления
                 result = self.run_command_with_interactive_handling(upgrade_cmd, dry_run, gui_terminal=True)
                 if result == 0:
-                    print("[OK] Система успешно обновлена после исправления", channels=["gui_log"])
+                    print("[OK] Система успешно обновлена после исправления", gui_log=True)
                     return True
                 elif result == 139:
-                    print("[WARNING] Повторная ошибка сегментации, пробуем безопасное обновление...", channels=["gui_log"])
+                    print("[WARNING] Повторная ошибка сегментации, пробуем безопасное обновление...", gui_log=True)
                     return self._safe_update_retry()
                 else:
-                    print("[ERROR] Ошибка обновления системы даже после исправления", channels=["gui_log"])
+                    print("[ERROR] Ошибка обновления системы даже после исправления", gui_log=True)
                     
                     # Пробуем исправить проблемы с кэшем APT
-                    print("[TOOL] Пробуем исправить проблемы с кэшем APT...", channels=["gui_log"])
+                    print("[TOOL] Пробуем исправить проблемы с кэшем APT...", gui_log=True)
                     
                     try:
                         # Очищаем кэш APT
@@ -11734,7 +11854,7 @@ class SystemUpdater(object):
         try:
             # Сначала очищаем блокирующие файлы
             print("[INFO] Очищаем блокирующие файлы перед исправлением dpkg")
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             
             # 1. Исправляем конфигурацию dpkg
             print("   [TOOL] Запускаем dpkg --configure -a...")
@@ -11758,45 +11878,45 @@ class SystemUpdater(object):
                 result = self.run_command_with_interactive_handling(fix_cmd, False, gui_terminal=True)
                 
                 if result == 0:
-                    print("[OK] apt --fix-broken install выполнен успешно", channels=["gui_log"])
+                    print("[OK] apt --fix-broken install выполнен успешно", gui_log=True)
                     return True
                 else:
-                    print("[WARNING] apt --fix-broken install завершился с ошибкой", channels=["gui_log"])
+                    print("[WARNING] apt --fix-broken install завершился с ошибкой", gui_log=True)
                     
             except Exception as fix_error:
-                print(f"[ERROR] Критическая ошибка в apt --fix-broken install: {fix_error}", channels=["gui_log"])
-                print("[INFO] Очистка блокировок", channels=["gui_log"])  # Очищаем блокировки при критической ошибке
+                print(f"[ERROR] Критическая ошибка в apt --fix-broken install: {fix_error}", gui_log=True)
+                print("[INFO] Очистка блокировок", gui_log=True)  # Очищаем блокировки при критической ошибке
                 return False
                 
                 # 3. Принудительное удаление проблемных пакетов
-                print("[WARNING] Пробуем принудительное удаление проблемных пакетов", channels=["gui_log"])
+                print("[WARNING] Пробуем принудительное удаление проблемных пакетов", gui_log=True)
                 force_remove_cmd = ['dpkg', '--remove', '--force-remove-reinstreq', 'python3-tk']
                 result = self.run_command_with_interactive_handling(force_remove_cmd, False, gui_terminal=True)
                 
                 if result == 0:
-                    print("[OK] Проблемные пакеты удалены принудительно", channels=["gui_log"])
+                    print("[OK] Проблемные пакеты удалены принудительно", gui_log=True)
                     # Повторяем исправление зависимостей
                     print("[INFO] Повторяем исправление зависимостей после принудительного удаления")
                     result = self.run_command_with_interactive_handling(fix_cmd, False, gui_terminal=True)
                     if result == 0:
-                        print("[OK] Зависимости исправлены после принудительного удаления", channels=["gui_log"])
+                        print("[OK] Зависимости исправлены после принудительного удаления", gui_log=True)
                         return True
                     else:
-                        print("[ERROR] Не удалось исправить зависимости после принудительного удаления", channels=["gui_log"])
+                        print("[ERROR] Не удалось исправить зависимости после принудительного удаления", gui_log=True)
                 
-                print("[ERROR] Автоматическое исправление dpkg не удалось", channels=["gui_log"])
+                print("[ERROR] Автоматическое исправление dpkg не удалось", gui_log=True)
                 return False
                 
         except Exception as e:
-            print(f"[ERROR] Ошибка автоматического исправления dpkg: {e}", channels=["gui_log"])
+            print(f"[ERROR] Ошибка автоматического исправления dpkg: {e}", gui_log=True)
             return False
     
     def simulate_update_scenarios(self):
         """Симуляция различных сценариев обновления"""
-        print("[PROCESS] Симуляция сценариев обновления...", channels=["gui_log"])
+        print("[PROCESS] Симуляция сценариев обновления...", gui_log=True)
         
         # Тест 1: dpkg конфигурационный файл
-        print("\n[LIST] Тест 1: dpkg конфигурационный файл", channels=["gui_log"])
+        print("\n[LIST] Тест 1: dpkg конфигурационный файл", gui_log=True)
         test_output = """Файл настройки «/etc/ssl/openssl.cnf»
 ==> Изменён с момента установки (вами или сценарием).
 ==> Автор пакета предоставил обновлённую версию.
@@ -12012,7 +12132,7 @@ def run_repo_checker(gui_terminal=None, dry_run=False):
         stats = checker.get_statistics()
         print("\nСТАТИСТИКА РЕПОЗИТОРИЕВ:")
         print("=========================")
-        print("[LIST] Репозитории:", channels=["gui_log"])
+        print("[LIST] Репозитории:", gui_log=True)
         print("   • Активировано: %d рабочих" % stats['activated'])
         print("   • Деактивировано: %d нерабочих" % stats['deactivated'])
         
@@ -12048,39 +12168,39 @@ def run_system_stats(temp_dir, dry_run=False):
         
         # Проверяем права доступа
         if os.geteuid() != 0:
-            print("[ERROR] Требуются права root для работы с системными пакетами", channels=["gui_log"])
+            print("[ERROR] Требуются права root для работы с системными пакетами", gui_log=True)
             print("Запустите: sudo python3 astra_automation.py")
             return False
         
         # Анализируем обновления
         if not stats.get_updatable_packages():
-            print("[WARNING] Предупреждение: не удалось получить список обновлений", channels=["gui_log"])
+            print("[WARNING] Предупреждение: не удалось получить список обновлений", gui_log=True)
         
         # Анализируем автоудаление
         if not stats.get_autoremove_packages():
-            print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", channels=["gui_log"])
+            print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", gui_log=True)
         
         # Подсчитываем пакеты для установки
         if not stats.calculate_install_stats():
-            print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", channels=["gui_log"])
+            print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", gui_log=True)
         
         # Показываем статистику
         stats.display_statistics()
         
         if dry_run:
-            print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
+            print("[OK] Анализ статистики завершен успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", gui_log=True)
         else:
-            print("[OK] Анализ статистики завершен успешно!", channels=["gui_log"])
+            print("[OK] Анализ статистики завершен успешно!", gui_log=True)
         
         return True
         
     except Exception as e:
-        print(f"[ERROR] Ошибка анализа статистики: {e}", channels=["gui_log"])
+        print(f"[ERROR] Ошибка анализа статистики: {e}", gui_log=True)
         return False
 
 def run_interactive_handler(temp_dir, dry_run=False):
     """Запуск модуля перехвата интерактивных запросов через класс InteractiveHandler"""
-    print("\n[AUTO] Запуск тестирования перехвата интерактивных запросов...", channels=["gui_log"])
+    print("\n[AUTO] Запуск тестирования перехвата интерактивных запросов...", gui_log=True)
     
     try:
         # Создаем экземпляр класса InteractiveHandler напрямую
@@ -12114,25 +12234,25 @@ def run_system_updater(temp_dir, dry_run=False):
         
         # Если не dry_run, запускаем реальное обновление
         if not dry_run:
-            print("[TOOL] Тест реального обновления системы...", channels=["gui_log"])
+            print("[TOOL] Тест реального обновления системы...", gui_log=True)
             success = updater.update_system(dry_run)
             if success:
-                print("[OK] Обновление системы завершено успешно", channels=["gui_log"])
+                print("[OK] Обновление системы завершено успешно", gui_log=True)
             else:
-                print("[ERROR] Обновление системы завершено с ошибкой", channels=["gui_log"])
+                print("[ERROR] Обновление системы завершено с ошибкой", gui_log=True)
         else:
-            print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", channels=["gui_log"])
+            print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", gui_log=True)
             updater.update_system(dry_run)
         
         if dry_run:
-            print("[OK] Обновление системы завершено успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", channels=["gui_log"])
+            print("[OK] Обновление системы завершено успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)", gui_log=True)
         else:
-            print("[OK] Обновление системы завершено успешно!", channels=["gui_log"])
+            print("[OK] Обновление системы завершено успешно!", gui_log=True)
         
         return True
         
     except Exception as e:
-        print(f"[ERROR] Ошибка обновления системы: {e}", channels=["gui_log"])
+        print(f"[ERROR] Ошибка обновления системы: {e}", gui_log=True)
         return False
 
 def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
@@ -12199,8 +12319,6 @@ class DirectorySnapshot(object):
     """Класс для хранения снимка состояния директории"""
     
     def __init__(self, directory_path):
-        print("[TEST] DirectorySnapshot.__init__ - обычный print")
-        print("[TEST] DirectorySnapshot.__init__ - GUI log print", gui_log=True)
         
         self.directory_path = directory_path
         self.timestamp = datetime.datetime.now()
@@ -12251,8 +12369,6 @@ class DirectoryMonitor(object):
     """Класс для мониторинга изменений в директории"""
     
     def __init__(self, compact_mode=False):
-        print("[TEST] DirectoryMonitor.__init__ - обычный print")
-        print("[TEST] DirectoryMonitor.__init__ - GUI log print", gui_log=True)
         
         self.baseline = None  # Базовый снимок
         self.last_snapshot = None  # Последний снимок
@@ -12571,11 +12687,11 @@ def main():
     logger.process_queue()
     
     # Диагностическая информация
-    print(f"[INFO] Аргументы командной строки: {sys.argv}", channels=["gui_log"])
-    print(f"[INFO] Количество аргументов: {len(sys.argv)}", channels=["gui_log"])
-    print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", channels=["gui_log"])
-    print(f"[INFO] FSA-AstraInstall версия: {APP_VERSION}", channels=["gui_log"])
-    print(f"[INFO] Python версия: {sys.version}", channels=["gui_log"])
+    print(f"[INFO] Аргументы командной строки: {sys.argv}", gui_log=True)
+    print(f"[INFO] Количество аргументов: {len(sys.argv)}", gui_log=True)
+    print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", gui_log=True)
+    print(f"[INFO] FSA-AstraInstall версия: {APP_VERSION}", gui_log=True)
+    print(f"[INFO] Python версия: {sys.version}", gui_log=True)
     
     # КРИТИЧНО: Обрабатываем --close-terminal СРАЗУ после создания лог файла
     close_terminal_pid = None
@@ -12590,21 +12706,21 @@ def main():
         arg = sys.argv[i]
         if arg == '--console':
             console_mode = True
-            print("[INFO] Включен консольный режим", channels=["gui_log"])
+            print("[INFO] Включен консольный режим", gui_log=True)
         elif arg == '--dry-run':
             dry_run = True
-            print("[INFO] Включен режим тестирования", channels=["gui_log"])
+            print("[INFO] Включен режим тестирования", gui_log=True)
         elif arg == '--log-file':
             # Уже обработан выше
             i += 1  # Пропускаем следующий аргумент
         elif arg == '--setup-repos':
             setup_repos = True
-            print("[INFO] Режим: только настройка репозиториев", channels=["gui_log"])
+            print("[INFO] Режим: только настройка репозиториев", gui_log=True)
         elif arg == '--close-terminal':
             # Следующий аргумент - PID терминала
             if i + 1 < len(sys.argv):
                 close_terminal_pid = sys.argv[i + 1]
-                print(f"[INFO] Терминал будет закрыт после запуска GUI (PID: {close_terminal_pid})", channels=["gui_log"])
+                print(f"[INFO] Терминал будет закрыт после запуска GUI (PID: {close_terminal_pid})", gui_log=True)
                 print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
                 
                 # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
@@ -12641,28 +12757,28 @@ def main():
                 
                 i += 1  # Пропускаем следующий аргумент
             else:
-                print("[WARNING] Флаг --close-terminal указан без PID", channels=["gui_log"])
+                print("[WARNING] Флаг --close-terminal указан без PID", gui_log=True)
         elif arg == '--mode':
             # Следующий аргумент - режим запуска
             if i + 1 < len(sys.argv):
                 start_mode = sys.argv[i + 1]
-                print(f"[INFO] Режим запуска: {start_mode}", channels=["gui_log"])
+                print(f"[INFO] Режим запуска: {start_mode}", gui_log=True)
                 i += 1  # Пропускаем следующий аргумент
         i += 1
     
     try:
         # Логируем системную информацию
-        print("[INFO] Системная информация:", channels=["gui_log"])
-        print(f"[INFO] OS: {os.name}", channels=["gui_log"])
-        print(f"[INFO] Platform: {sys.platform}", channels=["gui_log"])
-        print(f"[INFO] User ID: {os.getuid()}", channels=["gui_log"])
-        print(f"[INFO] Effective User ID: {os.geteuid()}", channels=["gui_log"])
+        print("[INFO] Системная информация:", gui_log=True)
+        print(f"[INFO] OS: {os.name}", gui_log=True)
+        print(f"[INFO] Platform: {sys.platform}", gui_log=True)
+        print(f"[INFO] User ID: {os.getuid()}", gui_log=True)
+        print(f"[INFO] Effective User ID: {os.geteuid()}", gui_log=True)
         
         # Проверяем права root
         if os.geteuid() == 0:
-            print("[INFO] Запущено с правами root", channels=["gui_log"])
+            print("[INFO] Запущено с правами root", gui_log=True)
         else:
-            print("[INFO] Запущено БЕЗ прав root", channels=["gui_log"])
+            print("[INFO] Запущено БЕЗ прав root", gui_log=True)
         
         # Режим настройки репозиториев - выполнить и выйти
         if setup_repos:
@@ -12712,35 +12828,35 @@ def main():
                 print("\n[ERROR] Не удалось обработать репозитории")
                 sys.exit(1)
             
-            print("[INFO] Начинаем выполнение основной программы", channels=["gui_log"])
+            print("[INFO] Начинаем выполнение основной программы", gui_log=True)
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
-            print("[INFO] Запускаем GUI режим", channels=["gui_log"])
+            print("[INFO] Запускаем GUI режим", gui_log=True)
             # Проверяем системные требования
             if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", channels=["gui_log"])
+                print("[ERROR] Системные требования не выполнены", gui_log=True)
                 sys.exit(1)
             
             # Умная логика выбора режима на основе start_mode от bash
             if start_mode == "gui_ready":
                 # GUI готов - запускаем сразу
                 print("[GUI] GUI готов - запускаем интерфейс...")
-                print("[INFO] Режим: gui_ready - запускаем GUI", channels=["gui_log"])
+                print("[INFO] Режим: gui_ready - запускаем GUI", gui_log=True)
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
                     if gui_success:
-                        print("[OK] GUI мониторинг завершен", channels=["gui_log"])
+                        print("[OK] GUI мониторинг завершен", gui_log=True)
                     else:
-                        print("[ERROR] Ошибка GUI мониторинга", channels=["gui_log"])
+                        print("[ERROR] Ошибка GUI мониторинга", gui_log=True)
                 except Exception as gui_error:
-                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", channels=["gui_log"])
+                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", gui_log=True)
                     
             elif start_mode == "gui_install_first":
                 # Нужно установить GUI компоненты
                 print("[GUI] Установка GUI компонентов...")
-                print("[INFO] Режим: gui_install_first - устанавливаем GUI компоненты", channels=["gui_log"])
+                print("[INFO] Режим: gui_install_first - устанавливаем GUI компоненты", gui_log=True)
                 
                 if dry_run:
                     print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка GUI компонентов НЕ выполняется")
@@ -12751,15 +12867,15 @@ def main():
                     gui_install_success = install_gui_components()
                 
                 if gui_install_success:
-                    print("[SUCCESS] GUI компоненты установлены успешно!", channels=["gui_log"])
+                    print("[SUCCESS] GUI компоненты установлены успешно!", gui_log=True)
                 else:
                     print("[ERROR] Установка GUI компонентов завершена с ошибками")
-                    print("[ERROR] Установка GUI компонентов завершена с ошибками", channels=["gui_log"])
+                    print("[ERROR] Установка GUI компонентов завершена с ошибками", gui_log=True)
                     
             elif start_mode == "console_forced":
                 # Принудительный консольный режим - но мы в GUI режиме!
                 print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме")
-                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", channels=["gui_log"])
+                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", gui_log=True)
                 print("[INFO] Перезапустите с флагом --console:")
                 print("       bash astra_install.sh --console")
                 sys.exit(1)
@@ -12767,22 +12883,22 @@ def main():
             else:
                 # Неизвестный режим - пытаемся запустить GUI
                 print("[WARNING] Неизвестный режим: %s" % start_mode)
-                print(f"[WARNING] Неизвестный режим: {start_mode} - пытаемся запустить GUI", channels=["gui_log"])
+                print(f"[WARNING] Неизвестный режим: {start_mode} - пытаемся запустить GUI", gui_log=True)
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
                     if gui_success:
-                        print("[OK] GUI мониторинг завершен", channels=["gui_log"])
+                        print("[OK] GUI мониторинг завершен", gui_log=True)
                     else:
-                        print("[ERROR] Ошибка GUI мониторинга", channels=["gui_log"])
+                        print("[ERROR] Ошибка GUI мониторинга", gui_log=True)
                 except Exception as gui_error:
-                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", channels=["gui_log"])
+                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", gui_log=True)
                     print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                print("[INFO] Очистка блокировок", channels=["gui_log"])
+                print("[INFO] Очистка блокировок", gui_log=True)
             return
     
         # Консольный режим (только если указан --console)
-        print("[INFO] Запускаем консольный режим", channels=["gui_log"])
+        print("[INFO] Запускаем консольный режим", gui_log=True)
         print("=" * 60)
         if dry_run:
             print("FSA-AstraInstall Automation (РЕЖИМ ТЕСТИРОВАНИЯ)")
@@ -12795,19 +12911,19 @@ def main():
         
         try:
             # Проверяем системные требования (БЕЗ установки GUI пакетов)
-            print("[INFO] Проверяем системные требования", channels=["gui_log"])
+            print("[INFO] Проверяем системные требования", gui_log=True)
             if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", channels=["gui_log"])
+                print("[ERROR] Системные требования не выполнены", gui_log=True)
                 sys.exit(1)
         
             # Умная логика консольного режима на основе start_mode от bash
             if start_mode == "console_forced":
                 # Принудительный консольный режим - полное обновление системы
-                print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)", channels=["gui_log"])
+                print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)", gui_log=True)
                 print("\n[CONSOLE] Консольный режим - обновление системы...")
                 
                 # Обновляем систему
-                print("[INFO] Запускаем обновление системы", channels=["gui_log"])
+                print("[INFO] Запускаем обновление системы", gui_log=True)
                 print("\n[UPDATE] Обновление системы...")
                 universal_runner = get_global_universal_runner()
                 updater = SystemUpdater(universal_runner)
@@ -12820,7 +12936,7 @@ def main():
                 # Проверяем системные ресурсы
                 if not updater.check_system_resources():
                     print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", channels=["gui_log"])
+                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", gui_log=True)
                     sys.exit(1)
                 
                 # Запускаем обновление
@@ -12834,7 +12950,7 @@ def main():
             if repo_success and stats_success and interactive_success and update_success:
                 if dry_run:
                     print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                    print("[INFO] Автоматизация завершена успешно в режиме тестирования", channels=["gui_log"])
+                    print("[INFO] Автоматизация завершена успешно в режиме тестирования", gui_log=True)
                     print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
                     print("=============================")
                     print("[OK] Все проверки пройдены успешно")
@@ -12843,43 +12959,43 @@ def main():
                     print("[START] Для реальной установки запустите без --dry-run")
                 else:
                     print("\n[SUCCESS] Автоматизация завершена успешно!")
-                    print("[INFO] Автоматизация завершена успешно", channels=["gui_log"])
+                    print("[INFO] Автоматизация завершена успешно", gui_log=True)
             else:
                 print("\n[ERROR] Автоматизация завершена с ошибками")
-                print("[ERROR] Автоматизация завершена с ошибками", channels=["gui_log"])
+                print("[ERROR] Автоматизация завершена с ошибками", gui_log=True)
             
             # Неожиданный режим в консольном режиме
             print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
-            print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", channels=["gui_log"])
+            print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", gui_log=True)
             print("[INFO] Ожидался режим: console_forced")
             sys.exit(1)
             
         except KeyboardInterrupt:
-            print("[WARNING] Программа остановлена пользователем (Ctrl+C)", channels=["gui_log"])
+            print("[WARNING] Программа остановлена пользователем (Ctrl+C)", gui_log=True)
             print("\n[STOP] Остановлено пользователем")
             # Очищаем блокирующие файлы при прерывании
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             sys.exit(1)
         except Exception as e:
-            print(f"[ERROR] Критическая ошибка в консольном режиме: {e}", channels=["gui_log"])
+            print(f"[ERROR] Критическая ошибка в консольном режиме: {e}", gui_log=True)
             print("\n[ERROR] Критическая ошибка: %s" % str(e))
             # Очищаем блокирующие файлы при ошибке
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
             sys.exit(1)
         finally:
             # Очищаем временные файлы
             if temp_dir:
                 cleanup_temp_files(temp_dir)
-            print("[INFO] Программа завершена", channels=["gui_log"])
+            print("[INFO] Программа завершена", gui_log=True)
             
     except Exception as main_error:
         # Критическая ошибка на уровне main()
-        print(f"[ERROR] Критическая ошибка в main(): {main_error}", channels=["gui_log"])
+        print(f"[ERROR] Критическая ошибка в main(): {main_error}", gui_log=True)
         print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
         print("Проверьте лог файл: %s" % logger.get_log_path())
         # Очищаем блокирующие файлы при критической ошибке
         try:
-            print("[INFO] Очистка блокировок", channels=["gui_log"])
+            print("[INFO] Очистка блокировок", gui_log=True)
         except:
             pass
 
