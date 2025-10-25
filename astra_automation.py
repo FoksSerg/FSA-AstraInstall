@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.79 (2025.10.25)
+Версия: V2.3.81 (2025.10.25)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.79"
+APP_VERSION = "V2.3.81"
 import os
 import sys
 import tempfile
@@ -6106,7 +6106,6 @@ class AutomationGUI(object):
         
         # Устанавливаем парсер в UniversalProcessRunner после создания SystemUpdater
         self.universal_runner.parser = self.system_updater.system_update_parser
-        print("[PARSER] Парсер установлен в UniversalProcessRunner!")
         
         # Передаем ссылки на детальные бары для прямого обновления
         self.system_updater.download_progress = self.download_progress
@@ -6115,7 +6114,6 @@ class AutomationGUI(object):
         self.system_updater.download_label = self.download_label
         self.system_updater.unpack_label = self.unpack_label
         self.system_updater.config_label = self.config_label
-        print("[SYSTEM_UPDATER] SystemUpdater полностью настроен!")
         
         # Запускаем красивый тест прогресс-баров через 3 секунды после полной инициализации
         self.root.after(3000, self._test_progress_bars_animation)
@@ -6495,9 +6493,17 @@ class AutomationGUI(object):
         load_log_button = self.tk.Button(
             control_frame, 
             text="Загрузить лог", 
-            command=self.load_log_to_terminal
+            command=lambda: self.load_log_to_terminal(GLOBAL_LOG_FILE) if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE else None
         )
         load_log_button.pack(side=self.tk.RIGHT, padx=5)
+        
+        # Кнопка обновления терминала (для ручного обновления когда автопрокрутка отключена)
+        refresh_button = self.tk.Button(
+            control_frame, 
+            text="Обновить", 
+            command=self._manual_refresh_terminal
+        )
+        refresh_button.pack(side=self.tk.RIGHT, padx=5)
         
         # Кнопка очистки терминала
         clear_button = self.tk.Button(
@@ -6520,49 +6526,6 @@ class AutomationGUI(object):
             # Это сложная операция, пока оставим заглушку
             pass
     
-    def load_log_to_terminal(self):
-        """Загрузка содержимого лог-файла в терминал"""
-        try:
-            import os
-            
-            # Используем ТОЛЬКО глобальную переменную с путем к логу
-            if 'GLOBAL_LOG_FILE' not in globals() or not GLOBAL_LOG_FILE:
-                self.terminal_text.config(state=self.tk.NORMAL)
-                self.terminal_text.insert(self.tk.END, "[ERROR] Глобальная переменная GLOBAL_LOG_FILE не найдена\n")
-                self.terminal_text.config(state=self.tk.DISABLED)
-                return
-            
-            log_file_path = GLOBAL_LOG_FILE
-            
-            # Проверяем что файл существует
-            if not os.path.exists(log_file_path):
-                self.terminal_text.config(state=self.tk.NORMAL)
-                self.terminal_text.insert(self.tk.END, f"[ERROR] Лог-файл не найден: {log_file_path}\n")
-                self.terminal_text.config(state=self.tk.DISABLED)
-                return
-            
-            # Читаем содержимое файла
-            with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                log_content = f.read()
-            
-            # Очищаем терминал
-            self.terminal_text.config(state=self.tk.NORMAL)
-            self.terminal_text.delete("1.0", self.tk.END)
-            
-            # Добавляем содержимое лога
-            self.terminal_text.insert(self.tk.END, log_content)
-            
-            # Автопрокрутка если включена
-            if self.terminal_autoscroll_enabled.get():
-                self.terminal_text.see(self.tk.END)
-            
-            self.terminal_text.config(state=self.tk.DISABLED)
-            
-        except Exception as e:
-            self.terminal_text.config(state=self.tk.NORMAL)
-            self.terminal_text.insert(self.tk.END, f"[ERROR] Ошибка загрузки лога: {e}\n")
-            self.terminal_text.config(state=self.tk.DISABLED)
-    
     def clear_terminal(self):
         """Очистка терминала"""
         self.terminal_text.config(state=self.tk.NORMAL)
@@ -6575,36 +6538,9 @@ class AutomationGUI(object):
             self.terminal_full_content = "Терминал очищен\n"
     
     def filter_terminal_by_search(self, *args):
-        """Фильтрация терминала по поисковому запросу - полная перестройка содержимого"""
-        search_text = self.terminal_search_var.get().lower()
-        
-        # Получаем все содержимое терминала
-        self.terminal_text.config(state=self.tk.NORMAL)
-        content = self.terminal_text.get("1.0", self.tk.END)
-        
-        # Сохраняем полное содержимое если его еще нет или если оно меньше текущего
-        if not hasattr(self, 'terminal_full_content') or len(self.terminal_full_content) < len(content):
-            self.terminal_full_content = content
-        
-        self.terminal_text.delete("1.0", self.tk.END)
-        
-        if not search_text:
-            # Если поиск пустой - показываем все строки из сохраненного содержимого
-            self.terminal_text.insert("1.0", self.terminal_full_content)
-        else:
-            # Фильтруем строки - оставляем только те, что содержат искомый текст
-            lines = self.terminal_full_content.split('\n')
-            filtered_lines = []
-            
-            for line in lines:
-                if line.lower().find(search_text) != -1:
-                    filtered_lines.append(line)
-            
-            # Вставляем отфильтрованное содержимое
-            filtered_content = '\n'.join(filtered_lines)
-            self.terminal_text.insert("1.0", filtered_content)
-        
-        self.terminal_text.config(state=self.tk.DISABLED)
+        """Фильтрация терминала по поисковому запросу - ПОЛНОЕ ОБНОВЛЕНИЕ"""
+        # Полное обновление только при изменении фильтра
+        self._update_terminal_display()
     
     def clear_terminal_search(self):
         """Очистка поискового запроса"""
@@ -8569,14 +8505,122 @@ Path={os.path.dirname(script_path)}
             pass
     
     def add_terminal_output(self, message):
-        """Добавление сообщения в системный терминал (потокобезопасно)"""
+        """Добавление сообщения в системный терминал (ПРЯМОЕ)"""
         try:
-            # ИСПРАВЛЕНИЕ: Избегаем рекурсии - добавляем только в очередь терминала
-            self.terminal_queue.put(message)
+            # ПРЯМОЕ добавление в память без очередей
+            if not hasattr(self, 'terminal_messages'):
+                self.terminal_messages = []
+            
+            # Добавляем сообщение в память
+            self.terminal_messages.append(message)
+            
+            # Ограничиваем размер памяти (последние 50,000 сообщений)
+            if len(self.terminal_messages) > 50000:
+                self.terminal_messages = self.terminal_messages[-50000:]
+            
+            # ОБНОВЛЯЕМ ТЕРМИНАЛ ТОЛЬКО ЕСЛИ АВТОПРОКРУТКА ВКЛЮЧЕНА
+            if self.terminal_autoscroll_enabled.get():
+                self._update_terminal_display()
+            # Если автопрокрутка отключена - только пишем в память, не дергаем терминал
+            
         except Exception as e:
-            # Если очередь недоступна, выводим в консоль
-            print(f"[ERROR] Ошибка добавления в очередь терминала: {e}")
+            print(f"[ERROR] Ошибка добавления в терминал: {e}")
             print(f"[FALLBACK] Сообщение: {message}")
+    
+    def _manual_refresh_terminal(self):
+        """Ручное обновление терминала с прокруткой в конец"""
+        self._update_terminal_display()
+        # После обновления прокручиваем в конец
+        if hasattr(self, 'terminal_text'):
+            self.terminal_text.see(self.tk.END)
+    
+    def _update_terminal_display(self):
+        """Полное обновление терминала (при изменении фильтра или ручном обновлении)"""
+        try:
+            # ЗАЩИТА ОТ РЕКУРСИИ
+            if hasattr(self, '_updating_terminal') and self._updating_terminal:
+                return
+            self._updating_terminal = True
+            
+            if not hasattr(self, 'terminal_messages') or not self.terminal_messages:
+                self._updating_terminal = False
+                return
+            
+            # Получаем поисковый фильтр
+            search_text = self.terminal_search_var.get().lower()
+            
+            # Фильтруем сообщения в памяти
+            filtered_messages = []
+            for message in self.terminal_messages:
+                # Добавляем timestamp если нужно
+                if self.terminal_timestamp_enabled.get():
+                    import datetime
+                    timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    formatted_message = f"[{timestamp}] {message}"
+                else:
+                    formatted_message = message
+                
+                # Проверяем поисковый фильтр
+                if not search_text or formatted_message.lower().find(search_text) != -1:
+                    filtered_messages.append(formatted_message)
+            
+            # Обновляем терминал (только при изменении фильтра)
+            self.terminal_text.config(state=self.tk.NORMAL)
+            self.terminal_text.delete(1.0, self.tk.END)  # Очищаем
+            
+            # Добавляем отфильтрованные сообщения пакетами
+            for i in range(0, len(filtered_messages), 100):
+                batch = filtered_messages[i:i+100]
+                batch_text = "\n".join(batch) + "\n"
+                self.terminal_text.insert(self.tk.END, batch_text)
+            
+            # Прокручиваем вниз
+            if self.terminal_autoscroll_enabled.get():
+                self.terminal_text.see(self.tk.END)
+            
+            self.terminal_text.config(state=self.tk.DISABLED)
+            self._updating_terminal = False
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка обновления терминала: {e}")
+            self._updating_terminal = False
+    
+    def load_log_to_terminal(self, log_file_path):
+        """Загрузка существующего лога в терминал (с оптимизацией для больших файлов)"""
+        try:
+            # Получаем размер файла
+            import os
+            file_size = os.path.getsize(log_file_path)
+            file_size_mb = file_size / (1024 * 1024)
+            
+            # Читаем файл лога
+            with open(log_file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Очищаем текущие сообщения
+            if hasattr(self, 'terminal_messages'):
+                self.terminal_messages.clear()
+            else:
+                self.terminal_messages = []
+            
+            # Для больших файлов (>10MB) загружаем только последние строки
+            if file_size_mb > 10:
+                print(f"[INFO] Большой файл - загружаем только последние 20,000 строк", gui_log=True)
+                lines = lines[-20000:]  # Последние 20,000 строк
+            
+            # Добавляем строки из лога
+            loaded_count = 0
+            for line in lines:
+                line = line.strip()
+                if line:  # Пропускаем пустые строки
+                    self.terminal_messages.append(line)
+                    loaded_count += 1
+            
+            # Обновляем отображение терминала
+            self._update_terminal_display()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка загрузки лога: {e}", gui_log=True)
     
     def add_gui_log_output(self, message):
         """Добавление сообщения в GUI лог (потокобезопасно)"""
@@ -8641,7 +8685,7 @@ Path={os.path.dirname(script_path)}
             # Обновляем статус
             if hasattr(self, 'status_label'):
                 if "Система актуальна" in progress_data['stage_name']:
-                    self.status_label.config(text="✅ Система актуальна - обновлений не требуется")
+                    self.status_label.config(text="Система актуальна - обновлений не требуется")
                 else:
                     self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
                 
@@ -8753,9 +8797,9 @@ Path={os.path.dirname(script_path)}
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.process_queue()
             
-            # Обрабатываем сообщения из очереди (максимум 10 за раз для защиты от зависания)
+            # Обрабатываем сообщения из очереди (максимум 20 за раз для стабильности)
             processed_count = 0
-            while not self.terminal_queue.empty() and processed_count < 10:
+            while not self.terminal_queue.empty() and processed_count < 20:
                 try:
                     message = self.terminal_queue.get_nowait()
                     processed_count += 1
@@ -8772,11 +8816,13 @@ Path={os.path.dirname(script_path)}
                     elif message.startswith("[STAGE]"):
                         self.handle_stage_update(message)
                     else:
-                        # Форматируем сообщение
+                        # Форматируем сообщение (оптимизировано)
                         if self.terminal_timestamp_enabled.get():
-                            import datetime
-                            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                            formatted_message = f"[{timestamp}] {message}"
+                            # Кэшируем timestamp для группы сообщений
+                            if not hasattr(self, '_cached_timestamp') or processed_count % 10 == 0:
+                                import datetime
+                                self._cached_timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                            formatted_message = f"[{self._cached_timestamp}] {message}"
                         else:
                             formatted_message = message
                         
@@ -8786,30 +8832,53 @@ Path={os.path.dirname(script_path)}
                         else:
                             self.terminal_full_content = formatted_message + "\n"
                         
-                        # Проверяем нужно ли показывать сообщение
+                        # Проверяем нужно ли показывать сообщение (оптимизировано)
                         should_show = True
                         
-                        # Проверяем поисковый фильтр
-                        search_text = self.terminal_search_var.get().lower()
-                        if search_text and formatted_message.lower().find(search_text) == -1:
+                        # Проверяем поисковый фильтр (кэшируем значение)
+                        if not hasattr(self, '_cached_search_text') or processed_count % 5 == 0:
+                            self._cached_search_text = self.terminal_search_var.get().lower()
+                        
+                        if self._cached_search_text and formatted_message.lower().find(self._cached_search_text) == -1:
                             should_show = False
                         
                         # Показываем сообщение только если оно прошло все фильтры
                         if should_show:
-                            self.terminal_text.config(state=self.tk.NORMAL)
-                            self.terminal_text.insert(self.tk.END, formatted_message + "\n")
+                            # Батчинг: собираем сообщения и обновляем GUI один раз
+                            if not hasattr(self, '_terminal_batch'):
+                                self._terminal_batch = []
+                            
+                            # Защита от переполнения батча
+                            if len(self._terminal_batch) < 20:  # Максимум 20 сообщений в батче
+                                self._terminal_batch.append(formatted_message + "\n")
+                            else:
+                                # Принудительно обновляем GUI если батч переполнен
+                                self.terminal_text.config(state=self.tk.NORMAL)
+                                batch_text = ''.join(self._terminal_batch)
+                                self.terminal_text.insert(self.tk.END, batch_text)
+                                if self.terminal_autoscroll_enabled.get():
+                                    self.terminal_text.see(self.tk.END)
+                                self.terminal_text.config(state=self.tk.DISABLED)
+                                self._terminal_batch = [formatted_message + "\n"]  # Начинаем новый батч
+                            
+                            # Обновляем GUI каждые 5 сообщений или в конце цикла (ограничиваем размер)
+                            if len(self._terminal_batch) >= 5 or processed_count >= 49:
+                                self.terminal_text.config(state=self.tk.NORMAL)
+                                batch_text = ''.join(self._terminal_batch)
+                                self.terminal_text.insert(self.tk.END, batch_text)
                             
                             if self.terminal_autoscroll_enabled.get():
                                 self.terminal_text.see(self.tk.END)
                             
                         self.terminal_text.config(state=self.tk.DISABLED)
+                        self._terminal_batch = []  # Очищаем батч
                 except Exception as e:
                     break  # Выходим из цикла при ошибке
         except Exception as e:
             pass
         finally:
             # Повторяем через 200 мс для стабильности GUI
-            self.root.after(200, self.process_terminal_queue)
+            self.root.after(100, self.process_terminal_queue)  # Увеличено до 100мс для стабильности
         
     def reset_progress_bars(self):
         """Сброс всех прогресс-баров в начальное состояние"""
@@ -9335,24 +9404,33 @@ Path={os.path.dirname(script_path)}
         except Exception as e:
             print(f"[ERROR] Ошибка простой анимации: {e}")
     
-    def _set_progress_values(self, download_val, unpack_val, config_val):
+    def _set_progress_values(self, download_val, unpack_val, config_val, total_packages=None):
         """Установка значений прогресс-баров"""
         try:
+            # Если не передано общее количество пакетов, используем значения по умолчанию
+            if total_packages is None:
+                total_packages = 1000  # Значение по умолчанию для анимации
+            
+            # Рассчитываем реальные количества пакетов
+            downloaded_count = int((download_val / 100) * total_packages) if total_packages > 0 else 0
+            unpacked_count = int((unpack_val / 100) * total_packages) if total_packages > 0 else 0
+            configured_count = int((config_val / 100) * total_packages) if total_packages > 0 else 0
+            
             # Обновляем детальные бары
             if hasattr(self, 'download_progress'):
                 self.download_progress['value'] = download_val
                 if hasattr(self, 'download_label'):
-                    self.download_label.config(text=f"{int(download_val * 10)}/1000 ({download_val:.1f}%)")
+                    self.download_label.config(text=f"{downloaded_count}/{total_packages} ({download_val:.1f}%)")
             
             if hasattr(self, 'unpack_progress'):
                 self.unpack_progress['value'] = unpack_val
                 if hasattr(self, 'unpack_label'):
-                    self.unpack_label.config(text=f"{int(unpack_val * 10)}/1000 ({unpack_val:.1f}%)")
+                    self.unpack_label.config(text=f"{unpacked_count}/{total_packages} ({unpack_val:.1f}%)")
             
             if hasattr(self, 'config_progress'):
                 self.config_progress['value'] = config_val
                 if hasattr(self, 'config_label'):
-                    self.config_label.config(text=f"{int(config_val * 10)}/1000 ({config_val:.1f}%)")
+                    self.config_label.config(text=f"{configured_count}/{total_packages} ({config_val:.1f}%)")
             
             # Обновляем общий прогресс-бар
             if hasattr(self, 'wine_progress'):
@@ -9374,16 +9452,16 @@ Path={os.path.dirname(script_path)}
             # Устанавливаем начальные значения в прогресс-бары
             self._set_progress_values(0, 0, 0)
             
-            # Четкая последовательность: 1→100, 2→100, 3→100, 1→0, 2→0, 3→0
-            self._animate_bar_to_target('download', 0, 100)      # 0-2 сек: Download 0→100
-            self.root.after(2000, lambda: self._animate_bar_to_target('unpack', 0, 100))    # 2-4 сек: Unpack 0→100
-            self.root.after(4000, lambda: self._animate_bar_to_target('config', 0, 100))    # 4-6 сек: Config 0→100
-            self.root.after(6000, lambda: self._animate_bar_to_target('download', 100, 0)) # 6-8 сек: Download 100→0
-            self.root.after(8000, lambda: self._animate_bar_to_target('unpack', 100, 0))    # 8-10 сек: Unpack 100→0
-            self.root.after(10000, lambda: self._animate_bar_to_target('config', 100, 0))  # 10-12 сек: Config 100→0
+            # БЫСТРАЯ последовательность: 1→100, 2→100, 3→100, 1→0, 2→0, 3→0 (3 секунды)
+            self._animate_bar_to_target('download', 0, 100)      # 0-0.5 сек: Download 0→100
+            self.root.after(500, lambda: self._animate_bar_to_target('unpack', 0, 100))    # 0.5-1 сек: Unpack 0→100
+            self.root.after(1000, lambda: self._animate_bar_to_target('config', 0, 100))    # 1-1.5 сек: Config 0→100
+            self.root.after(1500, lambda: self._animate_bar_to_target('download', 100, 0)) # 1.5-2 сек: Download 100→0
+            self.root.after(2000, lambda: self._animate_bar_to_target('unpack', 100, 0))    # 2-2.5 сек: Unpack 100→0
+            self.root.after(2500, lambda: self._animate_bar_to_target('config', 100, 0))  # 2.5-3 сек: Config 100→0
             
-            # Финальное сообщение через 12 секунд
-            self.root.after(12000, self._set_final_message)
+            # Финальное сообщение через 3 секунды
+            self.root.after(3000, self._set_final_message)
             
         except Exception as e:
             print(f"[ERROR] Ошибка четкой анимации: {e}")
@@ -9392,7 +9470,7 @@ Path={os.path.dirname(script_path)}
         """Анимация одного бара от start_val до end_val"""
         try:
             current_val = start_val
-            step_size = 2 if end_val > start_val else -2  # Шаг 2% в нужном направлении
+            step_size = 10 if end_val > start_val else -10  # Шаг 10% для быстрой анимации
             
             def animate_step():
                 nonlocal current_val
@@ -9405,8 +9483,15 @@ Path={os.path.dirname(script_path)}
                 elif bar_type == 'config':
                     self.current_config = current_val
                 
+                # Получаем реальное количество пакетов из парсера
+                total_packages = 1000  # Значение по умолчанию для анимации
+                if hasattr(self, 'system_updater') and self.system_updater and hasattr(self.system_updater, 'system_update_parser'):
+                    parser = self.system_updater.system_update_parser
+                    if parser and hasattr(parser, 'packages_table') and parser.packages_table:
+                        total_packages = len(parser.packages_table)
+                
                 # Обновляем все прогресс-бары с текущими значениями
-                self._set_progress_values(self.current_download, self.current_unpack, self.current_config)
+                self._set_progress_values(self.current_download, self.current_unpack, self.current_config, total_packages)
                 
                 # Изменяем значение
                 current_val += step_size
@@ -9423,11 +9508,18 @@ Path={os.path.dirname(script_path)}
                     elif bar_type == 'config':
                         self.current_config = current_val
                     
-                    self._set_progress_values(self.current_download, self.current_unpack, self.current_config)
+                        # Получаем реальное количество пакетов из парсера
+                        total_packages = 1000  # Значение по умолчанию для анимации
+                        if hasattr(self, 'system_updater') and self.system_updater and hasattr(self.system_updater, 'system_update_parser'):
+                            parser = self.system_updater.system_update_parser
+                            if parser and hasattr(parser, 'packages_table') and parser.packages_table:
+                                total_packages = len(parser.packages_table)
+                        
+                        self._set_progress_values(self.current_download, self.current_unpack, self.current_config, total_packages)
                     return  # Останавливаем анимацию
                 
-                # Следующий шаг через 50мс
-                self.root.after(50, animate_step)
+                # Следующий шаг через 25мс для быстрой анимации
+                self.root.after(25, animate_step)
             
             # Запускаем анимацию
             animate_step()
@@ -9753,6 +9845,9 @@ class SystemUpdateParser:
         # Кэш для оптимизации
         self._progress_cache_valid = False
         self._cached_progress = 0.0
+        
+        # Множество для быстрого поиска пакетов O(1)
+        self._package_names_set = set()
     
     def parse_line(self, line):
         """Парсинг одной строки"""
@@ -9767,7 +9862,7 @@ class SystemUpdateParser:
         # ЭТАП 1: Поиск начала парсинга таблицы
         if "Расчёт обновлений" in clean_line:
             self.parsing_table_started = True
-            print(f"[PARSER] Начало парсинга таблицы: '{clean_line}'", gui_log=True)
+            print(f"[PARSER] АКТИВАЦИЯ: Начало парсинга таблицы!", gui_log=True)
             return
             
         # ЭТАП 2: Парсинг таблицы пакетов
@@ -9816,17 +9911,20 @@ class SystemUpdateParser:
         
         # ЭТАП 3: Отслеживание операций установки
         if self.parsing_install_started:
-            print(f"[PARSER_DEBUG] Отслеживание установки активно: '{clean_line[:50]}...'", gui_log=True)
             
             if "Распаковывается" in clean_line:
+                print(f"[PARSER] НАЙДЕНО 'Распаковывается'!", gui_log=True)
                 self.parse_unpack_operation(clean_line)
             elif "Настраивается" in clean_line:
+                print(f"[PARSER] НАЙДЕНО 'Настраивается'!", gui_log=True)
                 self.parse_configure_operation(clean_line)
             elif "Удаляется" in clean_line:
                 self.parse_remove_operation(clean_line)
             elif clean_line.startswith("Пол:"):
                 # Обрабатываем скачивание только если уже в режиме установки
                 self.parse_download_operation(clean_line)
+            else:
+                print(f"[PARSER] НЕ НАЙДЕНО ключевых слов в: '{clean_line[:100]}...'", gui_log=True)
         else:
             pass  # Парсинг не активен, игнорируем
     
@@ -9880,6 +9978,9 @@ class SystemUpdateParser:
         }
         
         self.packages_table.append(package_entry)
+        
+        # Добавляем в множество для быстрого поиска O(1)
+        self._package_names_set.add(package_name)
         
         # Обновляем статистику
         self.stats['total_packages'] += 1
@@ -9963,23 +10064,48 @@ class SystemUpdateParser:
         return False
     
     def parse_download_operation(self, line):
-        """Парсинг операции скачивания"""
-        # Ищем имя пакета и размер в строке "Пол:1 https://... repository-update 1.7_x86-64/main amd64 package_name amd64 version [size]"
-        # Берем имя пакета после архитектуры (amd64) и размер в квадратных скобках
-        pattern = r'Пол:\d+\s+https://[^\s]+\s+[^\s]+\s+[^\s]+\s+amd64\s+([^\s]+)\s+[^\s]+\s+[^\s]+\s+\[([^\]]+)\]'
-        match = re.search(pattern, line)
-        if match:
-            package_name = match.group(1)
-            package_size = match.group(2)
-            success = self.update_package_flag(package_name, 'downloaded', True)
-            if success:
-                self.update_package_size(package_name, package_size)
-                print(f"[PARSER] Пакет '{package_name}' скачан, размер: {package_size}", gui_log=True)
+        """БЫСТРЫЙ И ТОЧНЫЙ парсинг - извлекаем имя пакета напрямую"""
+        if not line.startswith("Пол:"):
+            return
+        
+        # БЫСТРЫЙ способ: извлекаем имя пакета по позиции
+        # Формат: Пол:1311 ... amd64 package-name all/amd64 version [size]
+        parts = line.split()
+        
+        if len(parts) >= 6:
+            # Ищем позицию "amd64" и берем следующее слово как имя пакета
+            package_name = None
+            for i, part in enumerate(parts):
+                if part == "amd64" and i + 1 < len(parts):
+                    package_name = parts[i + 1]
+                    break
+            
+            if not package_name:
+                # Fallback: берем предпоследнее слово перед версией
+                package_name = parts[-3]
+            
+            # Убираем архитектуру (package:amd64 -> package)
+            if ':' in package_name:
+                package_name = package_name.split(':')[0]
+            
+            # Проверяем что это реальный пакет (не URL, не версия, не число)
+            if (not package_name.startswith('http') and 
+                not package_name.startswith('[') and 
+                not package_name.replace('.', '').replace('-', '').replace('+', '').isdigit()):
                 
-                # Обновляем прогресс-бары
-                self._update_progress_bars()
+                # БЫСТРАЯ проверка в таблице (O(1) с множеством)
+                if package_name in self._package_names_set:
+                    success = self.update_package_flag(package_name, 'downloaded', True)
+                    if success:
+                        self._update_progress_bars()
+                    else:
+                        print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
+                else:
+                    print(f"[PARSER] Пакет '{package_name}' не в таблице", gui_log=True)
             else:
-                print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
+                print(f"[PARSER] Неверное имя пакета: '{package_name}'", gui_log=True)
+        else:
+            print(f"[PARSER] Неверный формат строки", gui_log=True)
     
     def parse_unpack_operation(self, line):
         """Парсинг операции распаковки"""
@@ -10017,6 +10143,7 @@ class SystemUpdateParser:
         """Обновление прогресс-баров на основе текущего состояния таблицы пакетов"""
         try:
             if not self.packages_table:
+                print(f"[PARSER] Таблица пакетов пуста!", gui_log=True)
                 return
             
             # Подсчитываем статистику
@@ -10057,10 +10184,8 @@ class SystemUpdateParser:
                     **detailed_progress
                 )
             
-            print(f"[PARSER] Прогресс обновлен: Скачано {downloaded_count}/{total_packages} ({download_progress:.1f}%), Распаковано {unpacked_count}/{total_packages} ({unpack_progress:.1f}%), Настроено {configured_count}/{total_packages} ({config_progress:.1f}%)", gui_log=True)
-            
         except Exception as e:
-            print(f"[ERROR] Ошибка обновления прогресс-баров: {e}")
+            print(f"[ERROR] Ошибка обновления прогресс-баров: {e}", gui_log=True)
     
     def parse_remove_operation(self, line):
         """Парсинг операции удаления"""
