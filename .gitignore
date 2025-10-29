@@ -134,3 +134,7 @@ History/
 
 # Local history snapshots
 History/
+
+# Log directories
+Log/
+LogLinux/

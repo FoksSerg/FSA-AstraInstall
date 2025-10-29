@@ -5685,6 +5685,11 @@ class AutomationGUI(object):
         # Экземпляр проверщика Wine компонентов
         self.wine_checker = None
         
+        # ФАЗА 5: Replay симулятор для отладки парсинга
+        self.replay_simulator = None
+        self.replay_progress_timer = None
+        self._replay_controls_visible = False
+        
         # Инициализируем новую универсальную архитектуру
         self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
         self.universal_installer = UniversalInstaller(callback=self._component_status_callback)
@@ -7034,6 +7039,79 @@ class AutomationGUI(object):
             command=self.clear_terminal
         )
         clear_button.pack(side=self.tk.RIGHT, padx=5)
+        
+        # ФАЗА 5: ТРЕТЬЯ СТРОКА - Replay контролы (изначально скрыты)
+        self.replay_controls_frame = self.tk.Frame(control_frame)
+        # Не pack() сразу - будет показан только после выбора файла
+        
+        # Переменная для скорости replay
+        self.replay_speed_var = self.tk.DoubleVar(value=1.0)
+        
+        # Кнопки управления
+        self.replay_play_button = self.tk.Button(
+            self.replay_controls_frame,
+            text="Play",
+            command=self.start_replay,
+            state=self.tk.DISABLED
+        )
+        self.replay_play_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.replay_pause_button = self.tk.Button(
+            self.replay_controls_frame,
+            text="Pause",
+            command=self.pause_replay,
+            state=self.tk.DISABLED
+        )
+        self.replay_pause_button.pack(side=self.tk.LEFT, padx=5)
+        
+        self.replay_stop_button = self.tk.Button(
+            self.replay_controls_frame,
+            text="Stop",
+            command=self.stop_replay,
+            state=self.tk.DISABLED
+        )
+        self.replay_stop_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # Слайдер скорости
+        speed_label = self.tk.Label(self.replay_controls_frame, text="Скорость:")
+        speed_label.pack(side=self.tk.LEFT, padx=(10, 2))
+        
+        self.replay_speed_scale = self.tk.Scale(
+            self.replay_controls_frame,
+            from_=0.5,
+            to=10.0,
+            resolution=0.5,
+            orient=self.tk.HORIZONTAL,
+            length=150,
+            variable=self.replay_speed_var,
+            command=self.on_replay_speed_change
+        )
+        self.replay_speed_scale.pack(side=self.tk.LEFT, padx=5)
+        
+        speed_value_label = self.tk.Label(self.replay_controls_frame, text="1.0x")
+        speed_value_label.pack(side=self.tk.LEFT, padx=2)
+        self.replay_speed_value_label = speed_value_label
+        
+        # Прогресс-бар
+        progress_label = self.tk.Label(self.replay_controls_frame, text="Прогресс:")
+        progress_label.pack(side=self.tk.LEFT, padx=(10, 2))
+        
+        self.replay_progress_var = self.tk.DoubleVar(value=0.0)
+        self.replay_progress_bar = self.ttk.Progressbar(
+            self.replay_controls_frame,
+            mode='determinate',
+            length=200,
+            variable=self.replay_progress_var
+        )
+        self.replay_progress_bar.pack(side=self.tk.LEFT, padx=5)
+        
+        # Лейбл статуса
+        self.replay_status_label = self.tk.Label(
+            self.replay_controls_frame,
+            text="Готово к воспроизведению",
+            fg="gray"
+        )
+        self.replay_status_label.pack(side=self.tk.LEFT, padx=10)
     
     def toggle_terminal_timestamps(self):
         """Переключение отображения временных меток"""
@@ -7131,37 +7209,18 @@ class AutomationGUI(object):
             print(f"[ERROR] Ошибка открытия файла лога: {e}")
     
     def open_replay_dialog(self):
-        """ФАЗА 5: Открытие диалога выбора лога для replay (простая версия - только выбор файла)"""
+        """ФАЗА 5: Открытие диалога выбора лога для replay"""
         try:
-            import sys
-            sys.stdout.flush()
-            print("=" * 60)
-            print("[TEST_REPLAY] КНОПКА 'Replay Log' НАЖАТА!")
-            print("=" * 60)
-            sys.stdout.flush()
-            
             import tkinter.filedialog as filedialog
             
-            print("[TEST_REPLAY] Импорт filedialog успешен")
-            sys.stdout.flush()
-            
-            # Простой путь к LogLinux
+            # Определяем директорию для поиска логов
             script_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') and sys.argv else os.getcwd()
             log_dir = os.path.join(script_dir, "LogLinux")
             
-            print(f"[TEST_REPLAY] Путь к LogLinux: {log_dir}")
-            print(f"[TEST_REPLAY] Существует: {os.path.exists(log_dir)}")
-            sys.stdout.flush()
-            
             if not os.path.exists(log_dir):
                 log_dir = os.path.join(script_dir, "Log")
-                print(f"[TEST_REPLAY] Используем Log вместо LogLinux: {log_dir}")
-                sys.stdout.flush()
             
-            print(f"[TEST_REPLAY] Открываем диалог выбора файла...")
-            sys.stdout.flush()
-            
-            # Простой выбор файла
+            # Выбор файла
             log_file = filedialog.askopenfilename(
                 title="Выберите RAW лог для воспроизведения",
                 initialdir=log_dir if os.path.exists(log_dir) else script_dir,
@@ -7171,24 +7230,210 @@ class AutomationGUI(object):
                 ]
             )
             
-            print(f"[TEST_REPLAY] Выбранный файл: {log_file}")
-            sys.stdout.flush()
-            
             if not log_file:
-                print("[TEST_REPLAY] Файл не выбран (отменено)")
-                sys.stdout.flush()
                 return  # Пользователь отменил выбор
             
-            print(f"[TEST_REPLAY] Файл выбран успешно: {log_file}")
-            sys.stdout.flush()
+            # Создаём или переиспользуем симулятор
+            if not self.replay_simulator:
+                self.replay_simulator = LogReplaySimulator()
+            
+            # Загружаем файл
+            lines_count = self.replay_simulator.load_log_file(log_file)
+            
+            if lines_count == 0:
+                print("[REPLAY_ERROR] Не удалось загрузить файл или файл пустой")
+                return
+            
+            # Логируем в ANALYSIS поток
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                dual_logger = globals()['_global_dual_logger']
+                dual_logger.write_analysis(f"[REPLAY] Загружен файл: {os.path.basename(log_file)}")
+                dual_logger.write_analysis(f"[REPLAY] Строк в файле: {lines_count}")
+            
+            # Показываем контролы Replay
+            if not hasattr(self, '_replay_controls_visible') or not self._replay_controls_visible:
+                self.replay_controls_frame.pack(fill=self.tk.X, pady=5)
+                self._replay_controls_visible = True
+            
+            # Активируем кнопки
+            self.replay_play_button.config(state=self.tk.NORMAL)
+            self.replay_pause_button.config(state=self.tk.DISABLED)
+            self.replay_stop_button.config(state=self.tk.DISABLED)
+            
+            # Обновляем статус
+            self.replay_status_label.config(
+                text=f"Загружено: {os.path.basename(log_file)} ({lines_count} строк)",
+                fg="green"
+            )
+            
+            # Сбрасываем прогресс
+            self.replay_progress_var.set(0.0)
+            
+            print(f"[REPLAY] Файл загружен: {os.path.basename(log_file)} ({lines_count} строк)")
             
         except Exception as e:
             import traceback
-            import sys
-            print(f"[TEST_REPLAY] EXCEPTION: {e}")
+            print(f"[REPLAY_ERROR] Ошибка открытия диалога: {e}")
             traceback.print_exc()
-            sys.stdout.flush()
-            sys.stderr.flush()
+    
+    def start_replay(self):
+        """ФАЗА 5: Начать/продолжить воспроизведение лога"""
+        try:
+            if not self.replay_simulator or not self.replay_simulator.log_lines:
+                print("[REPLAY_ERROR] Файл не загружен")
+                return
+            
+            # Если replay на паузе - продолжаем, иначе начинаем заново
+            if self.replay_simulator.is_paused:
+                self.resume_replay()
+                return
+            
+            # Сбрасываем состояние парсера перед началом replay
+            if hasattr(self, 'system_updater') and self.system_updater:
+                if hasattr(self.system_updater, 'system_update_parser'):
+                    parser = self.system_updater.system_update_parser
+                    if parser and hasattr(parser, 'reset_parser_state'):
+                        parser.reset_parser_state()
+            
+            # Сбрасываем RAW-буфер (опционально - для чистого replay)
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                dual_logger = globals()['_global_dual_logger']
+                dual_logger.clear_raw_buffer()
+                dual_logger.write_analysis("[REPLAY] Начало воспроизведения лога")
+                dual_logger.write_analysis(f"[REPLAY] Скорость: {self.replay_speed_var.get()}x")
+            
+            # Запускаем replay
+            speed = self.replay_speed_var.get()
+            self.replay_simulator.replay(
+                dual_logger=globals().get('_global_dual_logger'),
+                speed=speed,
+                callback=self._on_replay_progress_callback
+            )
+            
+            # Обновляем состояние кнопок
+            self.replay_play_button.config(state=self.tk.DISABLED)
+            self.replay_pause_button.config(state=self.tk.NORMAL)
+            self.replay_stop_button.config(state=self.tk.NORMAL)
+            
+            # Запускаем таймер для обновления прогресса
+            self._start_replay_progress_timer()
+            
+            self.replay_status_label.config(text="Воспроизведение...", fg="blue")
+            
+        except Exception as e:
+            import traceback
+            print(f"[REPLAY_ERROR] Ошибка запуска replay: {e}")
+            traceback.print_exc()
+    
+    def pause_replay(self):
+        """ФАЗА 5: Приостановить воспроизведение"""
+        try:
+            if self.replay_simulator:
+                self.replay_simulator.pause()
+                self.replay_play_button.config(state=self.tk.NORMAL)
+                self.replay_pause_button.config(state=self.tk.DISABLED)
+                self.replay_status_label.config(text="Приостановлено", fg="orange")
+                
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
+                    dual_logger.write_analysis("[REPLAY] Воспроизведение приостановлено")
+        except Exception as e:
+            print(f"[REPLAY_ERROR] Ошибка паузы: {e}")
+    
+    def resume_replay(self):
+        """ФАЗА 5: Продолжить воспроизведение (вызывается из start_replay если был пауза)"""
+        try:
+            if self.replay_simulator:
+                self.replay_simulator.resume()
+                self.replay_play_button.config(state=self.tk.DISABLED)
+                self.replay_pause_button.config(state=self.tk.NORMAL)
+                self.replay_stop_button.config(state=self.tk.NORMAL)
+                self.replay_status_label.config(text="Воспроизведение...", fg="blue")
+                
+                # Запускаем таймер если он не запущен
+                if not self.replay_progress_timer:
+                    self._start_replay_progress_timer()
+                
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
+                    dual_logger.write_analysis("[REPLAY] Воспроизведение продолжено")
+        except Exception as e:
+            print(f"[REPLAY_ERROR] Ошибка возобновления: {e}")
+    
+    def stop_replay(self):
+        """ФАЗА 5: Остановить воспроизведение"""
+        try:
+            if self.replay_simulator:
+                self.replay_simulator.stop()
+                
+                # Останавливаем таймер прогресса
+                if self.replay_progress_timer:
+                    self.root.after_cancel(self.replay_progress_timer)
+                    self.replay_progress_timer = None
+                
+                # Обновляем состояние кнопок
+                self.replay_play_button.config(state=self.tk.NORMAL)
+                self.replay_pause_button.config(state=self.tk.DISABLED)
+                self.replay_stop_button.config(state=self.tk.DISABLED)
+                
+                self.replay_status_label.config(text="Остановлено", fg="red")
+                
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
+                    dual_logger.write_analysis("[REPLAY] Воспроизведение остановлено")
+        except Exception as e:
+            print(f"[REPLAY_ERROR] Ошибка остановки: {e}")
+    
+    def on_replay_speed_change(self, value):
+        """ФАЗА 5: Обработчик изменения скорости replay"""
+        try:
+            speed = float(value)
+            self.replay_speed_value_label.config(text=f"{speed}x")
+            
+            # Обновляем скорость в симуляторе если он работает
+            if self.replay_simulator and self.replay_simulator.is_playing:
+                self.replay_simulator.speed = speed
+                
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
+                    dual_logger.write_analysis(f"[REPLAY] Скорость изменена: {speed}x")
+        except Exception as e:
+            print(f"[REPLAY_ERROR] Ошибка изменения скорости: {e}")
+    
+    def _on_replay_progress_callback(self, progress_percent):
+        """ФАЗА 5: Callback для обновления прогресса (вызывается из потока replay)"""
+        # Обновляем прогресс-бар через root.after для безопасности потока
+        self.root.after(0, lambda: self.replay_progress_var.set(progress_percent))
+    
+    def _start_replay_progress_timer(self):
+        """ФАЗА 5: Запуск таймера для периодического обновления прогресса"""
+        if not self.replay_simulator:
+            return
+        
+        # Обновляем прогресс из симулятора
+        current, total, progress = self.replay_simulator.get_progress()
+        self.replay_progress_var.set(progress)
+        
+        # Обновляем статус
+        if self.replay_simulator.is_playing:
+            if self.replay_simulator.is_paused:
+                status_text = f"Приостановлено ({current}/{total} строк)"
+            else:
+                status_text = f"Воспроизведение: {current}/{total} строк ({progress:.1f}%)"
+            self.replay_status_label.config(text=status_text, fg="blue")
+            
+            # Запланировать следующее обновление через 100мс
+            self.replay_progress_timer = self.root.after(100, self._start_replay_progress_timer)
+        elif not self.replay_simulator.is_playing and current >= total:
+            # Replay завершён
+            self.replay_status_label.config(text="Завершено", fg="green")
+            self.replay_play_button.config(state=self.tk.NORMAL)
+            self.replay_pause_button.config(state=self.tk.DISABLED)
+            self.replay_stop_button.config(state=self.tk.DISABLED)
+            
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                dual_logger = globals()['_global_dual_logger']
+                dual_logger.write_analysis(f"[REPLAY] Воспроизведение завершено: {total} строк")
     
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
@@ -10606,6 +10851,37 @@ class SystemUpdateParser:
         
         # ФАЗА 4: Отслеживание позиции в RAW-буфере
         self._last_processed_buffer_index = 0
+    
+    def reset_parser_state(self):
+        """
+        ФАЗА 5: Сброс состояния парсера перед replay
+        
+        Очищает все внутренние состояния, кэши и счётчики для начала нового парсинга
+        """
+        self.parsing_table_started = False
+        self.parsing_install_started = False
+        self.current_status = "UPDATE"
+        self.packages_table = []
+        self.total_packages = 0
+        self.max_packages_found = 0
+        self.stats = {
+            'total_packages': 0,
+            'update_packages': 0,
+            'remove_packages': 0,
+            'install_packages': 0,
+            'autoremove_packages': 0
+        }
+        self.is_finished = False
+        self.main_cycle_found = False
+        self._progress_cache_valid = False
+        self._cached_progress = 0.0
+        self._package_names_set = set()
+        self._last_processed_buffer_index = 0
+        
+        # Логируем сброс в ANALYSIS поток
+        if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+            dual_logger = globals()['_global_dual_logger']
+            dual_logger.write_analysis("[PARSER] Состояние парсера сброшено для replay")
     
     def parse_from_buffer(self):
         """
