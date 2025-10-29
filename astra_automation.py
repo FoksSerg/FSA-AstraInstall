@@ -877,6 +877,9 @@ class UniversalProcessRunner(object):
                     if _global_dual_logger:
                         try:
                             _global_dual_logger.write_raw(line_clean, timestamp=True)
+                            # ФАЗА 3: Также добавляем в GUI терминал с типом "raw"
+                            if self.gui_instance and hasattr(self.gui_instance, 'add_terminal_output'):
+                                self.gui_instance.add_terminal_output(line_clean, stream_type="raw")
                         except Exception as e:
                             print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
                     
@@ -6707,6 +6710,9 @@ class AutomationGUI(object):
         self.terminal_autoscroll_enabled = self.tk.BooleanVar(value=True)
         self.terminal_timestamp_enabled = self.tk.BooleanVar(value=True)
         
+        # Переменная для выбора потока логирования
+        self.terminal_stream_mode = self.tk.StringVar(value="analysis")
+        
         # Переменная для хранения полного содержимого терминала
         self.terminal_full_content = ""
         
@@ -6726,6 +6732,41 @@ class AutomationGUI(object):
             command=self.toggle_terminal_timestamps
         )
         timestamp_checkbox.pack(side=self.tk.LEFT, padx=5)
+        
+        # НОВОЕ: Разделитель
+        separator = self.tk.Label(control_frame, text=" | ", fg="gray")
+        separator.pack(side=self.tk.LEFT, padx=2)
+        
+        # НОВОЕ: Радиокнопки выбора потока
+        stream_label = self.tk.Label(control_frame, text="Поток:")
+        stream_label.pack(side=self.tk.LEFT, padx=2)
+        
+        stream_analysis_radio = self.tk.Radiobutton(
+            control_frame,
+            text="ANALYSIS",
+            variable=self.terminal_stream_mode,
+            value="analysis",
+            command=self.switch_terminal_stream
+        )
+        stream_analysis_radio.pack(side=self.tk.LEFT, padx=2)
+        
+        stream_raw_radio = self.tk.Radiobutton(
+            control_frame,
+            text="RAW",
+            variable=self.terminal_stream_mode,
+            value="raw",
+            command=self.switch_terminal_stream
+        )
+        stream_raw_radio.pack(side=self.tk.LEFT, padx=2)
+        
+        stream_both_radio = self.tk.Radiobutton(
+            control_frame,
+            text="ОБА",
+            variable=self.terminal_stream_mode,
+            value="both",
+            command=self.switch_terminal_stream
+        )
+        stream_both_radio.pack(side=self.tk.LEFT, padx=2)
         
         # Поле поиска
         search_frame = self.tk.Frame(control_frame)
@@ -6759,6 +6800,14 @@ class AutomationGUI(object):
             command=lambda: self.load_log_to_terminal(GLOBAL_LOG_FILE) if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE else None
         )
         load_log_button.pack(side=self.tk.RIGHT, padx=5)
+        
+        # НОВОЕ: Кнопка открытия файла лога
+        open_log_button = self.tk.Button(
+            control_frame,
+            text="Открыть файл",
+            command=self.open_current_log_file
+        )
+        open_log_button.pack(side=self.tk.RIGHT, padx=5)
         
         # Кнопка обновления терминала (для ручного обновления когда автопрокрутка отключена)
         refresh_button = self.tk.Button(
@@ -6810,6 +6859,66 @@ class AutomationGUI(object):
         self.terminal_search_var.set("")
         # Принудительно применяем фильтр для восстановления всех записей
         self.filter_terminal_by_search()
+    
+    def switch_terminal_stream(self):
+        """Переключение отображаемого потока логирования"""
+        try:
+            # Просто обновляем отображение - _update_terminal_display() сам выберет нужный поток
+            self._update_terminal_display()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка переключения потока: {e}")
+    
+    def open_current_log_file(self):
+        """Открытие файла лога в системном редакторе"""
+        try:
+            # Определяем какой файл открывать в зависимости от выбранного потока
+            mode = self.terminal_stream_mode.get()
+            
+            # Получаем путь к файлу из глобального DualStreamLogger
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                dual_logger = globals()['_global_dual_logger']
+                
+                if mode == "raw":
+                    log_file = dual_logger._raw_log_path
+                elif mode == "analysis":
+                    log_file = dual_logger._analysis_log_path
+                else:  # "both"
+                    # Для режима "оба" открываем ANALYSIS файл
+                    log_file = dual_logger._analysis_log_path
+                
+                # Проверяем существование файла
+                if os.path.exists(log_file):
+                    # Открываем файл в системном редакторе
+                    if sys.platform == "darwin":  # macOS
+                        subprocess.Popen(["open", log_file])
+                    elif sys.platform.startswith("linux"):  # Linux
+                        subprocess.Popen(["xdg-open", log_file])
+                    else:  # Windows
+                        os.startfile(log_file)
+                    
+                    print(f"[INFO] Открыт файл лога: {os.path.basename(log_file)}")
+                else:
+                    print(f"[WARNING] Файл лога не найден: {log_file}")
+            else:
+                # Fallback: открываем обычный лог файл
+                if 'GLOBAL_LOG_FILE' in globals() and globals()['GLOBAL_LOG_FILE']:
+                    log_file = globals()['GLOBAL_LOG_FILE']
+                    if os.path.exists(log_file):
+                        if sys.platform == "darwin":
+                            subprocess.Popen(["open", log_file])
+                        elif sys.platform.startswith("linux"):
+                            subprocess.Popen(["xdg-open", log_file])
+                        else:
+                            os.startfile(log_file)
+                        print(f"[INFO] Открыт файл лога: {os.path.basename(log_file)}")
+                    else:
+                        print(f"[WARNING] Файл лога не найден: {log_file}")
+                else:
+                    print("[WARNING] Файлы логов не инициализированы")
+                    
+        except Exception as e:
+            print(f"[ERROR] Ошибка открытия файла лога: {e}")
     
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
@@ -8767,17 +8876,37 @@ Path={os.path.dirname(script_path)}
         except Exception as e:
             pass
     
-    def add_terminal_output(self, message):
-        """Добавление сообщения в системный терминал (ПРЯМОЕ)"""
+    def add_terminal_output(self, message, stream_type="analysis"):
+        """
+        Добавление сообщения в системный терминал (ПРЯМОЕ)
+        
+        Args:
+            message: Текст сообщения
+            stream_type: Тип потока - "analysis" (по умолчанию) или "raw"
+        """
         try:
-            # ПРЯМОЕ добавление в память без очередей
+            # Инициализируем раздельные массивы для потоков
+            if not hasattr(self, 'terminal_messages_analysis'):
+                self.terminal_messages_analysis = []
+            if not hasattr(self, 'terminal_messages_raw'):
+                self.terminal_messages_raw = []
+            
+            # Добавляем сообщение в соответствующий поток
+            if stream_type == "raw":
+                self.terminal_messages_raw.append(message)
+                # Ограничиваем размер памяти (последние 50,000 сообщений)
+                if len(self.terminal_messages_raw) > 50000:
+                    self.terminal_messages_raw = self.terminal_messages_raw[-50000:]
+            else:  # "analysis" или любой другой тип
+                self.terminal_messages_analysis.append(message)
+                # Ограничиваем размер памяти (последние 50,000 сообщений)
+                if len(self.terminal_messages_analysis) > 50000:
+                    self.terminal_messages_analysis = self.terminal_messages_analysis[-50000:]
+            
+            # Поддержка обратной совместимости: обновляем старый массив
             if not hasattr(self, 'terminal_messages'):
                 self.terminal_messages = []
-            
-            # Добавляем сообщение в память
             self.terminal_messages.append(message)
-            
-            # Ограничиваем размер памяти (последние 50,000 сообщений)
             if len(self.terminal_messages) > 50000:
                 self.terminal_messages = self.terminal_messages[-50000:]
             
@@ -8805,7 +8934,26 @@ Path={os.path.dirname(script_path)}
                 return
             self._updating_terminal = True
             
-            if not hasattr(self, 'terminal_messages') or not self.terminal_messages:
+            # НОВОЕ: Получаем сообщения в зависимости от выбранного режима
+            mode = getattr(self, 'terminal_stream_mode', None)
+            if mode:
+                mode_value = mode.get()
+                if mode_value == "raw":
+                    messages_to_display = getattr(self, 'terminal_messages_raw', [])
+                elif mode_value == "analysis":
+                    messages_to_display = getattr(self, 'terminal_messages_analysis', [])
+                elif mode_value == "both":
+                    # Объединяем оба потока
+                    messages_analysis = getattr(self, 'terminal_messages_analysis', [])
+                    messages_raw = getattr(self, 'terminal_messages_raw', [])
+                    messages_to_display = messages_analysis + messages_raw
+                else:
+                    messages_to_display = getattr(self, 'terminal_messages', [])
+            else:
+                # Fallback: используем старый массив для обратной совместимости
+                messages_to_display = getattr(self, 'terminal_messages', [])
+            
+            if not messages_to_display:
                 self._updating_terminal = False
                 return
             
@@ -8814,7 +8962,7 @@ Path={os.path.dirname(script_path)}
             
             # Фильтруем сообщения в памяти
             filtered_messages = []
-            for message in self.terminal_messages:
+            for message in messages_to_display:
                 # Добавляем timestamp если нужно
                 if self.terminal_timestamp_enabled.get():
                     import datetime
