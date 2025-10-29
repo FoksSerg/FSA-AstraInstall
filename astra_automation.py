@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.83 (2025.10.25)
+Версия: V2.3.84 (2025.10.29)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.83"
+APP_VERSION = "V2.3.84"
 import os
 import sys
 import tempfile
@@ -23,6 +23,7 @@ import threading
 import traceback
 import hashlib
 import queue
+import time
 
 # Попытка импорта psutil (может быть не установлен)
 try:
@@ -231,6 +232,244 @@ COMPONENTS_CONFIG = {
 }
 
 # ============================================================================
+# DUALSTREAMLOGGER - СИСТЕМА ДВОЙНЫХ ПОТОКОВ ЛОГИРОВАНИЯ
+# ============================================================================
+
+class DualStreamLogger:
+    """
+    Класс для управления двумя независимыми потоками логирования.
+    
+    Особенности:
+    - Потокобезопасный (thread-safe)
+    - Буферы в памяти с ограничением размера
+    - Независимые потоки для RAW и ANALYSIS данных
+    - Асинхронная запись в файлы (неблокирующая)
+    
+    RAW-поток: необработанный вывод apt-get и системных процессов (без задержек)
+    ANALYSIS-поток: аналитика, парсинг, мониторинг нашей системы
+    """
+    
+    def __init__(self, max_buffer_size=10000, raw_log_path=None, analysis_log_path=None):
+        """Инициализация DualStreamLogger"""
+        from collections import deque
+        # Буферы в памяти
+        self._raw_buffer = deque(maxlen=max_buffer_size)
+        self._analysis_buffer = deque(maxlen=max_buffer_size)
+        
+        # Блокировки для потокобезопасности
+        self._raw_lock = threading.Lock()
+        self._analysis_lock = threading.Lock()
+        
+        # Настройки
+        self._max_buffer_size = max_buffer_size
+        
+        # Файловое логирование
+        self._raw_log_path = raw_log_path
+        self._analysis_log_path = analysis_log_path
+        self._file_queue = queue.Queue()
+        self._file_writer_thread = None
+        self._file_writer_running = False
+        self._raw_file = None
+        self._analysis_file = None
+    
+    def write_raw(self, message, timestamp=True):
+        """Записать сообщение в RAW-поток"""
+        if timestamp:
+            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            formatted_message = "[%s] %s" % (timestamp_str, message)
+        else:
+            formatted_message = message
+        
+        with self._raw_lock:
+            self._raw_buffer.append(formatted_message)
+        
+        # Асинхронная запись в файл (если включено)
+        if self._file_writer_running and self._raw_log_path:
+            self._file_queue.put(('raw', formatted_message))
+    
+    def write_analysis(self, message, timestamp=True):
+        """Записать сообщение в ANALYSIS-поток"""
+        if timestamp:
+            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            formatted_message = "[%s] %s" % (timestamp_str, message)
+        else:
+            formatted_message = message
+        
+        with self._analysis_lock:
+            self._analysis_buffer.append(formatted_message)
+        
+        # Асинхронная запись в файл (если включено)
+        if self._file_writer_running and self._analysis_log_path:
+            self._file_queue.put(('analysis', formatted_message))
+    
+    def get_raw_buffer(self):
+        """Получить все содержимое RAW-буфера"""
+        with self._raw_lock:
+            return list(self._raw_buffer)
+    
+    def get_analysis_buffer(self):
+        """Получить все содержимое ANALYSIS-буфера"""
+        with self._analysis_lock:
+            return list(self._analysis_buffer)
+    
+    def get_raw_last_n(self, n):
+        """Получить последние N строк из RAW-буфера"""
+        with self._raw_lock:
+            buffer_list = list(self._raw_buffer)
+            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
+    
+    def get_analysis_last_n(self, n):
+        """Получить последние N строк из ANALYSIS-буфера"""
+        with self._analysis_lock:
+            buffer_list = list(self._analysis_buffer)
+            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
+    
+    def clear_raw_buffer(self):
+        """Очистить RAW-буфер"""
+        with self._raw_lock:
+            self._raw_buffer.clear()
+    
+    def clear_analysis_buffer(self):
+        """Очистить ANALYSIS-буфер"""
+        with self._analysis_lock:
+            self._analysis_buffer.clear()
+    
+    def get_raw_buffer_size(self):
+        """Получить текущий размер RAW-буфера"""
+        with self._raw_lock:
+            return len(self._raw_buffer)
+    
+    def get_analysis_buffer_size(self):
+        """Получить текущий размер ANALYSIS-буфера"""
+        with self._analysis_lock:
+            return len(self._analysis_buffer)
+    
+    def _file_writer_worker(self):
+        """Рабочий поток для асинхронной записи в файлы"""
+        buffer_raw = []
+        buffer_analysis = []
+        last_flush_time = time.time()
+        flush_interval = 1.0
+        flush_count = 50
+        
+        try:
+            while self._file_writer_running:
+                try:
+                    stream_type, message = self._file_queue.get(timeout=0.1)
+                    
+                    if stream_type == 'raw':
+                        buffer_raw.append(message + '\n')
+                    elif stream_type == 'analysis':
+                        buffer_analysis.append(message + '\n')
+                    
+                    current_time = time.time()
+                    should_flush = (
+                        len(buffer_raw) >= flush_count or
+                        len(buffer_analysis) >= flush_count or
+                        (current_time - last_flush_time) >= flush_interval
+                    )
+                    
+                    if should_flush:
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                        last_flush_time = current_time
+                    
+                except queue.Empty:
+                    current_time = time.time()
+                    if (current_time - last_flush_time) >= flush_interval:
+                        if buffer_raw or buffer_analysis:
+                            self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                            buffer_raw.clear()
+                            buffer_analysis.clear()
+                        last_flush_time = current_time
+                except Exception as e:
+                    print("[DualStreamLogger] Ошибка в file_writer: %s" % str(e))
+            
+            if buffer_raw or buffer_analysis:
+                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+        
+        except Exception as e:
+            print("[DualStreamLogger] Критическая ошибка в file_writer: %s" % str(e))
+        finally:
+            if self._raw_file:
+                self._raw_file.close()
+                self._raw_file = None
+            if self._analysis_file:
+                self._analysis_file.close()
+                self._analysis_file = None
+    
+    def _flush_buffers_to_files(self, buffer_raw, buffer_analysis):
+        """Записать буферы в файлы"""
+        try:
+            if buffer_raw and self._raw_file:
+                self._raw_file.writelines(buffer_raw)
+                self._raw_file.flush()
+            
+            if buffer_analysis and self._analysis_file:
+                self._analysis_file.writelines(buffer_analysis)
+                self._analysis_file.flush()
+        except Exception as e:
+            print("[DualStreamLogger] Ошибка записи в файлы: %s" % str(e))
+    
+    def start_file_logging(self):
+        """Запустить файловое логирование"""
+        if self._file_writer_running:
+            return False
+        
+        try:
+            if self._raw_log_path:
+                self._raw_file = open(self._raw_log_path, 'a', encoding='utf-8')
+            
+            if self._analysis_log_path:
+                self._analysis_file = open(self._analysis_log_path, 'a', encoding='utf-8')
+            
+            self._file_writer_running = True
+            self._file_writer_thread = threading.Thread(
+                target=self._file_writer_worker,
+                daemon=True,
+                name="DualStreamLogger-FileWriter"
+            )
+            self._file_writer_thread.start()
+            
+            return True
+        
+        except Exception as e:
+            print("[DualStreamLogger] Ошибка запуска файлового логирования: %s" % str(e))
+            self._file_writer_running = False
+            return False
+    
+    def stop_file_logging(self, flush=True):
+        """Остановить файловое логирование"""
+        if not self._file_writer_running:
+            return
+        
+        self._file_writer_running = False
+        
+        if self._file_writer_thread and self._file_writer_thread.is_alive():
+            self._file_writer_thread.join(timeout=5.0)
+        
+        self._file_writer_thread = None
+    
+    @staticmethod
+    def create_default_logger(analysis_log_path, max_buffer_size=10000):
+        """Создать DualStreamLogger с дефолтными путями"""
+        log_dir = os.path.dirname(analysis_log_path)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
+        
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        logger = DualStreamLogger(
+            max_buffer_size=max_buffer_size,
+            raw_log_path=raw_log_path,
+            analysis_log_path=analysis_log_path
+        )
+        
+        return logger
+
+# ============================================================================
 # ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
 # ============================================================================
 
@@ -247,6 +486,17 @@ def universal_print(*args, **kwargs):
     if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
         with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
             f.write(f"[INFO] {message}\n")
+    
+    # НОВОЕ: ДОПОЛНИТЕЛЬНО дублируем в ANALYSIS-поток DualStreamLogger (если есть)
+    # Это НЕ МЕНЯЕТ существующую логику, просто добавляет дублирование
+    if hasattr(sys, '_gui_instance') and sys._gui_instance:
+        try:
+            if hasattr(sys._gui_instance.universal_runner, 'dual_logger'):
+                dual_logger = sys._gui_instance.universal_runner.dual_logger
+                if dual_logger:
+                    dual_logger.write_analysis(f"[PRINT] {message}", timestamp=True)
+        except Exception:
+            pass  # Не ломаем работу если что-то пошло не так
     
     # В терминал GUI (если готов)
     if hasattr(sys, '_gui_instance') and sys._gui_instance:
@@ -276,6 +526,9 @@ builtins.print = universal_print
 
 # Глобальный экземпляр UniversalProcessRunner будет создан после определения класса
 _global_universal_runner = None
+
+# Глобальный экземпляр DualStreamLogger для двойных потоков логирования
+_global_dual_logger = None
 
 def get_global_universal_runner():
     """Получение глобального экземпляра UniversalProcessRunner"""
@@ -378,6 +631,9 @@ class UniversalProcessRunner(object):
             gui_log_callback: Функция для отправки сообщений в GUI лог
             gui_instance: Ссылка на экземпляр GUI
             parser: Парсер для обработки строк (SystemUpdateParser)
+        
+        Note:
+            DualStreamLogger используется через глобальную переменную _global_dual_logger
         """
         
         self.logger = logger
@@ -617,6 +873,13 @@ class UniversalProcessRunner(object):
                 # Выводим строку в реальном времени
                 line_clean = line.rstrip()
                 if line_clean:
+                    # НОВОЕ: Записываем RAW-вывод процесса в отдельный поток (используем глобальный dual_logger)
+                    if _global_dual_logger:
+                        try:
+                            _global_dual_logger.write_raw(line_clean, timestamp=True)
+                        except Exception as e:
+                            print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
+                    
                     # Парсер получает СЫРУЮ строку от внешнего процесса
                     if self.parser:
                         try:
@@ -624,7 +887,7 @@ class UniversalProcessRunner(object):
                         except Exception as e:
                             print(f"[PARSER_ERROR] Ошибка парсинга: {e}", gui_log=True)
                     
-                    # Наш лог получает ОБРАБОТАННУЮ строку
+                    # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
                     self._log("  %s" % line_clean, "INFO", channels)
                     output_buffer += line
                 
@@ -12793,10 +13056,45 @@ def main():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
     
+    # НОВОЕ: Инициализируем DualStreamLogger для разделения потоков
+    print("[DUAL_STREAM] Инициализация системы двойных потоков логирования...")
+    dual_logger = None
+    try:
+        # Создаём DualStreamLogger с интеграцией в существующую систему
+        dual_logger = DualStreamLogger.create_default_logger(
+            analysis_log_path=GLOBAL_LOG_FILE,
+            max_buffer_size=10000
+        )
+        
+        # Запускаем файловое логирование
+        dual_logger.start_file_logging()
+        
+        print("[DUAL_STREAM] ✓ DualStreamLogger создан и запущен")
+        print("[DUAL_STREAM]   - RAW-поток (apt): %s" % os.path.basename(dual_logger._raw_log_path))
+        print("[DUAL_STREAM]   - ANALYSIS-поток: %s" % os.path.basename(dual_logger._analysis_log_path))
+        
+        # НОВОЕ: Устанавливаем глобальную переменную для доступа из UniversalProcessRunner
+        global _global_dual_logger
+        _global_dual_logger = dual_logger
+        
+        # ТЕСТОВАЯ ЗАПИСЬ: Проверяем что RAW-поток работает
+        try:
+            _global_dual_logger.write_raw("=== ТЕСТ: DualStreamLogger инициализирован ===", timestamp=True)
+            _global_dual_logger.write_raw("=== ТЕСТ: RAW-поток готов к приему данных от apt-get ===", timestamp=True)
+            _global_dual_logger.flush_buffers()  # Принудительная запись для теста
+            print("[DUAL_STREAM] ✓ Тестовые записи добавлены в RAW-поток")
+        except Exception as test_e:
+            print("[DUAL_STREAM] ⚠ Ошибка тестовой записи: %s" % str(test_e))
+    except Exception as e:
+        print("[DUAL_STREAM] ⚠ Ошибка инициализации DualStreamLogger: %s" % str(e))
+        print("[DUAL_STREAM]   Продолжаем без разделения потоков...")
+        dual_logger = None
+        _global_dual_logger = None
+    
     # Проверяем аргументы командной строки для лог-файла
     print(f"[DEBUG_ARGS] Все аргументы: {sys.argv}")
     
-    # Создаем единый universal_runner для всего приложения
+    # Создаем единый universal_runner для всего приложения (dual_logger через глобальную переменную)
     logger = UniversalProcessRunner()
     logger.set_log_file(log_file)
     
@@ -13111,6 +13409,16 @@ def main():
             # Очищаем временные файлы
             if temp_dir:
                 cleanup_temp_files(temp_dir)
+            
+            # НОВОЕ: Останавливаем DualStreamLogger перед завершением
+            if dual_logger:
+                try:
+                    print("[DUAL_STREAM] Остановка файлового логирования...")
+                    dual_logger.stop_file_logging(flush=True)
+                    print("[DUAL_STREAM] ✓ DualStreamLogger остановлен")
+                except Exception as e:
+                    print(f"[DUAL_STREAM] ⚠ Ошибка остановки: {e}")
+            
             print("[INFO] Программа завершена", gui_log=True)
             
     except Exception as main_error:
@@ -13118,6 +13426,14 @@ def main():
         print(f"[ERROR] Критическая ошибка в main(): {main_error}", gui_log=True)
         print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
         print("Проверьте лог файл: %s" % logger.get_log_path())
+        
+        # НОВОЕ: Останавливаем DualStreamLogger при критической ошибке
+        if 'dual_logger' in locals() and dual_logger:
+            try:
+                dual_logger.stop_file_logging(flush=True)
+            except:
+                pass
+        
         # Очищаем блокирующие файлы при критической ошибке
         try:
             print("[INFO] Очистка блокировок", gui_log=True)
