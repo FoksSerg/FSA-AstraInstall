@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.84 (2025.10.29)
+Версия: V2.3.86 (2025.10.29)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.84"
+APP_VERSION = "V2.3.86"
 import os
 import sys
 import tempfile
@@ -399,6 +399,21 @@ class DualStreamLogger:
                 self._analysis_file.close()
                 self._analysis_file = None
     
+    def flush_buffers(self):
+        """Публичный метод для принудительной записи буферов в файлы"""
+        try:
+            # Получаем текущие буферы и записываем их
+            with self._raw_lock:
+                buffer_raw = list(self._raw_buffer)
+            
+            with self._analysis_lock:
+                buffer_analysis = list(self._analysis_buffer)
+            
+            if buffer_raw or buffer_analysis:
+                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+        except Exception as e:
+            print(f"[DualStreamLogger] Ошибка flush_buffers: {e}")
+    
     def _flush_buffers_to_files(self, buffer_raw, buffer_analysis):
         """Записать буферы в файлы"""
         try:
@@ -470,6 +485,138 @@ class DualStreamLogger:
         return logger
 
 # ============================================================================
+# LOG REPLAY SIMULATOR (ФАЗА 5)
+# ============================================================================
+class LogReplaySimulator:
+    """
+    Симулятор воспроизведения логов для отладки парсинга на macOS
+    
+    Позволяет загрузить RAW лог с Linux и воспроизвести его в реальном времени,
+    эмулируя работу apt-get процесса. Парсер обрабатывает replay как живые данные.
+    """
+    
+    def __init__(self):
+        """Инициализация симулятора"""
+        self.log_lines = []
+        self.current_line = 0
+        self.is_playing = False
+        self.is_paused = False
+        self.speed = 1.0  # Скорость воспроизведения (1.0 = реальное время)
+        self.replay_thread = None
+    
+    def load_log_file(self, log_path):
+        """
+        Загрузка файла лога
+        
+        Args:
+            log_path: Путь к файлу лога
+            
+        Returns:
+            int: Количество загруженных строк
+        """
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                self.log_lines = f.readlines()
+            
+            self.current_line = 0
+            print(f"[REPLAY] Загружено {len(self.log_lines)} строк из {os.path.basename(log_path)}")
+            return len(self.log_lines)
+            
+        except Exception as e:
+            print(f"[REPLAY_ERROR] Ошибка загрузки лога: {e}")
+            return 0
+    
+    def replay(self, dual_logger, speed=1.0, callback=None):
+        """
+        Воспроизведение лога в DualStreamLogger
+        
+        Args:
+            dual_logger: Экземпляр DualStreamLogger для записи
+            speed: Скорость воспроизведения (1.0 = реальное время, 10.0 = в 10 раз быстрее)
+            callback: Функция обратного вызова для прогресса (progress_percent)
+        """
+        import threading
+        import time
+        
+        self.speed = speed
+        self.is_playing = True
+        self.is_paused = False
+        
+        def _replay_thread():
+            """Поток воспроизведения"""
+            try:
+                total_lines = len(self.log_lines)
+                
+                for i, line in enumerate(self.log_lines):
+                    # Проверка на остановку
+                    if not self.is_playing:
+                        break
+                    
+                    # Проверка на паузу
+                    while self.is_paused and self.is_playing:
+                        time.sleep(0.1)
+                    
+                    # Убираем временные метки из строки (если есть)
+                    clean_line = line.strip()
+                    if clean_line.startswith('[') and '] ' in clean_line:
+                        # Убираем метку времени типа [HH:MM:SS]
+                        clean_line = clean_line.split('] ', 1)[1] if '] ' in clean_line else clean_line
+                    
+                    # Записываем в RAW-поток
+                    if clean_line:
+                        dual_logger.write_raw(clean_line, timestamp=True)
+                    
+                    # Задержка в зависимости от скорости
+                    # Реалистичная задержка ~ 10ms между строками apt
+                    base_delay = 0.01  # 10ms
+                    delay = base_delay / self.speed
+                    time.sleep(delay)
+                    
+                    # Обновление прогресса
+                    self.current_line = i + 1
+                    if callback:
+                        progress = (self.current_line / total_lines) * 100
+                        callback(progress)
+                
+                print(f"[REPLAY] Завершено: {self.current_line}/{total_lines} строк")
+                self.is_playing = False
+                
+            except Exception as e:
+                print(f"[REPLAY_ERROR] Ошибка воспроизведения: {e}")
+                self.is_playing = False
+        
+        # Запускаем в отдельном потоке
+        self.replay_thread = threading.Thread(target=_replay_thread, daemon=True)
+        self.replay_thread.start()
+    
+    def pause(self):
+        """Приостановить воспроизведение"""
+        self.is_paused = True
+    
+    def resume(self):
+        """Продолжить воспроизведение"""
+        self.is_paused = False
+    
+    def stop(self):
+        """Остановить воспроизведение"""
+        self.is_playing = False
+        self.is_paused = False
+    
+    def get_progress(self):
+        """
+        Получить текущий прогресс воспроизведения
+        
+        Returns:
+            tuple: (current_line, total_lines, progress_percent)
+        """
+        total = len(self.log_lines)
+        if total == 0:
+            return (0, 0, 0.0)
+        
+        progress = (self.current_line / total) * 100
+        return (self.current_line, total, progress)
+
+# ============================================================================
 # ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
 # ============================================================================
 
@@ -501,7 +648,9 @@ def universal_print(*args, **kwargs):
     # В терминал GUI (если готов)
     if hasattr(sys, '_gui_instance') and sys._gui_instance:
         try:
-            sys._gui_instance.universal_runner.gui_callback(message)
+            if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
+                if hasattr(sys._gui_instance.universal_runner, 'gui_callback') and sys._gui_instance.universal_runner.gui_callback:
+                    sys._gui_instance.universal_runner.gui_callback(message)
         except Exception as e:
             if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
                 with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
@@ -883,12 +1032,13 @@ class UniversalProcessRunner(object):
                         except Exception as e:
                             print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
                     
-                    # Парсер получает СЫРУЮ строку от внешнего процесса
-                    if self.parser:
-                        try:
-                            self.parser.parse_line(line_clean)
-                        except Exception as e:
-                            print(f"[PARSER_ERROR] Ошибка парсинга: {e}", gui_log=True)
+                    # ФАЗА 4: Парсер теперь читает из RAW-буфера, а не напрямую
+                    # Старый прямой парсинг ОТКЛЮЧЕН для избежания двойной обработки
+                    # if self.parser:
+                    #     try:
+                    #         self.parser.parse_line(line_clean)
+                    #     except Exception as e:
+                    #         print(f"[PARSER_ERROR] Ошибка парсинга: {e}", gui_log=True)
                     
                     # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
                     self._log("  %s" % line_clean, "INFO", channels)
@@ -6017,7 +6167,7 @@ class AutomationGUI(object):
                         for widget in processes_frame.winfo_children():
                             widget.destroy()
                         
-                        clean_label = tk.Label(processes_frame, text="✓ Все процессы установки закрыты", 
+                        clean_label = tk.Label(processes_frame, text="OK: Все процессы установки закрыты", 
                                               font=("Arial", 12), fg="#00aa00")
                         clean_label.pack(pady=20)
                         
@@ -6673,8 +6823,8 @@ class AutomationGUI(object):
         terminal_frame = self.tk.LabelFrame(self.terminal_frame, text="Системный терминал")
         terminal_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Создаем Text виджет для терминала
-        self.terminal_text = self.tk.Text(terminal_frame, height=15, wrap=self.tk.WORD, 
+        # Создаем Text виджет для терминала (уменьшена высота)
+        self.terminal_text = self.tk.Text(terminal_frame, height=12, wrap=self.tk.WORD, 
                                        font=('Courier', 10), bg='white', fg='black')
         terminal_scrollbar = self.tk.Scrollbar(terminal_frame, orient=self.tk.VERTICAL, 
                                             command=self.terminal_text.yview)
@@ -6701,8 +6851,8 @@ class AutomationGUI(object):
         self.start_terminal_monitoring()
     
     def create_terminal_control_panel(self):
-        """Создание панели управления терминалом"""
-        # Панель управления
+        """Создание панели управления терминалом (две строки)"""
+        # Главная панель управления
         control_frame = self.tk.Frame(self.terminal_frame)
         control_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
@@ -6716,33 +6866,47 @@ class AutomationGUI(object):
         # Переменная для хранения полного содержимого терминала
         self.terminal_full_content = ""
         
+        # ПЕРВАЯ СТРОКА: Чекбоксы и радиокнопки
+        first_row = self.tk.Frame(control_frame)
+        first_row.pack(fill=self.tk.X, pady=2)
+        
         # Флажок автоперемотки
+        def test_autoscroll_change():
+            """Тестовая функция для проверки работы кнопок"""
+            print("=" * 60)
+            print("[TEST_BUTTON] КНОПКА АВТОПРОКРУТКИ РАБОТАЕТ!")
+            print(f"[TEST_BUTTON] Значение: {self.terminal_autoscroll_enabled.get()}")
+            print("=" * 60)
+            import sys
+            sys.stdout.flush()  # Принудительный flush
+        
         autoscroll_checkbox = self.tk.Checkbutton(
-            control_frame, 
+            first_row, 
             text="Автоперемотка", 
-            variable=self.terminal_autoscroll_enabled
+            variable=self.terminal_autoscroll_enabled,
+            command=test_autoscroll_change
         )
         autoscroll_checkbox.pack(side=self.tk.LEFT, padx=5)
         
         # Флажок временных меток
         timestamp_checkbox = self.tk.Checkbutton(
-            control_frame, 
+            first_row, 
             text="Метка времени", 
             variable=self.terminal_timestamp_enabled,
             command=self.toggle_terminal_timestamps
         )
         timestamp_checkbox.pack(side=self.tk.LEFT, padx=5)
         
-        # НОВОЕ: Разделитель
-        separator = self.tk.Label(control_frame, text=" | ", fg="gray")
+        # Разделитель
+        separator = self.tk.Label(first_row, text=" | ", fg="gray")
         separator.pack(side=self.tk.LEFT, padx=2)
         
-        # НОВОЕ: Радиокнопки выбора потока
-        stream_label = self.tk.Label(control_frame, text="Поток:")
+        # Радиокнопки выбора потока
+        stream_label = self.tk.Label(first_row, text="Поток:")
         stream_label.pack(side=self.tk.LEFT, padx=2)
         
         stream_analysis_radio = self.tk.Radiobutton(
-            control_frame,
+            first_row,
             text="ANALYSIS",
             variable=self.terminal_stream_mode,
             value="analysis",
@@ -6751,7 +6915,7 @@ class AutomationGUI(object):
         stream_analysis_radio.pack(side=self.tk.LEFT, padx=2)
         
         stream_raw_radio = self.tk.Radiobutton(
-            control_frame,
+            first_row,
             text="RAW",
             variable=self.terminal_stream_mode,
             value="raw",
@@ -6760,7 +6924,7 @@ class AutomationGUI(object):
         stream_raw_radio.pack(side=self.tk.LEFT, padx=2)
         
         stream_both_radio = self.tk.Radiobutton(
-            control_frame,
+            first_row,
             text="ОБА",
             variable=self.terminal_stream_mode,
             value="both",
@@ -6768,8 +6932,8 @@ class AutomationGUI(object):
         )
         stream_both_radio.pack(side=self.tk.LEFT, padx=2)
         
-        # Поле поиска
-        search_frame = self.tk.Frame(control_frame)
+        # Поле поиска (справа на первой строке)
+        search_frame = self.tk.Frame(first_row)
         search_frame.pack(side=self.tk.RIGHT, padx=5)
         
         self.terminal_search_var = self.tk.StringVar()
@@ -6786,24 +6950,70 @@ class AutomationGUI(object):
         # Кнопка очистки поиска
         clear_search_button = self.tk.Button(
             search_frame, 
-            text="×", 
+            text="X", 
             width=2,
             height=1,
             command=self.clear_terminal_search
         )
         clear_search_button.pack(side=self.tk.LEFT, padx=2)
         
+        # ВТОРАЯ СТРОКА: Кнопки
+        second_row = self.tk.Frame(control_frame)
+        second_row.pack(fill=self.tk.X, pady=2)
+        
         # Кнопка загрузки лога
+        def load_log_cmd():
+            """Команда для загрузки лога"""
+            try:
+                import sys
+                sys.stdout.flush()  # Принудительный flush
+                print("=" * 60)
+                print("[DEBUG_LOAD_LOG_CMD] КНОПКА 'Загрузить лог' НАЖАТА!")
+                print("=" * 60)
+                sys.stdout.flush()
+                print(f"[DEBUG_LOAD_LOG_CMD] Проверка GLOBAL_LOG_FILE в globals(): {'GLOBAL_LOG_FILE' in globals()}")
+                
+                if 'GLOBAL_LOG_FILE' in globals():
+                    log_file = globals()['GLOBAL_LOG_FILE']
+                    print(f"[DEBUG_LOAD_LOG_CMD] GLOBAL_LOG_FILE = {log_file}")
+                    print(f"[DEBUG_LOAD_LOG_CMD] Тип: {type(log_file)}")
+                    
+                    if log_file:
+                        print(f"[DEBUG_LOAD_LOG_CMD] Вызываю load_log_to_terminal({log_file})")
+                        self.load_log_to_terminal(log_file)
+                    else:
+                        print("[DEBUG_LOAD_LOG_CMD] ERROR: GLOBAL_LOG_FILE пустой или None")
+                else:
+                    print("[DEBUG_LOAD_LOG_CMD] ERROR: GLOBAL_LOG_FILE не найден в globals()")
+                    
+            except Exception as e:
+                import traceback
+                import sys
+                print(f"[DEBUG_LOAD_LOG_CMD] EXCEPTION в load_log_cmd: {e}")
+                print("[DEBUG_LOAD_LOG_CMD] Traceback:")
+                traceback.print_exc()
+                sys.stdout.flush()
+                sys.stderr.flush()
+        
+        # Кнопки справа на второй строке
         load_log_button = self.tk.Button(
-            control_frame, 
+            second_row, 
             text="Загрузить лог", 
-            command=lambda: self.load_log_to_terminal(GLOBAL_LOG_FILE) if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE else None
+            command=load_log_cmd
         )
         load_log_button.pack(side=self.tk.RIGHT, padx=5)
         
+        # ФАЗА 5: Кнопка Replay логов
+        replay_log_button = self.tk.Button(
+            second_row,
+            text="Replay Log",
+            command=self.open_replay_dialog
+        )
+        replay_log_button.pack(side=self.tk.RIGHT, padx=5)
+        
         # НОВОЕ: Кнопка открытия файла лога
         open_log_button = self.tk.Button(
-            control_frame,
+            second_row,
             text="Открыть файл",
             command=self.open_current_log_file
         )
@@ -6811,7 +7021,7 @@ class AutomationGUI(object):
         
         # Кнопка обновления терминала (для ручного обновления когда автопрокрутка отключена)
         refresh_button = self.tk.Button(
-            control_frame, 
+            second_row, 
             text="Обновить", 
             command=self._manual_refresh_terminal
         )
@@ -6819,7 +7029,7 @@ class AutomationGUI(object):
         
         # Кнопка очистки терминала
         clear_button = self.tk.Button(
-            control_frame, 
+            second_row, 
             text="Очистить", 
             command=self.clear_terminal
         )
@@ -6919,6 +7129,66 @@ class AutomationGUI(object):
                     
         except Exception as e:
             print(f"[ERROR] Ошибка открытия файла лога: {e}")
+    
+    def open_replay_dialog(self):
+        """ФАЗА 5: Открытие диалога выбора лога для replay (простая версия - только выбор файла)"""
+        try:
+            import sys
+            sys.stdout.flush()
+            print("=" * 60)
+            print("[TEST_REPLAY] КНОПКА 'Replay Log' НАЖАТА!")
+            print("=" * 60)
+            sys.stdout.flush()
+            
+            import tkinter.filedialog as filedialog
+            
+            print("[TEST_REPLAY] Импорт filedialog успешен")
+            sys.stdout.flush()
+            
+            # Простой путь к LogLinux
+            script_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') and sys.argv else os.getcwd()
+            log_dir = os.path.join(script_dir, "LogLinux")
+            
+            print(f"[TEST_REPLAY] Путь к LogLinux: {log_dir}")
+            print(f"[TEST_REPLAY] Существует: {os.path.exists(log_dir)}")
+            sys.stdout.flush()
+            
+            if not os.path.exists(log_dir):
+                log_dir = os.path.join(script_dir, "Log")
+                print(f"[TEST_REPLAY] Используем Log вместо LogLinux: {log_dir}")
+                sys.stdout.flush()
+            
+            print(f"[TEST_REPLAY] Открываем диалог выбора файла...")
+            sys.stdout.flush()
+            
+            # Простой выбор файла
+            log_file = filedialog.askopenfilename(
+                title="Выберите RAW лог для воспроизведения",
+                initialdir=log_dir if os.path.exists(log_dir) else script_dir,
+                filetypes=[
+                    ("Log files", "*.log"),
+                    ("All files", "*.*")
+                ]
+            )
+            
+            print(f"[TEST_REPLAY] Выбранный файл: {log_file}")
+            sys.stdout.flush()
+            
+            if not log_file:
+                print("[TEST_REPLAY] Файл не выбран (отменено)")
+                sys.stdout.flush()
+                return  # Пользователь отменил выбор
+            
+            print(f"[TEST_REPLAY] Файл выбран успешно: {log_file}")
+            sys.stdout.flush()
+            
+        except Exception as e:
+            import traceback
+            import sys
+            print(f"[TEST_REPLAY] EXCEPTION: {e}")
+            traceback.print_exc()
+            sys.stdout.flush()
+            sys.stderr.flush()
     
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
@@ -8975,21 +9245,38 @@ Path={os.path.dirname(script_path)}
                 if not search_text or formatted_message.lower().find(search_text) != -1:
                     filtered_messages.append(formatted_message)
             
+            # Проверяем что виджет терминала еще существует
+            if not hasattr(self, 'terminal_text'):
+                self._updating_terminal = False
+                return
+            
+            try:
+                # Проверяем что виджет не уничтожен
+                self.terminal_text.winfo_exists()
+            except:
+                # Виджет уничтожен - выходим
+                self._updating_terminal = False
+                return
+            
             # Обновляем терминал (только при изменении фильтра)
-            self.terminal_text.config(state=self.tk.NORMAL)
-            self.terminal_text.delete(1.0, self.tk.END)  # Очищаем
-            
-            # Добавляем отфильтрованные сообщения пакетами
-            for i in range(0, len(filtered_messages), 100):
-                batch = filtered_messages[i:i+100]
-                batch_text = "\n".join(batch) + "\n"
-                self.terminal_text.insert(self.tk.END, batch_text)
-            
-            # Прокручиваем вниз
-            if self.terminal_autoscroll_enabled.get():
-                self.terminal_text.see(self.tk.END)
-            
-            self.terminal_text.config(state=self.tk.DISABLED)
+            try:
+                self.terminal_text.config(state=self.tk.NORMAL)
+                self.terminal_text.delete(1.0, self.tk.END)  # Очищаем
+                
+                # Добавляем отфильтрованные сообщения пакетами
+                for i in range(0, len(filtered_messages), 100):
+                    batch = filtered_messages[i:i+100]
+                    batch_text = "\n".join(batch) + "\n"
+                    self.terminal_text.insert(self.tk.END, batch_text)
+                
+                # Прокручиваем вниз
+                if self.terminal_autoscroll_enabled.get():
+                    self.terminal_text.see(self.tk.END)
+                
+                self.terminal_text.config(state=self.tk.DISABLED)
+            except:
+                # Виджет уничтожен во время обновления - выходим
+                pass
             self._updating_terminal = False
             
         except Exception as e:
@@ -8999,39 +9286,86 @@ Path={os.path.dirname(script_path)}
     def load_log_to_terminal(self, log_file_path):
         """Загрузка существующего лога в терминал (с оптимизацией для больших файлов)"""
         try:
+            print(f"[DEBUG_LOAD_LOG] Начало загрузки лога: {log_file_path}")
+            
+            # Проверяем входные параметры
+            if not log_file_path:
+                print("[DEBUG_LOAD_LOG] ERROR: log_file_path пустой или None")
+                return
+            
+            if not isinstance(log_file_path, str):
+                print(f"[DEBUG_LOAD_LOG] ERROR: log_file_path не строка: {type(log_file_path)}")
+                return
+            
             # Получаем размер файла
             import os
+            print(f"[DEBUG_LOAD_LOG] Проверка существования файла: {log_file_path}")
+            if not os.path.exists(log_file_path):
+                print(f"[DEBUG_LOAD_LOG] ERROR: Файл не существует: {log_file_path}")
+                return
+            
+            print(f"[DEBUG_LOAD_LOG] Файл существует, получаем размер...")
             file_size = os.path.getsize(log_file_path)
             file_size_mb = file_size / (1024 * 1024)
+            print(f"[DEBUG_LOAD_LOG] Размер файла: {file_size_mb:.2f} MB ({file_size} байт)")
             
             # Читаем файл лога
+            print(f"[DEBUG_LOAD_LOG] Начинаем чтение файла...")
             with open(log_file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
+            print(f"[DEBUG_LOAD_LOG] Прочитано строк: {len(lines)}")
             
             # Очищаем текущие сообщения
+            print(f"[DEBUG_LOAD_LOG] Очистка terminal_messages...")
             if hasattr(self, 'terminal_messages'):
                 self.terminal_messages.clear()
             else:
                 self.terminal_messages = []
             
+            # Также очищаем раздельные потоки
+            if hasattr(self, 'terminal_messages_analysis'):
+                self.terminal_messages_analysis.clear()
+            else:
+                self.terminal_messages_analysis = []
+            
+            if hasattr(self, 'terminal_messages_raw'):
+                self.terminal_messages_raw.clear()
+            else:
+                self.terminal_messages_raw = []
+            
+            print(f"[DEBUG_LOAD_LOG] Буферы очищены")
+            
             # Для больших файлов (>10MB) загружаем только последние строки
             if file_size_mb > 10:
                 print(f"[INFO] Большой файл - загружаем только последние 20,000 строк", gui_log=True)
                 lines = lines[-20000:]  # Последние 20,000 строк
+                print(f"[DEBUG_LOAD_LOG] Обрезано до: {len(lines)} строк")
             
             # Добавляем строки из лога
+            print(f"[DEBUG_LOAD_LOG] Начинаем добавление строк в буфер...")
             loaded_count = 0
-            for line in lines:
+            for i, line in enumerate(lines):
                 line = line.strip()
                 if line:  # Пропускаем пустые строки
                     self.terminal_messages.append(line)
                     loaded_count += 1
+                    if loaded_count % 1000 == 0:
+                        print(f"[DEBUG_LOAD_LOG] Добавлено строк: {loaded_count}...")
+            
+            print(f"[DEBUG_LOAD_LOG] Всего добавлено строк: {loaded_count}")
             
             # Обновляем отображение терминала
+            print(f"[DEBUG_LOAD_LOG] Обновление отображения терминала...")
             self._update_terminal_display()
+            print(f"[DEBUG_LOAD_LOG] Загрузка лога завершена успешно")
             
         except Exception as e:
-            print(f"[ERROR] Ошибка загрузки лога: {e}", gui_log=True)
+            import traceback
+            error_msg = f"[ERROR] Ошибка загрузки лога: {e}"
+            print(error_msg)
+            print(f"[DEBUG_LOAD_LOG] Traceback:")
+            traceback.print_exc()
+            print(error_msg, gui_log=True)
     
     def add_gui_log_output(self, message):
         """Добавление сообщения в GUI лог (потокобезопасно)"""
@@ -9207,6 +9541,16 @@ Path={os.path.dirname(script_path)}
             # Обрабатываем очередь UniversalProcessRunner
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.process_queue()
+            
+            # ФАЗА 4: Парсер читает из RAW-буфера
+            if hasattr(self, 'system_updater') and self.system_updater:
+                if hasattr(self.system_updater, 'system_update_parser'):
+                    parser = self.system_updater.system_update_parser
+                    if parser and hasattr(parser, 'parse_from_buffer'):
+                        try:
+                            parser.parse_from_buffer()
+                        except Exception as e:
+                            print(f"[PARSER_ERROR] Ошибка parse_from_buffer: {e}")
             
             # Обрабатываем сообщения из очереди (максимум 20 за раз для стабильности)
             processed_count = 0
@@ -10259,6 +10603,53 @@ class SystemUpdateParser:
         
         # Множество для быстрого поиска пакетов O(1)
         self._package_names_set = set()
+        
+        # ФАЗА 4: Отслеживание позиции в RAW-буфере
+        self._last_processed_buffer_index = 0
+    
+    def parse_from_buffer(self):
+        """
+        ФАЗА 4: Парсинг новых строк из RAW-буфера DualStreamLogger
+        
+        Читает только новые строки из буфера (начиная с _last_processed_buffer_index)
+        и обрабатывает их через parse_line().
+        """
+        if self.is_finished:
+            return
+        
+        # Получаем доступ к глобальному DualStreamLogger
+        if '_global_dual_logger' not in globals() or not globals()['_global_dual_logger']:
+            return  # Если logger не инициализирован - используем старый механизм
+        
+        dual_logger = globals()['_global_dual_logger']
+        
+        # Получаем RAW-буфер
+        raw_buffer = dual_logger._raw_buffer
+        
+        # Получаем длину буфера (thread-safe через deque)
+        current_buffer_size = len(raw_buffer)
+        
+        # Если нет новых данных - выходим
+        if current_buffer_size <= self._last_processed_buffer_index:
+            return
+        
+        # Обрабатываем только новые строки
+        for i in range(self._last_processed_buffer_index, current_buffer_size):
+            try:
+                # Получаем строку из буфера
+                line = raw_buffer[i]
+                
+                # Парсим через существующий метод
+                self.parse_line(line)
+                
+            except IndexError:
+                # Буфер изменился во время итерации - прекращаем
+                break
+            except Exception as e:
+                print(f"[PARSER_ERROR] Ошибка парсинга из буфера: {e}")
+        
+        # Обновляем позицию
+        self._last_processed_buffer_index = current_buffer_size
     
     def parse_line(self, line):
         """Парсинг одной строки"""
@@ -13217,7 +13608,7 @@ def main():
         # Запускаем файловое логирование
         dual_logger.start_file_logging()
         
-        print("[DUAL_STREAM] ✓ DualStreamLogger создан и запущен")
+        print("[DUAL_STREAM] OK: DualStreamLogger создан и запущен")
         print("[DUAL_STREAM]   - RAW-поток (apt): %s" % os.path.basename(dual_logger._raw_log_path))
         print("[DUAL_STREAM]   - ANALYSIS-поток: %s" % os.path.basename(dual_logger._analysis_log_path))
         
@@ -13230,11 +13621,11 @@ def main():
             _global_dual_logger.write_raw("=== ТЕСТ: DualStreamLogger инициализирован ===", timestamp=True)
             _global_dual_logger.write_raw("=== ТЕСТ: RAW-поток готов к приему данных от apt-get ===", timestamp=True)
             _global_dual_logger.flush_buffers()  # Принудительная запись для теста
-            print("[DUAL_STREAM] ✓ Тестовые записи добавлены в RAW-поток")
+            print("[DUAL_STREAM] OK: Тестовые записи добавлены в RAW-поток")
         except Exception as test_e:
-            print("[DUAL_STREAM] ⚠ Ошибка тестовой записи: %s" % str(test_e))
+            print("[DUAL_STREAM] WARNING: Ошибка тестовой записи: %s" % str(test_e))
     except Exception as e:
-        print("[DUAL_STREAM] ⚠ Ошибка инициализации DualStreamLogger: %s" % str(e))
+        print("[DUAL_STREAM] WARNING: Ошибка инициализации DualStreamLogger: %s" % str(e))
         print("[DUAL_STREAM]   Продолжаем без разделения потоков...")
         dual_logger = None
         _global_dual_logger = None
@@ -13563,9 +13954,9 @@ def main():
                 try:
                     print("[DUAL_STREAM] Остановка файлового логирования...")
                     dual_logger.stop_file_logging(flush=True)
-                    print("[DUAL_STREAM] ✓ DualStreamLogger остановлен")
+                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен")
                 except Exception as e:
-                    print(f"[DUAL_STREAM] ⚠ Ошибка остановки: {e}")
+                    print(f"[DUAL_STREAM] WARNING: Ошибка остановки: {e}")
             
             print("[INFO] Программа завершена", gui_log=True)
             
