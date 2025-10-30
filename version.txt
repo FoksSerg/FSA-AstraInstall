@@ -1,0 +1,8 @@
+FSA-AstraInstall
+MAJOR=2
+MINOR=4
+PATCH=AUTO
+Date: AUTO
+Developer: @FoksSegr
+Company: ООО "НПА Вира-Реалтайм"
+
