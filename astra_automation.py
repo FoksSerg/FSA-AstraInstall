@@ -565,6 +565,14 @@ class LogReplaySimulator:
                     # Записываем в RAW-поток
                     if clean_line:
                         dual_logger.write_raw(clean_line, timestamp=True)
+                        
+                        # ФАЗА 5: Также добавляем в GUI терминал для отображения
+                        # Получаем ссылку на GUI из sys._gui_instance
+                        if hasattr(sys, '_gui_instance') and sys._gui_instance:
+                            try:
+                                sys._gui_instance.add_terminal_output(clean_line, stream_type="raw")
+                            except Exception as e:
+                                pass  # Игнорируем ошибки GUI во время replay
                     
                     # Задержка в зависимости от скорости
                     # Реалистичная задержка ~ 10ms между строками apt
@@ -5690,6 +5698,10 @@ class AutomationGUI(object):
         self.replay_progress_timer = None
         self._replay_controls_visible = False
         
+        # Таймер обновления прогресса установки (время и диск)
+        self.installation_progress_timer = None
+        self.disk_update_counter = 0  # Счетчик для обновления диска каждые 5 секунд
+        
         # Инициализируем новую универсальную архитектуру
         self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
         self.universal_installer = UniversalInstaller(callback=self._component_status_callback)
@@ -6649,78 +6661,6 @@ class AutomationGUI(object):
         
         self.status_label = self.tk.Label(status_frame, text="Готов к запуску")
         self.status_label.pack(padx=5, pady=3)
-        
-        # Статистика (зафиксирована внизу)
-        stats_frame = self.tk.LabelFrame(self.main_frame, text="Статистика")
-        stats_frame.pack(fill=self.tk.X, padx=10, pady=3, side=self.tk.BOTTOM)
-        
-        stats_inner = self.tk.Frame(stats_frame)
-        stats_inner.pack(fill=self.tk.X, padx=5, pady=3)
-        
-        # Расширенная статистика - строка 1 (4 элемента)
-        self.tk.Label(stats_inner, text="Скачано:").grid(row=0, column=0, sticky=self.tk.W)
-        self.downloaded_label = self.tk.Label(stats_inner, text="0/0 (0%)")
-        self.downloaded_label.grid(row=0, column=1, sticky=self.tk.W, padx=(5, 15))
-        
-        self.tk.Label(stats_inner, text="Распаковано:").grid(row=0, column=2, sticky=self.tk.W)
-        self.unpacked_label = self.tk.Label(stats_inner, text="0/0 (0%)")
-        self.unpacked_label.grid(row=0, column=3, sticky=self.tk.W, padx=(5, 15))
-        
-        self.tk.Label(stats_inner, text="Настроено:").grid(row=0, column=4, sticky=self.tk.W)
-        self.configured_label = self.tk.Label(stats_inner, text="0/0 (0%)")
-        self.configured_label.grid(row=0, column=5, sticky=self.tk.W, padx=(5, 15))
-        
-        self.tk.Label(stats_inner, text="Размер:").grid(row=0, column=6, sticky=self.tk.W)
-        self.size_label = self.tk.Label(stats_inner, text="0 MB")
-        self.size_label.grid(row=0, column=7, sticky=self.tk.W, padx=(5, 15))
-        
-        # Расширенная статистика - строка 2 (2 элемента)
-        self.tk.Label(stats_inner, text="Скорость:").grid(row=1, column=0, sticky=self.tk.W)
-        self.speed_label = self.tk.Label(stats_inner, text="0 MB/s")
-        self.speed_label.grid(row=1, column=1, sticky=self.tk.W, padx=(5, 15))
-        
-        self.tk.Label(stats_inner, text="Статус:").grid(row=1, column=2, sticky=self.tk.W)
-        self.status_detail_label = self.tk.Label(stats_inner, text="Ожидание")
-        self.status_detail_label.grid(row=1, column=3, sticky=self.tk.W, padx=(5, 15))
-        
-        # Инициализируем статистику
-        self.update_extended_statistics()
-        
-        # Запускаем периодическое обновление статистики
-        self.root.after(1000, self.periodic_stats_update)
-    
-    def update_extended_statistics(self):
-        """Обновление расширенной статистики в GUI"""
-        try:
-            # Получаем статистику от SystemUpdater
-            if hasattr(self, 'system_updater') and self.system_updater:
-                stats = self.system_updater.get_extended_statistics()
-                
-                # Обновляем поля статистики
-                if hasattr(self, 'downloaded_label'):
-                    self.downloaded_label.config(text=stats['downloaded'])
-                if hasattr(self, 'unpacked_label'):
-                    self.unpacked_label.config(text=stats['unpacked'])
-                if hasattr(self, 'configured_label'):
-                    self.configured_label.config(text=stats['configured'])
-                if hasattr(self, 'size_label'):
-                    self.size_label.config(text=stats['downloaded_size'])
-                if hasattr(self, 'speed_label'):
-                    self.speed_label.config(text=stats['download_speed'])
-                    
-        except Exception as e:
-            # Игнорируем ошибки обновления статистики
-            pass
-    
-    def periodic_stats_update(self):
-        """Периодическое обновление статистики"""
-        try:
-            self.update_extended_statistics()
-        except Exception as e:
-            pass
-        
-        # Повторяем каждые 2 секунды
-        self.root.after(2000, self.periodic_stats_update)
     
     def create_repos_tab(self):
         """Создание вкладки управления репозиториями"""
@@ -9308,19 +9248,8 @@ Path={os.path.dirname(script_path)}
     def update_status(self, status, detail=""):
         """Обновление статуса"""
         self.status_label.config(text=status)
-        if detail:
-            self.status_detail_label.config(text=detail)
         self.root.update_idletasks()
         
-    def update_stats(self, repos=None, updates=None, packages=None):
-        """Обновление статистики"""
-        if repos is not None:
-            self.repo_label.config(text=repos)
-        if updates is not None:
-            self.update_label.config(text=updates)
-        if packages is not None:
-            self.package_label.config(text=packages)
-        self.root.update_idletasks()
         
     def start_terminal_monitoring(self):
         """Запуск мониторинга системного вывода"""
@@ -9931,6 +9860,100 @@ Path={os.path.dirname(script_path)}
                 
         except Exception as e:
             print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
+    
+    def start_progress_timer(self):
+        """Запуск таймера обновления времени и дискового пространства"""
+        # Останавливаем предыдущий таймер если был
+        self.stop_progress_timer()
+        
+        # Сбрасываем счетчик обновления диска
+        self.disk_update_counter = 0
+        
+        # Запускаем новый таймер
+        self._update_progress_timer()
+    
+    def stop_progress_timer(self):
+        """Остановка таймера обновления"""
+        if self.installation_progress_timer:
+            try:
+                self.root.after_cancel(self.installation_progress_timer)
+            except:
+                pass
+            self.installation_progress_timer = None
+    
+    def _update_progress_timer(self):
+        """Периодическое обновление времени и дискового пространства"""
+        try:
+            # Проверяем что процесс еще работает
+            if not self.is_running:
+                return
+            
+            # Получаем статистику от SystemUpdater
+            if hasattr(self, 'system_updater') and self.system_updater and self.system_updater.start_time:
+                import time
+                
+                # Вычисляем прошедшее время
+                elapsed_time = time.time() - self.system_updater.start_time
+                minutes = int(elapsed_time // 60)
+                seconds = int(elapsed_time % 60)
+                
+                # Обновляем метку времени
+                if hasattr(self, 'wine_time_label'):
+                    self.wine_time_label.config(text=f"{minutes} мин {seconds} сек")
+                
+                # Увеличиваем счетчик и обновляем диск каждые 5 вызовов (5 секунд)
+                self.disk_update_counter += 1
+                if self.disk_update_counter >= 5:
+                    self.disk_update_counter = 0
+                    self._update_disk_space()
+            
+            # Планируем следующее обновление через 1 секунду
+            self.installation_progress_timer = self.root.after(1000, self._update_progress_timer)
+            
+        except Exception as e:
+            # Логируем ошибку для отладки
+            print(f"[TIMER_ERROR] {e}")
+            pass  # Игнорируем ошибки таймера
+    
+    def _update_disk_space(self):
+        """Обновление информации о дисковом пространстве"""
+        try:
+            if hasattr(self, 'system_updater') and self.system_updater and self.system_updater.initial_disk_space is not None:
+                import shutil
+                
+                # ИЗМЕНЕНО: Получаем текущее ЗАНЯТОЕ место
+                disk_usage = shutil.disk_usage('/')
+                current_used = disk_usage.used
+                
+                # ИЗМЕНЕНО: Вычисляем разницу (сколько добавилось)
+                disk_change = current_used - self.system_updater.initial_disk_space
+                
+                # Отладочное логирование
+                size_mb = disk_change / (1024**2)
+                print(f"[DISK_DEBUG] Начальное занято: {self.system_updater.initial_disk_space/(1024**3):.2f} ГБ, "
+                      f"Текущее занято: {current_used/(1024**3):.2f} ГБ, "
+                      f"Добавлено: {size_mb:.1f} МБ")
+                
+                if disk_change > 0:
+                    # Место занято (установлено больше)
+                    if hasattr(self, 'wine_size_label'):
+                        self.wine_size_label.config(text=f"{size_mb:.0f} MB")
+                        print(f"[DISK_UPDATE] Установлено: {size_mb:.0f} MB")
+                elif disk_change < 0:
+                    # Место освобождено (удалено)
+                    if hasattr(self, 'wine_size_label'):
+                        self.wine_size_label.config(text=f"{abs(size_mb):.0f} MB освобождено")
+                        print(f"[DISK_UPDATE] Освобождено: {abs(size_mb):.0f} MB")
+                else:
+                    # Без изменений
+                    if hasattr(self, 'wine_size_label'):
+                        self.wine_size_label.config(text="0 MB")
+                        print(f"[DISK_UPDATE] Без изменений")
+                        
+        except Exception as e:
+            print(f"[DISK_ERROR] Ошибка обновления диска: {e}")
+            import traceback
+            traceback.print_exc()
         
     def start_automation(self):
         """Запуск автоматизации"""
@@ -9952,6 +9975,14 @@ Path={os.path.dirname(script_path)}
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
         
+        # НОВОЕ: Запускаем мониторинг времени и дискового пространства
+        if hasattr(self, 'system_updater') and self.system_updater:
+            self.system_updater.start_monitoring()
+            print("[MONITORING] Мониторинг времени и диска запущен", gui_log=True)
+        
+        # НОВОЕ: Запускаем периодическое обновление таймера
+        self.start_progress_timer()
+        
         # Запускаем автоматизацию в отдельном потоке
         print("[AUTOMATION] Запускаем поток автоматизации...")
         import threading
@@ -9963,6 +9994,9 @@ Path={os.path.dirname(script_path)}
     def stop_automation(self):
         """Остановка автоматизации"""
         print("[STOP] Попытка мягкой остановки процесса...", gui_log=True)
+        
+        # НОВОЕ: Останавливаем таймер прогресса
+        self.stop_progress_timer()
         
         # Сначала пробуем мягкую остановку
         self.is_running = False
@@ -10335,6 +10369,9 @@ Path={os.path.dirname(script_path)}
             print("[INFO] Очистка блокировок", gui_log=True)
             
         finally:
+            # НОВОЕ: Останавливаем таймер прогресса
+            self.stop_progress_timer()
+            
             # Сбрасываем флаг только если процесс НЕ был остановлен пользователем
             if self.is_running:  # Если флаг еще True, значит процесс завершился естественно
                 self.is_running = False
@@ -10347,20 +10384,17 @@ Path={os.path.dirname(script_path)}
         """Парсинг статуса из вывода"""
         line = line.strip()
         
-        # Репозитории
+        # Репозитории (информация доступна в терминале)
         if "Активировано:" in line and "рабочих" in line:
-            repos = line.split("Активировано:")[1].strip()
-            self.update_stats(repos=repos)
+            pass  # Раньше обновляли статистику, теперь только в терминале
             
-        # Обновления
+        # Обновления (информация доступна в терминале)
         elif "Найдено" in line and "пакетов для обновления" in line:
-            updates = line.split("Найдено")[1].split("пакетов")[0].strip()
-            self.update_stats(updates=updates)
+            pass  # Раньше обновляли статистику, теперь только в терминале
             
-        # Пакеты для установки
+        # Пакеты для установки (информация доступна в терминале)
         elif "ИТОГО:" in line and "пакетов" in line:
-            packages = line.split("ИТОГО:")[1].strip()
-            self.update_stats(packages=packages)
+            pass  # Раньше обновляли статистику, теперь только в терминале
             
         # Статус модулей
         elif "Запуск автоматизации проверки репозиториев" in line:
@@ -10935,7 +10969,20 @@ class SystemUpdateParser:
         if not line:
             return
         
-        clean_line = line
+        # Удаляем временные метки формата [YYYY-MM-DD HH:MM:SS.mmm] если они есть
+        clean_line = line.strip()
+        if clean_line.startswith('[') and '] ' in clean_line:
+            # Проверяем что это временная метка (содержит цифры и : и -)
+            bracket_end = clean_line.find(']')
+            if bracket_end > 0:
+                potential_timestamp = clean_line[1:bracket_end]
+                # Простая проверка: содержит ли хотя бы : и -
+                if ':' in potential_timestamp and ('-' in potential_timestamp or '.' in potential_timestamp):
+                    clean_line = clean_line[bracket_end + 1:].strip()
+        
+        # Если строка пустая после очистки - пропускаем
+        if not clean_line:
+            return
         
         # ЭТАП 1: Поиск начала парсинга таблицы
         if "Расчёт обновлений" in clean_line:
@@ -11002,7 +11049,7 @@ class SystemUpdateParser:
                 # Обрабатываем скачивание только если уже в режиме установки
                 self.parse_download_operation(clean_line)
             else:
-                print(f"[PARSER] НЕ НАЙДЕНО ключевых слов в: '{clean_line[:100]}...'", gui_log=True)
+                print(f"[PARSER] НЕ НАЙДЕНО ключевых слов в: '{clean_line[:200]}...'", gui_log=True)
         else:
             pass  # Парсинг не активен, игнорируем
     
@@ -11191,7 +11238,10 @@ class SystemUpdateParser:
         pattern = r'Распаковывается\s+([^\s]+)'
         match = re.search(pattern, line)
         if match:
-            package_name = match.group(1)
+            package_name_full = match.group(1)
+            # Убираем архитектуру если есть (например package:amd64 -> package)
+            package_name = package_name_full.split(':')[0] if ':' in package_name_full else package_name_full
+            
             success = self.update_package_flag(package_name, 'unpacked', True)
             if success:
                 print(f"[PARSER] Пакет '{package_name}' распакован", gui_log=True)
@@ -11199,15 +11249,18 @@ class SystemUpdateParser:
                 # Обновляем прогресс-бары
                 self._update_progress_bars()
             else:
-                print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
+                print(f"[PARSER] Пакет '{package_name}' не найден в таблице (полное имя: {package_name_full})!", gui_log=True)
     
     def parse_configure_operation(self, line):
         """Парсинг операции настройки"""
-        # Ищем имя пакета в строке "Настраивается package_name"
-        pattern = r'Настраивается\s+([^\s]+)'
+        # Ищем имя пакета в строке "Настраивается package_name" или "Настраивается пакет package_name"
+        pattern = r'Настраивается\s+(?:пакет\s+)?([^\s(]+)'
         match = re.search(pattern, line)
         if match:
-            package_name = match.group(1)
+            package_name_full = match.group(1)
+            # Убираем архитектуру если есть (например package:amd64 -> package)
+            package_name = package_name_full.split(':')[0] if ':' in package_name_full else package_name_full
+            
             success = self.update_package_flag(package_name, 'configured', True)
             if success:
                 print(f"[PARSER] Пакет '{package_name}' настроен", gui_log=True)
@@ -12088,8 +12141,9 @@ class SystemUpdater(object):
         # Получаем начальное дисковое пространство
         try:
             disk_usage = shutil.disk_usage('/')
-            self.initial_disk_space = disk_usage.free  # Свободное место в байтах
-            print(f"[INFO] Начальное свободное место: {self.initial_disk_space / (1024**3):.2f} ГБ")
+            self.initial_disk_space = disk_usage.used  # ИЗМЕНЕНО: Используем занятое место
+            print(f"[INFO] Начальное занятое место: {self.initial_disk_space / (1024**3):.2f} ГБ")
+            print(f"[INFO] Начальное свободное место: {disk_usage.free / (1024**3):.2f} ГБ")
         except Exception as e:
             print(f"[WARNING] Не удалось получить дисковое пространство: {e}")
             self.initial_disk_space = 0
@@ -12108,20 +12162,22 @@ class SystemUpdater(object):
         seconds = int(elapsed_time % 60)
         time_text = f"Время: {minutes} мин {seconds} сек"
         
-        # Вычисляем изменение дискового пространства
+        # ИЗМЕНЕНО: Вычисляем изменение дискового пространства на основе ЗАНЯТОГО места
         try:
             disk_usage = shutil.disk_usage('/')
-            current_free = disk_usage.free
-            disk_change = self.initial_disk_space - current_free
+            current_used = disk_usage.used
+            disk_change = current_used - self.initial_disk_space
             
             if disk_change > 0:
-                # Место занято (использовано)
+                # Место занято (установлено)
                 size_mb = disk_change / (1024**2)
-                disk_text = f"Использовано: {size_mb:.1f} МБ"
-            else:
+                disk_text = f"Установлено: {size_mb:.1f} МБ"
+            elif disk_change < 0:
                 # Место освобождено (очистка)
                 size_mb = abs(disk_change) / (1024**2)
                 disk_text = f"Освобождено: {size_mb:.1f} МБ"
+            else:
+                disk_text = "0 МБ"
         except Exception as e:
             disk_text = "Использовано: 0 МБ"
         
@@ -12134,34 +12190,6 @@ class SystemUpdater(object):
     def get_auto_response(self, prompt_type):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
-    
-    def get_extended_statistics(self):
-        """Получение расширенной статистики для GUI"""
-        try:
-            # Вычисляем проценты
-            downloaded_pct = (self.downloaded_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
-            unpacked_pct = (self.unpacked_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
-            configured_pct = (self.configured_packages / self.total_packages) * 100 if self.total_packages > 0 else 0
-            
-            # Формируем статистику
-            stats = {
-                'downloaded': f"{self.downloaded_packages}/{self.total_packages} ({downloaded_pct:.1f}%)",
-                'unpacked': f"{self.unpacked_packages}/{self.total_packages} ({unpacked_pct:.1f}%)",
-                'configured': f"{self.configured_packages}/{self.total_packages} ({configured_pct:.1f}%)",
-                'downloaded_size': f"{self.downloaded_size_mb:.1f} MB",
-                'download_speed': f"{self.download_speed_mb:.1f} MB/s"
-            }
-            
-            return stats
-            
-        except Exception as e:
-            return {
-                'downloaded': "0/0 (0%)",
-                'unpacked': "0/0 (0%)",
-                'configured': "0/0 (0%)",
-                'downloaded_size': "0 MB",
-                'download_speed': "0 MB/s"
-            }
     
     def calculate_time_remaining(self, progress):
         """Вычисление оставшегося времени (упрощенная версия)"""
