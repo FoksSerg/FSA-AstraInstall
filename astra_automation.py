@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.3.86 (2025.10.29)
+Версия: V2.3.87 (2025.10.30)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.3.86"
+APP_VERSION = "V2.3.87"
 import os
 import sys
 import tempfile
@@ -5610,6 +5610,98 @@ class ComponentStatusManager(object):
         }
 
 # ============================================================================
+# КЛАСС ВСПЛЫВАЮЩИХ ПОДСКАЗОК
+# ============================================================================
+class ToolTip:
+    """Класс для создания всплывающих подсказок (tooltips) для виджетов"""
+    
+    def __init__(self, widget, text):
+        """
+        Инициализация подсказки
+        
+        Args:
+            widget: Виджет tkinter для которого создается подсказка
+            text: Текст подсказки
+        """
+        self.widget = widget
+        self.text = text
+        self.tooltip_window = None
+        self.show_timer = None
+        
+        # Привязываем события с задержкой для macOS
+        self.widget.bind("<Enter>", self.schedule_show)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+        self.widget.bind("<Button-1>", self.hide_tooltip)  # Скрываем при клике
+    
+    def schedule_show(self, event=None):
+        """Планируем показ подсказки с задержкой"""
+        self.cancel_show()
+        # Задержка 500мс перед показом (для macOS)
+        self.show_timer = self.widget.after(500, self.show_tooltip)
+    
+    def cancel_show(self):
+        """Отменить запланированный показ"""
+        if self.show_timer:
+            self.widget.after_cancel(self.show_timer)
+            self.show_timer = None
+    
+    def show_tooltip(self, event=None):
+        """Показать подсказку"""
+        if self.tooltip_window or not self.text:
+            return
+        
+        try:
+            # Получаем координаты виджета с обновлением
+            self.widget.update_idletasks()
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+            
+            # Импортируем tkinter
+            import tkinter as tk
+            
+            # Создаем всплывающее окно
+            self.tooltip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)  # Убираем рамку окна
+            
+            # Для macOS: дополнительные настройки
+            try:
+                tw.wm_attributes("-topmost", True)  # Поверх всех окон
+            except:
+                pass
+            
+            tw.wm_geometry(f"+{x}+{y}")
+            
+            # Создаем метку с текстом
+            label = tk.Label(
+                tw,
+                text=self.text,
+                justify='left',
+                background="#ffffe0",  # Светло-желтый фон
+                foreground="black",
+                relief='solid',
+                borderwidth=1,
+                font=("Arial", 9, "normal"),
+                padx=5,
+                pady=3
+            )
+            label.pack()
+            
+        except Exception as e:
+            # При ошибке скрываем и не показываем
+            print(f"[TOOLTIP_ERROR] {e}")
+            self.hide_tooltip()
+    
+    def hide_tooltip(self, event=None):
+        """Скрыть подсказку"""
+        self.cancel_show()
+        if self.tooltip_window:
+            try:
+                self.tooltip_window.destroy()
+            except:
+                pass
+            self.tooltip_window = None
+
+# ============================================================================
 # GUI КЛАСС АВТОМАТИЗАЦИИ
 # ============================================================================
 class AutomationGUI(object):
@@ -5632,7 +5724,7 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.25)")
+        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION} (2025.10.30)")
         
         # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
@@ -6498,7 +6590,7 @@ class AutomationGUI(object):
         self.wine_time_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
         # Размер
-        self.tk.Label(info_panel, text="Установлено:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.tk.Label(info_panel, text="Использование диска:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
         self.wine_size_label = self.tk.Label(info_panel, text="0 MB", font=('Arial', 9))
         self.wine_size_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
@@ -6586,10 +6678,12 @@ class AutomationGUI(object):
         self.start_button = self.tk.Button(button_frame, text="Запустить", 
                                           command=self.start_automation)
         self.start_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(self.start_button, "Запустить автоматизацию согласно выбранным компонентам")
         
         self.stop_button = self.tk.Button(button_frame, text="Остановить", 
                                          command=self.stop_automation, state=self.tk.DISABLED)
         self.stop_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(self.stop_button, "Остановить текущий процесс установки")
         
         
         
@@ -6649,18 +6743,6 @@ class AutomationGUI(object):
         self.detail_label = self.tk.Label(detail_frame, text="", 
                                         font=("Arial", 9), fg="darkgreen")
         self.detail_label.pack(anchor=self.tk.W, padx=5, pady=2)
-        
-        # Скорость и время
-        self.speed_label = self.tk.Label(detail_frame, text="", 
-                                       font=("Arial", 8), fg="gray")
-        self.speed_label.pack(anchor=self.tk.W, padx=5, pady=(0, 5))
-        
-        # Статус
-        status_frame = self.tk.LabelFrame(self.main_frame, text="Статус")
-        status_frame.pack(fill=self.tk.X, padx=10, pady=3)
-        
-        self.status_label = self.tk.Label(status_frame, text="Готов к запуску")
-        self.status_label.pack(padx=5, pady=3)
     
     def create_repos_tab(self):
         """Создание вкладки управления репозиториями"""
@@ -6684,6 +6766,7 @@ class AutomationGUI(object):
                                                 bg='#4CAF50',
                                                 fg='white')
         self.load_repos_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.load_repos_button, "Загрузить список репозиториев из /etc/apt/sources.list")
         
         self.check_repos_button2 = self.tk.Button(button_frame, 
                                                   text="Проверить доступность", 
@@ -6692,6 +6775,7 @@ class AutomationGUI(object):
                                                   bg='#2196F3',
                                                   fg='white')
         self.check_repos_button2.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.check_repos_button2, "Проверить доступность всех репозиториев по сети")
         
         self.update_repos_button = self.tk.Button(button_frame, 
                                                   text="Обновить списки (apt update)", 
@@ -6700,6 +6784,7 @@ class AutomationGUI(object):
                                                   bg='#FF9800',
                                                   fg='white')
         self.update_repos_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.update_repos_button, "Обновить локальную базу пакетов (выполнить apt update)")
         
         self.repos_status_label = self.tk.Label(button_frame, 
                                                text="Нажмите 'Загрузить репозитории' для начала",
@@ -6802,7 +6887,7 @@ class AutomationGUI(object):
         control_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
         # Переменные для флажков
-        self.terminal_autoscroll_enabled = self.tk.BooleanVar(value=True)
+        self.terminal_autoscroll_enabled = self.tk.BooleanVar(value=False)  # По умолчанию выключена
         self.terminal_timestamp_enabled = self.tk.BooleanVar(value=True)
         
         # Переменная для выбора потока логирования
@@ -6832,6 +6917,7 @@ class AutomationGUI(object):
             command=test_autoscroll_change
         )
         autoscroll_checkbox.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(autoscroll_checkbox, "Автоматически прокручивать терминал вниз при новых сообщениях")
         
         # Флажок временных меток
         timestamp_checkbox = self.tk.Checkbutton(
@@ -6841,6 +6927,7 @@ class AutomationGUI(object):
             command=self.toggle_terminal_timestamps
         )
         timestamp_checkbox.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(timestamp_checkbox, "Отображать метки времени перед каждым сообщением")
         
         # Разделитель
         separator = self.tk.Label(first_row, text=" | ", fg="gray")
@@ -6858,6 +6945,7 @@ class AutomationGUI(object):
             command=self.switch_terminal_stream
         )
         stream_analysis_radio.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(stream_analysis_radio, "Показывать только аналитические сообщения парсера")
         
         stream_raw_radio = self.tk.Radiobutton(
             first_row,
@@ -6867,6 +6955,7 @@ class AutomationGUI(object):
             command=self.switch_terminal_stream
         )
         stream_raw_radio.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(stream_raw_radio, "Показывать только сырой вывод apt-get")
         
         stream_both_radio = self.tk.Radiobutton(
             first_row,
@@ -6876,6 +6965,7 @@ class AutomationGUI(object):
             command=self.switch_terminal_stream
         )
         stream_both_radio.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(stream_both_radio, "Показывать оба потока одновременно")
         
         # Поле поиска (справа на первой строке)
         search_frame = self.tk.Frame(first_row)
@@ -6892,6 +6982,30 @@ class AutomationGUI(object):
         )
         search_entry.pack(side=self.tk.LEFT, padx=2)
         
+        # Добавляем поддержку Ctrl+V / Cmd+V для вставки из буфера обмена
+        def paste_from_clipboard(event=None):
+            """Вставка текста из буфера обмена в поле поиска"""
+            try:
+                # Получаем текст из буфера обмена
+                clipboard_text = self.root.clipboard_get()
+                if clipboard_text:
+                    # Очищаем текущее содержимое
+                    self.terminal_search_var.set("")
+                    # Вставляем текст из буфера
+                    self.terminal_search_var.set(clipboard_text)
+                    print(f"[SEARCH] Вставлено из буфера: {clipboard_text[:50]}...")
+                return "break"  # Предотвращаем стандартное поведение
+            except Exception as e:
+                print(f"[SEARCH] Ошибка вставки из буфера: {e}")
+                return "break"
+        
+        # Привязываем горячие клавиши для вставки
+        search_entry.bind("<Control-v>", paste_from_clipboard)  # Ctrl+V для Linux/Windows
+        search_entry.bind("<Command-v>", paste_from_clipboard)  # Cmd+V для macOS
+        
+        # Добавляем всплывающую подсказку
+        ToolTip(search_entry, "Поиск по терминалу (Ctrl+V / Cmd+V для вставки из буфера)")
+        
         # Кнопка очистки поиска
         clear_search_button = self.tk.Button(
             search_frame, 
@@ -6901,6 +7015,7 @@ class AutomationGUI(object):
             command=self.clear_terminal_search
         )
         clear_search_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(clear_search_button, "Очистить поле поиска")
         
         # ВТОРАЯ СТРОКА: Кнопки
         second_row = self.tk.Frame(control_frame)
@@ -6947,6 +7062,7 @@ class AutomationGUI(object):
             command=load_log_cmd
         )
         load_log_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(load_log_button, "Загрузить лог-файл текущей сессии в терминал")
         
         # ФАЗА 5: Кнопка Replay логов
         replay_log_button = self.tk.Button(
@@ -6955,6 +7071,7 @@ class AutomationGUI(object):
             command=self.open_replay_dialog
         )
         replay_log_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(replay_log_button, "Воспроизвести сохраненный RAW лог для отладки парсера")
         
         # НОВОЕ: Кнопка открытия файла лога
         open_log_button = self.tk.Button(
@@ -6963,6 +7080,7 @@ class AutomationGUI(object):
             command=self.open_current_log_file
         )
         open_log_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(open_log_button, "Открыть текущий лог-файл во внешнем редакторе")
         
         # Кнопка обновления терминала (для ручного обновления когда автопрокрутка отключена)
         refresh_button = self.tk.Button(
@@ -6971,6 +7089,7 @@ class AutomationGUI(object):
             command=self._manual_refresh_terminal
         )
         refresh_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(refresh_button, "Обновить терминал вручную (полезно при отключенной автопрокрутке)")
         
         # Кнопка очистки терминала
         clear_button = self.tk.Button(
@@ -6979,6 +7098,7 @@ class AutomationGUI(object):
             command=self.clear_terminal
         )
         clear_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(clear_button, "Очистить содержимое терминала")
         
         # ФАЗА 5: ТРЕТЬЯ СТРОКА - Replay контролы (изначально скрыты)
         self.replay_controls_frame = self.tk.Frame(control_frame)
@@ -6995,6 +7115,7 @@ class AutomationGUI(object):
             state=self.tk.DISABLED
         )
         self.replay_play_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.replay_play_button, "Начать воспроизведение лога")
         
         self.replay_pause_button = self.tk.Button(
             self.replay_controls_frame,
@@ -7003,6 +7124,7 @@ class AutomationGUI(object):
             state=self.tk.DISABLED
         )
         self.replay_pause_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.replay_pause_button, "Приостановить воспроизведение")
         
         self.replay_stop_button = self.tk.Button(
             self.replay_controls_frame,
@@ -7011,6 +7133,7 @@ class AutomationGUI(object):
             state=self.tk.DISABLED
         )
         self.replay_stop_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.replay_stop_button, "Остановить воспроизведение и сбросить")
         
         # Слайдер скорости
         speed_label = self.tk.Label(self.replay_controls_frame, text="Скорость:")
@@ -7401,6 +7524,7 @@ class AutomationGUI(object):
                                                 bg='#4CAF50',
                                                 fg='white')
         self.check_wine_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.check_wine_button, "Проверить какие компоненты Wine и Astra.IDE установлены")
         
         self.install_wine_button = self.tk.Button(main_buttons_frame, 
                                                   text="Установить выбранные", 
@@ -7410,6 +7534,7 @@ class AutomationGUI(object):
                                                   fg='white',
                                                   state=self.tk.DISABLED)
         self.install_wine_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.install_wine_button, "Установить отмеченные галочками компоненты")
         
         self.uninstall_wine_button = self.tk.Button(main_buttons_frame, 
                                                     text="Удалить выбранные", 
@@ -7419,6 +7544,7 @@ class AutomationGUI(object):
                                                     fg='white',
                                                     state=self.tk.DISABLED)
         self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.uninstall_wine_button, "Удалить отмеченные галочками компоненты")
         
         # Вторая строка: Дополнительные действия
         extra_buttons_frame = self.tk.Frame(button_frame)
@@ -7431,6 +7557,7 @@ class AutomationGUI(object):
                                                   bg='#E91E63',
                                                   fg='white')
         self.full_cleanup_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.full_cleanup_button, "Полностью удалить Wine и все связанные файлы")
         
         # Статус
         self.wine_status_label = self.tk.Label(extra_buttons_frame, 
@@ -7503,7 +7630,7 @@ class AutomationGUI(object):
             # Если размеры еще не определены, используем значения по умолчанию
             if window_width <= 1 or window_height <= 1:
                 window_width = 1000
-                window_height = 600
+                window_height = 635  # Обновлено: 600 -> 635 (реальная высота после всех изменений)
             
             # Получаем размер экрана
             screen_width = self.root.winfo_screenwidth()
@@ -7516,6 +7643,12 @@ class AutomationGUI(object):
             # Убеждаемся, что окно не выходит за границы экрана
             center_x = max(0, center_x)
             center_y = max(0, center_y)
+            
+            # Для Linux: дополнительно учитываем высоту панели задач (обычно ~30-50px)
+            # Смещаем вверх, чтобы окно не уходило за нижнюю границу
+            if center_y + window_height > screen_height - 50:
+                center_y = screen_height - window_height - 50
+                center_y = max(0, center_y)  # Не выше верхней границы
             
             # Устанавливаем новую позицию
             self.root.geometry('+%d+%d' % (center_x, center_y))
@@ -7554,6 +7687,7 @@ class AutomationGUI(object):
         self.sysmon_button = self.tk.Button(row1_frame, text="Системный монитор", 
                                            command=self.open_system_monitor, width=15)
         self.sysmon_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(self.sysmon_button, "Открыть системный монитор для отслеживания ресурсов")
         
         # Строка 2: Память слева, Ярлык справа
         row2_frame = self.tk.Frame(resources_frame)
@@ -7565,6 +7699,7 @@ class AutomationGUI(object):
         self.shortcut_button = self.tk.Button(row2_frame, text="Проверка...", 
                                              command=self.toggle_desktop_shortcut, width=15)
         self.shortcut_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(self.shortcut_button, "Создать или удалить ярлык Astra.IDE на рабочем столе")
         
         # Предупреждения о ресурсах
         self.resources_warning_label = self.tk.Label(resources_frame, text="", font=('Arial', 8))
@@ -7651,6 +7786,7 @@ class AutomationGUI(object):
         self.open_log_button = self.tk.Button(log_info_frame, text="Открыть лог файл", 
                                             command=self.open_log_file)
         self.open_log_button.pack(padx=5, pady=3)
+        ToolTip(self.open_log_button, "Открыть текущий лог-файл во внешнем текстовом редакторе")
         
         # Обновляем информацию о системе
         self.update_system_info()
@@ -9246,8 +9382,32 @@ Path={os.path.dirname(script_path)}
                 pass
         
     def update_status(self, status, detail=""):
-        """Обновление статуса"""
-        self.status_label.config(text=status)
+        """Обновление статуса
+        
+        Args:
+            status: Текст статуса для полей этапа и детелей
+            detail: Дополнительный текст (не используется, для совместимости)
+        """
+        # Определяем цвет по содержимому
+        if "успешно" in status.lower() or "завершена" in status.lower() and "ошибк" not in status.lower():
+            color = 'green'
+        elif "ошибк" in status.lower() or "прерван" in status.lower():
+            color = 'red'
+        else:
+            color = 'blue'
+        
+        # Обновляем "Подготовка..." в детальном прогрессе
+        if hasattr(self, 'stage_label'):
+            self.stage_label.config(text=status, fg=color)
+        
+        # Обновляем поле "Этап" в прогрессе установки
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text=status, fg=color)
+        
+        # Обновляем зеленую строку детелей
+        if hasattr(self, 'detail_label'):
+            self.detail_label.config(text=status)
+        
         self.root.update_idletasks()
         
         
@@ -9901,9 +10061,9 @@ Path={os.path.dirname(script_path)}
                 if hasattr(self, 'wine_time_label'):
                     self.wine_time_label.config(text=f"{minutes} мин {seconds} сек")
                 
-                # Увеличиваем счетчик и обновляем диск каждые 5 вызовов (5 секунд)
+                # Увеличиваем счетчик и обновляем диск каждые 3 вызова (3 секунды)
                 self.disk_update_counter += 1
-                if self.disk_update_counter >= 5:
+                if self.disk_update_counter >= 3:
                     self.disk_update_counter = 0
                     self._update_disk_space()
             
@@ -10885,6 +11045,10 @@ class SystemUpdateParser:
         
         # ФАЗА 4: Отслеживание позиции в RAW-буфере
         self._last_processed_buffer_index = 0
+        
+        # Текущий обрабатываемый пакет и операция (для отображения в статусе)
+        self.current_package_name = None
+        self.current_operation = None  # "Загрузка", "Распаковка", "Настройка"
     
     def reset_parser_state(self):
         """
@@ -10984,10 +11148,12 @@ class SystemUpdateParser:
         if not clean_line:
             return
         
-        # ЭТАП 1: Поиск начала парсинга таблицы
-        if "Расчёт обновлений" in clean_line:
+        # ЭТАП 1: Поиск начала парсинга таблицы (несколько вариантов триггеров)
+        if "Расчёт обновлений" in clean_line or \
+           "Построение дерева зависимостей" in clean_line or \
+           "Чтение информации о состоянии" in clean_line:
             self.parsing_table_started = True
-            print(f"[PARSER] АКТИВАЦИЯ: Начало парсинга таблицы!", gui_log=True)
+            print(f"[PARSER] АКТИВАЦИЯ: Начало парсинга таблицы! Триггер: '{clean_line[:50]}'", gui_log=True)
             return
             
         # ЭТАП 2: Парсинг таблицы пакетов
@@ -11010,11 +11176,47 @@ class SystemUpdateParser:
                 self.current_status = "UPDATE"
                 return
             
-            # Завершение парсинга таблицы
-            elif re.search(r'Обновлено \d+ пакетов', clean_line):
+            # Завершение парсинга таблицы (гибкий паттерн для любых форм слова "пакет")
+            elif re.search(r'Обновлено\s+\d+\s+пакет', clean_line):
                 self.parsing_table_started = False
                 self.parsing_install_started = True
                 print(f"[PARSER] Таблица готова! Начинаем отслеживание установки", gui_log=True)
+                print(f"[PARSER] Найдена строка завершения: '{clean_line}'", gui_log=True)
+                
+                # СПЕЦИАЛЬНАЯ ОБРАБОТКА: Если max_packages_found == 0 (нечего обновлять)
+                if self.max_packages_found == 0:
+                    print(f"[PARSER] Обнаружено 0 пакетов для обновления - обновляем бары на 100%", gui_log=True)
+                    # Принудительно обновляем прогресс на 100%
+                    global_progress = self._calculate_global_progress()  # Вернёт 100.0
+                    detailed_progress = self._calculate_detailed_progress()  # Вернёт всё по 100.0
+                    
+                    # Обновляем GUI через system_updater
+                    if self.system_updater:
+                        self.system_updater.update_detailed_bars(detailed_progress)
+                        
+                        # ПРЯМОЕ обновление глобального бара
+                        if hasattr(self.system_updater, 'gui_instance'):
+                            gui = self.system_updater.gui_instance
+                            if hasattr(gui, 'wine_progress'):
+                                gui.wine_progress['value'] = 100.0
+                                print(f"[PARSER] Глобальный бар обновлён на 100%", gui_log=True)
+                    
+                    # Обновляем глобальный прогресс
+                    if self.universal_manager:
+                        self.universal_manager.update_progress(
+                            "system_update",
+                            "Система актуальна!",
+                            100,
+                            100,
+                            "Обновления не требуются",
+                            **detailed_progress
+                        )
+                    
+                    self._update_status("Система актуальна! Обновления не требуются")
+                else:
+                    # Обновляем глобальный статус
+                    self._update_status("Загрузка и установка пакетов")
+                
                 # Сохраняем таблицу сразу после создания
                 self.save_table_to_file()
                 return
@@ -11025,6 +11227,8 @@ class SystemUpdateParser:
                     self.parsing_table_started = False
                     self.parsing_install_started = True
                     print(f"[PARSER] Таблица готова! Начинаем отслеживание установки (по первому 'Пол:')", gui_log=True)
+                    # Обновляем глобальный статус
+                    self._update_status("Загрузка и установка пакетов")
                     # Сохраняем таблицу сразу после создания
                     self.save_table_to_file()
                 return
@@ -11048,6 +11252,9 @@ class SystemUpdateParser:
             elif clean_line.startswith("Пол:"):
                 # Обрабатываем скачивание только если уже в режиме установки
                 self.parse_download_operation(clean_line)
+            elif "Чтение базы данных" in clean_line or "(Чтение базы данных" in clean_line:
+                # Обрабатываем прогресс чтения базы данных
+                self.parse_database_reading(clean_line)
             else:
                 print(f"[PARSER] НЕ НАЙДЕНО ключевых слов в: '{clean_line[:200]}...'", gui_log=True)
         else:
@@ -11222,6 +11429,10 @@ class SystemUpdateParser:
                 if package_name in self._package_names_set:
                     success = self.update_package_flag(package_name, 'downloaded', True)
                     if success:
+                        self.current_package_name = package_name  # Сохраняем текущий пакет
+                        self.current_operation = "Загрузка"  # Сохраняем текущую операцию
+                        # Обновляем детали (зеленая строка)
+                        self._update_status("", f"Загрузка: {package_name}")
                         self._update_progress_bars()
                     else:
                         print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
@@ -11246,6 +11457,13 @@ class SystemUpdateParser:
             if success:
                 print(f"[PARSER] Пакет '{package_name}' распакован", gui_log=True)
                 
+                # Сохраняем текущий пакет и операцию
+                self.current_package_name = package_name
+                self.current_operation = "Распаковка"
+                
+                # Обновляем детали (зеленая строка)
+                self._update_status("", f"Распаковка: {package_name}")
+                
                 # Обновляем прогресс-бары
                 self._update_progress_bars()
             else:
@@ -11265,10 +11483,69 @@ class SystemUpdateParser:
             if success:
                 print(f"[PARSER] Пакет '{package_name}' настроен", gui_log=True)
                 
+                # Сохраняем текущий пакет и операцию
+                self.current_package_name = package_name
+                self.current_operation = "Настройка"
+                
+                # Обновляем детали (зеленая строка)
+                self._update_status("", f"Настройка: {package_name}")
+                
                 # Обновляем прогресс-бары
                 self._update_progress_bars()
             else:
                 print(f"[PARSER] Пакет '{package_name}' не найден в таблице!", gui_log=True)
+    
+    def parse_database_reading(self, line):
+        """Парсинг прогресса чтения базы данных dpkg"""
+        # Извлекаем процент если есть: "(Чтение базы данных … 35%"
+        import re
+        percent_match = re.search(r'(\d+)%', line)
+        
+        if percent_match:
+            percent = percent_match.group(1)
+            # Создаем псевдографическую шкалу
+            bar_length = 20
+            filled = int((int(percent) / 100) * bar_length)
+            bar = '█' * filled + '░' * (bar_length - filled)
+            
+            # Формируем детали с операцией и именем пакета (в зеленую строку)
+            if self.current_package_name and self.current_operation:
+                detail_text = f"{self.current_operation}: {self.current_package_name} [{bar}] {percent}%"
+            elif self.current_package_name:
+                detail_text = f"{self.current_package_name}: [{bar}] {percent}%"
+            else:
+                detail_text = f"Чтение базы данных: [{bar}] {percent}%"
+            
+            # Обновляем только детали, статус не трогаем
+            self._update_status("", detail_text)
+        else:
+            # Просто сообщение о чтении с операцией и именем пакета если есть
+            if self.current_package_name and self.current_operation:
+                self._update_status("", f"{self.current_operation}: {self.current_package_name} - чтение базы данных...")
+            elif self.current_package_name:
+                self._update_status("", f"{self.current_package_name}: чтение базы данных...")
+            else:
+                self._update_status("", "Чтение базы данных dpkg...")
+    
+    def _update_status(self, status_text="", detail_text=""):
+        """Обновление статусной строки в GUI
+        
+        Args:
+            status_text: Текст для wine_stage_label (глобальный статус/этап). Если пустой - не обновляется
+            detail_text: Текст для detail_label (детали операций). Если пустой - не обновляется
+        """
+        try:
+            # Обновляем через GUI если доступен
+            if self.system_updater and hasattr(self.system_updater, 'gui_instance'):
+                gui = self.system_updater.gui_instance
+                # Обновляем wine_stage_label (поле "Этап") только если передан текст
+                if status_text and hasattr(gui, 'wine_stage_label'):
+                    gui.wine_stage_label.config(text=status_text, fg='blue')
+                # Обновляем detail_label (зеленая строка) только если передан текст
+                if detail_text and hasattr(gui, 'detail_label'):
+                    gui.detail_label.config(text=detail_text)
+        except Exception as e:
+            pass  # Игнорируем ошибки обновления GUI
     
     def _update_progress_bars(self):
         """Обновление прогресс-баров на основе текущего состояния таблицы пакетов"""
@@ -11513,43 +11790,44 @@ class SystemUpdateParser:
             )
     
     def _calculate_global_progress(self):
-        """ТОЧНЫЙ расчет глобального прогресса на основе таблицы пакетов"""
+        """Расчет глобального прогресса: каждый этап по 1/3 (33.33%)"""
         # Используем кэш если он валиден
         if self._progress_cache_valid:
             return self._cached_progress
         
+        # Если нечего обновлять - задача выполнена на 100%!
         if self.max_packages_found == 0:
-            return 0.0
+            return 100.0
         
-        total_operations = self.max_packages_found * 3  # 1651 * 3 = 4953
-        completed_operations = 0
+        # Подсчитываем пакеты по статусам
+        downloaded_count = len(self.packages_table)  # Всё что в таблице - скачано
+        unpacked_count = sum(1 for pkg in self.packages_table.values() 
+                           if pkg["status"] in ["unpacked", "configured"])
+        configured_count = sum(1 for pkg in self.packages_table.values() 
+                             if pkg["status"] == "configured")
         
-        # Проходим по каждому пакету в таблице
-        for package_name, package_info in self.packages_table.items():
-            # Операция 1: Скачивание (всегда выполнена, если пакет в таблице)
-            completed_operations += 1
-            
-            # Операция 2: Распаковка (выполнена если статус unpacked или configured)
-            if package_info["status"] in ["unpacked", "configured"]:
-                completed_operations += 1
-            
-            # Операция 3: Настройка (выполнена только если статус configured)
-            if package_info["status"] == "configured":
-                completed_operations += 1
+        # Каждый этап вносит 33.33% в общий прогресс
+        download_progress = (downloaded_count / self.max_packages_found) * 33.33
+        unpack_progress = (unpacked_count / self.max_packages_found) * 33.33
+        config_progress = (configured_count / self.max_packages_found) * 33.34  # 33.34 чтобы в сумме было 100
+        
+        # Суммируем прогресс всех этапов
+        total_progress = download_progress + unpack_progress + config_progress
         
         # Кэшируем результат
-        self._cached_progress = (completed_operations / total_operations) * 100
+        self._cached_progress = min(100.0, total_progress)  # Ограничиваем 100%
         self._progress_cache_valid = True
         
         return self._cached_progress
     
     def _calculate_detailed_progress(self):
         """Расчет детализированного прогресса для трех этапов"""
+        # Если нечего обновлять - все этапы выполнены на 100%!
         if self.max_packages_found == 0:
             return {
-                'download_progress': 0.0,
-                'unpack_progress': 0.0,
-                'config_progress': 0.0,
+                'download_progress': 100.0,
+                'unpack_progress': 100.0,
+                'config_progress': 100.0,
                 'download_count': 0,
                 'unpack_count': 0,
                 'config_count': 0,
@@ -12884,6 +13162,11 @@ class SystemUpdater(object):
         log_file = GLOBAL_LOG_FILE
         
         print("[PACKAGE] Обновление системы...")
+        
+        # КРИТИЧНО: Сбрасываем состояние парсера перед новым запуском
+        if hasattr(self, 'system_update_parser') and self.system_update_parser:
+            print("[PARSER] Сброс состояния парсера перед новым запуском обновления...")
+            self.system_update_parser.reset_parser_state()
         
         # ОТКЛЮЧЕНО: Старый мониторинг лог-файла (теперь парсер получает данные напрямую)
         # self.start_log_monitoring(log_file)
