@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.89 (2025.10.30)
+Версия: V2.4.91 (2025.10.31)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.89"
+APP_VERSION = "V2.4.91"
 import os
 import sys
 import tempfile
@@ -234,7 +234,6 @@ COMPONENTS_CONFIG = {
 # ============================================================================
 # DUALSTREAMLOGGER - СИСТЕМА ДВОЙНЫХ ПОТОКОВ ЛОГИРОВАНИЯ
 # ============================================================================
-
 class DualStreamLogger:
     """
     Класс для управления двумя независимыми потоками логирования.
@@ -246,7 +245,7 @@ class DualStreamLogger:
     - Асинхронная запись в файлы (неблокирующая)
     
     RAW-поток: необработанный вывод apt-get и системных процессов (без задержек)
-    ANALYSIS-поток: аналитика, парсинг, мониторинг нашей системы
+    ANALYSIS-поток: аналитика, парсинг, мониторинг системы
     """
     
     def __init__(self, max_buffer_size=10000, raw_log_path=None, analysis_log_path=None):
@@ -485,7 +484,7 @@ class DualStreamLogger:
         return logger
 
 # ============================================================================
-# LOG REPLAY SIMULATOR (ФАЗА 5)
+# LOG REPLAY SIMULATOR
 # ============================================================================
 class LogReplaySimulator:
     """
@@ -566,7 +565,7 @@ class LogReplaySimulator:
                     if clean_line:
                         dual_logger.write_raw(clean_line, timestamp=True)
                         
-                        # ФАЗА 5: Также добавляем в GUI терминал для отображения
+                        # Также добавляем в GUI терминал для отображения
                         # Получаем ссылку на GUI из sys._gui_instance
                         if hasattr(sys, '_gui_instance') and sys._gui_instance:
                             try:
@@ -808,11 +807,6 @@ class UniversalProcessRunner(object):
         
         # Тестовое сообщение будет отправлено при активации перехвата
     
-    def setup_print_redirect(self):
-        """Настройка перехвата стандартного print()"""
-        # Этот метод больше не нужен - print() переопределяется в main()
-        pass
-    
     def setup_subprocess_redirect(self):
         """Подмена subprocess.run() на UniversalProcessRunner"""
         import subprocess as original_subprocess
@@ -996,13 +990,6 @@ class UniversalProcessRunner(object):
             self.current_update_phase = "autoremove"
             self.update_phase_start_stage = "cleaning"
         
-        # Передаем информацию о текущей фазе в ProcessProgressManager
-        if hasattr(self, 'gui_instance') and self.gui_instance:
-            if hasattr(self.gui_instance, 'system_updater') and self.gui_instance.system_updater:
-                progress_manager = self.gui_instance.system_updater.progress_manager
-                progress_manager.current_update_phase = self.current_update_phase
-                progress_manager.update_phase_start_stage = self.update_phase_start_stage
-        
         try:
             # Логируем начало процесса
             self._log("Начало выполнения: %s" % cmd_str, "INFO", channels)
@@ -1030,23 +1017,15 @@ class UniversalProcessRunner(object):
                 # Выводим строку в реальном времени
                 line_clean = line.rstrip()
                 if line_clean:
-                    # НОВОЕ: Записываем RAW-вывод процесса в отдельный поток (используем глобальный dual_logger)
+                    # Записываем RAW-вывод процесса в отдельный поток (используем глобальный dual_logger)
                     if _global_dual_logger:
                         try:
                             _global_dual_logger.write_raw(line_clean, timestamp=True)
-                            # ФАЗА 3: Также добавляем в GUI терминал с типом "raw"
+                            # Также добавляем в GUI терминал с типом "raw"
                             if self.gui_instance and hasattr(self.gui_instance, 'add_terminal_output'):
                                 self.gui_instance.add_terminal_output(line_clean, stream_type="raw")
                         except Exception as e:
                             print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
-                    
-                    # ФАЗА 4: Парсер теперь читает из RAW-буфера, а не напрямую
-                    # Старый прямой парсинг ОТКЛЮЧЕН для избежания двойной обработки
-                    # if self.parser:
-                    #     try:
-                    #         self.parser.parse_line(line_clean)
-                    #     except Exception as e:
-                    #         print(f"[PARSER_ERROR] Ошибка парсинга: {e}", gui_log=True)
                     
                     # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
                     self._log("  %s" % line_clean, "INFO", channels)
@@ -5785,7 +5764,7 @@ class AutomationGUI(object):
         # Экземпляр проверщика Wine компонентов
         self.wine_checker = None
         
-        # ФАЗА 5: Replay симулятор для отладки парсинга
+        # Replay симулятор для отладки парсинга
         self.replay_simulator = None
         self.replay_progress_timer = None
         self._replay_controls_visible = False
@@ -7064,7 +7043,7 @@ class AutomationGUI(object):
         load_log_button.pack(side=self.tk.RIGHT, padx=5)
         ToolTip(load_log_button, "Загрузить лог-файл текущей сессии в терминал")
         
-        # ФАЗА 5: Кнопка Replay логов
+        # Кнопка Replay логов
         replay_log_button = self.tk.Button(
             second_row,
             text="Replay Log",
@@ -7100,7 +7079,7 @@ class AutomationGUI(object):
         clear_button.pack(side=self.tk.RIGHT, padx=5)
         ToolTip(clear_button, "Очистить содержимое терминала")
         
-        # ФАЗА 5: ТРЕТЬЯ СТРОКА - Replay контролы (изначально скрыты)
+        # ТРЕТЬЯ СТРОКА - Replay контролы (изначально скрыты)
         self.replay_controls_frame = self.tk.Frame(control_frame)
         # Не pack() сразу - будет показан только после выбора файла
         
@@ -7272,7 +7251,7 @@ class AutomationGUI(object):
             print(f"[ERROR] Ошибка открытия файла лога: {e}")
     
     def open_replay_dialog(self):
-        """ФАЗА 5: Открытие диалога выбора лога для replay"""
+        """Открытие диалога выбора лога для replay"""
         try:
             import tkinter.filedialog as filedialog
             
@@ -7340,7 +7319,7 @@ class AutomationGUI(object):
             traceback.print_exc()
     
     def start_replay(self):
-        """ФАЗА 5: Начать/продолжить воспроизведение лога"""
+        """Начать/продолжить воспроизведение лога"""
         try:
             if not self.replay_simulator or not self.replay_simulator.log_lines:
                 print("[REPLAY_ERROR] Файл не загружен")
@@ -7389,7 +7368,7 @@ class AutomationGUI(object):
             traceback.print_exc()
     
     def pause_replay(self):
-        """ФАЗА 5: Приостановить воспроизведение"""
+        """Приостановить воспроизведение"""
         try:
             if self.replay_simulator:
                 self.replay_simulator.pause()
@@ -7404,7 +7383,7 @@ class AutomationGUI(object):
             print(f"[REPLAY_ERROR] Ошибка паузы: {e}")
     
     def resume_replay(self):
-        """ФАЗА 5: Продолжить воспроизведение (вызывается из start_replay если был пауза)"""
+        """Продолжить воспроизведение (вызывается из start_replay если был пауза)"""
         try:
             if self.replay_simulator:
                 self.replay_simulator.resume()
@@ -7424,7 +7403,7 @@ class AutomationGUI(object):
             print(f"[REPLAY_ERROR] Ошибка возобновления: {e}")
     
     def stop_replay(self):
-        """ФАЗА 5: Остановить воспроизведение"""
+        """Остановить воспроизведение"""
         try:
             if self.replay_simulator:
                 self.replay_simulator.stop()
@@ -7448,7 +7427,7 @@ class AutomationGUI(object):
             print(f"[REPLAY_ERROR] Ошибка остановки: {e}")
     
     def on_replay_speed_change(self, value):
-        """ФАЗА 5: Обработчик изменения скорости replay"""
+        """Обработчик изменения скорости replay"""
         try:
             speed = float(value)
             self.replay_speed_value_label.config(text=f"{speed}x")
@@ -7464,12 +7443,12 @@ class AutomationGUI(object):
             print(f"[REPLAY_ERROR] Ошибка изменения скорости: {e}")
     
     def _on_replay_progress_callback(self, progress_percent):
-        """ФАЗА 5: Callback для обновления прогресса (вызывается из потока replay)"""
+        """Callback для обновления прогресса (вызывается из потока replay)"""
         # Обновляем прогресс-бар через root.after для безопасности потока
         self.root.after(0, lambda: self.replay_progress_var.set(progress_percent))
     
     def _start_replay_progress_timer(self):
-        """ФАЗА 5: Запуск таймера для периодического обновления прогресса"""
+        """Запуск таймера для периодического обновления прогресса"""
         if not self.replay_simulator:
             return
         
@@ -9876,7 +9855,7 @@ Path={os.path.dirname(script_path)}
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.process_queue()
             
-            # ФАЗА 4: Парсер читает из RAW-буфера
+            # Парсер читает из RAW-буфера
             if hasattr(self, 'system_updater') and self.system_updater:
                 if hasattr(self.system_updater, 'system_update_parser'):
                     parser = self.system_updater.system_update_parser
@@ -11043,7 +11022,7 @@ class SystemUpdateParser:
         # Множество для быстрого поиска пакетов O(1)
         self._package_names_set = set()
         
-        # ФАЗА 4: Отслеживание позиции в RAW-буфере
+        # Отслеживание позиции в RAW-буфере
         self._last_processed_buffer_index = 0
         
         # Текущий обрабатываемый пакет и операция (для отображения в статусе)
@@ -11052,7 +11031,7 @@ class SystemUpdateParser:
     
     def reset_parser_state(self):
         """
-        ФАЗА 5: Сброс состояния парсера перед replay
+        Сброс состояния парсера перед replay
         
         Очищает все внутренние состояния, кэши и счётчики для начала нового парсинга
         """
@@ -11083,7 +11062,7 @@ class SystemUpdateParser:
     
     def parse_from_buffer(self):
         """
-        ФАЗА 4: Парсинг новых строк из RAW-буфера DualStreamLogger
+        Парсинг новых строк из RAW-буфера DualStreamLogger
         
         Читает только новые строки из буфера (начиная с _last_processed_buffer_index)
         и обрабатывает их через parse_line().
@@ -11241,8 +11220,8 @@ class SystemUpdateParser:
         # ЭТАП 3: Отслеживание операций установки
         if self.parsing_install_started:
             
-            if "Распаковывается" in clean_line:
-                print(f"[PARSER] НАЙДЕНО 'Распаковывается'!", gui_log=True)
+            if ("Распаковывается" in clean_line) or ("Подготовка к распаковке" in clean_line):
+                print(f"[PARSER] НАЙДЕНО этап распаковки!")
                 self.parse_unpack_operation(clean_line)
             elif "Настраивается" in clean_line:
                 print(f"[PARSER] НАЙДЕНО 'Настраивается'!", gui_log=True)
@@ -11444,31 +11423,38 @@ class SystemUpdateParser:
             print(f"[PARSER] Неверный формат строки", gui_log=True)
     
     def parse_unpack_operation(self, line):
-        """Парсинг операции распаковки"""
-        # Ищем имя пакета в строке "Распаковывается package_name"
-        pattern = r'Распаковывается\s+([^\s]+)'
+        """Парсинг операции распаковки (включая стадию 'Подготовка к распаковке')"""
+        is_prepare = "Подготовка к распаковке" in line
+
+        # Допускаем оба варианта + необязательное слово 'пакет', обрезаем по '('
+        pattern = r'(?:Подготовка к распаковке|Распаковывается)\s+(?:пакет\s+)?([^\s(]+)'
         match = re.search(pattern, line)
-        if match:
-            package_name_full = match.group(1)
-            # Убираем архитектуру если есть (например package:amd64 -> package)
-            package_name = package_name_full.split(':')[0] if ':' in package_name_full else package_name_full
-            
-            success = self.update_package_flag(package_name, 'unpacked', True)
-            if success:
-                print(f"[PARSER] Пакет '{package_name}' распакован", gui_log=True)
-                
-                # Сохраняем текущий пакет и операцию
-                self.current_package_name = package_name
-                self.current_operation = "Распаковка"
-                
-                # Обновляем детали (зеленая строка)
-                self._update_status("", f"Распаковка: {package_name}")
-                
-                # Обновляем прогресс-бары
-                self._update_progress_bars()
-            else:
-                print(f"[PARSER] Пакет '{package_name}' не найден в таблице (полное имя: {package_name_full})!", gui_log=True)
-    
+        if not match:
+            print(f"[PARSER] Неверный формат строки распаковки")
+            return
+
+        package_name_full = match.group(1)
+        package_name = package_name_full.split(':')[0] if ':' in package_name_full else package_name_full
+
+        # На стадии подготовки НЕ выставляем флаг 'unpacked'
+        if is_prepare:
+            self.current_package_name = package_name
+            self.current_operation = "Распаковка"
+            self._update_status("", f"Распаковка (подготовка): {package_name}")
+            self._update_progress_bars()
+            return
+
+        # Стадия реальной распаковки: выставляем флаг
+        success = self.update_package_flag(package_name, 'unpacked', True)
+        if success:
+            print(f"[PARSER] Пакет '{package_name}' распакован")
+            self.current_package_name = package_name
+            self.current_operation = "Распаковка"
+            self._update_status("", f"Распаковка: {package_name}")
+            self._update_progress_bars()
+        else:
+            print(f"[PARSER] Пакет '{package_name}' не найден в таблице (полное имя: {package_name_full})!")
+
     def parse_configure_operation(self, line):
         """Парсинг операции настройки"""
         # Ищем имя пакета в строке "Настраивается package_name" или "Настраивается пакет package_name"
@@ -11976,309 +11962,6 @@ class SystemUpdateParser:
             'completion_percent': (stats['downloaded_count'] / len(self.packages_table) * 100) if self.packages_table else 0
         }
 
-class ProcessProgressManager:
-    """СТАРЫЙ менеджер прогресса - БУДЕТ УДАЛЕН"""
-    
-    def __init__(self, gui_callback=None):
-       
-        self.gui_callback = gui_callback
-        self.gui_instance = None
-        self.current_update_phase = None
-        self.update_phase_start_stage = None
-    
-    # Определения для разных типов процессов
-    PROCESS_DEFINITIONS = {
-        "system_update": {
-            "name": "Обновление системы",
-            "phases": [
-                {
-                    "name": "apt-get update", 
-                    "weight": 0.2, 
-                    "stages": {
-                        "reading_lists": {"name": "Чтение списков пакетов", "weight": 0.3},
-                        "analyzing": {"name": "Анализ системы", "weight": 0.7}
-                    }
-                },
-                {
-                    "name": "apt-get dist-upgrade", 
-                    "weight": 0.6, 
-                    "stages": {
-                        "downloading": {"name": "Скачивание пакетов", "weight": 0.4},
-                        "installing": {"name": "Установка пакетов", "weight": 0.6}
-                    }
-                },
-                {
-                    "name": "apt-get autoremove", 
-                    "weight": 0.2, 
-                    "stages": {
-                        "cleaning": {"name": "Очистка системы", "weight": 1.0}
-                    }
-                }
-            ]
-        },
-        
-        "wine_install": {
-            "name": "Установка Wine",
-            "phases": [
-                {
-                    "name": "Подготовка", 
-                    "weight": 0.1, 
-                    "stages": {
-                        "checking_deps": {"name": "Проверка зависимостей", "weight": 0.5},
-                        "downloading_wine": {"name": "Скачивание Wine", "weight": 0.5}
-                    }
-                },
-                {
-                    "name": "Установка Wine", 
-                    "weight": 0.7, 
-                    "stages": {
-                        "installing_wine": {"name": "Установка Wine", "weight": 0.6},
-                        "configuring_wine": {"name": "Настройка Wine", "weight": 0.4}
-                    }
-                },
-                {
-                    "name": "Настройка", 
-                    "weight": 0.2, 
-                    "stages": {
-                        "testing_wine": {"name": "Тестирование Wine", "weight": 0.5},
-                        "finalizing": {"name": "Завершение", "weight": 0.5}
-                    }
-                }
-            ]
-        },
-        
-        "app_install": {
-            "name": "Установка приложения",
-            "phases": [
-                {
-                    "name": "Подготовка", 
-                    "weight": 0.15, 
-                    "stages": {
-                        "checking_app": {"name": "Проверка приложения", "weight": 0.4},
-                        "downloading_app": {"name": "Скачивание приложения", "weight": 0.6}
-                    }
-                },
-                {
-                    "name": "Установка", 
-                    "weight": 0.7, 
-                    "stages": {
-                        "installing_app": {"name": "Установка приложения", "weight": 0.7},
-                        "configuring_app": {"name": "Настройка приложения", "weight": 0.3}
-                    }
-                },
-                {
-                    "name": "Завершение", 
-                    "weight": 0.15, 
-                    "stages": {
-                        "testing_app": {"name": "Тестирование приложения", "weight": 0.6},
-                        "cleanup": {"name": "Очистка", "weight": 0.4}
-                    }
-                }
-            ]
-        }
-    }
-    
-    def __init__(self, gui_callback=None):
-        """
-        Инициализация менеджера прогресса
-        
-        Args:
-            gui_callback: Функция для отправки обновлений в GUI
-        """
-        self.gui_callback = gui_callback
-        self.current_process = None
-        self.current_phase_index = 0
-        self.current_stage_index = 0
-        self.global_progress = 0.0
-        self.process_start_progress = 0.0
-        self.gui_instance = None  # Добавляем ссылку на GUI
-        self.current_update_phase = None  # Текущая фаза обновления
-        self.update_phase_start_stage = None  # Начальный этап для текущей фазы
-        
-    def start_process(self, process_type, process_name=None):
-        """
-        Начать отслеживание нового процесса
-        
-        Args:
-            process_type: Тип процесса (system_update, wine_install, app_install)
-            process_name: Название процесса (опционально)
-        """
-        if process_type not in self.PROCESS_DEFINITIONS:
-            raise ValueError(f"Неизвестный тип процесса: {process_type}")
-        
-        self.current_process = process_type
-        self.current_phase_index = 0
-        self.current_stage_index = 0
-        self.global_progress = 0.0
-        self.process_start_progress = 0.0
-        
-        process_info = self.PROCESS_DEFINITIONS[process_type]
-        display_name = process_name or process_info["name"]
-        
-        print(f"[PROGRESS_MANAGER] Начинаем процесс: {display_name}")
-        print(f"[PROGRESS_MANAGER] ProcessProgressManager успешно запущен и отслеживает процесс")
-        
-    def update_local_progress(self, stage_name, local_progress, details=""):
-        """
-        Обновить локальный прогресс этапа
-        
-        Args:
-            stage_name: Название этапа
-            local_progress: Локальный прогресс этапа (0-100)
-            details: Дополнительные детали
-        """
-        
-        if not self.current_process:
-            print("[WARNING] Процесс не инициализирован")
-            return
-        
-        process_def = self.PROCESS_DEFINITIONS[self.current_process]
-        phases = process_def["phases"]
-        
-        # Находим текущую фазу и этап
-        current_phase = phases[self.current_phase_index]
-        stage_info = current_phase["stages"].get(stage_name)
-        
-        if not stage_info:
-            print(f"[WARNING] Этап {stage_name} не найден в текущей фазе")
-            return
-        
-        # Вычисляем глобальный прогресс
-        phase_weight = current_phase["weight"]
-        stage_weight = stage_info["weight"]
-        
-        # Прогресс текущего этапа в рамках фазы (0-1)
-        stage_progress_in_phase = (local_progress / 100.0) * stage_weight
-        
-        # Прогресс текущей фазы в рамках всего процесса
-        phase_progress = stage_progress_in_phase
-        
-        # Обновляем глобальный прогресс (ограничиваем 100%)
-        self.global_progress = min(100.0, (self.process_start_progress + phase_progress) * 100.0)
-        
-        
-        # Отправляем обновление в GUI
-        self.send_progress_update(
-            self.global_progress,
-            stage_name,
-            local_progress,
-            stage_info["name"],
-            details
-        )
-        
-        print(f"[PROGRESS] {stage_info['name']}: {local_progress:.1f}% | Глобальный: {self.global_progress:.1f}%")
-        
-    def finish_current_phase(self):
-        """Завершить текущую фазу и перейти к следующей"""
-        if not self.current_process:
-            return
-        
-        process_def = self.PROCESS_DEFINITIONS[self.current_process]
-        phases = process_def["phases"]
-        
-        if self.current_phase_index < len(phases) - 1:
-            # Обновляем стартовый прогресс для следующей фазы
-            current_phase = phases[self.current_phase_index]
-            self.process_start_progress += current_phase["weight"]
-            self.current_phase_index += 1
-            self.current_stage_index = 0
-            
-            print(f"[PROGRESS] Переход к фазе: {phases[self.current_phase_index]['name']}")
-        
-    def finish_process(self):
-        """Завершить текущий процесс"""
-        if not self.current_process:
-            return
-        
-        # Устанавливаем глобальный прогресс в 100%
-        self.global_progress = 100.0
-        
-        process_info = self.PROCESS_DEFINITIONS[self.current_process]
-        
-        self.send_progress_update(
-            self.global_progress,
-            "finished",
-            100,
-            "Процесс завершен",
-            f"{process_info['name']} успешно завершен"
-        )
-        
-        print(f"[PROGRESS] Процесс {process_info['name']} завершен")
-        
-        # Сбрасываем состояние
-        self.current_process = None
-        self.current_phase_index = 0
-        self.current_stage_index = 0
-        self.global_progress = 0.0
-        self.process_start_progress = 0.0
-        
-    def send_progress_update(self, global_progress, stage_name, stage_progress, stage_display_name, details):
-        """Отправить обновление прогресса в GUI"""
-        
-        # Записываем в файл прогресса
-        self.write_progress_to_file(global_progress, stage_name, stage_progress, stage_display_name, details)
-        
-        if self.gui_callback:
-            # Отправляем в оригинальном формате (как было до изменений)
-            self.gui_callback({
-                'global_progress': global_progress,
-                'stage_name': stage_name,
-                'stage_progress': stage_progress,
-                'stage_display_name': stage_display_name,
-                'details': details
-            })
-        else:
-            pass
-
-    def write_progress_to_file(self, global_progress, stage_name, stage_progress, stage_display_name, details):
-        """Запись прогресса в файл progress_table"""
-        try:
-            import os
-            import datetime
-            
-            # Используем глобальный лог-файл
-            log_file_path = GLOBAL_LOG_FILE
-            
-            # Создаем путь к файлу прогресса
-            log_dir = os.path.dirname(log_file_path)
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-            
-            # Создаем имя файла прогресса на основе основного лог-файла
-            main_log_name = os.path.basename(log_file_path)
-            progress_file_name = main_log_name.replace("astra_automation_", "progress_table_").replace(".log", ".txt")
-            progress_file = os.path.join(log_dir, progress_file_name)
-            
-            # Получаем timestamp
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            
-            # Извлекаем номер пакета из деталей
-            package_num = ""
-            if "Пакет" in details and ":" in details:
-                try:
-                    package_num = details.split("Пакет")[1].split(":")[0].strip()
-                except:
-                    package_num = ""
-            
-            # Формируем строку таблицы
-            table_line = f"{timestamp} | {stage_name:<15} | {stage_progress:>6.1f}% | {global_progress:>8.1f}% | {package_num}\n"
-            
-            # Записываем в файл
-            with open(progress_file, 'a', encoding='utf-8') as f:
-                # Добавляем заголовок если файл пустой
-                if os.path.getsize(progress_file) == 0:
-                    header = "Время     | Этап           | Этапный% | Глобальный% | Пакет\n"
-                    f.write(header)
-                    f.write("-" * 60 + "\n")
-                f.write(table_line)
-                
-        except Exception as e:
-            print(f"[ERROR] Ошибка записи в файл прогресса: {e}")
-    
-    def get_global_progress(self):
-        """Получить текущий глобальный прогресс"""
-        return self.global_progress
-
 # ============================================================================
 # ОБНОВЛЕНИЕ СИСТЕМЫ
 # ============================================================================
@@ -12296,7 +11979,7 @@ class SystemUpdater(object):
         self.min_free_space_gb = 2.0  # Минимум 2 ГБ свободного места
         self.min_free_memory_mb = 512  # Минимум 512 МБ свободной памяти
         
-        # Счетчики для накопительного прогресса (DEPRECATED - используем ProcessProgressManager)
+        # Счетчики для накопительного прогресса (DEPRECATED - используем UniversalProgressManager)
         self.package_counter = 0
         self.total_packages = 1600  # Примерное количество пакетов
         self.current_stage = None
@@ -12305,7 +11988,7 @@ class SystemUpdater(object):
         
         # Определяем send_progress_to_gui ПЕРЕД созданием менеджеров
         def send_progress_to_gui(progress_data):
-            """Отправка обновления прогресса в GUI через ProcessProgressManager"""
+            """Отправка обновления прогресса в GUI через UniversalProgressManager"""
             try:
                 import datetime
                 
@@ -12342,11 +12025,6 @@ class SystemUpdater(object):
         
         # Привязываем метод к экземпляру
         self.send_progress_to_gui = send_progress_to_gui
-        
-        # Новый менеджер прогресса
-        self.progress_manager = ProcessProgressManager(gui_callback=self.send_progress_to_gui)
-        self.progress_manager.gui_instance = self  # Устанавливаем ссылку на GUI
-        print("[PROGRESS_MANAGER] ProcessProgressManager успешно инициализирован и готов к работе")
         
         # НОВЫЙ универсальный менеджер прогресса
         self.universal_progress_manager = UniversalProgressManager(universal_runner=self.universal_runner, gui_callback=self.send_progress_to_gui)
@@ -13003,16 +12681,6 @@ class SystemUpdater(object):
             current_phase = "autoremove"
         else:
             current_phase = None
-        
-        # Передаем информацию о текущей фазе в ProcessProgressManager
-        if hasattr(self, 'progress_manager') and self.progress_manager:
-            self.progress_manager.current_update_phase = current_phase
-            if current_phase == "update":
-                self.progress_manager.update_phase_start_stage = "reading_lists"
-            elif current_phase == "dist-upgrade":
-                self.progress_manager.update_phase_start_stage = "downloading"
-            elif current_phase == "autoremove":
-                self.progress_manager.update_phase_start_stage = "cleaning"
         
         # Определяем тип команды для лога GUI
         if 'apt-get update' in ' '.join(cmd):
@@ -13794,7 +13462,6 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         print(f"[LOG_FILE] Установлен путь к лог-файлу в universal_runner: {log_file}")
         gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
         gui.universal_runner.gui_log_callback = gui.add_gui_log_output  # УСТАНАВЛИВАЕМ GUI LOG CALLBACK!
-        gui.universal_runner.setup_print_redirect()  # ВКЛЮЧЕНО: рекурсия исправлена
         gui.universal_runner.setup_subprocess_redirect()  # Подмена subprocess.run()
         gui.universal_runner.setup_logging_redirect()  # Подмена logging.getLogger()
         gui.universal_runner.setup_universal_logging_redirect()  # Подмена ВСЕХ методов логирования
