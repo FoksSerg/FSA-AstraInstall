@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.93 (2025.10.31)
+Версия: V2.4.94 (2025.10.31)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.93"
+APP_VERSION = "V2.4.94"
 import os
 import sys
 import tempfile
@@ -5774,24 +5774,12 @@ class AutomationGUI(object):
         window_width = 1000
         window_height = 600
         
-        # Получаем размер экрана
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        
-        # Вычисляем позицию для центрирования
-        center_x = int(screen_width/2 - window_width/2)
-        center_y = int(screen_height/2 - window_height/2)
-        
-        # Убеждаемся, что окно не выходит за границы экрана
-        center_x = max(0, center_x)
-        center_y = max(0, center_y)
-        
-        # Устанавливаем геометрию окна с позицией по центру
-        self.root.geometry('%dx%d+%d+%d' % (window_width, window_height, center_x, center_y))
+        # Устанавливаем геометрию окна БЕЗ позиции (будет центрировано в _center_window)
+        self.root.geometry('%dx%d' % (window_width, window_height))
         
         # Принудительно центрируем окно после создания
         self.root.update_idletasks()
-        self._center_window()  # Восстановлено центрирование окна
+        self._center_window()  # Центрирование с учетом панели задач
         
         # Разрешаем изменение размера окна
         self.root.resizable(True, True)
@@ -7647,7 +7635,7 @@ class AutomationGUI(object):
         self.root.after(1000, update_resources)
     
     def _center_window(self):
-        """Центрирование окна на экране"""
+        """Центрирование окна на экране с учетом панели задач"""
         try:
             # Обновляем информацию о размерах окна
             self.root.update_idletasks()
@@ -7659,7 +7647,7 @@ class AutomationGUI(object):
             # Если размеры еще не определены, используем значения по умолчанию
             if window_width <= 1 or window_height <= 1:
                 window_width = 1000
-                window_height = 635  # Обновлено: 600 -> 635 (реальная высота после всех изменений)
+                window_height = 635  # Реальная высота после всех изменений
             
             # Получаем размер экрана
             screen_width = self.root.winfo_screenwidth()
@@ -7673,16 +7661,19 @@ class AutomationGUI(object):
             center_x = max(0, center_x)
             center_y = max(0, center_y)
             
-            # Для Linux: дополнительно учитываем высоту панели задач (обычно ~30-50px)
-            # Смещаем вверх, чтобы окно не уходило за нижнюю границу
-            if center_y + window_height > screen_height - 50:
-                center_y = screen_height - window_height - 50
+            # Проверяем, не выходит ли окно за нижнюю границу экрана с учетом панели задач
+            # Если нижняя часть окна прячется за панелью задач, прикрепляем окно к верху экрана
+            taskbar_height = 80  # Высота панели задач (ориентировочно)
+            bottom_edge = center_y + window_height
+            if bottom_edge > screen_height - taskbar_height:
+                # Окно выходит за панель задач - прикрепляем к верху экрана
+                center_y = 20  # Отступ 20px от верхней границы экрана
                 center_y = max(0, center_y)  # Не выше верхней границы
             
             # Устанавливаем новую позицию
             self.root.geometry('+%d+%d' % (center_x, center_y))
             
-            # Добавляем сообщение о центрировании в терминал
+            # Логирование для отладки
             print(f"[GUI] Окно центрировано: {window_width}x{window_height} на позиции ({center_x}, {center_y})")
         except Exception as e:
             # Игнорируем ошибки центрирования
