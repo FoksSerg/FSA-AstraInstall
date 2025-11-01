@@ -1,8 +1,13 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.4.94 (2025.10.30)
+# Версия: V2.4.95 (2025.10.30)
 # Компания: ООО "НПА Вира-Реалтайм"
+
+# Сворачиваем все окна включая терминал в самом начале работы
+if command -v xdotool >/dev/null 2>&1; then
+    xdotool key Super+d 2>/dev/null 
+fi
 
 # Функция логирования
 log_message() {
@@ -138,8 +143,8 @@ log_message "Права установлены"
 log_message "Запуск установки..."
 cd "$LINUX_ASTRA_PATH" 2>/dev/null
 if [ -f "astra_install.sh" ]; then
-    log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID"
-    ./astra_install.sh --terminal-pid "$TERMINAL_PID"
+    log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID --windows-minimized"
+    ./astra_install.sh --terminal-pid "$TERMINAL_PID" --windows-minimized
 else
     log_message "ОШИБКА: Файл astra_install.sh не найден"
     echo "Ошибка Обновления"

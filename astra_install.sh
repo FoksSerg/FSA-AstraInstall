@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.4.94 (2025.10.30)
+# Версия: V2.4.95 (2025.10.30)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,10 +8,49 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.4.94"
+SCRIPT_VERSION="V2.4.95 (2025.10.30)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# КРИТИЧНО: Сворачиваем окно терминала МГНОВЕННО (до всех выводов)
+# Выполняем только при первом запуске (до перезапуска через sudo)
+if [ "$EUID" -ne 0 ] && command -v xdotool >/dev/null 2>&1; then
+    # Проверяем аргументы - не сворачиваем в консольном режиме
+    SKIP_TERMINAL=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--console" ]]; then
+            SKIP_TERMINAL=true
+            break
+        fi
+    done
+    
+    # Сворачиваем окно терминала (всегда, кроме консольного режима)
+    if [ "$SKIP_TERMINAL" != "true" ]; then
+        TERM_PID=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
+        if [ ! -z "$TERM_PID" ]; then
+            WINDOW_IDS=$(xdotool search --pid "$TERM_PID" 2>/dev/null)
+            if [ -n "$WINDOW_IDS" ]; then
+                for window in $WINDOW_IDS; do
+                    xdotool windowminimize "$window" 2>/dev/null
+                done
+            fi
+        fi
+    fi
+    
+    # Сворачиваем все остальные окна (если не передан --windows-minimized)
+    SKIP_ALL_WINDOWS=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--console" ]] || [[ "$arg" == "--windows-minimized" ]]; then
+            SKIP_ALL_WINDOWS=true
+            break
+        fi
+    done
+    
+    if [ "$SKIP_ALL_WINDOWS" != "true" ]; then
+        xdotool key Super+d 2>/dev/null
+    fi
+fi
 
 # КРИТИЧНО: Принудительно переходим в каталог скрипта
 # Это решает проблему запуска из ярлыка на рабочем столе
@@ -194,7 +233,6 @@ echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
 echo "Аргументы командной строки: $*" >> "$LOG_FILE"
 echo "============================================================" >> "$LOG_FILE"
 
-
 echo "============================================================"
 echo "ASTRA AUTOMATION - АВТОМАТИЧЕСКАЯ УСТАНОВКА И ЗАПУСК"
 echo "============================================================"
@@ -211,6 +249,9 @@ TERMINAL_PID_ARG=""
 
 for arg in "$@"; do
     case $arg in
+        --windows-minimized)
+            # Окна уже свернуты, пропускаем сворачивание
+            ;;
         --console)
             CONSOLE_MODE=true
             echo "[i] Режим: КОНСОЛЬНЫЙ (без GUI)"
@@ -251,8 +292,12 @@ fi
 if [ "$EUID" -ne 0 ]; then
     echo "[i] Требуются права root. Перезапуск через sudo..."
     log_message "Перезапуск скрипта с правами root через sudo"
-    # Перезапускаем себя с sudo, передавая все аргументы
-    exec sudo -E bash "$0" "$@"
+    # Перезапускаем себя с sudo, передавая все аргументы и переменные окружения
+    if [ ! -z "$DISPLAY" ]; then
+        exec sudo -E env DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" bash "$0" "$@"
+    else
+        exec sudo -E env FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" bash "$0" "$@"
+    fi
     exit $?
 fi
 
@@ -332,7 +377,7 @@ log_message "Python 3: $PYTHON3_VERSION"
 # ============================================================
 
 if [ "$CONSOLE_MODE" = false ]; then
-echo ""
+    echo ""
     echo "[*] Определяем оптимальный режим запуска..."
     log_message "Начинаем определение режима запуска"
     
@@ -442,8 +487,8 @@ echo ""
             ;;
     esac
     echo "============================================================"
-        echo ""
-        
+    echo ""
+    
     # Если нужно установить tkinter - делаем это
     if [ "$START_MODE" = "gui_install_first" ]; then
         echo "[#] Устанавливаем компоненты для GUI..."
@@ -476,7 +521,7 @@ echo ""
                 log_message "tkinter установлен и проверен"
                 
                 # Устанавливаем дополнительные компоненты для GUI
-    echo ""
+                echo ""
                 echo "[#] Установка дополнительных компонентов для GUI..."
                 yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
                 COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
@@ -509,7 +554,7 @@ echo ""
             log_message "Пропускаем установку pip3 (не критично для GUI)"
             
             # Исправляем зависимости
-    echo ""
+            echo ""
             echo "   [*] Исправляем зависимости..."
             log_message "Исправляем зависимости (apt-get install -f)"
             apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
@@ -526,7 +571,7 @@ echo ""
     
     # Финальная проверка перед запуском GUI
     if [ "$START_MODE" = "gui_ready" ] || [ "$START_MODE" = "gui_install_first" ]; then
-echo ""
+        echo ""
         echo "[?] Финальная проверка перед запуском GUI..."
         log_message "Финальная проверка компонентов перед запуском GUI"
         
@@ -545,18 +590,18 @@ echo ""
 fi
 
 echo ""
-    echo "[?] Статус компонентов:"
-    echo "   [i] Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
-    echo "   [i] Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
-    echo "   [i] pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
-    log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A'), Tkinter=$(python3 -c 'import tkinter; print("OK")' 2>/dev/null || echo 'N/A'), pip3=$(pip3 --version 2>/dev/null || echo 'N/A')"
+echo "[?] Статус компонентов:"
+echo "   [i] Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
+echo "   [i] Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
+echo "   [i] pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
+log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A'), Tkinter=$(python3 -c 'import tkinter; print("OK")' 2>/dev/null || echo 'N/A'), pip3=$(pip3 --version 2>/dev/null || echo 'N/A')"
 
 echo ""
-    echo "[+] Подготовка завершена!"
-    log_message "Подготовка компонентов завершена. Режим: $START_MODE"
+echo "[+] Подготовка завершена!"
+log_message "Подготовка компонентов завершена. Режим: $START_MODE"
 
 # ============================================================
-# БЛОК 5: ЗАПУСК PYTHON СКРИПТА
+# БЛОК 4: ЗАПУСК PYTHON СКРИПТА
 # ============================================================
 
 echo ""
@@ -596,91 +641,83 @@ log_message "Передаем управление Python скрипту: astra_
 log_message "Лог файл: $LOG_FILE"
 
     if python3 --version >/dev/null 2>&1; then
-    echo "   [i] Используем Python 3: $(python3 --version)"
+        echo "   [i] Используем Python 3: $(python3 --version)"
         log_message "Используем Python 3: $(python3 --version)"
-    
-    if [ "$CONSOLE_MODE" = true ]; then
-        # Консольный режим - запускаем в текущем терминале
-        python3 astra_automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
-        PYTHON_EXIT_CODE=$?
-    else
-        # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
-        echo "   [i] GUI запускается в фоновом режиме"
-        echo "   [i] Окно терминала закроется автоматически после запуска GUI"
-        log_message "GUI запускается в фоновом режиме (детачится от терминала)"
         
-        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
-        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-        # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
-        log_message "Начинаем поиск PID терминала с проверкой процессов"
-        
-        # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
-        if [ ! -z "$TERMINAL_PID" ]; then
-            log_message "Используем переданный PID терминала: $TERMINAL_PID"
-            # TERMINAL_PID уже установлен, не нужно переприсваивать
+        if [ "$CONSOLE_MODE" = true ]; then
+            # Консольный режим - запускаем в текущем терминале
+            python3 astra_automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
+            PYTHON_EXIT_CODE=$?
         else
-            log_message "Переданный PID терминала не найден, используем алгоритм поиска"
-        
-        # Список методов определения PID (по приоритету)
-        methods=(
-            "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
-            "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
-            "\$PPID"                                                             # Метод 3 - простой fallback
-            "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
-            "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
-            "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
-        )
-        
-        # Проверяем каждый метод по очереди
-        for i in "${!methods[@]}"; do
-            method="${methods[$i]}"
-            # Проверяем каждый метод
-            candidate_pid=$(eval "$method" 2>/dev/null)
+            # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
+            echo "   [i] GUI запускается в фоновом режиме"
+            echo "   [i] Окно терминала закроется автоматически после запуска GUI"
+            log_message "GUI запускается в фоновом режиме (детачится от терминала)"
             
-            # Проверяем существование и тип процесса
-            if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
-                process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
+            # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
+            # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
+            # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
+            log_message "Начинаем поиск PID терминала с проверкой процессов"
+            
+            # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
+            if [ ! -z "$TERMINAL_PID" ]; then
+                log_message "Используем переданный PID терминала: $TERMINAL_PID"
+                # TERMINAL_PID уже установлен, не нужно переприсваивать
+            else
+                log_message "Переданный PID терминала не найден, используем алгоритм поиска"
                 
-                # Проверяем что это терминал
-                if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
-                    TERMINAL_PID="$candidate_pid"
-                    log_message "Найден терминал: PID=$candidate_pid, имя=$process_name"
-                    break  # ВЫХОДИМ ИЗ ЦИКЛА!
+                # Список методов определения PID (по приоритету)
+                methods=(
+                    "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
+                    "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
+                    "\$PPID"                                                             # Метод 3 - простой fallback
+                    "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
+                    "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
+                    "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
+                )
+                
+                # Проверяем каждый метод по очереди
+                for i in "${!methods[@]}"; do
+                    method="${methods[$i]}"
+                    # Проверяем каждый метод
+                    candidate_pid=$(eval "$method" 2>/dev/null)
+                    
+                    # Проверяем существование и тип процесса
+                    if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
+                        process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
+                        
+                        # Проверяем что это терминал
+                        if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
+                            TERMINAL_PID="$candidate_pid"
+                            log_message "Найден терминал: PID=$candidate_pid, имя=$process_name"
+                            break  # ВЫХОДИМ ИЗ ЦИКЛА!
+                        fi
+                    fi
+                done
+                
+                # Fallback если ничего не найдено
+                if [ -z "$TERMINAL_PID" ]; then
+                    log_message "Терминал не найден, используем первый метод как fallback"
+                    TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
                 fi
-            fi
-        done
-        
-        # Fallback если ничего не найдено
-        if [ -z "$TERMINAL_PID" ]; then
-            log_message "Терминал не найден, используем первый метод как fallback"
-            TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
+            fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
+            
+            log_message "PID окна терминала: $TERMINAL_PID"
+            
+            # Запускаем GUI с передачей PID терминала для автозакрытия
+            nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+            PYTHON_PID=$!
+            
+            log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
+            log_message "GUI закроет терминал (PID: $TERMINAL_PID) после полного запуска"
+            
+            PYTHON_EXIT_CODE=0
         fi
-        
-        fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
-        
-        
-        log_message "PID окна терминала: $TERMINAL_PID"
-        
-        # Сворачиваем терминал перед запуском GUI
-        log_message "Сворачиваем терминал перед запуском GUI"
-        
-        # Сворачиваем окно терминала (работает на большинстве терминалов)
-        wmctrl -r :ACTIVE: -b add,hidden 2>/dev/null || true
-        
-        # Запускаем GUI с передачей PID терминала для автозакрытия
-        nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
-        PYTHON_PID=$!
-        
-        log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
-        log_message "GUI закроет терминал (PID: $TERMINAL_PID) после полного запуска"
-        
-        PYTHON_EXIT_CODE=0
-    fi
-else
-    echo "   [ERR] Python 3 не найден!"
-    log_message "ОШИБКА: Python 3 не найден"
+    else
+        echo "   [ERR] Python 3 не найден!"
+        log_message "ОШИБКА: Python 3 не найден"
         exit 1
-fi
+    fi
 
 log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"
 exit $PYTHON_EXIT_CODE
