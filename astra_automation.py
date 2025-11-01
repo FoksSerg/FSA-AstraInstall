@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.95 (2025.10.31)
+Версия: V2.4.96 (2025.11.01)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.95 (2025.10.31)"
+APP_VERSION = "V2.4.96 (2025.11.01)"
 import os
 import sys
 import tempfile
@@ -66,17 +66,6 @@ COMPONENTS_CONFIG = {
         'description': 'Wine версии 9.0 для совместимости',
         'priority': 2
     },
-    'ptrace_scope': {
-        'name': 'ptrace_scope',
-        'category': 'system_config',
-        'dependencies': [],
-        'check_paths': ['/proc/sys/kernel/yama/ptrace_scope'],
-        'install_method': 'system_config',
-        'uninstall_method': 'system_config',
-        'gui_selectable': True,
-        'description': 'Настройка ptrace_scope для Wine',
-        'priority': 3
-    },
     
     # Wine окружение
     'wineprefix': {
@@ -102,7 +91,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'Mono runtime для Wine',
         'priority': 5
     },
@@ -116,7 +105,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': '.NET Framework 4.8',
         'priority': 6
     },
@@ -132,7 +121,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'Visual C++ 2013 Redistributable',
         'priority': 7
     },
@@ -148,7 +137,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'Visual C++ 2022 Redistributable',
         'priority': 8
     },
@@ -162,7 +151,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'DirectX d3dcompiler_43',
         'priority': 9
     },
@@ -176,7 +165,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'DirectX d3dcompiler_47',
         'priority': 10
     },
@@ -190,7 +179,7 @@ COMPONENTS_CONFIG = {
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
-        'gui_selectable': False,
+        'gui_selectable': True,
         'description': 'DXVK - Vulkan-based D3D11 implementation',
         'priority': 11
     },
