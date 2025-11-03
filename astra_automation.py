@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.97 (2025.11.01)
+Версия: V2.4.98 (2025.11.03)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.97 (2025.11.01)"
+APP_VERSION = "V2.4.98 (2025.11.03)"
 import os
 import sys
 import tempfile
@@ -260,13 +260,10 @@ class DualStreamLogger:
         self._raw_file = None
         self._analysis_file = None
     
-    def write_raw(self, message, timestamp=True):
-        """Записать сообщение в RAW-поток"""
-        if timestamp:
-            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            formatted_message = "[%s] %s" % (timestamp_str, message)
-        else:
-            formatted_message = message
+    def write_raw(self, message):
+        """Записать сообщение в RAW-поток (всегда с меткой времени)"""
+        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        formatted_message = "[%s] %s" % (timestamp_str, message)
         
         with self._raw_lock:
             self._raw_buffer.append(formatted_message)
@@ -275,13 +272,10 @@ class DualStreamLogger:
         if self._file_writer_running and self._raw_log_path:
             self._file_queue.put(('raw', formatted_message))
     
-    def write_analysis(self, message, timestamp=True):
-        """Записать сообщение в ANALYSIS-поток"""
-        if timestamp:
-            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            formatted_message = "[%s] %s" % (timestamp_str, message)
-        else:
-            formatted_message = message
+    def write_analysis(self, message):
+        """Записать сообщение в ANALYSIS-поток (всегда с меткой времени)"""
+        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        formatted_message = "[%s] %s" % (timestamp_str, message)
         
         with self._analysis_lock:
             self._analysis_buffer.append(formatted_message)
@@ -552,15 +546,14 @@ class LogReplaySimulator:
                     
                     # Записываем в RAW-поток
                     if clean_line:
-                        dual_logger.write_raw(clean_line, timestamp=True)
+                        dual_logger.write_raw(clean_line)
                         
-                        # Также добавляем в GUI терминал для отображения
-                        # Получаем ссылку на GUI из sys._gui_instance
-                        if hasattr(sys, '_gui_instance') and sys._gui_instance:
-                            try:
-                                sys._gui_instance.add_terminal_output(clean_line, stream_type="raw")
-                            except Exception as e:
-                                pass  # Игнорируем ошибки GUI во время replay
+                        # Также добавляем в буфер через universal_print для отображения в GUI
+                        # GUI читает из буфера DualStreamLogger, поэтому используем universal_print
+                        try:
+                            universal_print(clean_line, stream='raw', level='INFO')
+                        except Exception as e:
+                            pass  # Игнорируем ошибки во время replay
                     
                     # Задержка в зависимости от скорости
                     # Реалистичная задержка ~ 10ms между строками apt
@@ -621,48 +614,72 @@ import builtins
 _original_print = builtins.print
 
 def universal_print(*args, **kwargs):
-    """Простая функция перехвата print()"""
+    """
+    Универсальная функция логирования - переопределяет builtins.print
+    
+    Автоматически вызывается при использовании стандартного print():
+    - print("сообщение") → universal_print("сообщение")
+    - print("сообщение", gui_log=True) → universal_print("сообщение", gui_log=True)
+    
+    Прямой вызов с параметрами используется только в специальных местах:
+    - universal_print("сообщение", stream='raw', level='ERROR')
+    
+    Флаги:
+    - stream='analysis'|'raw' - поток (по умолчанию 'analysis')
+    - gui_log=True|False - отображать в GUI логе (по умолчанию False)
+    - level='INFO'|'ERROR'|'WARNING'|'DEBUG' - уровень (по умолчанию 'INFO')
+    
+    ВСЕ сообщения ВСЕГДА с метками времени (через DualStreamLogger)
+    """
     message = ' '.join(str(arg) for arg in args)
+    
+    # Флаги
+    stream_type = kwargs.pop('stream', 'analysis')  # 'analysis' или 'raw'
     gui_log = kwargs.pop('gui_log', False)
+    level = kwargs.pop('level', 'INFO')
     
-    # ВСЕГДА записываем в файл (если GLOBAL_LOG_FILE определена)
-    if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
-        with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(f"[INFO] {message}\n")
+    # Получаем dual_logger из universal_runner или глобального
+    dual_logger = None
     
-    # НОВОЕ: ДОПОЛНИТЕЛЬНО дублируем в ANALYSIS-поток DualStreamLogger (если есть)
-    # Это НЕ МЕНЯЕТ существующую логику, просто добавляет дублирование
+    # Сначала пробуем через GUI
     if hasattr(sys, '_gui_instance') and sys._gui_instance:
-        try:
-            if hasattr(sys._gui_instance.universal_runner, 'dual_logger'):
-                dual_logger = sys._gui_instance.universal_runner.dual_logger
-                if dual_logger:
-                    dual_logger.write_analysis(f"[PRINT] {message}", timestamp=True)
-        except Exception:
-            pass  # Не ломаем работу если что-то пошло не так
+        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
+            dual_logger = getattr(sys._gui_instance.universal_runner, 'dual_logger', None)
     
-    # В терминал GUI (если готов)
-    if hasattr(sys, '_gui_instance') and sys._gui_instance:
-        try:
-            if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
-                if hasattr(sys._gui_instance.universal_runner, 'gui_callback') and sys._gui_instance.universal_runner.gui_callback:
-                    sys._gui_instance.universal_runner.gui_callback(message)
-        except Exception as e:
-            if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
-                with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
-                    f.write(f"[ERROR] gui_callback failed: {e}\n")
+    # Если через GUI не получилось, пробуем глобальный
+    if not dual_logger:
+        dual_logger = _global_dual_logger
     
-    # В лог GUI (только если gui_log=True)
+    # ВСЁ через DualStreamLogger (буферы с метками времени)
+    if dual_logger:
+        formatted_message = f"[{level}] {message}"
+        if stream_type == 'raw':
+            dual_logger.write_raw(formatted_message)  # ВСЕГДА с меткой времени
+        else:
+            dual_logger.write_analysis(formatted_message)  # ВСЕГДА с меткой времени
+    else:
+        # Fallback: если dual_logger недоступен, используем оригинальный print
+        # (только для самых ранних этапов инициализации)
+        import builtins
+        if not hasattr(builtins, '_original_print'):
+            builtins._original_print = builtins.print
+        builtins._original_print(f"[{level}] {message}")
+    
+    # GUI лог (ТОЛЬКО если gui_log=True)
     if gui_log and hasattr(sys, '_gui_instance') and sys._gui_instance:
-        try:
+        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
             if hasattr(sys._gui_instance.universal_runner, 'gui_log_callback'):
-                sys._gui_instance.universal_runner.gui_log_callback(message)
-        except Exception as e:
-            if 'GLOBAL_LOG_FILE' in globals() and GLOBAL_LOG_FILE:
-                with open(GLOBAL_LOG_FILE, 'a', encoding='utf-8') as f:
-                    f.write(f"[ERROR] gui_log_callback failed: {e}\n")
+                try:
+                    sys._gui_instance.universal_runner.gui_log_callback(message)
+                except Exception:
+                    pass  # Игнорируем ошибки
 
-# Переопределяем builtins.print
+# Сохраняем оригинальный print для fallback
+import builtins
+if not hasattr(builtins, '_original_print'):
+    builtins._original_print = builtins.print
+
+# Переопределяем builtins.print - это позволяет использовать стандартный print() везде
 builtins.print = universal_print
 
 # ============================================================================
@@ -874,12 +891,6 @@ class UniversalProcessRunner(object):
             else:
                 universal_runner.log_info(message)
         
-        # Подменяем все методы _write_to_file
-        def universal_write_to_file(self, message):
-            """Универсальный _write_to_file с отправкой в UniversalProcessRunner"""
-            universal_runner = get_global_universal_runner()
-            universal_runner._write_to_file(message)
-        
         # Подменяем все методы _log в классах
         import types
         types.MethodType = lambda func, instance: universal_log if func.__name__ == '_log' else func
@@ -889,33 +900,36 @@ class UniversalProcessRunner(object):
             self.gui_callback("[UNIVERSAL] UniversalProcessRunner готов к перехвату ВСЕХ методов логирования")
     
     def log_info(self, message, description=None, extra_info=None):
-        """Логирование информационного сообщения"""
+        """Логирование информационного сообщения (метка времени автоматически)"""
         if description and extra_info is not None:
             full_message = f"{description}: {str(message)} (доп.инфо: {extra_info})"
         elif description:
             full_message = f"{description}: {str(message)}"
         else:
             full_message = str(message)
-        self.add_output(f"[INFO] {full_message}")
-        self._write_to_file(f"[INFO] {full_message}")
+        
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        universal_print(full_message, stream='analysis', level='INFO')
     
     def log_error(self, message, description=None):
-        """Логирование сообщения об ошибке"""
+        """Логирование сообщения об ошибке (метка времени автоматически)"""
         if description:
             full_message = f"{description}: {str(message)}"
         else:
             full_message = str(message)
-        self.add_output(f"[ERROR] {full_message}")
-        self._write_to_file(f"[ERROR] {full_message}")
+        
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        universal_print(full_message, stream='analysis', level='ERROR')
     
     def log_warning(self, message, description=None):
-        """Логирование предупреждения"""
+        """Логирование предупреждения (метка времени автоматически)"""
         if description:
             full_message = f"{description}: {str(message)}"
         else:
             full_message = str(message)
-        self.add_output(f"[WARNING] {full_message}")
-        self._write_to_file(f"[WARNING] {full_message}")
+        
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        universal_print(full_message, stream='analysis', level='WARNING')
     
     def log_debug(self, message, description=None):
         """Логирование отладочных сообщений"""
@@ -928,23 +942,6 @@ class UniversalProcessRunner(object):
         """Установка пути к лог-файлу"""
         self.log_file_path = log_file_path
     
-    def _write_to_file(self, message):
-        """Запись сообщения в лог-файл"""
-        if not self.log_file_path:
-            return
-        
-        try:
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            log_entry = f"[{timestamp}] {message}\n"
-            
-            with open(self.log_file_path, 'a', encoding='utf-8') as f:
-                f.write(log_entry)
-                f.flush()
-        except Exception as e:
-            # Если не можем записать в лог, игнорируем ошибку
-            pass
-        
     def run_process(self, command, process_type="general", 
                    channels=["file", "terminal"], callback=None, timeout=None, env=None):
         """
@@ -1006,14 +1003,13 @@ class UniversalProcessRunner(object):
                 # Выводим строку в реальном времени
                 line_clean = line.rstrip()
                 if line_clean:
-                    # Записываем RAW-вывод процесса в отдельный поток (используем глобальный dual_logger)
+                    # RAW поток (необработанный вывод процесса, метка времени автоматически)
                     if _global_dual_logger:
                         try:
-                            _global_dual_logger.write_raw(line_clean, timestamp=True)
-                            # Также добавляем в GUI терминал с типом "raw"
-                            if self.gui_instance and hasattr(self.gui_instance, 'add_terminal_output'):
-                                self.gui_instance.add_terminal_output(line_clean, stream_type="raw")
+                            _global_dual_logger.write_raw(line_clean)  # Метка времени добавляется автоматически
+                            # GUI читает из буфера, поэтому не вызываем add_terminal_output()
                         except Exception as e:
+                            # Используем стандартный print() с gui_log=True (поддерживается universal_print)
                             print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
                     
                     # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
@@ -1051,21 +1047,14 @@ class UniversalProcessRunner(object):
     
     def add_output(self, message, level="INFO", channels=[], bypass_filter=False):
         """
-        Быстрое добавление сообщения в очередь - внешний процесс не ждет
+        Добавление сообщения в лог (через universal_print для обратной совместимости)
         
-        Args:
-            message: Текст сообщения
-            level: Уровень сообщения ("INFO", "WARNING", "ERROR")
-            channels: Каналы вывода ["gui_log"] - file и terminal всегда включены
-            bypass_filter: Обойти фильтрацию для GUI лога
+        Метка времени добавляется автоматически через DualStreamLogger
         """
-        # file и terminal всегда включены, добавляем gui_log если указан
-        all_channels = ["file", "terminal"]
-        if "gui_log" in channels:
-            all_channels.append("gui_log")
-        
-        # Быстро добавляем в очередь - внешний процесс продолжает работу
-        self.output_queue.put((message, level, all_channels, bypass_filter))
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        gui_log = "gui_log" in channels
+        stream = 'raw' if 'raw' in str(channels).lower() else 'analysis'
+        universal_print(message, stream=stream, level=level, gui_log=gui_log)
     
     def _write_to_terminal(self, message):
         """Простая запись в терминал"""
@@ -1089,47 +1078,29 @@ class UniversalProcessRunner(object):
                     message, level, channels = item
                     bypass_filter = False
                 
-                # Записываем в файл
-                if "file" in channels:
-                    self._write_to_file(f"[{level}] {message}")
+                # Используем прямой вызов universal_print с параметрами (исключительный случай)
+                gui_log = "gui_log" in channels
+                stream = 'raw' if 'raw' in str(channels).lower() else 'analysis'
+                universal_print(message, stream=stream, level=level, gui_log=gui_log)
                 
-                # Выводим в терминал (БЕЗ фильтрации - все сообщения попадают в терминал)
-                if "terminal" in channels:
-                        self._write_to_terminal(message)
-                
-                # GUI лог - если ЯВНО указан gui_log, НЕ ФИЛЬТРУЕМ!
-                if "gui_log" in channels:
-                    if hasattr(self, 'gui_log_callback') and self.gui_log_callback:
-                        self.gui_log_callback(message)
-        except:
-            pass
+        except Exception as e:
+            pass  # Игнорируем ошибки
     
     def _log(self, message, level="INFO", channels=["file", "terminal"]):
         """
-        Универсальное логирование в выбранные каналы
+        Универсальное логирование - всё через universal_print
         
         Args:
             message: Текст сообщения
-            level: Уровень сообщения
-            channels: Список каналов ["file", "terminal", "gui"]
+            level: Уровень сообщения ("INFO", "ERROR", "WARNING")
+            channels: Игнорируется (для обратной совместимости)
+        
+        Метка времени добавляется автоматически через DualStreamLogger
         """
-        # Лог файл (всегда, если есть logger) - используем методы universal_runner напрямую
-        if "file" in channels:
-            if level == "ERROR":
-                self.log_error(message)
-            elif level == "WARNING":
-                self.log_warning(message)
-            else:
-                self.log_info(message)
-        
-        # GUI терминал
-        if "terminal" in channels and self.gui_callback:
-            self.gui_callback(message)
-        
-        # GUI лог (только для ключевых сообщений)
-        if "gui" in channels:
-            # Здесь можно добавить логику для GUI лога
-            pass
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        # stream='analysis' для обработанных сообщений
+        gui_log_flag = "gui_log" in channels if isinstance(channels, list) else False
+        universal_print(message, stream='analysis', level=level, gui_log=gui_log_flag)
     
     def _detect_interactive_prompt(self, output_buffer):
         """Определение интерактивных запросов в выводе"""
@@ -1192,9 +1163,8 @@ class RepoChecker(object):
             # Fallback: используем переопределенный print через universal_print
             print(message)
         
-        # Также отправляем в GUI терминал если есть
-        if self.gui_terminal:
-            self.gui_terminal.add_terminal_output(message)
+        # Сообщения автоматически попадают в буфер DualStreamLogger через universal_print
+        # GUI читает из буфера, поэтому прямой вызов add_terminal_output() не нужен
     
     def backup_sources_list(self, dry_run=False):
         """Создание backup файла репозиториев"""
@@ -2574,7 +2544,7 @@ class WineInstaller(object):
         )
         
         # Запускаем мониторинг диалогов в отдельном потоке
-        dialog_thread = threading.Thread(target=self._monitor_wine_dialogs, args=(process.pid,))
+        dialog_thread = threading.Thread(target=self._monitor_wine_dialogs, args=(process.pid))
         dialog_thread.daemon = True
         dialog_thread.start()
         
@@ -6345,6 +6315,37 @@ class ToolTip:
             self.tooltip_window = None
 
 # ============================================================================
+# TERMINALREDIRECTOR - ПЕРЕНАПРАВЛЕНИЕ sys.stdout/stderr В RAW ПОТОК
+# ============================================================================
+class TerminalRedirector:
+    """
+    Перехват sys.stdout/stderr для перенаправления в RAW поток DualStreamLogger
+    
+    Все сообщения автоматически получают метки времени через DualStreamLogger
+    """
+    
+    def __init__(self, stream_name):
+        """
+        Args:
+            stream_name: "stdout" или "stderr"
+        """
+        self.stream_name = stream_name
+    
+    def write(self, message):
+        """Запись в RAW поток через universal_print"""
+        if message.strip():
+            # Добавляем префикс для stderr
+            if self.stream_name == "stderr":
+                message = f"[STDERR] {message}"
+            
+            # ВСЁ через universal_print в RAW поток (метка времени добавляется автоматически)
+            universal_print(message.strip(), stream='raw', level='INFO')
+    
+    def flush(self):
+        """Не требуется для GUI"""
+        pass
+
+# ============================================================================
 # GUI КЛАСС АВТОМАТИЗАЦИИ
 # ============================================================================
 class AutomationGUI(object):
@@ -7044,32 +7045,13 @@ class AutomationGUI(object):
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
-        class TerminalRedirector:
-            """Класс для перенаправления вывода в GUI терминал"""
-            def __init__(self, terminal_queue, stream_name):
-                self.terminal_queue = terminal_queue
-                self.stream_name = stream_name
-                self.original_stream = sys.stdout if stream_name == "stdout" else sys.stderr
-            
-            def write(self, message):
-                if message.strip():  # Пропускаем пустые строки
-                    # Добавляем префикс для stderr
-                    if self.stream_name == "stderr":
-                        message = "[STDERR] " + message
-                    self.terminal_queue.put(message)
-                # Также пишем в оригинальный поток (для отладки)
-                # self.original_stream.write(message)
-            
-            def flush(self):
-                pass  # GUI не требует flush
-        
         # Перенаправляем stdout и stderr
-        sys.stdout = TerminalRedirector(self.terminal_queue, "stdout")
-        sys.stderr = TerminalRedirector(self.terminal_queue, "stderr")
+        sys.stdout = TerminalRedirector("stdout")
+        sys.stderr = TerminalRedirector("stderr")
         
-        # Логируем перенаправление
-        self.add_terminal_output("[SYSTEM] Вывод перенаправлен на встроенный терминал GUI")
-        self.add_terminal_output("[SYSTEM] Родительский терминал можно безопасно закрыть")
+        # Логируем перенаправление (используем прямой вызов universal_print с параметрами)
+        universal_print("[SYSTEM] Вывод перенаправлен на встроенный терминал GUI", stream='analysis')
+        universal_print("[SYSTEM] Родительский терминал можно безопасно закрыть", stream='analysis')
     
     def start_system_monitoring(self):
         """Запуск постоянного фонового мониторинга CPU и сети"""
@@ -7246,8 +7228,8 @@ class AutomationGUI(object):
         # Инициализируем UniversalProcessRunner ПОСЛЕ создания всех GUI элементов
         self.universal_runner = UniversalProcessRunner(
             logger=None,  # Будет установлен позже из main
-            gui_callback=self.add_terminal_output,
-            gui_log_callback=self.add_gui_log_output,  # Теперь существует!
+            gui_callback=None,  # Больше не используется - GUI читает из буферов DualStreamLogger
+            gui_log_callback=self.add_gui_log_output,  # Для специального GUI лога
             gui_instance=self,  # Передаем ссылку на GUI
             parser=None  # Будет установлен после создания SystemUpdater
         )
@@ -7520,9 +7502,6 @@ class AutomationGUI(object):
         # Переменная для выбора потока логирования
         self.terminal_stream_mode = self.tk.StringVar(value="analysis")
         
-        # Переменная для хранения полного содержимого терминала
-        self.terminal_full_content = ""
-        
         # ПЕРВАЯ СТРОКА: Чекбоксы и радиокнопки
         first_row = self.tk.Frame(control_frame)
         first_row.pack(fill=self.tk.X, pady=2)
@@ -7656,22 +7635,13 @@ class AutomationGUI(object):
                 sys.stdout.flush()  # Принудительный flush
                 print("=" * 60)
                 print("[DEBUG_LOAD_LOG_CMD] КНОПКА 'Загрузить лог' НАЖАТА!")
-                print("=" * 60)
-                sys.stdout.flush()
-                print(f"[DEBUG_LOAD_LOG_CMD] Проверка GLOBAL_LOG_FILE в globals(): {'GLOBAL_LOG_FILE' in globals()}")
-                
-                if 'GLOBAL_LOG_FILE' in globals():
-                    log_file = globals()['GLOBAL_LOG_FILE']
-                    print(f"[DEBUG_LOAD_LOG_CMD] GLOBAL_LOG_FILE = {log_file}")
-                    print(f"[DEBUG_LOAD_LOG_CMD] Тип: {type(log_file)}")
-                    
-                    if log_file:
-                        print(f"[DEBUG_LOAD_LOG_CMD] Вызываю load_log_to_terminal({log_file})")
-                        self.load_log_to_terminal(log_file)
-                    else:
-                        print("[DEBUG_LOAD_LOG_CMD] ERROR: GLOBAL_LOG_FILE пустой или None")
+                # Получаем путь к лог-файлу из DualStreamLogger
+                log_file = self._get_log_file_path()
+                if log_file:
+                    print(f"[DEBUG_LOAD_LOG_CMD] Вызываю load_log_to_terminal({log_file})")
+                    self.load_log_to_terminal(log_file)
                 else:
-                    print("[DEBUG_LOAD_LOG_CMD] ERROR: GLOBAL_LOG_FILE не найден в globals()")
+                    print("[DEBUG_LOAD_LOG_CMD] ERROR: Путь к лог-файлу не найден")
                     
             except Exception as e:
                 import traceback
@@ -7823,10 +7793,6 @@ class AutomationGUI(object):
         self.terminal_text.insert(self.tk.END, "Терминал очищен\n")
         self.terminal_text.config(state=self.tk.DISABLED)
         
-        # Очищаем сохраненное содержимое
-        if hasattr(self, 'terminal_full_content'):
-            self.terminal_full_content = "Терминал очищен\n"
-    
     def filter_terminal_by_search(self, *args):
         """Фильтрация терминала по поисковому запросу - ПОЛНОЕ ОБНОВЛЕНИЕ"""
         # Полное обновление только при изменении фильтра
@@ -7846,6 +7812,25 @@ class AutomationGUI(object):
             
         except Exception as e:
             print(f"[ERROR] Ошибка переключения потока: {e}")
+    
+    def _get_log_file_path(self):
+        """
+        Получение пути к лог-файлу из DualStreamLogger
+        
+        Returns:
+            str: Путь к analysis log файлу или GLOBAL_LOG_FILE как fallback
+        """
+        # Пробуем получить из DualStreamLogger
+        if hasattr(self, 'universal_runner') and self.universal_runner:
+            dual_logger = getattr(self.universal_runner, 'dual_logger', None)
+            if dual_logger and hasattr(dual_logger, '_analysis_log_path'):
+                if dual_logger._analysis_log_path:
+                    return dual_logger._analysis_log_path
+        
+        # Fallback: используем GLOBAL_LOG_FILE если DualStreamLogger недоступен
+        if 'GLOBAL_LOG_FILE' in globals():
+            return globals().get('GLOBAL_LOG_FILE', None)
+        return None
     
     def open_current_log_file(self):
         """Открытие файла лога в системном редакторе"""
@@ -7879,9 +7864,9 @@ class AutomationGUI(object):
                 else:
                     print(f"[WARNING] Файл лога не найден: {log_file}")
             else:
-                # Fallback: открываем обычный лог файл
-                if 'GLOBAL_LOG_FILE' in globals() and globals()['GLOBAL_LOG_FILE']:
-                    log_file = globals()['GLOBAL_LOG_FILE']
+                # Fallback: используем метод получения пути
+                log_file = self._get_log_file_path()
+                if log_file:
                     if os.path.exists(log_file):
                         if sys.platform == "darwin":
                             subprocess.Popen(["open", log_file])
@@ -8412,8 +8397,8 @@ class AutomationGUI(object):
         log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
         log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
+        # Получаем путь к лог-файлу из DualStreamLogger
+        log_file = self._get_log_file_path() or "Не установлен"
         self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_file, 
                                           font=('Courier', 8), fg='blue')
         self.log_path_label.pack(padx=5, pady=3)
@@ -8882,7 +8867,7 @@ class AutomationGUI(object):
                 self.wine_checkboxes[item_id] = False
             
             # Цветовое выделение
-            self.wine_tree.item(item_id, tags=(status_tag,))
+            self.wine_tree.item(item_id, tags=(status_tag))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
@@ -8971,7 +8956,7 @@ class AutomationGUI(object):
         
         # Запускаем установку в отдельном потоке
         import threading
-        install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,))
+        install_thread = threading.Thread(target=self._perform_wine_install, args=(selected))
         install_thread.daemon = True
         install_thread.start()
     
@@ -9321,7 +9306,7 @@ class AutomationGUI(object):
         
         # Запускаем удаление в отдельном потоке
         import threading
-        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
+        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected))
         uninstall_thread.daemon = True
         uninstall_thread.start()
     
@@ -9378,9 +9363,8 @@ class AutomationGUI(object):
             
             # Получаем logger из глобального лог-файла
             logger = None
-            if GLOBAL_LOG_FILE:
-                logger = UniversalProcessRunner()
-                logger.set_log_file(GLOBAL_LOG_FILE)
+            # Logger создается автоматически при инициализации через dual_logger
+            # Не нужно создавать отдельный logger и передавать GLOBAL_LOG_FILE
             
             # Создаем деинсталлятор с полной очисткой
             uninstaller = WineUninstaller(
@@ -9539,10 +9523,10 @@ class AutomationGUI(object):
                         
                         # Цветовое выделение
                         if is_disabled:
-                            self.repos_tree.item(item, tags=('disabled',))
+                            self.repos_tree.item(item, tags=('disabled'))
                             disabled_count += 1
                         else:
-                            self.repos_tree.item(item, tags=('active',))
+                            self.repos_tree.item(item, tags=('active'))
                             active_count += 1
                         
                         total_count += 1
@@ -10025,49 +10009,6 @@ Path={os.path.dirname(script_path)}
         except Exception as e:
             pass
     
-    def add_terminal_output(self, message, stream_type="analysis"):
-        """
-        Добавление сообщения в системный терминал (ПРЯМОЕ)
-        
-        Args:
-            message: Текст сообщения
-            stream_type: Тип потока - "analysis" (по умолчанию) или "raw"
-        """
-        try:
-            # Инициализируем раздельные массивы для потоков
-            if not hasattr(self, 'terminal_messages_analysis'):
-                self.terminal_messages_analysis = []
-            if not hasattr(self, 'terminal_messages_raw'):
-                self.terminal_messages_raw = []
-            
-            # Добавляем сообщение в соответствующий поток
-            if stream_type == "raw":
-                self.terminal_messages_raw.append(message)
-                # Ограничиваем размер памяти (последние 50,000 сообщений)
-                if len(self.terminal_messages_raw) > 50000:
-                    self.terminal_messages_raw = self.terminal_messages_raw[-50000:]
-            else:  # "analysis" или любой другой тип
-                self.terminal_messages_analysis.append(message)
-                # Ограничиваем размер памяти (последние 50,000 сообщений)
-                if len(self.terminal_messages_analysis) > 50000:
-                    self.terminal_messages_analysis = self.terminal_messages_analysis[-50000:]
-            
-            # Поддержка обратной совместимости: обновляем старый массив
-            if not hasattr(self, 'terminal_messages'):
-                self.terminal_messages = []
-            self.terminal_messages.append(message)
-            if len(self.terminal_messages) > 50000:
-                self.terminal_messages = self.terminal_messages[-50000:]
-            
-            # ОБНОВЛЯЕМ ТЕРМИНАЛ ТОЛЬКО ЕСЛИ АВТОПРОКРУТКА ВКЛЮЧЕНА
-            if self.terminal_autoscroll_enabled.get():
-                self._update_terminal_display()
-            # Если автопрокрутка отключена - только пишем в память, не дергаем терминал
-            
-        except Exception as e:
-            print(f"[ERROR] Ошибка добавления в терминал: {e}")
-            print(f"[FALLBACK] Сообщение: {message}")
-    
     def _manual_refresh_terminal(self):
         """Ручное обновление терминала с прокруткой в конец"""
         self._update_terminal_display()
@@ -10075,92 +10016,105 @@ Path={os.path.dirname(script_path)}
         if hasattr(self, 'terminal_text'):
             self.terminal_text.see(self.tk.END)
     
+    def _extract_timestamp(self, message):
+        """
+        Извлечение timestamp из сообщения для сортировки
+        
+        Формат сообщения: "[2024-01-01 12:00:00.123] [LEVEL] message"
+        """
+        try:
+            if message.startswith('[') and '] ' in message:
+                timestamp_str = message.split('] ', 1)[0][1:]  # Убираем первую '['
+                # Парсим timestamp
+                import datetime
+                return datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S.%f")
+        except Exception:
+            pass
+        # Если не удалось извлечь - возвращаем минимальное время для сортировки
+        import datetime
+        return datetime.datetime.min
+    
     def _update_terminal_display(self):
-        """Полное обновление терминала (при изменении фильтра или ручном обновлении)"""
+        """Обновление терминала из буферов DualStreamLogger"""
         try:
             # ЗАЩИТА ОТ РЕКУРСИИ
             if hasattr(self, '_updating_terminal') and self._updating_terminal:
                 return
             self._updating_terminal = True
             
-            # НОВОЕ: Получаем сообщения в зависимости от выбранного режима
+            # Получаем dual_logger
+            dual_logger = None
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                dual_logger = getattr(self.universal_runner, 'dual_logger', None)
+            
+            # Fallback: используем глобальный dual_logger
+            if not dual_logger:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
+            
+            if not dual_logger:
+                self._updating_terminal = False
+                return
+            
+            # Режим отображения
             mode = getattr(self, 'terminal_stream_mode', None)
             if mode:
                 mode_value = mode.get()
+                
                 if mode_value == "raw":
-                    messages_to_display = getattr(self, 'terminal_messages_raw', [])
+                    # Только RAW поток
+                    messages = dual_logger.get_raw_buffer()
+                    
                 elif mode_value == "analysis":
-                    messages_to_display = getattr(self, 'terminal_messages_analysis', [])
+                    # Только ANALYSIS поток
+                    messages = dual_logger.get_analysis_buffer()
+                    
                 elif mode_value == "both":
-                    # Объединяем оба потока
-                    messages_analysis = getattr(self, 'terminal_messages_analysis', [])
-                    messages_raw = getattr(self, 'terminal_messages_raw', [])
-                    messages_to_display = messages_analysis + messages_raw
+                    # Объединяем оба потока ПО ВРЕМЕНИ
+                    raw_messages = dual_logger.get_raw_buffer()
+                    analysis_messages = dual_logger.get_analysis_buffer()
+                    
+                    # Объединяем и сортируем по времени (метки времени уже есть в каждом сообщении)
+                    all_messages = raw_messages + analysis_messages
+                    all_messages.sort(key=lambda x: self._extract_timestamp(x))
+                    
+                    messages = all_messages
                 else:
-                    messages_to_display = getattr(self, 'terminal_messages', [])
+                    messages = []
             else:
-                # Fallback: используем старый массив для обратной совместимости
-                messages_to_display = getattr(self, 'terminal_messages', [])
+                # Fallback: используем analysis по умолчанию
+                messages = dual_logger.get_analysis_buffer()
             
-            if not messages_to_display:
+            if not messages:
                 self._updating_terminal = False
                 return
             
-            # Получаем поисковый фильтр
+            # Применяем поисковый фильтр
             search_text = self.terminal_search_var.get().lower()
+            if search_text:
+                messages = [msg for msg in messages if search_text in msg.lower()]
             
-            # Фильтруем сообщения в памяти
-            filtered_messages = []
-            for message in messages_to_display:
-                # Добавляем timestamp если нужно
-                if self.terminal_timestamp_enabled.get():
-                    import datetime
-                    timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                    formatted_message = f"[{timestamp}] {message}"
-                else:
-                    formatted_message = message
-                
-                # Проверяем поисковый фильтр
-                if not search_text or formatted_message.lower().find(search_text) != -1:
-                    filtered_messages.append(formatted_message)
+            # Обновляем терминал
+            self.terminal_text.config(state=self.tk.NORMAL)
+            self.terminal_text.delete(1.0, self.tk.END)
             
-            # Проверяем что виджет терминала еще существует
-            if not hasattr(self, 'terminal_text'):
-                self._updating_terminal = False
-                return
+            # Добавляем все сообщения (метки времени уже есть в каждом сообщении)
+            for message in messages:
+                self.terminal_text.insert(self.tk.END, message + "\n")
             
-            try:
-                # Проверяем что виджет не уничтожен
-                self.terminal_text.winfo_exists()
-            except:
-                # Виджет уничтожен - выходим
-                self._updating_terminal = False
-                return
+            # Прокрутка в конец (если автопрокрутка включена)
+            if self.terminal_autoscroll_enabled.get():
+                self.terminal_text.see(self.tk.END)
             
-            # Обновляем терминал (только при изменении фильтра)
-            try:
-                self.terminal_text.config(state=self.tk.NORMAL)
-                self.terminal_text.delete(1.0, self.tk.END)  # Очищаем
-                
-                # Добавляем отфильтрованные сообщения пакетами
-                for i in range(0, len(filtered_messages), 100):
-                    batch = filtered_messages[i:i+100]
-                    batch_text = "\n".join(batch) + "\n"
-                    self.terminal_text.insert(self.tk.END, batch_text)
-                
-                # Прокручиваем вниз
-                if self.terminal_autoscroll_enabled.get():
-                    self.terminal_text.see(self.tk.END)
-                
-                self.terminal_text.config(state=self.tk.DISABLED)
-            except:
-                # Виджет уничтожен во время обновления - выходим
-                pass
+            self.terminal_text.config(state=self.tk.DISABLED)
+            
             self._updating_terminal = False
             
         except Exception as e:
-            print(f"[ERROR] Ошибка обновления терминала: {e}")
-            self._updating_terminal = False
+            # Используем стандартный print() с gui_log=True (поддерживается universal_print)
+            print(f"[ERROR] Ошибка обновления терминала: {e}", gui_log=True)
+            if hasattr(self, '_updating_terminal'):
+                self._updating_terminal = False
     
     def load_log_to_terminal(self, log_file_path):
         """Загрузка существующего лога в терминал (с оптимизацией для больших файлов)"""
@@ -10194,23 +10148,20 @@ Path={os.path.dirname(script_path)}
                 lines = f.readlines()
             print(f"[DEBUG_LOAD_LOG] Прочитано строк: {len(lines)}")
             
-            # Очищаем текущие сообщения
-            print(f"[DEBUG_LOAD_LOG] Очистка terminal_messages...")
-            if hasattr(self, 'terminal_messages'):
-                self.terminal_messages.clear()
-            else:
-                self.terminal_messages = []
+            # Очищаем буферы DualStreamLogger (если доступен)
+            print(f"[DEBUG_LOAD_LOG] Очистка буферов DualStreamLogger...")
+            dual_logger = None
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                dual_logger = getattr(self.universal_runner, 'dual_logger', None)
             
-            # Также очищаем раздельные потоки
-            if hasattr(self, 'terminal_messages_analysis'):
-                self.terminal_messages_analysis.clear()
-            else:
-                self.terminal_messages_analysis = []
+            # Fallback: используем глобальный dual_logger
+            if not dual_logger:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    dual_logger = globals()['_global_dual_logger']
             
-            if hasattr(self, 'terminal_messages_raw'):
-                self.terminal_messages_raw.clear()
-            else:
-                self.terminal_messages_raw = []
+            if dual_logger:
+                dual_logger.clear_raw_buffer()
+                dual_logger.clear_analysis_buffer()
             
             print(f"[DEBUG_LOAD_LOG] Буферы очищены")
             
@@ -10220,13 +10171,16 @@ Path={os.path.dirname(script_path)}
                 lines = lines[-20000:]  # Последние 20,000 строк
                 print(f"[DEBUG_LOAD_LOG] Обрезано до: {len(lines)} строк")
             
-            # Добавляем строки из лога
-            print(f"[DEBUG_LOAD_LOG] Начинаем добавление строк в буфер...")
+            # Добавляем строки из лога в DualStreamLogger (analysis buffer)
+            print(f"[DEBUG_LOAD_LOG] Начинаем добавление строк в буфер DualStreamLogger...")
             loaded_count = 0
             for i, line in enumerate(lines):
                 line = line.strip()
                 if line:  # Пропускаем пустые строки
-                    self.terminal_messages.append(line)
+                    # Добавляем в analysis buffer DualStreamLogger
+                    if dual_logger:
+                        # Сообщения из старого лога считаем analysis (они уже обработаны)
+                        dual_logger.write_analysis(line)
                     loaded_count += 1
                     if loaded_count % 1000 == 0:
                         print(f"[DEBUG_LOAD_LOG] Добавлено строк: {loaded_count}...")
@@ -10415,9 +10369,9 @@ Path={os.path.dirname(script_path)}
             print(f"[GUI_REAL_TIME] Ошибка обработки прогресса: {e}")
     
     def process_terminal_queue(self):
-        """Обработка очереди сообщений терминала (вызывается из главного потока)"""
+        """Обработка очереди специальных сообщений и обновление терминала из буферов"""
         try:
-            # Обрабатываем очередь UniversalProcessRunner
+            # Обрабатываем очередь UniversalProcessRunner (для обратной совместимости)
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 self.universal_runner.process_queue()
             
@@ -10429,16 +10383,18 @@ Path={os.path.dirname(script_path)}
                         try:
                             parser.parse_from_buffer()
                         except Exception as e:
+                            # Используем стандартный print() - автоматически работает через universal_print
                             print(f"[PARSER_ERROR] Ошибка parse_from_buffer: {e}")
             
-            # Обрабатываем сообщения из очереди (максимум 20 за раз для стабильности)
+            # Обрабатываем только специальные сообщения прогресса из terminal_queue
+            # Обычные сообщения теперь читаются из буферов DualStreamLogger через _update_terminal_display()
             processed_count = 0
-            while not self.terminal_queue.empty() and processed_count < 20:
+            while hasattr(self, 'terminal_queue') and not self.terminal_queue.empty() and processed_count < 20:
                 try:
                     message = self.terminal_queue.get_nowait()
                     processed_count += 1
                     
-                    # Обрабатываем специальные сообщения прогресса
+                    # Обрабатываем только специальные сообщения прогресса
                     if message.startswith("[UNIVERSAL_PROGRESS]"):
                         self.handle_universal_progress(message)
                     elif message.startswith("[REAL_TIME_PROGRESS]"):
@@ -10449,70 +10405,22 @@ Path={os.path.dirname(script_path)}
                         self.handle_apt_progress(message)
                     elif message.startswith("[STAGE]"):
                         self.handle_stage_update(message)
-                    else:
-                        # Форматируем сообщение (оптимизировано)
-                        if self.terminal_timestamp_enabled.get():
-                            # Кэшируем timestamp для группы сообщений
-                            if not hasattr(self, '_cached_timestamp') or processed_count % 10 == 0:
-                                import datetime
-                                self._cached_timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-                            formatted_message = f"[{self._cached_timestamp}] {message}"
-                        else:
-                            formatted_message = message
-                        
-                        # Добавляем в полное содержимое
-                        if hasattr(self, 'terminal_full_content'):
-                            self.terminal_full_content += formatted_message + "\n"
-                        else:
-                            self.terminal_full_content = formatted_message + "\n"
-                        
-                        # Проверяем нужно ли показывать сообщение (оптимизировано)
-                        should_show = True
-                        
-                        # Проверяем поисковый фильтр (кэшируем значение)
-                        if not hasattr(self, '_cached_search_text') or processed_count % 5 == 0:
-                            self._cached_search_text = self.terminal_search_var.get().lower()
-                        
-                        if self._cached_search_text and formatted_message.lower().find(self._cached_search_text) == -1:
-                            should_show = False
-                        
-                        # Показываем сообщение только если оно прошло все фильтры
-                        if should_show:
-                            # Батчинг: собираем сообщения и обновляем GUI один раз
-                            if not hasattr(self, '_terminal_batch'):
-                                self._terminal_batch = []
-                            
-                            # Защита от переполнения батча
-                            if len(self._terminal_batch) < 20:  # Максимум 20 сообщений в батче
-                                self._terminal_batch.append(formatted_message + "\n")
-                            else:
-                                # Принудительно обновляем GUI если батч переполнен
-                                self.terminal_text.config(state=self.tk.NORMAL)
-                                batch_text = ''.join(self._terminal_batch)
-                                self.terminal_text.insert(self.tk.END, batch_text)
-                                if self.terminal_autoscroll_enabled.get():
-                                    self.terminal_text.see(self.tk.END)
-                                self.terminal_text.config(state=self.tk.DISABLED)
-                                self._terminal_batch = [formatted_message + "\n"]  # Начинаем новый батч
-                            
-                            # Обновляем GUI каждые 5 сообщений или в конце цикла (ограничиваем размер)
-                            if len(self._terminal_batch) >= 5 or processed_count >= 49:
-                                self.terminal_text.config(state=self.tk.NORMAL)
-                                batch_text = ''.join(self._terminal_batch)
-                                self.terminal_text.insert(self.tk.END, batch_text)
-                            
-                            if self.terminal_autoscroll_enabled.get():
-                                self.terminal_text.see(self.tk.END)
-                            
-                        self.terminal_text.config(state=self.tk.DISABLED)
-                        self._terminal_batch = []  # Очищаем батч
+                    # Остальные сообщения игнорируем - они уже в буферах DualStreamLogger
+                    
                 except Exception as e:
                     break  # Выходим из цикла при ошибке
+            
+            # Обновляем терминал из буферов (только если автопрокрутка включена)
+            # Автопрокрутка контролирует обновление терминала - если выключена, не обновляем
+            if self.terminal_autoscroll_enabled.get():
+                self._update_terminal_display()
+                
         except Exception as e:
-            pass
+            # Используем стандартный print() - автоматически работает через universal_print
+            print(f"[ERROR] Ошибка process_terminal_queue: {e}")
         finally:
-            # Повторяем через 200 мс для стабильности GUI
-            self.root.after(100, self.process_terminal_queue)  # Увеличено до 100мс для стабильности
+            # Повторяем через 100мс для стабильности GUI
+            self.root.after(100, self.process_terminal_queue)
         
     def reset_progress_bars(self):
         """Сброс всех прогресс-баров в начальное состояние"""
@@ -10875,8 +10783,11 @@ Path={os.path.dirname(script_path)}
     
     def open_log_file(self):
         """Открытие лог файла в системном редакторе"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
+        # Получаем путь к лог-файлу из DualStreamLogger
+        log_file = self._get_log_file_path()
+        if not log_file:
+            print("[WARNING] Путь к лог-файлу не найден", gui_log=True)
+            return
         try:
             import subprocess
             import platform
@@ -10906,9 +10817,6 @@ Path={os.path.dirname(script_path)}
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
         print("[AUTOMATION] run_automation() начал выполнение!")
-        
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
         
         try:
             print("[INFO] Начинаем автоматизацию в GUI режиме")
@@ -11069,7 +10977,12 @@ Path={os.path.dirname(script_path)}
                 
         except Exception as e:
             print(f"[ERROR] Критическая ошибка в GUI автоматизации: {e}", gui_log=True)
-            print(f"Проверьте лог файл: {GLOBAL_LOG_FILE}", gui_log=True)
+            # Получаем путь к лог-файлу для отображения
+            log_file_path = self._get_log_file_path() if hasattr(self, '_get_log_file_path') else None
+            if log_file_path:
+                print(f"Проверьте лог файл: {log_file_path}", gui_log=True)
+            else:
+                print("Проверьте лог файл (путь недоступен)", gui_log=True)
             # Очищаем блокирующие файлы при критической ошибке
             print("[INFO] Очистка блокировок", gui_log=True)
             
@@ -11418,9 +11331,6 @@ class InteractiveHandler(object):
             
         except Exception as e:
             print("   [ERROR] Ошибка в simulate_interactive_scenarios: %s" % str(e))
-            # Используем глобальный лог-файл
-            log_file = GLOBAL_LOG_FILE
-        
             print(f"[ERROR] Ошибка в simulate_interactive_scenarios: {e}")
             return False
 
@@ -11526,7 +11436,11 @@ class UniversalProgressManager:
             if hasattr(self.universal_runner, 'log_file') and self.universal_runner.log_file:
                 main_log_path = self.universal_runner.log_file
             else:
-                main_log_path = GLOBAL_LOG_FILE
+                # Получаем путь к лог-файлу из DualStreamLogger или используем GLOBAL_LOG_FILE как fallback
+                if 'GLOBAL_LOG_FILE' in globals():
+                    main_log_path = globals()['GLOBAL_LOG_FILE']
+                else:
+                    main_log_path = None
             log_dir = os.path.dirname(main_log_path)
             main_log_name = os.path.basename(main_log_path)
             progress_file_name = main_log_name.replace("astra_automation_", "universal_progress_").replace(".log", ".txt")
@@ -12730,9 +12644,6 @@ class SystemUpdater(object):
     
     def check_system_resources(self):
         """Проверка системных ресурсов перед обновлением"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
         print("[SYSTEM] Проверка системных ресурсов...")
         print("[INFO] Начинаем проверку системных ресурсов")
         
@@ -12992,9 +12903,6 @@ class SystemUpdater(object):
     
     def _fix_dpkg_issues(self):
         """Автоматическое исправление проблем dpkg"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
         print("   [TOOL] Исправляем проблемы dpkg...")
         print("[INFO] Начинаем исправление проблем dpkg")
         
@@ -13149,10 +13057,6 @@ class SystemUpdater(object):
     
     def _force_remove_broken_packages(self, broken_packages):
         """Принудительное удаление неработоспособных пакетов"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
-        
         try:
             for package in broken_packages[:3]:  # Обрабатываем максимум 3 пакета
                 print("   [TOOL] Принудительно удаляем пакет: %s" % package)
@@ -13319,9 +13223,6 @@ class SystemUpdater(object):
     
     def _recover_from_segfault(self):
         """Восстановление системы после ошибки сегментации"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
         print("   [RECOVERY] Начинаем восстановление системы...")
         print("[INFO] Начинаем восстановление системы после ошибки сегментации")
         
@@ -13392,9 +13293,6 @@ class SystemUpdater(object):
     
     def update_system(self, dry_run=False):
         """Обновление системы"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-        
         print("[PACKAGE] Обновление системы...")
         
         # КРИТИЧНО: Сбрасываем состояние парсера перед новым запуском
@@ -13403,7 +13301,7 @@ class SystemUpdater(object):
             self.system_update_parser.reset_parser_state()
         
         # ОТКЛЮЧЕНО: Старый мониторинг лог-файла (теперь парсер получает данные напрямую)
-        # self.start_log_monitoring(log_file)
+        # Парсер получает данные напрямую из буферов DualStreamLogger
         
         # Сбрасываем счетчики статистики
         self.downloaded_packages = 0
@@ -13548,9 +13446,6 @@ class SystemUpdater(object):
     
     def _safe_update_retry(self):
         """Безопасное повторное обновление после ошибки сегментации"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
         print("[SAFE] Безопасное повторное обновление...")
         print("[INFO] Начинаем безопасное повторное обновление")
         
@@ -13593,9 +13488,6 @@ class SystemUpdater(object):
     
     def auto_fix_dpkg_errors(self):
         """Автоматическое исправление ошибок dpkg"""
-        # Используем глобальный лог-файл
-        log_file = GLOBAL_LOG_FILE
-
         print("[TOOL] Автоматическое исправление ошибок dpkg...")
         print("[INFO] Начинаем автоматическое исправление ошибок dpkg")
         
@@ -14013,9 +13905,8 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         gui = AutomationGUI(console_mode=False, close_terminal_pid=close_terminal_pid)
         
         # Устанавливаем лог-файл для GUI
-        # Используем глобальный лог-файл
+        # Получаем путь к лог-файлу из GLOBAL_LOG_FILE (установлен в main())
         log_file = GLOBAL_LOG_FILE
-
         gui.main_log_file = log_file
         
         print("   [OK] GUI создан успешно, настраиваем universal_runner...")
@@ -14023,10 +13914,15 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         # Передаем единый logger в GUI
         gui.universal_runner = get_global_universal_runner()
         
-        # Устанавливаем путь к лог-файлу в universal_runner (переданный от bash)
-        gui.universal_runner.set_log_file(log_file)
-        print(f"[LOG_FILE] Установлен путь к лог-файлу в universal_runner: {log_file}")
-        gui.universal_runner.gui_callback = gui.add_terminal_output  # УСТАНАВЛИВАЕМ GUI CALLBACK!
+        # КРИТИЧНО: Устанавливаем dual_logger в universal_runner для доступа из GUI
+        if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+            gui.universal_runner.dual_logger = globals()['_global_dual_logger']
+            print(f"[DUAL_STREAM] dual_logger установлен в universal_runner")
+        
+        # DualStreamLogger уже инициализирован с GLOBAL_LOG_FILE в main()
+        # Не нужно дополнительно устанавливать путь через set_log_file()
+        print(f"[LOG_FILE] DualStreamLogger использует путь: {log_file}")
+        # gui_callback больше не используется - GUI читает из буферов DualStreamLogger
         gui.universal_runner.gui_log_callback = gui.add_gui_log_output  # УСТАНАВЛИВАЕМ GUI LOG CALLBACK!
         gui.universal_runner.setup_subprocess_redirect()  # Подмена subprocess.run()
         gui.universal_runner.setup_logging_redirect()  # Подмена logging.getLogger()
@@ -14438,8 +14334,8 @@ def main():
         
         # ТЕСТОВАЯ ЗАПИСЬ: Проверяем что RAW-поток работает
         try:
-            _global_dual_logger.write_raw("=== ТЕСТ: DualStreamLogger инициализирован ===", timestamp=True)
-            _global_dual_logger.write_raw("=== ТЕСТ: RAW-поток готов к приему данных от apt-get ===", timestamp=True)
+            _global_dual_logger.write_raw("=== ТЕСТ: DualStreamLogger инициализирован ===")
+            _global_dual_logger.write_raw("=== ТЕСТ: RAW-поток готов к приему данных от apt-get ===")
             _global_dual_logger.flush_buffers()  # Принудительная запись для теста
             print("[DUAL_STREAM] OK: Тестовые записи добавлены в RAW-поток")
         except Exception as test_e:
