@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.99 (2025.11.04)
+Версия: V2.4.100 (2025.11.04)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.99 (2025.11.04)"
+APP_VERSION = "V2.4.100 (2025.11.04)"
 import os
 import sys
 import tempfile
@@ -7154,6 +7154,10 @@ class AutomationGUI(object):
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
         self.system_info_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
         
+        # Вкладка Пакеты
+        self.packages_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.packages_frame, text=" Пакеты ")
+        
         # Создаем элементы основной вкладки
         self.create_main_tab()
         
@@ -7168,6 +7172,9 @@ class AutomationGUI(object):
         
         # Создаем элементы вкладки Информация о Системе
         self.create_system_info_tab()
+        
+        # Создаем элементы вкладки Пакеты
+        self.create_packages_tab()
         
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
@@ -8395,17 +8402,214 @@ class AutomationGUI(object):
         # Получаем путь к лог-файлу из DualStreamLogger
         log_file = self._get_log_file_path() or "Не установлен"
         self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_file, 
-                                          font=('Courier', 8), fg='blue')
-        self.log_path_label.pack(padx=5, pady=3)
+                                           font=('Arial', 9), anchor="w", justify="left")
+        self.log_path_label.pack(fill=self.tk.X, padx=5, pady=3)
+    
+    def create_packages_tab(self):
+        """Создание вкладки Пакеты с динамическим обновлением"""
+        # Создаем Treeview для отображения таблицы пакетов
+        packages_scrollbar_y = self.tk.Scrollbar(self.packages_frame, orient=self.tk.VERTICAL)
+        packages_scrollbar_x = self.tk.Scrollbar(self.packages_frame, orient=self.tk.HORIZONTAL)
+
+        self.packages_tree = self.ttk.Treeview(
+            self.packages_frame,
+            columns=("name", "size", "status", "downloaded", "unpacked", "configured"),
+            show="headings",
+            yscrollcommand=packages_scrollbar_y.set,
+            xscrollcommand=packages_scrollbar_x.set
+        )
+
+        # Настраиваем колонки с сортировкой
+        self.packages_tree.heading("name", text="Пакет", command=lambda: self._sort_packages_table("name"))
+        self.packages_tree.heading("size", text="Размер", command=lambda: self._sort_packages_table("size"))
+        self.packages_tree.heading("status", text="Статус", command=lambda: self._sort_packages_table("status"))
+        self.packages_tree.heading("downloaded", text="Скачан", command=lambda: self._sort_packages_table("downloaded"))
+        self.packages_tree.heading("unpacked", text="Распакован", command=lambda: self._sort_packages_table("unpacked"))
+        self.packages_tree.heading("configured", text="Настроен", command=lambda: self._sort_packages_table("configured"))
+
+        self.packages_tree.column("name", width=200, anchor="w")
+        self.packages_tree.column("size", width=100, anchor="e")
+        self.packages_tree.column("status", width=120, anchor="w")
+        self.packages_tree.column("downloaded", width=80, anchor="center")
+        self.packages_tree.column("unpacked", width=80, anchor="center")
+        self.packages_tree.column("configured", width=80, anchor="center")
+
+        packages_scrollbar_y.config(command=self.packages_tree.yview)
+        packages_scrollbar_x.config(command=self.packages_tree.xview)
+
+        # Размещаем элементы
+        self.packages_tree.grid(row=0, column=0, sticky="nsew")
+        packages_scrollbar_y.grid(row=0, column=1, sticky="ns")
+        packages_scrollbar_x.grid(row=1, column=0, sticky="ew")
+
+        self.packages_frame.grid_rowconfigure(0, weight=1)
+        self.packages_frame.grid_columnconfigure(0, weight=1)
+
+        # Переменные для сортировки
+        self.packages_sort_column = None
+        self.packages_sort_reverse = False
+
+        # Панель статистики внизу
+        self.packages_stats_frame = self.tk.Frame(self.packages_frame)
+        self.packages_stats_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+
+        self.packages_stats_label = self.tk.Label(
+            self.packages_stats_frame,
+            text="Информация: Всего пакетов: 0 | Скачано: 0 | Распаковано: 0 | Настроено: 0",
+            anchor="w"
+        )
+        self.packages_stats_label.pack(fill=self.tk.X)
         
-        # Кнопка для открытия лога
-        self.open_log_button = self.tk.Button(log_info_frame, text="Открыть лог файл", 
-                                            command=self.open_log_file)
-        self.open_log_button.pack(padx=5, pady=3)
-        ToolTip(self.open_log_button, "Открыть текущий лог-файл во внешнем текстовом редакторе")
+        # Запускаем обновление таблицы
+        self.root.after(1000, self.start_packages_table_update)
+    
+    def start_packages_table_update(self):
+        """Запуск периодического обновления таблицы пакетов"""
+        if hasattr(self, 'packages_tree'):
+            self.update_packages_table()
+            # Обновляем каждые 500мс (не слишком часто, чтобы не тормозить)
+            self.root.after(500, self.start_packages_table_update)
+    
+    def update_packages_table(self):
+        """Обновление таблицы пакетов из парсера (асинхронно, не блокирует основной процесс)"""
+        try:
+            # Получаем таблицу пакетов из парсера
+            if not hasattr(self, 'system_updater') or not self.system_updater:
+                return
+            
+            parser = getattr(self.system_updater, 'system_update_parser', None)
+            if not parser or not hasattr(parser, 'packages_table'):
+                return
+            
+            packages_table = parser.packages_table
+            if not packages_table:
+                return
+            
+            # Очищаем текущую таблицу
+            for item in self.packages_tree.get_children():
+                self.packages_tree.delete(item)
+            
+            # Применяем сортировку если нужно
+            if self.packages_sort_column:
+                packages_table = self._apply_packages_sort(packages_table.copy())
+            
+            # Добавляем ВСЕ пакеты (без ограничений)
+            total_packages = len(packages_table)
+            
+            # Статистика
+            downloaded_count = sum(1 for pkg in packages_table if pkg.get('flags', {}).get('downloaded', False))
+            unpacked_count = sum(1 for pkg in packages_table if pkg.get('flags', {}).get('unpacked', False))
+            configured_count = sum(1 for pkg in packages_table if pkg.get('flags', {}).get('configured', False))
+            
+            # Обновляем статистику
+            if hasattr(self, 'packages_stats_label'):
+                self.packages_stats_label.config(
+                    text=f"Информация: Всего пакетов: {total_packages} | "
+                         f"Скачано: {downloaded_count} | "
+                         f"Распаковано: {unpacked_count} | "
+                         f"Настроено: {configured_count}"
+                )
+            
+            # Добавляем ВСЕ пакеты в таблицу
+            for pkg in packages_table:
+                package_name = pkg.get('package_name', '')
+                size = pkg.get('size', '') or ''
+                # Если размер None или пустой, показываем пустую строку вместо None
+                if not size or size.lower() == 'unknown':
+                    size = ''
+                flags = pkg.get('flags', {})
+                
+                # Определяем статус
+                status = "Скачивание"
+                if flags.get('configured'):
+                    status = "Настроен"
+                elif flags.get('unpacked'):
+                    status = "Распакован"
+                elif flags.get('downloaded'):
+                    status = "Скачан"
+                
+                # Добавляем строку
+                item_id = self.packages_tree.insert("", self.tk.END, values=(
+                    package_name,
+                    size,
+                    status,
+                    "✓" if flags.get('downloaded') else "",
+                    "✓" if flags.get('unpacked') else "",
+                    "✓" if flags.get('configured') else ""
+                ))
+                
+                # Цветовая индикация (опционально)
+                if flags.get('configured'):
+                    self.packages_tree.set(item_id, "status", "✓ Настроен")
+                elif flags.get('unpacked'):
+                    self.packages_tree.set(item_id, "status", "→ Распакован")
+                elif flags.get('downloaded'):
+                    self.packages_tree.set(item_id, "status", "⬇ Скачан")
+                    
+        except Exception as e:
+            # Игнорируем ошибки - не должны блокировать основной процесс
+            pass
+    
+    def _sort_packages_table(self, column):
+        """Сортировка таблицы пакетов по указанной колонке"""
+        # Если клик по той же колонке - меняем направление сортировки
+        if self.packages_sort_column == column:
+            self.packages_sort_reverse = not self.packages_sort_reverse
+        else:
+            self.packages_sort_column = column
+            self.packages_sort_reverse = False
         
-        # Обновляем информацию о системе
-        self.update_system_info()
+        # Обновляем таблицу с новой сортировкой
+        self.update_packages_table()
+    
+    def _apply_packages_sort(self, packages_list):
+        """Применение сортировки к списку пакетов"""
+        if not self.packages_sort_column:
+            return packages_list
+        
+        def sort_key(pkg):
+            """Функция для получения ключа сортировки"""
+            if self.packages_sort_column == "name":
+                # Сортировка по имени пакета
+                return pkg.get('package_name', '').lower()
+            
+            elif self.packages_sort_column == "size":
+                # Сортировка по размеру (в байтах)
+                return pkg.get('size_bytes', 0)
+            
+            elif self.packages_sort_column == "status":
+                # Сортировка по статусу (приоритет: Настроен > Распакован > Скачан > Скачивание)
+                flags = pkg.get('flags', {})
+                if flags.get('configured'):
+                    return 0  # Настроен - первый
+                elif flags.get('unpacked'):
+                    return 1  # Распакован - второй
+                elif flags.get('downloaded'):
+                    return 2  # Скачан - третий
+                else:
+                    return 3  # Скачивание - последний
+            
+            elif self.packages_sort_column == "downloaded":
+                # Сортировка по флагу "скачан"
+                return 0 if pkg.get('flags', {}).get('downloaded', False) else 1
+            
+            elif self.packages_sort_column == "unpacked":
+                # Сортировка по флагу "распакован"
+                return 0 if pkg.get('flags', {}).get('unpacked', False) else 1
+            
+            elif self.packages_sort_column == "configured":
+                # Сортировка по флагу "настроен"
+                return 0 if pkg.get('flags', {}).get('configured', False) else 1
+            
+            return 0
+        
+        # Сортируем список
+        try:
+            sorted_list = sorted(packages_list, key=sort_key, reverse=self.packages_sort_reverse)
+            return sorted_list
+        except Exception as e:
+            # В случае ошибки возвращаем исходный список
+            return packages_list
     
     def update_system_info(self):
         """Обновление информации о системе"""
@@ -11378,9 +11582,6 @@ class UniversalProgressManager:
         
         # Отправляем обновление в GUI
         self._send_progress_update()
-        
-        # Записываем в лог для анализа
-        self._write_progress_to_file()
     
     def update_statistics(self, process_type, stats_data):
         """
@@ -11422,34 +11623,6 @@ class UniversalProgressManager:
                 
         except Exception as e:
             pass
-    
-    def _write_progress_to_file(self):
-        """Запись прогресса в файл для анализа"""
-        try:
-            import os
-            import datetime
-            if hasattr(self.universal_runner, 'log_file') and self.universal_runner.log_file:
-                main_log_path = self.universal_runner.log_file
-            else:
-                # Получаем путь к лог-файлу из DualStreamLogger или используем GLOBAL_LOG_FILE как fallback
-                if 'GLOBAL_LOG_FILE' in globals():
-                    main_log_path = globals()['GLOBAL_LOG_FILE']
-                else:
-                    main_log_path = None
-            log_dir = os.path.dirname(main_log_path)
-            main_log_name = os.path.basename(main_log_path)
-            progress_file_name = main_log_name.replace("astra_automation_", "universal_progress_").replace(".log", ".txt")
-            progress_file = os.path.join(log_dir, progress_file_name)
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            table_line = f"{timestamp} | {self.stage_name:<20} | {self.stage_progress:>6.1f}% | {self.global_progress:>8.1f}% | {self.details[:50]}\n"
-            with open(progress_file, 'a', encoding='utf-8') as f:
-                if os.path.getsize(progress_file) == 0:
-                    header = "Время     | Этап                 | Этапный% | Глобальный% | Детали\n"
-                    f.write(header)
-                    f.write("-" * 80 + "\n")
-                f.write(table_line)
-        except Exception as e:
-            print(f"[UNIVERSAL_PROGRESS] Ошибка записи в файл прогресса: {e}")
 
 
 class SystemUpdateParser:
@@ -11671,8 +11844,6 @@ class SystemUpdateParser:
                     # Обновляем глобальный статус
                     self._update_status("Загрузка и установка пакетов")
                 
-                # Сохраняем таблицу сразу после создания
-                self.save_table_to_file()
                 return
             
             # Дополнительное условие завершения - начало скачивания
@@ -11683,8 +11854,6 @@ class SystemUpdateParser:
                     print(f"[PARSER] Таблица готова! Начинаем отслеживание установки (по первому 'Пол:')", gui_log=True)
                     # Обновляем глобальный статус
                     self._update_status("Загрузка и установка пакетов")
-                    # Сохраняем таблицу сразу после создания
-                    self.save_table_to_file()
                 return
             
             # Парсинг списков пакетов
@@ -11787,7 +11956,13 @@ class SystemUpdateParser:
         """Конвертация размера из текстового формата в байты"""
         if not size_str:
             return 0
-            
+        
+        # Проверяем на специальные значения
+        if isinstance(size_str, str):
+            size_str = size_str.strip()
+            if size_str.lower() in ('unknown', 'none', 'n/a', ''):
+                return 0
+        
         # Убираем пробелы и приводим к нижнему регистру
         size_str = size_str.strip().lower()
         
@@ -11795,7 +11970,9 @@ class SystemUpdateParser:
         size_str = size_str.replace(',', '.')
         
         try:
-            if size_str.endswith('b'):
+            # Убираем все пробелы из числа (разделители тысяч)
+            # Определяем единицу измерения
+            if size_str.endswith('b') and not size_str.endswith('kb') and not size_str.endswith('mb') and not size_str.endswith('gb'):
                 # Байты: "9 704 B" -> 9704
                 number_str = size_str[:-1].strip().replace(' ', '')
                 return int(float(number_str))
@@ -11804,7 +11981,7 @@ class SystemUpdateParser:
                 number_str = size_str[:-2].strip().replace(' ', '')
                 return int(float(number_str) * 1024)
             elif size_str.endswith('mb'):
-                # Мегабайты: "23,1 MB" -> 23.1 * 1024 * 1024 = 24222105
+                # Мегабайты: "23,1 MB" или "73.5 mb" -> 23.1 * 1024 * 1024 = 24222105
                 number_str = size_str[:-2].strip().replace(' ', '')
                 return int(float(number_str) * 1024 * 1024)
             elif size_str.endswith('gb'):
@@ -11813,9 +11990,12 @@ class SystemUpdateParser:
                 return int(float(number_str) * 1024 * 1024 * 1024)
             else:
                 # Пробуем как число без единиц
-                return int(float(size_str.replace(' ', '')))
-        except (ValueError, IndexError):
-            print(f"[WARNING] Не удалось распарсить размер: '{size_str}'")
+                number_str = size_str.replace(' ', '')
+                return int(float(number_str))
+        except (ValueError, IndexError, AttributeError):
+            # Не выводим предупреждение для 'unknown' - это нормально
+            if size_str and size_str.lower() not in ('unknown', 'none', 'n/a', ''):
+                print(f"[WARNING] Не удалось распарсить размер: '{size_str}'")
             return 0
     
     def format_bytes(self, bytes_value):
@@ -11849,6 +12029,26 @@ class SystemUpdateParser:
                 return True
         return False
     
+    def _extract_size(self, line):
+        """Извлечение размера пакета из строки (формат: [1.2 MB], [1 329 kB], [9 704 B], [67,2 kB])"""
+        import re
+        # Ищем размер в формате [число единица], где число может содержать пробелы (разделитель тысяч) и запятые/точки
+        # Паттерн: [число с пробелами/запятыми/точками] пробел единица]
+        # Важно: ищем последнее вхождение [число единица] в строке (размер пакета, а не временная метка)
+        # Временные метки имеют формат [YYYY-MM-DD HH:MM:SS.mmm], а размеры - [число единица]
+        matches = re.finditer(r'\[([0-9.,\s]+)\s*(B|KB|MB|GB|kB|MB|GB)\]', line)
+        matches_list = list(matches)
+        
+        # Берем последнее совпадение (размер пакета всегда в конце строки)
+        if matches_list:
+            match = matches_list[-1]
+            size_value = match.group(1)
+            # Убираем пробелы (разделители тысяч) и заменяем запятую на точку
+            size_value = size_value.replace(' ', '').replace(',', '.')
+            size_unit = match.group(2).upper()
+            return f"{size_value} {size_unit}"
+        return None
+    
     def parse_download_operation(self, line):
         """БЫСТРЫЙ И ТОЧНЫЙ парсинг - извлекаем имя пакета напрямую"""
         if not line.startswith("Пол:"):
@@ -11856,6 +12056,7 @@ class SystemUpdateParser:
         
         # БЫСТРЫЙ способ: извлекаем имя пакета по позиции
         # Формат: Пол:1311 ... amd64 package-name all/amd64 version [size]
+        # Или с временной меткой: [timestamp] Пол:1311 ... [size]
         parts = line.split()
         
         if len(parts) >= 6:
@@ -11879,10 +12080,17 @@ class SystemUpdateParser:
                 not package_name.startswith('[') and 
                 not package_name.replace('.', '').replace('-', '').replace('+', '').isdigit()):
                 
+                # Извлекаем размер из строки (формат: [1.2 MB] или [1234 B])
+                # Используем всю строку line, т.к. временные метки уже удалены в parse_line()
+                package_size = self._extract_size(line)
+                
                 # БЫСТРАЯ проверка в таблице (O(1) с множеством)
                 if package_name in self._package_names_set:
                     success = self.update_package_flag(package_name, 'downloaded', True)
                     if success:
+                        # Обновляем размер пакета если он найден
+                        if package_size:
+                            self.update_package_size(package_name, package_size)
                         self.current_package_name = package_name  # Сохраняем текущий пакет
                         self.current_operation = "Загрузка"  # Сохраняем текущую операцию
                         # Обновляем детали (зеленая строка)
@@ -12332,13 +12540,6 @@ class SystemUpdateParser:
         
         return "unknown"
     
-    def _extract_size(self, line):
-        """Извлечение размера пакета"""
-        match = re.search(r'\[([0-9.,]+)\s*(KB|MB|GB)\]', line)
-        if match:
-            return f"{match.group(1)} {match.group(2)}"
-        return "unknown"
-    
     def _extract_package_name_from_unpack(self, line):
         """Извлечение имени пакета из строки распаковки"""
         match = re.search(r'Распаковывается ([^(]+)', line)
@@ -12365,9 +12566,6 @@ class SystemUpdateParser:
         print(f"[PARSER] Парсинг завершен! Создана таблица из {len(self.packages_table)} пакетов", gui_log=True)
         print(f"[PARSER] Статистика: {self.stats}", gui_log=True)
         
-        # Сохраняем таблицу в файл
-        self.save_table_to_file()
-        
         if self.universal_manager:
             self.universal_manager.update_progress(
                 "system_update",
@@ -12377,40 +12575,6 @@ class SystemUpdateParser:
                 "Процесс обновления завершен успешно"
             )
 
-    def save_table_to_file(self):
-        """Сохранение таблицы пакетов в файл"""
-        try:
-            import os
-            import json
-            from datetime import datetime
-            
-            # Создаем папку Log если её нет
-            log_dir = os.path.join(os.path.dirname(__file__), 'Log')
-            if not os.path.exists(log_dir):
-                os.makedirs(log_dir)
-            
-            # Генерируем имя файла с временной меткой
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            table_file = os.path.join(log_dir, f"packages_table_{timestamp}.json")
-            
-            # Подготавливаем данные для сохранения
-            table_data = {
-                'timestamp': timestamp,
-                'total_packages': len(self.packages_table),
-                'stats': self.stats,
-                'size_stats': self.get_size_statistics(),
-                'packages': self.packages_table
-            }
-            
-            # Сохраняем в JSON
-            with open(table_file, 'w', encoding='utf-8') as f:
-                json.dump(table_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"[PARSER] Таблица пакетов сохранена в файл: {table_file}", gui_log=True)
-            
-        except Exception as e:
-            print(f"[PARSER] Ошибка сохранения таблицы: {e}", gui_log=True)
-    
     def get_packages_table(self):
         """Получение таблицы пакетов"""
         return self.packages_table
