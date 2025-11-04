@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.98 (2025.11.03)
+Версия: V2.4.99 (2025.11.04)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.98 (2025.11.03)"
+APP_VERSION = "V2.4.99 (2025.11.04)"
 import os
 import sys
 import tempfile
@@ -384,12 +384,12 @@ class DualStreamLogger:
     def flush_buffers(self):
         """Публичный метод для принудительной записи буферов в файлы"""
         try:
-            # Получаем текущие буферы и записываем их
+            # Получаем текущие буферы и добавляем переносы строк для записи
             with self._raw_lock:
-                buffer_raw = list(self._raw_buffer)
+                buffer_raw = [msg + '\n' for msg in self._raw_buffer]
             
             with self._analysis_lock:
-                buffer_analysis = list(self._analysis_buffer)
+                buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
             
             if buffer_raw or buffer_analysis:
                 self._flush_buffers_to_files(buffer_raw, buffer_analysis)
@@ -546,14 +546,9 @@ class LogReplaySimulator:
                     
                     # Записываем в RAW-поток
                     if clean_line:
+                        # Записываем в RAW-буфер (метка времени добавляется автоматически)
+                        # GUI читает из буфера DualStreamLogger напрямую, поэтому не нужно вызывать universal_print()
                         dual_logger.write_raw(clean_line)
-                        
-                        # Также добавляем в буфер через universal_print для отображения в GUI
-                        # GUI читает из буфера DualStreamLogger, поэтому используем universal_print
-                        try:
-                            universal_print(clean_line, stream='raw', level='INFO')
-                        except Exception as e:
-                            pass  # Игнорируем ошибки во время replay
                     
                     # Задержка в зависимости от скорости
                     # Реалистичная задержка ~ 10ms между строками apt
@@ -12492,13 +12487,21 @@ class SystemUpdater(object):
                 
                 # Отправляем в GUI через universal_runner
                 if hasattr(self, 'universal_runner') and self.universal_runner:
-                    self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(gui_data))
+                    # Проверяем, что gui_callback существует и является callable
+                    if hasattr(self.universal_runner, 'gui_callback') and self.universal_runner.gui_callback and callable(self.universal_runner.gui_callback):
+                        try:
+                            self.universal_runner.gui_callback("[ADVANCED_PROGRESS] " + str(gui_data))
+                        except Exception as callback_e:
+                            print(f"[ERROR] Ошибка вызова gui_callback: {callback_e}")
                     
                     # Обновляем статистику в GUI
                     if hasattr(self, 'universal_runner') and self.universal_runner and hasattr(self.universal_runner, 'gui_instance'):
                         gui_instance = self.universal_runner.gui_instance
                         if gui_instance and hasattr(gui_instance, 'update_statistics'):
-                            gui_instance.update_statistics(gui_data)
+                            try:
+                                gui_instance.update_statistics(gui_data)
+                            except Exception as stats_e:
+                                print(f"[ERROR] Ошибка обновления статистики: {stats_e}")
                             
             except Exception as e:
                 print(f"[ERROR] Ошибка в send_progress_to_gui: {e}")
@@ -14336,8 +14339,9 @@ def main():
         try:
             _global_dual_logger.write_raw("=== ТЕСТ: DualStreamLogger инициализирован ===")
             _global_dual_logger.write_raw("=== ТЕСТ: RAW-поток готов к приему данных от apt-get ===")
-            _global_dual_logger.flush_buffers()  # Принудительная запись для теста
-            print("[DUAL_STREAM] OK: Тестовые записи добавлены в RAW-поток")
+            # flush_buffers() не нужен - асинхронная запись через очередь работает автоматически
+            # Принудительная запись только в исключительных случаях (например, перед завершением)
+            print("[DUAL_STREAM] OK: Тестовые записи добавлены в RAW-поток (запись через очередь)")
         except Exception as test_e:
             print("[DUAL_STREAM] WARNING: Ошибка тестовой записи: %s" % str(test_e))
     except Exception as e:
