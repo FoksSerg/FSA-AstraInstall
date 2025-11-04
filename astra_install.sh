@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.4.100 (2025.10.30)
+# Версия: V2.4.101 (2025.11.05)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,10 +8,41 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.4.100 (2025.10.30)"
+SCRIPT_VERSION="V2.4.101 (2025.11.05)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Универсальная функция сворачивания окна терминала (работает до и после sudo)
+minimize_terminal_window() {
+    if ! command -v xdotool >/dev/null 2>&1; then
+        return 0  # xdotool недоступен, выходим тихо
+    fi
+    
+    local terminal_pid="$1"
+    
+    # Если передан PID терминала, используем его
+    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowminimize "$window" 2>/dev/null
+            done
+            return 0
+        fi
+    fi
+    
+    # Fallback: пробуем найти терминал через PPID
+    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
+    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowminimize "$window" 2>/dev/null
+            done
+        fi
+    fi
+}
 
 # КРИТИЧНО: Сворачиваем окно терминала МГНОВЕННО (до всех выводов)
 # Выполняем только при первом запуске (до перезапуска через sudo)
@@ -27,15 +58,7 @@ if [ "$EUID" -ne 0 ] && command -v xdotool >/dev/null 2>&1; then
     
     # Сворачиваем окно терминала (всегда, кроме консольного режима)
     if [ "$SKIP_TERMINAL" != "true" ]; then
-        TERM_PID=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
-        if [ ! -z "$TERM_PID" ]; then
-            WINDOW_IDS=$(xdotool search --pid "$TERM_PID" 2>/dev/null)
-            if [ -n "$WINDOW_IDS" ]; then
-                for window in $WINDOW_IDS; do
-                    xdotool windowminimize "$window" 2>/dev/null
-                done
-            fi
-        fi
+        minimize_terminal_window ""  # Пробуем найти автоматически
     fi
     
     # Сворачиваем все остальные окна (если не передан --windows-minimized)
@@ -286,6 +309,21 @@ done
 if [ ! -z "$TERMINAL_PID_ARG" ]; then
     TERMINAL_PID="$TERMINAL_PID_ARG"
     log_message "Используем PID терминала из аргумента: $TERMINAL_PID"
+    
+    # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
+    if [ "$EUID" -eq 0 ] && command -v xdotool >/dev/null 2>&1; then
+        SKIP_TERMINAL=false
+        for arg in "$@"; do
+            if [[ "$arg" == "--console" ]]; then
+                SKIP_TERMINAL=true
+                break
+            fi
+        done
+        
+        if [ "$SKIP_TERMINAL" != "true" ]; then
+            minimize_terminal_window "$TERMINAL_PID"  # Используем переданный PID
+        fi
+    fi
 fi
 
 # Проверяем права root и автоматически перезапускаемся через sudo если нужно

@@ -1,17 +1,43 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.4.100 (2025.10.30)
+# Версия: V2.4.101 (2025.11.05)
 # Компания: ООО "НПА Вира-Реалтайм"
-
-# Сворачиваем все окна включая терминал в самом начале работы
-if command -v xdotool >/dev/null 2>&1; then
-    xdotool key Super+d 2>/dev/null 
-fi
 
 # Функция логирования
 log_message() {
     echo "[$(date '+%H:%M:%S')] $1"
+}
+
+# Универсальная функция сворачивания окна терминала (работает до и после sudo)
+minimize_terminal_window() {
+    if ! command -v xdotool >/dev/null 2>&1; then
+        return 0  # xdotool недоступен, выходим тихо
+    fi
+    
+    local terminal_pid="$1"
+    
+    # Если передан PID терминала, используем его
+    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowminimize "$window" 2>/dev/null
+            done
+            return 0
+        fi
+    fi
+    
+    # Fallback: пробуем найти терминал через PPID
+    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
+    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowminimize "$window" 2>/dev/null
+            done
+        fi
+    fi
 }
 
 # Пути для Linux
@@ -64,6 +90,12 @@ fi
 
 export TERMINAL_PID
 
+# Сворачиваем все окна в первый раз (ДО sudo, если доступен xdotool)
+if command -v xdotool >/dev/null 2>&1; then
+    xdotool key Super+d 2>/dev/null  # Сворачиваем все окна
+    minimize_terminal_window "$TERMINAL_PID"  # Сворачиваем терминал по PID
+fi
+
 # Проверяем права root
 if [ "$EUID" -ne 0 ]; then
     log_message "Запуск с правами root (передаем PID терминала через аргумент)..."
@@ -76,6 +108,9 @@ if [ ! -z "$1" ] && [[ "$1" == "--terminal-pid" ]]; then
     TERMINAL_PID="$2"
     log_message "Используем переданный PID терминала: $TERMINAL_PID"
     shift 2  # Убираем --terminal-pid и значение из аргументов
+    
+    # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
+    minimize_terminal_window "$TERMINAL_PID"
 fi
 
 # Проверяем доступность сервера
@@ -110,6 +145,8 @@ if [ ! -f "$CREDENTIALS_FILE" ]; then
     echo "username=FokinSA" >> "$CREDENTIALS_FILE"
     chmod 600 "$CREDENTIALS_FILE"
     log_message "Учетные данные сохранены"
+    # Сворачиваем терминал после запроса пароля
+    minimize_terminal_window "$TERMINAL_PID"
 fi
 
 # Копируем файлы используя сохраненные учетные данные
@@ -127,6 +164,9 @@ for file in "${FILES_TO_COPY[@]}"; do
 done
 
 log_message "Все файлы успешно скопированы!"
+
+# Сворачиваем терминал после копирования файлов (на всякий случай)
+minimize_terminal_window "$TERMINAL_PID"
 
 # Очищаем логи (ОТКЛЮЧЕНО для сохранения диагностики)
 log_message "Очистка старых логов ОТКЛЮЧЕНА для сохранения диагностики..."
