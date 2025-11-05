@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.101 (2025.11.04)
+Версия: V2.4.102 (2025.11.05)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.101 (2025.11.04)"
+APP_VERSION = "V2.4.102 (2025.11.05)"
 import os
 import sys
 import tempfile
@@ -237,7 +237,7 @@ class DualStreamLogger:
     ANALYSIS-поток: аналитика, парсинг, мониторинг системы
     """
     
-    def __init__(self, max_buffer_size=10000, raw_log_path=None, analysis_log_path=None):
+    def __init__(self, max_buffer_size=50000, raw_log_path=None, analysis_log_path=None):
         """Инициализация DualStreamLogger"""
         from collections import deque
         # Буферы в памяти
@@ -306,13 +306,47 @@ class DualStreamLogger:
             buffer_list = list(self._analysis_buffer)
             return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
     
-    def clear_raw_buffer(self):
-        """Очистить RAW-буфер"""
+    def clear_raw_buffer(self, flush_before_clear=True):
+        """Очистить RAW-буфер
+        
+        Args:
+            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
+        """
+        if flush_before_clear and self._file_writer_running:
+            # Принудительно записываем все данные из буфера в файл перед очисткой
+            try:
+                with self._raw_lock:
+                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
+                
+                if buffer_raw and self._raw_file:
+                    self._raw_file.writelines(buffer_raw)
+                    self._raw_file.flush()
+                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка flush перед очисткой RAW-буфера: {e}")
+        
         with self._raw_lock:
             self._raw_buffer.clear()
     
-    def clear_analysis_buffer(self):
-        """Очистить ANALYSIS-буфер"""
+    def clear_analysis_buffer(self, flush_before_clear=True):
+        """Очистить ANALYSIS-буфер
+        
+        Args:
+            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
+        """
+        if flush_before_clear and self._file_writer_running:
+            # Принудительно записываем все данные из буфера в файл перед очисткой
+            try:
+                with self._analysis_lock:
+                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
+                
+                if buffer_analysis and self._analysis_file:
+                    self._analysis_file.writelines(buffer_analysis)
+                    self._analysis_file.flush()
+                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка flush перед очисткой ANALYSIS-буфера: {e}")
+        
         with self._analysis_lock:
             self._analysis_buffer.clear()
     
@@ -368,18 +402,72 @@ class DualStreamLogger:
                 except Exception as e:
                     print(f"[DualStreamLogger] Ошибка в file_writer: {e}")
             
+            # После завершения основного цикла, дожидаемся опустошения очереди
+            # Это критично для сохранения всех данных при завершении
+            empty_timeout_count = 0
+            max_empty_timeout = 100  # Максимум 10 секунд (100 * 0.1)
+            
+            while not self._file_queue.empty() and empty_timeout_count < max_empty_timeout:
+                try:
+                    stream_type, message = self._file_queue.get(timeout=0.1)
+                    
+                    if stream_type == 'raw':
+                        buffer_raw.append(message + '\n')
+                    elif stream_type == 'analysis':
+                        buffer_analysis.append(message + '\n')
+                    
+                    # Flush при заполнении буфера
+                    if len(buffer_raw) >= flush_count or len(buffer_analysis) >= flush_count:
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                    
+                    empty_timeout_count = 0  # Сброс счетчика при получении данных
+                except queue.Empty:
+                    empty_timeout_count += 1
+                    # Flush периодически даже если очередь пуста
+                    if empty_timeout_count % 10 == 0 and (buffer_raw or buffer_analysis):
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка в file_writer при завершении: {e}")
+                    break
+            
+            # Финальный flush оставшихся данных
             if buffer_raw or buffer_analysis:
                 self._flush_buffers_to_files(buffer_raw, buffer_analysis)
         
         except Exception as e:
             print(f"[DualStreamLogger] Критическая ошибка в file_writer: {e}")
         finally:
+            # Финальный flush перед закрытием файлов
+            if buffer_raw or buffer_analysis:
+                try:
+                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка финального flush: {e}")
+            
+            # Закрываем файлы с flush
             if self._raw_file:
-                self._raw_file.close()
-                self._raw_file = None
+                try:
+                    self._raw_file.flush()
+                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
+                    self._raw_file.close()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка закрытия raw файла: {e}")
+                finally:
+                    self._raw_file = None
+            
             if self._analysis_file:
-                self._analysis_file.close()
-                self._analysis_file = None
+                try:
+                    self._analysis_file.flush()
+                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
+                    self._analysis_file.close()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка закрытия analysis файла: {e}")
+                finally:
+                    self._analysis_file = None
     
     def flush_buffers(self):
         """Публичный метод для принудительной записи буферов в файлы"""
@@ -443,13 +531,41 @@ class DualStreamLogger:
         
         self._file_writer_running = False
         
+        # Если flush=True, дожидаемся опустошения очереди
+        if flush:
+            # Ждем пока очередь не опустеет (максимум 30 секунд)
+            max_wait_time = 30.0
+            start_time = time.time()
+            while not self._file_queue.empty() and (time.time() - start_time) < max_wait_time:
+                time.sleep(0.1)  # Небольшая задержка
+            
+            # Если очередь не опустела, выводим предупреждение
+            if not self._file_queue.empty():
+                remaining = self._file_queue.qsize()
+                print(f"[DualStreamLogger] WARNING: Очередь не опустела при завершении, осталось {remaining} сообщений")
+        
+        # Ждем завершения потока (увеличиваем таймаут до 10 секунд)
         if self._file_writer_thread and self._file_writer_thread.is_alive():
-            self._file_writer_thread.join(timeout=5.0)
+            self._file_writer_thread.join(timeout=10.0)
+        
+        # Принудительный flush при завершении (если flush=True)
+        if flush:
+            try:
+                # Записываем оставшиеся данные из буферов в файлы
+                with self._raw_lock:
+                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
+                with self._analysis_lock:
+                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
+                
+                if buffer_raw or buffer_analysis:
+                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка принудительного flush: {e}")
         
         self._file_writer_thread = None
     
     @staticmethod
-    def create_default_logger(analysis_log_path, max_buffer_size=10000):
+    def create_default_logger(analysis_log_path, max_buffer_size=50000):
         """Создать DualStreamLogger с дефолтными путями"""
         log_dir = os.path.dirname(analysis_log_path)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -7973,9 +8089,11 @@ class AutomationGUI(object):
                         parser.reset_parser_state()
             
             # Сбрасываем RAW-буфер (опционально - для чистого replay)
+            # ВАЖНО: Перед очисткой принудительно записываем все данные в файл
             if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
                 dual_logger = globals()['_global_dual_logger']
-                dual_logger.clear_raw_buffer()
+                # Принудительный flush перед очисткой (flush_before_clear=True)
+                dual_logger.clear_raw_buffer(flush_before_clear=True)
                 dual_logger.write_analysis("[REPLAY] Начало воспроизведения лога")
                 dual_logger.write_analysis(f"[REPLAY] Скорость: {self.replay_speed_var.get()}x")
             
@@ -10348,7 +10466,8 @@ Path={os.path.dirname(script_path)}
             print(f"[DEBUG_LOAD_LOG] Прочитано строк: {len(lines)}")
             
             # Очищаем буферы DualStreamLogger (если доступен)
-            print(f"[DEBUG_LOAD_LOG] Очистка буферов DualStreamLogger...")
+            # ВАЖНО: Перед очисткой принудительно записываем все данные в файл
+            print(f"[DEBUG_LOAD_LOG] Принудительная запись буферов в файл перед очисткой...")
             dual_logger = None
             if hasattr(self, 'universal_runner') and self.universal_runner:
                 dual_logger = getattr(self.universal_runner, 'dual_logger', None)
@@ -10359,8 +10478,17 @@ Path={os.path.dirname(script_path)}
                     dual_logger = globals()['_global_dual_logger']
             
             if dual_logger:
-                dual_logger.clear_raw_buffer()
-                dual_logger.clear_analysis_buffer()
+                # Принудительно дожидаемся опустошения очереди перед очисткой
+                if dual_logger._file_writer_running:
+                    # Ждем пока очередь не опустеет (максимум 5 секунд)
+                    max_wait_time = 5.0
+                    start_time = time.time()
+                    while not dual_logger._file_queue.empty() and (time.time() - start_time) < max_wait_time:
+                        time.sleep(0.1)
+                
+                # Принудительный flush перед очисткой (flush_before_clear=True)
+                dual_logger.clear_raw_buffer(flush_before_clear=True)
+                dual_logger.clear_analysis_buffer(flush_before_clear=True)
             
             print(f"[DEBUG_LOAD_LOG] Буферы очищены")
             
@@ -14485,7 +14613,7 @@ def main():
         # Создаём DualStreamLogger с интеграцией в существующую систему
         dual_logger = DualStreamLogger.create_default_logger(
             analysis_log_path=GLOBAL_LOG_FILE,
-            max_buffer_size=10000
+            max_buffer_size=50000
         )
         
         # Запускаем файловое логирование
