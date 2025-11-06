@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.103 (2025.11.06)
+Версия: V2.4.104 (2025.11.07)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.103 (2025.11.06)"
+APP_VERSION = "V2.4.104 (2025.11.07)"
 import os
 import sys
 import tempfile
@@ -299,47 +299,6 @@ COMPONENTS_CONFIG = {
         'sort_order': 14
     },
     
-    # APT пакеты Linux
-    'gimp': {
-        'name': 'GIMP',
-        'command_name': 'gimp',  # Имя пакета для apt install
-        'path': '/usr/bin/gimp',
-        'category': 'apt_packages',
-        'dependencies': [],
-        'check_paths': ['/usr/bin/gimp'],
-        'install_method': 'apt_install',
-        'uninstall_method': 'apt_remove',
-        'gui_selectable': True,
-        'description': 'GIMP - графический редактор',
-        'sort_order': 20
-    },
-    'vlc': {
-        'name': 'VLC Media Player',
-        'command_name': 'vlc',  # Имя пакета для apt install
-        'path': '/usr/bin/vlc',
-        'category': 'apt_packages',
-        'dependencies': [],
-        'check_paths': ['/usr/bin/vlc'],
-        'install_method': 'apt_install',
-        'uninstall_method': 'apt_remove',
-        'gui_selectable': True,
-        'description': 'VLC - медиаплеер',
-        'sort_order': 21
-    },
-    'libreoffice': {
-        'name': 'LibreOffice',
-        'command_name': 'libreoffice',  # Имя пакета для apt install
-        'path': '/usr/bin/libreoffice',
-        'category': 'apt_packages',
-        'dependencies': [],
-        'check_paths': ['/usr/bin/libreoffice'],
-        'install_method': 'apt_install',
-        'uninstall_method': 'apt_remove',
-        'gui_selectable': True,
-        'description': 'LibreOffice - офисный пакет',
-        'sort_order': 22
-    },
-    
     # Wine приложения (Windows через Wine)
     'notepad_plus_plus': {
         'name': 'Notepad++',
@@ -354,32 +313,6 @@ COMPONENTS_CONFIG = {
         'description': 'Notepad++ - текстовый редактор для Windows',
         'sort_order': 15
     },
-    'winrar': {
-        'name': 'WinRAR',
-        'command_name': 'winrar.exe',
-        'path': 'drive_c/Program Files/WinRAR/winrar.exe',
-        'category': 'wine_application',
-        'dependencies': ['wineprefix'],
-        'check_paths': ['drive_c/Program Files/WinRAR/winrar.exe'],
-        'install_method': 'wine_executable',
-        'uninstall_method': 'wine_executable',
-        'gui_selectable': True,
-        'description': 'WinRAR - архиватор для Windows',
-        'sort_order': 16
-    },
-    'firefox_wine': {
-        'name': 'Firefox (Wine)',
-        'command_name': 'firefox.exe',
-        'path': 'drive_c/Program Files/Mozilla Firefox/firefox.exe',
-        'category': 'wine_application',
-        'dependencies': ['wineprefix', 'dotnet48', 'vcrun2022'],  # Множественные зависимости
-        'check_paths': ['drive_c/Program Files/Mozilla Firefox/firefox.exe'],
-        'install_method': 'wine_executable',
-        'uninstall_method': 'wine_executable',
-        'gui_selectable': True,
-        'description': 'Firefox - браузер для Windows (через Wine)',
-        'sort_order': 17
-    }
 }
 
 # ============================================================================
@@ -657,6 +590,87 @@ def validate_component_config():
         raise ValueError(error_msg)
     
     return []
+
+# ============================================================================
+# КЛАСС ОТСЛЕЖИВАНИЯ АКТИВНОСТИ КЛАССОВ (определяем рано для использования в декораторах)
+# ============================================================================
+class ActivityTracker(object):
+    """Легковесный трекер активности классов и установщиков"""
+    
+    def __init__(self):
+        self.active_operations = {}  # {class_name: {method: start_time, status: 'running'}}
+        self.operation_history = []  # История операций
+        self.max_history = 100  # Максимальное количество записей в истории
+    
+    def track_operation(self, class_name, method_name, status='start'):
+        """Отслеживание операции класса"""
+        import time
+        
+        key = f"{class_name}.{method_name}"
+        current_time = time.time()
+        
+        if status == 'start':
+            self.active_operations[key] = {
+                'start_time': current_time,
+                'status': 'running',
+                'class': class_name,
+                'method': method_name
+            }
+        elif status == 'end':
+            if key in self.active_operations:
+                duration = current_time - self.active_operations[key]['start_time']
+                operation_data = {
+                    'class': class_name,
+                    'method': method_name,
+                    'duration': duration,
+                    'end_time': current_time
+                }
+                self.operation_history.append(operation_data)
+                
+                # Ограничиваем размер истории
+                if len(self.operation_history) > self.max_history:
+                    self.operation_history = self.operation_history[-self.max_history:]
+                
+                del self.active_operations[key]
+    
+    def get_active_operations(self):
+        """Получить список активных операций"""
+        import time
+        current_time = time.time()
+        
+        active = []
+        for key, op in self.active_operations.items():
+            duration = current_time - op['start_time']
+            active.append({
+                'class': op['class'],
+                'method': op['method'],
+                'duration': duration,
+                'status': op['status']
+            })
+        
+        return active
+    
+    def get_recent_operations(self, limit=10):
+        """Получить последние операции"""
+        return sorted(self.operation_history, key=lambda x: x['end_time'], reverse=True)[:limit]
+
+# Глобальный трекер активности
+_global_activity_tracker = ActivityTracker()
+
+def track_class_activity(class_name):
+    """Декоратор для отслеживания активности методов класса"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            _global_activity_tracker.track_operation(class_name, func.__name__, 'start')
+            try:
+                result = func(*args, **kwargs)
+                _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
+                return result
+            except Exception as e:
+                _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
+                raise
+        return wrapper
+    return decorator
 
 # ============================================================================
 # БАЗОВЫЙ КЛАСС ДЛЯ ОБРАБОТЧИКОВ КОМПОНЕНТОВ
@@ -1030,6 +1044,7 @@ class WinePackageHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'wine_packages'
     
+    @track_class_activity('WinePackageHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка Wine пакета через apt"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -1111,6 +1126,7 @@ class WinePackageHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('WinePackageHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление Wine пакета через apt-get purge"""
         print(f"WinePackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -1209,6 +1225,7 @@ class SystemConfigHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'system_config'
     
+    @track_class_activity('SystemConfigHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка системной настройки"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -1249,6 +1266,7 @@ class SystemConfigHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('SystemConfigHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление системной настройки (восстановление значения по умолчанию)"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
@@ -1303,6 +1321,7 @@ class WineEnvironmentHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'wine_environment'
     
+    @track_class_activity('WineEnvironmentHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Инициализация Wine окружения"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -1473,6 +1492,7 @@ export PATH="{wine_path}:$PATH" && \
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('WineEnvironmentHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Очистка Wine окружения (удаление WINEPREFIX)"""
         print(f"WineEnvironmentHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -1564,6 +1584,7 @@ class WinetricksHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'winetricks'
     
+    @track_class_activity('WinetricksHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка winetricks компонента"""
         print(f"WinetricksHandler.install() вызван с component_id={component_id}, config={config}", level='DEBUG')
@@ -1735,6 +1756,7 @@ export PATH="/opt/wine-9.0/bin:$PATH" && \
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('WinetricksHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление winetricks компонента"""
         print(f"WinetricksHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -1904,6 +1926,7 @@ class AptPackageHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'apt_packages'
     
+    @track_class_activity('AptPackageHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка APT пакета"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -1973,6 +1996,7 @@ class AptPackageHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('AptPackageHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление APT пакета"""
         print(f"AptPackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -2041,6 +2065,7 @@ class WineApplicationHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'wine_application'
     
+    @track_class_activity('WineApplicationHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка Wine приложения"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -2067,6 +2092,7 @@ class WineApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('WineApplicationHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление Wine приложения"""
         print(f"WineApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -2183,6 +2209,7 @@ class ApplicationHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'application'
     
+    @track_class_activity('ApplicationHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка приложения"""
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -2223,6 +2250,7 @@ class ApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
+    @track_class_activity('ApplicationHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление приложения"""
         print(f"ApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
@@ -2702,6 +2730,13 @@ class DualStreamLogger:
         self._file_writer_running = False
         self._raw_file = None
         self._analysis_file = None
+        
+        # Счетчики для мониторинга
+        self._messages_received_raw = 0  # Количество полученных RAW сообщений
+        self._messages_received_analysis = 0  # Количество полученных ANALYSIS сообщений
+        self._messages_saved_raw = 0  # Количество сохраненных RAW сообщений
+        self._messages_saved_analysis = 0  # Количество сохраненных ANALYSIS сообщений
+        self._stats_lock = threading.Lock()  # Блокировка для потокобезопасности счетчиков
     
     def write_raw(self, message):
         """Записать сообщение в RAW-поток (всегда с меткой времени)"""
@@ -2710,6 +2745,10 @@ class DualStreamLogger:
         
         with self._raw_lock:
             self._raw_buffer.append(formatted_message)
+        
+        # Увеличиваем счетчик полученных сообщений
+        with self._stats_lock:
+            self._messages_received_raw += 1
         
         # Асинхронная запись в файл (если включено)
         if self._file_writer_running and self._raw_log_path:
@@ -2722,6 +2761,10 @@ class DualStreamLogger:
         
         with self._analysis_lock:
             self._analysis_buffer.append(formatted_message)
+        
+        # Увеличиваем счетчик полученных сообщений
+        with self._stats_lock:
+            self._messages_received_analysis += 1
         
         # Асинхронная запись в файл (если включено)
         if self._file_writer_running and self._analysis_log_path:
@@ -2805,6 +2848,9 @@ class DualStreamLogger:
     
     def _file_writer_worker(self):
         """Рабочий поток для асинхронной записи в файлы"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_file_writer_worker)", level='DEBUG')
         buffer_raw = []
         buffer_analysis = []
         last_flush_time = time.time()
@@ -2933,10 +2979,16 @@ class DualStreamLogger:
             if buffer_raw and self._raw_file:
                 self._raw_file.writelines(buffer_raw)
                 self._raw_file.flush()
+                # Увеличиваем счетчик сохраненных сообщений
+                with self._stats_lock:
+                    self._messages_saved_raw += len(buffer_raw)
             
             if buffer_analysis and self._analysis_file:
                 self._analysis_file.writelines(buffer_analysis)
                 self._analysis_file.flush()
+                # Увеличиваем счетчик сохраненных сообщений
+                with self._stats_lock:
+                    self._messages_saved_analysis += len(buffer_analysis)
         except Exception as e:
             print("[DualStreamLogger] Ошибка записи в файлы: %s" % str(e))
     
@@ -2958,7 +3010,9 @@ class DualStreamLogger:
                 daemon=True,
                 name="DualStreamLogger-FileWriter"
             )
+            print(f"Создание потока DualStreamLogger-FileWriter (PID потока будет назначен при запуске)", level='DEBUG')
             self._file_writer_thread.start()
+            print(f"Поток DualStreamLogger-FileWriter запущен (имя: {self._file_writer_thread.name})", level='DEBUG')
             
             return True
         
@@ -3085,6 +3139,9 @@ class LogReplaySimulator:
         
         def _replay_thread():
             """Поток воспроизведения"""
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} начал выполнение (_replay_thread)", level='DEBUG')
             try:
                 total_lines = len(self.log_lines)
                 
@@ -3127,10 +3184,16 @@ class LogReplaySimulator:
             except Exception as e:
                 print(f"[REPLAY_ERROR] Ошибка воспроизведения: {e}")
                 self.is_playing = False
+            finally:
+                import threading
+                thread_name = threading.current_thread().name
+                print(f"Поток {thread_name} завершил выполнение (_replay_thread)", level='DEBUG')
         
         # Запускаем в отдельном потоке
-        self.replay_thread = threading.Thread(target=_replay_thread, daemon=True)
+        self.replay_thread = threading.Thread(target=_replay_thread, daemon=True, name="ReplayThread")
+        print(f"Создание потока ReplayThread для воспроизведения логов", level='DEBUG')
         self.replay_thread.start()
+        print(f"Поток ReplayThread запущен (имя: {self.replay_thread.name})", level='DEBUG')
     
     def pause(self):
         """Приостановить воспроизведение"""
@@ -3365,6 +3428,9 @@ class UniversalProcessRunner(object):
         self.current_update_phase = "update"  # update, dist-upgrade, autoremove
         self.update_phase_start_stage = "reading_lists"  # Начальный этап для текущей фазы
         
+        # Отслеживание запущенных процессов для мониторинга
+        self.running_processes = {}  # {pid: {'process': subprocess.Popen, 'command': str, 'process_type': str, 'start_time': float}}
+        
         # Тестовое сообщение будет отправлено при активации перехвата
     
     def setup_subprocess_redirect(self):
@@ -3492,10 +3558,174 @@ class UniversalProcessRunner(object):
         else:
             full_message = str(message)
     
+    def get_running_processes(self):
+        """Получение списка запущенных процессов с метриками CPU и памяти"""
+        running_processes = []
+        
+        # Очищаем завершенные процессы
+        finished_pids = []
+        for pid, proc_info in self.running_processes.items():
+            process = proc_info.get('process')
+            if process and process.poll() is not None:
+                # Процесс завершился
+                finished_pids.append(pid)
+        
+        # Удаляем завершенные процессы
+        for pid in finished_pids:
+            del self.running_processes[pid]
+        
+        if PSUTIL_AVAILABLE:
+            # Используем psutil для получения метрик CPU и памяти
+            for pid, proc_info in self.running_processes.items():
+                process = proc_info.get('process')
+                if not process:
+                    continue
+                
+                try:
+                    proc = psutil.Process(pid)
+                    cpu_percent = proc.cpu_percent(interval=0.1)
+                    memory_mb = proc.memory_info().rss / (1024 * 1024)
+                    cmdline = ' '.join(proc.cmdline()[:3]) if proc.cmdline() else proc_info.get('command', '')
+                    
+                    # Получаем все рекурсивные дочерние процессы
+                    children = []
+                    try:
+                        for child in proc.children(recursive=True):
+                            try:
+                                child_cpu = child.cpu_percent(interval=0.1)
+                                child_memory = child.memory_info().rss / (1024 * 1024)
+                                child_cmdline = ' '.join(child.cmdline()[:3]) if child.cmdline() else child.name()
+                                
+                                children.append({
+                                    'pid': child.pid,
+                                    'name': child.name(),
+                                    'cpu': child_cpu,
+                                    'memory': child_memory,
+                                    'cmdline': child_cmdline,
+                                    'parent_pid': pid
+                                })
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                    
+                    running_processes.append({
+                        'pid': pid,
+                        'name': proc.name(),
+                        'cpu': cpu_percent,
+                        'memory': memory_mb,
+                        'cmdline': cmdline,
+                        'process_type': proc_info.get('process_type', 'general'),
+                        'start_time': proc_info.get('start_time', 0),
+                        'children': children
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Процесс уже завершился или нет доступа
+                    continue
+                except Exception:
+                    continue
+        else:
+            # Если psutil недоступен, возвращаем базовую информацию
+            for pid, proc_info in self.running_processes.items():
+                process = proc_info.get('process')
+                if not process or process.poll() is not None:
+                    continue
+                
+                running_processes.append({
+                    'pid': pid,
+                    'name': 'unknown',
+                    'cpu': 0,
+                    'memory': 0,
+                    'cmdline': proc_info.get('command', ''),
+                    'process_type': proc_info.get('process_type', 'general'),
+                    'start_time': proc_info.get('start_time', 0),
+                    'children': []
+                })
+        
+        return running_processes
+    
     def set_log_file(self, log_file_path):
         """Установка пути к лог-файлу"""
         self.log_file_path = log_file_path
     
+    def _check_process_activity(self, process, last_activity_time, check_interval=30):
+        """
+        Проверяет активность процесса (вывод, CPU, сеть, диск)
+        
+        Args:
+            process: Объект subprocess.Popen
+            last_activity_time: Время последней активности (timestamp)
+            check_interval: Интервал проверки активности в секундах
+        
+        Returns:
+            tuple: (is_active, activity_type) - активен ли процесс и тип активности (на русском)
+        """
+        import time
+        current_time = time.time()
+        
+        # Если процесс завершился - не активен
+        if process.poll() is not None:
+            return (False, 'завершен')
+        
+        # Проверяем время с последней активности
+        time_since_activity = current_time - last_activity_time
+        
+        # Если прошло меньше check_interval - считаем активным
+        if time_since_activity < check_interval:
+            return (True, 'недавняя активность')
+        
+        # Проверяем активность через psutil (если доступен)
+        if PSUTIL_AVAILABLE:
+            try:
+                proc = psutil.Process(process.pid)
+                
+                # Проверяем использование CPU (если > 0% - процесс работает)
+                try:
+                    cpu_percent = proc.cpu_percent(interval=0.1)
+                    if cpu_percent > 0:
+                        return (True, f'CPU {cpu_percent:.1f}%')
+                except:
+                    pass
+                
+                # Проверяем сетевую активность
+                try:
+                    connections = proc.connections()
+                    if connections:
+                        # Есть сетевые соединения - процесс может работать
+                        return (True, f'сеть ({len(connections)} соединений)')
+                except:
+                    pass
+                
+                # Проверяем операции с диском
+                try:
+                    io_counters = proc.io_counters()
+                    if io_counters:
+                        # Проверяем, были ли недавние операции с диском
+                        # (сравниваем с предыдущими значениями, если есть)
+                        return (True, 'диск')
+                except:
+                    pass
+                
+                # Проверяем использование памяти (если процесс использует память - может работать)
+                try:
+                    memory_info = proc.memory_info()
+                    if memory_info.rss > 0:
+                        # Процесс использует память, но это не гарантия активности
+                        # Используем только как дополнительный признак
+                        pass
+                except:
+                    pass
+                
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                # Процесс завершился или нет доступа
+                return (False, 'нет доступа')
+            except Exception:
+                pass
+        
+        # Если нет признаков активности - считаем зависшим
+        return (False, 'завис')
+    
+    @track_class_activity('UniversalProcessRunner')
     def run_process(self, command, process_type="general", 
                    channels=["file", "terminal"], callback=None, timeout=None, env=None):
         """
@@ -3534,6 +3764,11 @@ class UniversalProcessRunner(object):
             # Логируем начало процесса
             print("Начало выполнения: %s" % cmd_str, "INFO", channels)
             
+            # Определяем короткое имя процесса для отладки
+            process_name = cmd_str.split()[0] if cmd_str.split() else "unknown"
+            if len(process_name) > 20:
+                process_name = process_name[:20] + "..."
+            
             # Запускаем процесс
             process = subprocess.Popen(
                 command,
@@ -3545,18 +3780,58 @@ class UniversalProcessRunner(object):
                 env=env  # НОВОЕ: Передаем переменные окружения
             )
             
+            # Сохраняем информацию о запущенном процессе для мониторинга
+            import time
+            self.running_processes[process.pid] = {
+                'process': process,
+                'command': cmd_str,
+                'process_type': process_type,
+                'start_time': time.time()
+            }
+            
             # Читаем вывод построчно в реальном времени
             output_buffer = ""
             
-            # КРИТИЧНО: Используем таймаут для чтения вывода
+            # КРИТИЧНО: Используем умный таймаут с проверкой активности
             start_time = time.time() if timeout else None
+            last_activity_time = start_time if start_time else time.time()
+            last_output_time = last_activity_time
+            last_activity_check = time.time()
+            last_status_log = time.time()
+            
+            # Параметры умного таймаута
+            activity_check_interval = 30  # Проверяем активность каждые 30 секунд
+            no_activity_warning_time = 120  # Предупреждение через 2 минуты без активности
+            max_no_activity_time = 600  # Максимум 10 минут без активности
+            max_total_timeout = timeout if timeout else None  # Максимальное общее время
+            
+            # Отладочное сообщение о запуске процесса
+            if timeout:
+                print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | PID: {process.pid} | Таймаут: {timeout} сек | Статус: запущен", "DEBUG", channels)
+            else:
+                print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | PID: {process.pid} | Таймаут: не установлен | Статус: запущен", "DEBUG", channels)
             
             while True:
-                # Проверяем таймаут
-                if timeout:
-                    elapsed = time.time() - start_time
-                    if elapsed > timeout:
-                        print("Процесс превысил таймаут, завершаем...", "ERROR", channels)
+                current_time = time.time()
+                
+                # Проверяем общий таймаут с умной логикой
+                if timeout and start_time:
+                    elapsed = current_time - start_time
+                    
+                    # Если превышен максимальный таймаут - проверяем активность
+                    if elapsed > max_total_timeout:
+                        is_active, activity_type = self._check_process_activity(process, last_activity_time)
+                        time_since_activity = current_time - last_activity_time
+                        remaining_timeout = max_total_timeout - elapsed
+                        
+                        if is_active:
+                            # Процесс активен, но медленно работает - продлеваем таймаут
+                            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: АКТИВЕН ({activity_type}) | Время работы: {int(elapsed)} сек | Без активности: {int(time_since_activity)} сек | Продлеваем таймаут на 5 минут", "INFO", channels)
+                            max_total_timeout += 300  # Продлеваем на 5 минут
+                            last_activity_time = current_time  # Обновляем время активности
+                        else:
+                            # Процесс завис - завершаем
+                            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ЗАВИС | Время работы: {int(elapsed)} сек | Без активности: {int(time_since_activity)} сек | Завершаем процесс", "ERROR", channels)
                         process.kill()
                         # КРИТИЧНО: Завершаем все дочерние процессы
                         if PSUTIL_AVAILABLE:
@@ -3572,13 +3847,57 @@ class UniversalProcessRunner(object):
                         # Fallback: просто убиваем процесс, если psutil недоступен
                         return -1
                 
-                # Читаем строку с таймаутом
+                # Читаем строку
                 try:
                     line = process.stdout.readline()
                 except:
                     break
                 
                 if not line:
+                    # Проверяем активность при отсутствии вывода
+                    time_since_output = current_time - last_output_time
+                    
+                    if time_since_output > activity_check_interval:
+                        # Проверяем активность процесса
+                        is_active, activity_type = self._check_process_activity(process, last_activity_time)
+                        time_since_activity = current_time - last_activity_time
+                        elapsed = current_time - start_time if start_time else 0
+                        remaining_timeout = (max_total_timeout - elapsed) if (timeout and start_time and max_total_timeout) else None
+                        remaining_no_activity = max_no_activity_time - time_since_output
+                        
+                        if is_active:
+                            # Процесс активен - обновляем время активности
+                            last_activity_time = current_time
+                            if time_since_output > no_activity_warning_time:
+                                status_msg = f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: АКТИВЕН ({activity_type}) | Время работы: {int(elapsed)} сек | Без вывода: {int(time_since_output)} сек"
+                                if remaining_timeout is not None:
+                                    status_msg += f" | До таймаута: {int(remaining_timeout)} сек"
+                                print(status_msg, "INFO", channels)
+                        else:
+                            # Нет активности
+                            if time_since_output > max_no_activity_time:
+                                # Превышен максимальный период без активности
+                                print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ЗАВИС | Время работы: {int(elapsed)} сек | Без активности: {int(time_since_output)} сек | Завершаем процесс", "ERROR", channels)
+                                process.kill()
+                                # КРИТИЧНО: Завершаем все дочерние процессы
+                                if PSUTIL_AVAILABLE:
+                                    try:
+                                        parent = psutil.Process(process.pid)
+                                        for child in parent.children(recursive=True):
+                                            try:
+                                                child.kill()
+                                            except:
+                                                pass
+                                    except:
+                                        pass
+                                return -1
+                            elif time_since_output > no_activity_warning_time:
+                                # Предупреждение о возможном зависании
+                                status_msg = f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: НЕТ АКТИВНОСТИ | Время работы: {int(elapsed)} сек | Без активности: {int(time_since_output)} сек | Осталось до завершения: {int(remaining_no_activity)} сек"
+                                if remaining_timeout is not None:
+                                    status_msg += f" | До таймаута: {int(remaining_timeout)} сек"
+                                print(status_msg, "WARNING", channels)
+                    
                     # Проверяем, завершился ли процесс
                     if process.poll() is not None:
                         break
@@ -3587,7 +3906,11 @@ class UniversalProcessRunner(object):
                 # Выводим строку в реальном времени
                 line_clean = line.rstrip()
                 if line_clean:
-                    # RAW поток (необработанный вывод процесса, метка времени автоматически)
+                    # Есть вывод - обновляем время последней активности
+                    last_activity_time = current_time
+                    last_output_time = current_time
+                    
+                    # RAW поток (необработанный вывод процесса, метка времени добавляется автоматически)
                     if _global_dual_logger:
                         try:
                             _global_dual_logger.write_raw(line_clean)  # Метка времени добавляется автоматически
@@ -3599,6 +3922,26 @@ class UniversalProcessRunner(object):
                     # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
                     print("  %s" % line_clean, "INFO", channels)
                     output_buffer += line
+                    
+                    # Логируем активность процесса (опционально, для отладки)
+                    if timeout and (current_time - last_status_log) > 30:
+                        # Логируем статус активности каждые 30 секунд
+                        elapsed = current_time - start_time
+                        time_since_activity = current_time - last_activity_time
+                        remaining_timeout = (max_total_timeout - elapsed) if max_total_timeout else None
+                        
+                        # Проверяем текущую активность для статуса
+                        is_active, activity_type = self._check_process_activity(process, last_activity_time)
+                        status = "АКТИВЕН" if is_active else "ОЖИДАНИЕ"
+                        
+                        status_msg = f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: {status}"
+                        if is_active:
+                            status_msg += f" ({activity_type})"
+                        status_msg += f" | Время работы: {int(elapsed)} сек | Последняя активность: {int(time_since_activity)} сек назад"
+                        if remaining_timeout is not None:
+                            status_msg += f" | До таймаута: {int(remaining_timeout)} сек"
+                        print(status_msg, "DEBUG", channels)
+                        last_status_log = current_time
                 
                 # Проверяем на интерактивные запросы
                 if self._detect_interactive_prompt(output_buffer):
@@ -3663,22 +4006,33 @@ class UniversalProcessRunner(object):
                     pass
             
             # Логируем результат
+            elapsed_total = time.time() - start_time if start_time else 0
             if return_code == 0:
+                print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ЗАВЕРШЕН УСПЕШНО | Время работы: {int(elapsed_total)} сек | Код возврата: {return_code}", "INFO", channels)
                 print("Процесс завершен успешно", "INFO", channels)
             else:
+                print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ЗАВЕРШЕН С ОШИБКОЙ | Время работы: {int(elapsed_total)} сек | Код возврата: {return_code}", "ERROR", channels)
                 print("Процесс завершен с ошибкой (код: %d)" % return_code, "ERROR", channels)
             
             return return_code
             
         except subprocess.TimeoutExpired:
+            elapsed_total = time.time() - start_time if start_time else 0
+            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name if 'process_name' in locals() else 'unknown'} | Статус: ТАЙМАУТ | Время работы: {int(elapsed_total)} сек | Завершаем принудительно", "ERROR", channels)
             print("Процесс превысил таймаут", "ERROR", channels)
-            process.kill()
+            if 'process' in locals():
+                process.kill()
             return -1
         except Exception as e:
+            elapsed_total = time.time() - start_time if start_time else 0
+            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name if 'process_name' in locals() else 'unknown'} | Статус: ОШИБКА | Время работы: {int(elapsed_total)} сек | Ошибка: {str(e)}", "ERROR", channels)
             print("Ошибка выполнения процесса: %s" % str(e), "ERROR", channels)
             return -1
         finally:
             self.is_running = False
+            # Удаляем процесс из списка отслеживаемых после завершения
+            if 'process' in locals() and process.pid in self.running_processes:
+                del self.running_processes[process.pid]
     
     def add_output(self, message, level="INFO", channels=[], bypass_filter=False):
         """
@@ -4622,6 +4976,104 @@ class WineComponentsChecker(object):
         return missing
 
 # ============================================================================
+# КЛАСС МОНИТОРИНГА ПРОЦЕССОВ ПРИЛОЖЕНИЯ
+# ============================================================================
+class ProcessMonitor(object):
+    """Оптимизированный мониторинг процессов приложения с кэшированием"""
+    
+    def __init__(self):
+        # Убрали кэширование - всегда получаем свежие данные
+        pass
+        
+    def _get_app_processes_cached(self):
+        """Получение процессов приложения (без кэширования - всегда свежие данные)"""
+        # Всегда получаем свежие данные без кэширования
+        app_processes = self._get_app_processes_fast()
+        total_cpu = sum(proc.get('cpu', 0) for proc in app_processes)
+        
+        return app_processes, total_cpu
+    
+    def _get_app_processes_fast(self):
+        """Быстрое получение процессов без блокирующих вызовов"""
+        import os
+        
+        app_processes = []
+        current_pid = os.getpid()
+        
+        if PSUTIL_AVAILABLE:
+            try:
+                main_process = psutil.Process(current_pid)
+                
+                # Главный процесс - используем прямое измерение CPU без кэша и интервалов
+                try:
+                    # Прямое измерение CPU с минимальным интервалом для точности
+                    # Используем interval=0.1 для получения реального значения из системы
+                    cpu_percent = main_process.cpu_percent(interval=0.1)
+                    
+                    memory_mb = main_process.memory_info().rss / (1024 * 1024)
+                    
+                    # Получаем реальное имя процесса из системы
+                    process_name = main_process.name()
+                    
+                    # Формируем cmdline с информацией о скрипте
+                    if main_process.cmdline():
+                        # Берем первые 2 элемента команды (python3 и скрипт)
+                        cmdline = ' '.join(main_process.cmdline()[:2])
+                        # Если в cmdline есть astra_automation.py, добавляем это в имя для отображения
+                        if 'astra_automation.py' in cmdline:
+                            display_name = f"{process_name} (astra_automation.py)"
+                        else:
+                            display_name = process_name
+                    else:
+                        cmdline = f"{process_name} astra_automation.py"
+                        display_name = f"{process_name} (astra_automation.py)"
+                    
+                    app_processes.append({
+                        'pid': current_pid,
+                        'name': display_name,  # Используем реальное имя процесса с уточнением
+                        'cpu': cpu_percent,
+                        'memory': memory_mb,
+                        'cmdline': cmdline
+                    })
+                except:
+                    pass
+                
+                # Дочерние процессы - все рекурсивные дочерние процессы
+                try:
+                    children = main_process.children(recursive=True)  # Все рекурсивные дочерние процессы
+                    for child in children:
+                        try:
+                            # Прямое измерение CPU с минимальным интервалом для точности
+                            cpu_percent = child.cpu_percent(interval=0.1)
+                            
+                            memory_mb = child.memory_info().rss / (1024 * 1024)
+                            cmdline = ' '.join(child.cmdline()[:2]) if child.cmdline() else child.name()
+                            
+                            app_processes.append({
+                                'pid': child.pid,
+                                'name': child.name(),
+                                'cpu': cpu_percent,
+                                'memory': memory_mb,
+                                'cmdline': cmdline
+                            })
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            # Удаляем из кэша если процесс завершился
+                            if child.pid in self.last_cpu_percent:
+                                del self.last_cpu_percent[child.pid]
+                            continue
+                except:
+                    pass
+            except:
+                pass
+        
+        return app_processes
+    
+    def get_app_cpu_usage(self):
+        """Получить общее использование CPU приложением"""
+        _, total_cpu = self._get_app_processes_cached()
+        return total_cpu
+
+# ============================================================================
 # КЛАСС МОНИТОРИНГА УСТАНОВКИ
 # ============================================================================
 class InstallationMonitor(object):
@@ -4653,37 +5105,56 @@ class InstallationMonitor(object):
     def start_monitoring(self):
         """Запустить мониторинг"""
         import threading
+        # Проверяем, не запущен ли уже мониторинг
+        if self.is_monitoring and self.monitoring_thread and self.monitoring_thread.is_alive():
+            print(f"Мониторинг уже запущен, пропускаем повторный запуск", level='DEBUG')
+            return
         self.start_time = datetime.datetime.now()
         self.is_monitoring = True
-        self.monitoring_thread = threading.Thread(target=self._monitor_loop)
+        self.monitoring_thread = threading.Thread(target=self._monitor_loop, name="SystemMonitorThread")
         self.monitoring_thread.daemon = True
+        print(f"Создание потока SystemMonitorThread для мониторинга системы", level='DEBUG')
         self.monitoring_thread.start()
+        print(f"Поток SystemMonitorThread запущен (имя: {self.monitoring_thread.name})", level='DEBUG')
     
     def stop_monitoring(self):
         """Остановить мониторинг"""
         self.is_monitoring = False
-        if self.monitoring_thread:
+        if self.monitoring_thread and self.monitoring_thread.is_alive():
+            # Ждем завершения потока с таймаутом
             self.monitoring_thread.join(timeout=2)
+            # Если поток не завершился за 2 секунды, оставляем его (daemon поток завершится сам)
     
     def _monitor_loop(self):
         """Основной цикл мониторинга (в отдельном потоке)"""
+        import threading
         import time
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_monitor_loop)", level='DEBUG')
         
-        while self.is_monitoring:
-            try:
-                # Собираем данные
-                data = self.get_status()
-                
-                # Отправляем в callback если есть
-                if self.callback:
-                    self.callback(data)
-                
-                # Ждем 1 секунду
-                time.sleep(1)
-                
-            except Exception as e:
-                # Игнорируем ошибки мониторинга
-                pass
+        try:
+            while self.is_monitoring:
+                try:
+                    # Собираем данные
+                    data = self.get_status()
+                    
+                    # Отправляем в callback если есть
+                    if self.callback:
+                        self.callback(data)
+                    
+                    # Ждем 1 секунду
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    # Игнорируем ошибки мониторинга
+                    pass
+        except Exception as e:
+            # Игнорируем критические ошибки мониторинга
+            pass
+        finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_monitor_loop)", level='DEBUG')
     
     def _read_cpu_stats(self):
         """Прочитать текущие статистики CPU из /proc/stat"""
@@ -5870,6 +6341,7 @@ class UniversalInstaller(object):
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
         return check_component_status(component_id, wineprefix_path=self.wineprefix)
     
+    @track_class_activity('UniversalInstaller')
     def install_component(self, component_id):
         """
         Установка одного компонента
@@ -5945,6 +6417,7 @@ class UniversalInstaller(object):
             print("Ошибка установки компонента %s: %s" % (component_id, str(e)), level='ERROR')
             return False
     
+    @track_class_activity('UniversalInstaller')
     def uninstall_component(self, component_id):
         """
         Удаление одного компонента
@@ -6020,6 +6493,7 @@ class UniversalInstaller(object):
             print("Ошибка удаления компонента %s: %s" % (component_id, str(e)), level='ERROR')
             return False
     
+    @track_class_activity('UniversalInstaller')
     def install_components(self, component_ids):
         """
         Установка компонентов с учетом зависимостей
@@ -6127,6 +6601,7 @@ class UniversalInstaller(object):
         
         return success
     
+    @track_class_activity('UniversalInstaller')
     def uninstall_components(self, component_ids):
         """
         Удаление компонентов (упрощенная логика)
@@ -7305,6 +7780,13 @@ class ComponentStatusManager(object):
         """
         Получение статуса всех компонентов
         
+        ВАЖНО: Этот метод вызывается только:
+        1. При запуске GUI (один раз через _auto_check_components)
+        2. Во время операций установки/удаления (через _update_wine_status)
+        3. По запросу пользователя (кнопка "Обновить")
+        
+        НЕТ автоматического обновления статусов!
+        
         Returns:
             dict: Словарь {component_id: (status_text, status_tag)}
         """
@@ -7684,6 +8166,9 @@ class AutomationGUI(object):
         # Глобальный монитор системы для постоянного мониторинга CPU/NET
         self.system_monitor = None
         self.last_cpu_usage = 0
+        
+        # Монитор процессов приложения
+        self.process_monitor = ProcessMonitor()
         self.last_net_speed = 0.0
         
         # Создаем интерфейс
@@ -7701,9 +8186,9 @@ class AutomationGUI(object):
         # Запускаем обработку очереди терминала с задержкой (ПЕРЕД _auto_check_components!)
         self.root.after(1000, self.process_terminal_queue)
         
-        # Автоматически запускаем проверку компонентов при инициализации GUI
+        # Автоматически запускаем проверку компонентов при инициализации GUI (только один раз при запуске)
         if not console_mode:
-            self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI
+            self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI (только при запуске)
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -7770,14 +8255,228 @@ class AutomationGUI(object):
                 print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
                 return False
     
+    def _get_logger_threads_info(self):
+        """Получение информации о фоновых потоках логгера"""
+        threads_info = []
+        
+        try:
+            # Проверяем DualStreamLogger
+            dual_logger = None
+            if '_global_dual_logger' in globals() and globals().get('_global_dual_logger'):
+                dual_logger = globals()['_global_dual_logger']
+            elif hasattr(self, 'universal_runner') and self.universal_runner:
+                dual_logger = getattr(self.universal_runner, 'dual_logger', None)
+            
+            if dual_logger:
+                # Проверяем фоновый поток записи в файл
+                file_writer_running = getattr(dual_logger, '_file_writer_running', False)
+                file_writer_thread = getattr(dual_logger, '_file_writer_thread', None)
+                file_queue = getattr(dual_logger, '_file_queue', None)
+                
+                queue_size = 0
+                if file_queue:
+                    try:
+                        queue_size = file_queue.qsize()
+                    except:
+                        pass
+                
+                thread_alive = False
+                if file_writer_thread:
+                    try:
+                        thread_alive = file_writer_thread.is_alive()
+                    except:
+                        pass
+                
+                if file_writer_running and thread_alive:
+                    # Получаем статистику счетчиков
+                    with dual_logger._stats_lock:
+                        received_raw = getattr(dual_logger, '_messages_received_raw', 0)
+                        received_analysis = getattr(dual_logger, '_messages_received_analysis', 0)
+                        saved_raw = getattr(dual_logger, '_messages_saved_raw', 0)
+                        saved_analysis = getattr(dual_logger, '_messages_saved_analysis', 0)
+                    
+                    total_received = received_raw + received_analysis
+                    total_saved = saved_raw + saved_analysis
+                    pending = total_received - total_saved
+                    
+                    if queue_size > 0 or pending > 0:
+                        status = f'АКТИВЕН (очередь: {queue_size}, несохранено: {pending})'
+                    else:
+                        status = 'ОЖИДАНИЕ'
+                    
+                    threads_info.append({
+                        'name': 'DualStreamLogger-FileWriter',
+                        'status': status,
+                        'queue_size': queue_size,
+                        'info': f'Получено: {total_received} (RAW: {received_raw}, ANALYSIS: {received_analysis}) | Сохранено: {total_saved} (RAW: {saved_raw}, ANALYSIS: {saved_analysis}) | Очередь: {queue_size} | Несохранено: {pending}'
+                    })
+                elif file_writer_running and not thread_alive:
+                    threads_info.append({
+                        'name': 'DualStreamLogger-FileWriter',
+                        'status': 'ОШИБКА (поток завершен)',
+                        'queue_size': queue_size,
+                        'info': f'Поток должен работать, но завершен | Очередь: {queue_size}'
+                    })
+            
+            # Проверяем UniversalProcessRunner
+            universal_runner = None
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                universal_runner = self.universal_runner
+            elif '_global_universal_runner' in globals() and globals().get('_global_universal_runner'):
+                universal_runner = globals()['_global_universal_runner']
+            
+            if universal_runner:
+                output_queue = getattr(universal_runner, 'output_queue', None)
+                queue_size = 0
+                if output_queue:
+                    try:
+                        queue_size = output_queue.qsize()
+                    except:
+                        pass
+                
+                if queue_size > 0:
+                    threads_info.append({
+                        'name': 'UniversalProcessRunner-Queue',
+                        'status': f'АКТИВЕН (очередь: {queue_size})',
+                        'queue_size': queue_size,
+                        'info': f'Очередь сообщений UniversalProcessRunner | Необработанных: {queue_size}'
+                    })
+                else:
+                    threads_info.append({
+                        'name': 'UniversalProcessRunner-Queue',
+                        'status': 'ОЖИДАНИЕ',
+                        'queue_size': 0,
+                        'info': 'Очередь сообщений UniversalProcessRunner пуста'
+                    })
+        
+        except Exception as e:
+            # Игнорируем ошибки при проверке
+            pass
+        
+        return threads_info
+    
+    def _get_all_system_threads_info(self):
+        """Получение информации о всех активных потоках и таймерах в системе"""
+        threads_info = []
+        
+        try:
+            import threading
+            import time
+            
+            # Получаем все активные потоки
+            all_threads = threading.enumerate()
+            current_time = time.time()
+            
+            for thread in all_threads:
+                if thread == threading.current_thread():
+                    continue  # Пропускаем главный поток
+                
+                thread_name = thread.name
+                thread_alive = thread.is_alive()
+                thread_daemon = thread.daemon
+                
+                # Пытаемся получить дополнительную информацию о потоке
+                thread_info_str = f"Поток: {thread_name}"
+                if thread_daemon:
+                    thread_info_str += " (daemon)"
+                
+                # Проверяем, является ли это известным потоком
+                if 'DualStreamLogger' in thread_name:
+                    continue  # Уже отображается в logger_threads
+                elif 'monitoring' in thread_name.lower():
+                    status = 'РАБОТАЕТ' if thread_alive else 'ЗАВЕРШЕН'
+                    threads_info.append({
+                        'name': f'SystemThread-{thread_name}',
+                        'status': status,
+                        'info': thread_info_str
+                    })
+                elif thread_alive:
+                    # Другие активные потоки
+                    status = 'РАБОТАЕТ'
+                    threads_info.append({
+                        'name': f'Thread-{thread_name}',
+                        'status': status,
+                        'info': thread_info_str
+                    })
+            
+            # Проверяем активные таймеры Tkinter (root.after)
+            if hasattr(self, 'root') and self.root:
+                try:
+                    # Получаем информацию о запланированных событиях
+                    # К сожалению, Tkinter не предоставляет прямого доступа к списку таймеров
+                    # Но мы можем проверить наличие активных таймеров через другие способы
+                    
+                    # Проверяем наличие активных обновлений ресурсов
+                    if hasattr(self, '_last_processes_refresh'):
+                        last_refresh = getattr(self, '_last_processes_refresh', 0)
+                        if current_time - last_refresh < 5.0:
+                            threads_info.append({
+                                'name': 'Tkinter-Timers',
+                                'status': 'АКТИВЕН',
+                                'info': f'Активные таймеры GUI (последнее обновление: {int(current_time - last_refresh)}с назад)'
+                            })
+                except:
+                    pass
+            
+            # Проверяем наличие активных операций в UniversalInstaller
+            if hasattr(self, 'universal_installer') and self.universal_installer:
+                status_manager = getattr(self.universal_installer, 'status_manager', None)
+                if status_manager:
+                    installing = getattr(status_manager, 'installing', set())
+                    removing = getattr(status_manager, 'removing', set())
+                    if installing or removing:
+                        threads_info.append({
+                            'name': 'UniversalInstaller-Operations',
+                            'status': 'РАБОТАЕТ',
+                            'info': f'Установка: {len(installing)}, Удаление: {len(removing)}'
+                        })
+            
+            # Проверяем наличие активных операций в SystemUpdater
+            if hasattr(self, 'system_updater') and self.system_updater:
+                is_running = getattr(self.system_updater, 'is_running', False)
+                if is_running:
+                    threads_info.append({
+                        'name': 'SystemUpdater',
+                        'status': 'РАБОТАЕТ',
+                        'info': 'Обновление системы активно'
+                    })
+            
+            # Проверяем наличие активных операций в SystemMonitor
+            if hasattr(self, 'system_monitor') and self.system_monitor:
+                is_monitoring = getattr(self.system_monitor, 'is_monitoring', False)
+                if is_monitoring:
+                    threads_info.append({
+                        'name': 'SystemMonitor',
+                        'status': 'РАБОТАЕТ',
+                        'info': 'Мониторинг системы активен'
+                    })
+        
+        except Exception as e:
+            # Игнорируем ошибки при проверке
+            pass
+        
+        return threads_info
+    
     def _get_running_installation_processes(self):
-        """Получение списка запущенных процессов установки"""
+        """Получение списка запущенных процессов установки с кэшированием"""
+        import time
+        
+        # Кэшируем результаты на 2 секунды
+        if not hasattr(self, '_last_install_processes_check'):
+            self._last_install_processes_check = 0
+            self._cached_install_processes = []
+        
+        current_time = time.time()
+        if current_time - self._last_install_processes_check < 2.0:
+            return self._cached_install_processes  # Возвращаем кэш
+        
         try:
             import subprocess
             
-            # Список процессов для проверки - ТОЛЬКО процессы установки обновлений Linux!
+            # Список процессов для проверки - процессы установки обновлений Linux и компонентов
             processes_to_check = [
-                'apt-get', 'apt', 'dpkg', 'aptd', 'aptd.system', 'aptd.systemd'
+                'apt-get', 'apt', 'dpkg', 'aptd', 'aptd.system', 'aptd.systemd',
+                'wine', 'wineserver', 'wineboot', 'winetricks', 'msiexec'
             ]
             
             running_processes = []
@@ -7821,11 +8520,62 @@ class AutomationGUI(object):
                     # Игнорируем ошибки для отдельных процессов
                     pass
             
+            # Обновляем кэш
+            self._cached_install_processes = running_processes
+            self._last_install_processes_check = current_time
             return running_processes
             
         except Exception as e:
             print(f"[ERROR] Ошибка при получении списка процессов: {e}")
-            return []
+            # Возвращаем старый кэш при ошибке
+            return self._cached_install_processes
+    
+    def _get_wine_processes(self):
+        """Получение списка запущенных процессов Wine с метриками CPU и памяти"""
+        wine_processes = []
+        
+        # Проверяем наличие universal_installer
+        if not hasattr(self, 'universal_installer') or not self.universal_installer:
+            return wine_processes
+        
+        try:
+            # Получаем процессы Wine через UniversalInstaller
+            running_processes = self.universal_installer._check_wine_processes_running()
+            
+            if PSUTIL_AVAILABLE:
+                # Используем psutil для получения метрик CPU и памяти
+                for pid, name, cmdline in running_processes:
+                    try:
+                        proc = psutil.Process(pid)
+                        cpu_percent = proc.cpu_percent(interval=0.1)
+                        memory_mb = proc.memory_info().rss / (1024 * 1024)
+                        
+                        wine_processes.append({
+                            'pid': pid,
+                            'name': name,
+                            'cpu': cpu_percent,
+                            'memory': memory_mb,
+                            'cmdline': cmdline
+                        })
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        # Процесс уже завершился или нет доступа
+                        continue
+                    except Exception:
+                        continue
+            else:
+                # Если psutil недоступен, возвращаем базовую информацию
+                for pid, name, cmdline in running_processes:
+                    wine_processes.append({
+                        'pid': pid,
+                        'name': name,
+                        'cpu': 0,
+                        'memory': 0,
+                        'cmdline': cmdline
+                    })
+        except Exception as e:
+            print(f"Ошибка при получении процессов Wine: {e}", level='ERROR')
+        
+        return wine_processes
     
     def _kill_all_installation_processes(self, processes_to_kill=None):
         """Убивание всех процессов установки в системе"""
@@ -8278,10 +9028,26 @@ class AutomationGUI(object):
     
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
+        # Защита от повторного вызова
+        if hasattr(self, '_closing_in_progress') and self._closing_in_progress:
+            return
+        self._closing_in_progress = True
+        
         print("[INFO] GUI закрывается", gui_log=True)
+        
+        # Останавливаем системный мониторинг
+        if hasattr(self, 'system_monitor') and self.system_monitor:
+            try:
+                self.system_monitor.stop_monitoring()
+                print("Системный мониторинг остановлен", level='DEBUG')
+            except Exception as e:
+                print(f"Ошибка остановки системного мониторинга: {e}", level='DEBUG')
         
         # ВСЕГДА показываем форму подтверждения при закрытии GUI
         self._close_parent_terminal()
+        
+        # НЕ останавливаем DualStreamLogger здесь - это делается в finally блоке run()
+        # чтобы все логи успели записаться
     
     def _on_window_resize(self, event):
         """Обработчик изменения размера окна"""
@@ -8306,6 +9072,11 @@ class AutomationGUI(object):
     
     def start_system_monitoring(self):
         """Запуск постоянного фонового мониторинга CPU и сети"""
+        # Проверяем, не запущен ли уже мониторинг
+        if hasattr(self, 'system_monitor') and self.system_monitor and self.system_monitor.is_monitoring:
+            print(f"Системный мониторинг уже запущен, пропускаем повторный запуск", level='DEBUG')
+            return
+        
         # Создаем монитор с пустым WINEPREFIX (не важен для общего мониторинга)
         home = os.path.expanduser("~")
         wineprefix = os.path.join(home, ".wine-astraregul")
@@ -8328,12 +9099,14 @@ class AutomationGUI(object):
             # Обновляем только графические прогресс-бары
             # Псевдографические индикаторы убраны
             pass
-            
+
         except Exception as e:
             pass  # Игнорируем ошибки обновления
         
         # Повторяем каждые 500ms (0.5 секунды) для более частого обновления
-        self.root.after(500, self._update_system_display)
+        # ТОЛЬКО если GUI еще существует и не закрывается
+        if hasattr(self, 'root') and self.root and self.root.winfo_exists():
+            self.root.after(500, self._update_system_display)
     
     def _add_copy_menu(self, text_widget):
         """Добавление контекстного меню для копирования текста"""
@@ -8431,6 +9204,9 @@ class AutomationGUI(object):
         
         # Создаем элементы вкладки Информация о Системе
         self.create_system_info_tab()
+        
+        # Создаем вкладку Мониторинг процессов
+        self.create_processes_monitor_tab()
         
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
@@ -8591,8 +9367,6 @@ class AutomationGUI(object):
                                          command=self.stop_automation, state=self.tk.DISABLED)
         self.stop_button.pack(side=self.tk.LEFT, padx=2)
         ToolTip(self.stop_button, "Остановить текущий процесс установки")
-        
-        
         
         # Лог выполнения (на основной вкладке) - уменьшенный размер
         log_frame = self.tk.LabelFrame(self.main_frame, text="Лог выполнения")
@@ -9614,6 +10388,16 @@ class AutomationGUI(object):
         self.shortcut_button.pack(side=self.tk.RIGHT, padx=5)
         ToolTip(self.shortcut_button, "Создать или удалить ярлык Astra.IDE на рабочем столе")
         
+        # Строка 3: Использование CPU приложения
+        row3_frame = self.tk.Frame(resources_frame)
+        row3_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row3_frame, text="Использование CPU приложения:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.app_cpu_progress = self.ttk.Progressbar(row3_frame, length=100, mode='determinate', maximum=100)
+        self.app_cpu_progress.pack(side=self.tk.LEFT, padx=(5, 5))
+        self.app_cpu_label = self.tk.Label(row3_frame, text="0.0%", font=('Arial', 9))
+        self.app_cpu_label.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.app_cpu_progress, "Использование CPU процессами приложения (включая дочерние)")
+        
         # Предупреждения о ресурсах
         self.resources_warning_label = self.tk.Label(resources_frame, text="", font=('Arial', 8))
         
@@ -9685,15 +10469,388 @@ class AutomationGUI(object):
         
         # Инициализация уже выполнена в AutomationGUI.__init__
         
-        # Информация о логе (перенесенная с основной вкладки)
-        log_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о логе")
-        log_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+    def create_processes_monitor_tab(self):
+        """Создание вкладки Мониторинг процессов"""
+        # Создаем фрейм для вкладки
+        self.processes_monitor_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.processes_monitor_frame, text=" Мониторинг процессов ")
         
-        # Получаем путь к лог-файлу из DualStreamLogger
-        log_file = self._get_log_file_path() or "Не установлен"
-        self.log_path_label = self.tk.Label(log_info_frame, text="Лог файл: %s" % log_file, 
-                                           font=('Arial', 9), anchor="w", justify="left")
-        self.log_path_label.pack(fill=self.tk.X, padx=5, pady=3)
+        # Заголовок
+        header_frame = self.tk.Frame(self.processes_monitor_frame)
+        header_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(header_frame, text="Процессы приложения и установки", 
+                     font=('Arial', 12, 'bold')).pack(side=self.tk.LEFT)
+        
+        # Кнопка обновления
+        refresh_button = self.tk.Button(header_frame, text="Обновить", 
+                                       command=self._refresh_processes_monitor, width=12)
+        refresh_button.pack(side=self.tk.RIGHT, padx=5)
+        ToolTip(refresh_button, "Обновить список процессов вручную")
+        
+        # Таблица процессов
+        processes_frame = self.tk.Frame(self.processes_monitor_frame)
+        processes_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем Treeview для отображения процессов
+        columns = ('pid', 'name', 'cpu', 'memory', 'status', 'cmdline')
+        self.processes_tree = self.ttk.Treeview(processes_frame, columns=columns, show='headings', height=15)
+        
+        # Настройка колонок
+        self.processes_tree.heading('pid', text='PID')
+        self.processes_tree.heading('name', text='Имя процесса')
+        self.processes_tree.heading('cpu', text='CPU %')
+        self.processes_tree.heading('memory', text='Память (МБ)')
+        self.processes_tree.heading('status', text='Статус')
+        self.processes_tree.heading('cmdline', text='Команда')
+        
+        self.processes_tree.column('pid', width=80, anchor='center')
+        self.processes_tree.column('name', width=150, anchor='w')
+        self.processes_tree.column('cpu', width=80, anchor='center')
+        self.processes_tree.column('memory', width=100, anchor='center')
+        self.processes_tree.column('status', width=120, anchor='center')
+        self.processes_tree.column('cmdline', width=400, anchor='w')
+        
+        # Скроллбары
+        processes_scrollbar_y = self.tk.Scrollbar(processes_frame, orient=self.tk.VERTICAL, 
+                                                 command=self.processes_tree.yview)
+        processes_scrollbar_x = self.tk.Scrollbar(processes_frame, orient=self.tk.HORIZONTAL, 
+                                                 command=self.processes_tree.xview)
+        self.processes_tree.configure(yscrollcommand=processes_scrollbar_y.set,
+                                      xscrollcommand=processes_scrollbar_x.set)
+        
+        # Размещение
+        self.processes_tree.grid(row=0, column=0, sticky='nsew')
+        processes_scrollbar_y.grid(row=0, column=1, sticky='ns')
+        processes_scrollbar_x.grid(row=1, column=0, sticky='ew')
+        
+        processes_frame.grid_rowconfigure(0, weight=1)
+        processes_frame.grid_columnconfigure(0, weight=1)
+        
+        # Статус обновления
+        status_frame = self.tk.Frame(self.processes_monitor_frame)
+        status_frame.pack(fill=self.tk.X, padx=10, pady=2)
+        self.processes_status_label = self.tk.Label(status_frame, text="Обновление каждые 2 секунды...", 
+                                                   font=('Arial', 8), fg='gray')
+        self.processes_status_label.pack(side=self.tk.LEFT)
+        
+        # Инициализация данных
+        self._refresh_processes_monitor()
+        
+        # Автообновление каждые 2 секунды
+        self._auto_refresh_processes_monitor()
+    
+    def _refresh_processes_monitor(self):
+        """Обновление таблицы процессов"""
+        if not hasattr(self, 'processes_tree'):
+            return
+        
+        # Защита от частых вызовов
+        import time
+        if not hasattr(self, '_last_processes_refresh'):
+            self._last_processes_refresh = 0
+        
+        current_time = time.time()
+        # Если вкладка открыта - обновляем чаще (минимум 0.5 сек)
+        min_interval = 0.5
+        if current_time - self._last_processes_refresh < min_interval:
+            return  # Пропускаем слишком частые вызовы
+        
+        self._last_processes_refresh = current_time
+        
+        try:
+            # Очищаем таблицу
+            for item in self.processes_tree.get_children():
+                self.processes_tree.delete(item)
+            
+            # Получаем процессы приложения (кэшированные)
+            app_processes, total_cpu = self.process_monitor._get_app_processes_cached()
+            
+            # Получаем активные операции классов
+            active_operations = _global_activity_tracker.get_active_operations()
+            
+            # Получаем процессы установки
+            install_processes = self._get_running_installation_processes()
+            
+            # Получаем процессы Wine
+            wine_processes = self._get_wine_processes()
+            
+            # Получаем процессы UniversalProcessRunner
+            universal_runner_processes = []
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                universal_runner_processes = self.universal_runner.get_running_processes()
+            
+            # Получаем информацию о фоновых потоках логгера
+            logger_threads = self._get_logger_threads_info()
+            
+            # Получаем информацию о всех активных потоках и таймерах
+            system_threads = self._get_all_system_threads_info()
+            
+            # Добавляем процессы приложения
+            for proc in app_processes:
+                cpu = proc.get('cpu', 0)
+                memory = proc.get('memory', 0)
+                
+                # Определяем статус
+                if cpu > 30:
+                    status = 'ВЫСОКАЯ НАГРУЗКА'
+                    status_tag = 'high'
+                elif cpu > 10:
+                    status = 'АКТИВЕН'
+                    status_tag = 'active'
+                else:
+                    status = 'ОЖИДАНИЕ'
+                    status_tag = 'idle'
+                
+                cmdline = proc.get('cmdline', '')
+                if len(cmdline) > 80:
+                    cmdline = cmdline[:77] + '...'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    proc.get('pid', ''),
+                    proc.get('name', ''),
+                    f"{cpu:.1f}%",
+                    f"{memory:.1f}",
+                    status,
+                    cmdline
+                ), tags=(status_tag,))
+            
+            # Добавляем активные операции классов
+            for op in active_operations:
+                duration = int(op['duration'])
+                class_method = f"{op['class']}.{op['method']}"
+                
+                # Получаем информацию о текущем компоненте, если это UniversalInstaller
+                component_info = ""
+                if op['class'] == 'UniversalInstaller':
+                    # Пытаемся получить текущий компонент из ComponentStatusManager
+                    if hasattr(self, 'universal_installer') and self.universal_installer:
+                        status_manager = getattr(self.universal_installer, 'status_manager', None)
+                        if status_manager:
+                            # Получаем компоненты в процессе установки/удаления
+                            installing = getattr(status_manager, 'installing', set())
+                            removing = getattr(status_manager, 'removing', set())
+                            
+                            if installing:
+                                component_names = list(installing)
+                                component_info = f" | Компоненты: {', '.join(component_names)}"
+                            elif removing:
+                                component_names = list(removing)
+                                component_info = f" | Компоненты: {', '.join(component_names)}"
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    'N/A',
+                    class_method,
+                    'N/A',
+                    'N/A',
+                    f'РАБОТАЕТ ({duration}с)',
+                    f"Активная операция: {class_method}{component_info}"
+                ), tags=('class_op',))
+            
+            # Добавляем процессы установки
+            for proc in install_processes:
+                info = proc.get('info', '')
+                if len(info) > 80:
+                    info = info[:77] + '...'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    proc.get('pid', ''),
+                    proc.get('name', ''),
+                    'N/A',
+                    'N/A',
+                    'УСТАНОВКА',
+                    info
+                ), tags=('install',))
+            
+            # Добавляем процессы Wine
+            for proc in wine_processes:
+                cpu = proc.get('cpu', 0)
+                memory = proc.get('memory', 0)
+                
+                # Определяем статус
+                if cpu > 30:
+                    status = 'ВЫСОКАЯ НАГРУЗКА'
+                    status_tag = 'wine_high'
+                elif cpu > 10:
+                    status = 'АКТИВЕН'
+                    status_tag = 'wine_active'
+                else:
+                    status = 'ОЖИДАНИЕ'
+                    status_tag = 'wine_idle'
+                
+                cmdline = proc.get('cmdline', '')
+                if len(cmdline) > 80:
+                    cmdline = cmdline[:77] + '...'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    proc.get('pid', ''),
+                    proc.get('name', ''),
+                    f"{cpu:.1f}%",
+                    f"{memory:.1f}",
+                    status,
+                    cmdline
+                ), tags=(status_tag,))
+            
+            # Добавляем процессы UniversalProcessRunner
+            for proc in universal_runner_processes:
+                cpu = proc.get('cpu', 0)
+                memory = proc.get('memory', 0)
+                process_type = proc.get('process_type', 'general')
+                
+                # Определяем статус
+                if cpu > 30:
+                    status = 'ВЫСОКАЯ НАГРУЗКА'
+                    status_tag = 'runner_high'
+                elif cpu > 10:
+                    status = 'АКТИВЕН'
+                    status_tag = 'runner_active'
+                else:
+                    status = 'ОЖИДАНИЕ'
+                    status_tag = 'runner_idle'
+                
+                cmdline = proc.get('cmdline', '')
+                if len(cmdline) > 80:
+                    cmdline = cmdline[:77] + '...'
+                
+                # Добавляем родительский процесс
+                self.processes_tree.insert('', self.tk.END, values=(
+                    proc.get('pid', ''),
+                    proc.get('name', ''),
+                    f"{cpu:.1f}%",
+                    f"{memory:.1f}",
+                    f'{status} ({process_type})',
+                    cmdline
+                ), tags=(status_tag,))
+                
+                # Добавляем дочерние процессы
+                for child in proc.get('children', []):
+                    child_cpu = child.get('cpu', 0)
+                    child_memory = child.get('memory', 0)
+                    
+                    if child_cpu > 30:
+                        child_status = 'ВЫСОКАЯ НАГРУЗКА'
+                        child_status_tag = 'runner_child_high'
+                    elif child_cpu > 10:
+                        child_status = 'АКТИВЕН'
+                        child_status_tag = 'runner_child_active'
+                    else:
+                        child_status = 'ОЖИДАНИЕ'
+                        child_status_tag = 'runner_child_idle'
+                    
+                    child_cmdline = child.get('cmdline', '')
+                    if len(child_cmdline) > 80:
+                        child_cmdline = child_cmdline[:77] + '...'
+                    
+                    self.processes_tree.insert('', self.tk.END, values=(
+                        child.get('pid', ''),
+                        f"  └─ {child.get('name', '')}",
+                        f"{child_cpu:.1f}%",
+                        f"{child_memory:.1f}",
+                        child_status,
+                        child_cmdline
+                    ), tags=(child_status_tag,))
+            
+            # Добавляем все системные потоки и таймеры
+            for thread_info in system_threads:
+                name = thread_info.get('name', '')
+                status = thread_info.get('status', '')
+                info = thread_info.get('info', '')
+                
+                if len(info) > 80:
+                    info = info[:77] + '...'
+                
+                # Определяем цвет по статусу
+                if 'АКТИВЕН' in status or 'РАБОТАЕТ' in status:
+                    status_tag = 'system_active'
+                else:
+                    status_tag = 'system_idle'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    'N/A',
+                    name,
+                    'N/A',
+                    'N/A',
+                    status,
+                    info
+                ), tags=(status_tag,))
+            
+            # Добавляем фоновые потоки логгера
+            for thread_info in logger_threads:
+                name = thread_info.get('name', '')
+                status = thread_info.get('status', '')
+                queue_size = thread_info.get('queue_size', 0)
+                info = thread_info.get('info', '')
+                
+                if len(info) > 80:
+                    info = info[:77] + '...'
+                
+                # Определяем цвет по статусу
+                if 'АКТИВЕН' in status or queue_size > 0:
+                    status_tag = 'logger_active'
+                else:
+                    status_tag = 'logger_idle'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    'N/A',
+                    name,
+                    'N/A',
+                    'N/A',
+                    status,
+                    info
+                ), tags=(status_tag,))
+            
+            # Настройка цветов
+            self.processes_tree.tag_configure('high', foreground='red')
+            self.processes_tree.tag_configure('active', foreground='orange')
+            self.processes_tree.tag_configure('idle', foreground='green')
+            self.processes_tree.tag_configure('class_op', foreground='blue', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('install', foreground='blue')
+            self.processes_tree.tag_configure('logger_active', foreground='purple', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('logger_idle', foreground='gray')
+            self.processes_tree.tag_configure('system_active', foreground='darkblue', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('system_idle', foreground='lightgray')
+            # Цвета для процессов Wine
+            self.processes_tree.tag_configure('wine_high', foreground='red', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('wine_active', foreground='orange', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('wine_idle', foreground='green')
+            # Цвета для процессов UniversalProcessRunner
+            self.processes_tree.tag_configure('runner_high', foreground='red', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('runner_active', foreground='orange', font=('Arial', 9, 'bold'))
+            self.processes_tree.tag_configure('runner_idle', foreground='green')
+            # Цвета для дочерних процессов UniversalProcessRunner
+            self.processes_tree.tag_configure('runner_child_high', foreground='red')
+            self.processes_tree.tag_configure('runner_child_active', foreground='orange')
+            self.processes_tree.tag_configure('runner_child_idle', foreground='green')
+            
+            # Обновляем статус
+            total_runner_children = sum(len(proc.get('children', [])) for proc in universal_runner_processes)
+            total_processes = len(app_processes) + len(active_operations) + len(install_processes) + len(wine_processes) + len(universal_runner_processes) + total_runner_children + len(logger_threads) + len(system_threads)
+            self.processes_status_label.config(
+                text=f"Всего процессов: {total_processes} | Обновление каждые 2 секунды..."
+            )
+        except Exception as e:
+            self.processes_status_label.config(text=f"Ошибка обновления: {str(e)}", fg='red')
+    
+    def _auto_refresh_processes_monitor(self):
+        """Автоматическое обновление таблицы процессов"""
+        if not hasattr(self, 'processes_tree'):
+            return  # Прекращаем если таблица не существует
+        
+        # Проверяем, открыта ли вкладка мониторинга процессов
+        try:
+            current_tab_index = self.notebook.index(self.notebook.select())
+            current_tab_text = self.notebook.tab(current_tab_index, 'text').strip()
+            
+            if current_tab_text == 'Мониторинг процессов':
+                # Вкладка видна - обновляем более активно
+                self._refresh_processes_monitor()
+                # Планируем следующее обновление через 1 секунду (более частое обновление)
+                self.root.after(1000, self._auto_refresh_processes_monitor)
+            else:
+                # Вкладка не видна - планируем проверку через 5 секунд (реже)
+                self.root.after(5000, self._auto_refresh_processes_monitor)
+        except Exception as e:
+            # При ошибке планируем проверку через 5 секунд
+            self.root.after(5000, self._auto_refresh_processes_monitor)
     
     def create_packages_tab(self):
         """Создание вкладки Пакеты с динамическим обновлением"""
@@ -10057,6 +11214,34 @@ class AutomationGUI(object):
                 if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 2:
                     self.root.update_idletasks()
             
+            # Обновляем использование CPU приложением
+            if hasattr(self, 'app_cpu_progress'):
+                try:
+                    app_cpu_usage = self.process_monitor.get_app_cpu_usage()
+                    
+                    # Обновляем прогресс-бар
+                    self.app_cpu_progress['value'] = app_cpu_usage
+                    
+                    # Цветовая индикация
+                    if app_cpu_usage < 10:
+                        cpu_color = 'green'
+                    elif app_cpu_usage < 30:
+                        cpu_color = 'orange'
+                    else:
+                        cpu_color = 'red'
+                    
+                    # Обновляем текстовую метку
+                    if hasattr(self, 'app_cpu_label'):
+                        self.app_cpu_label.config(text="%.1f%%" % app_cpu_usage, fg=cpu_color)
+                    
+                    # Принудительно обновляем GUI если открыта вкладка "Система"
+                    if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 2:
+                        self.root.update_idletasks()
+                except Exception as e:
+                    self.app_cpu_progress['value'] = 0
+                    if hasattr(self, 'app_cpu_label'):
+                        self.app_cpu_label.config(text="0.0%", fg='gray')
+            
             # Обновляем CPU и сеть с цветовой индикацией (если элементы существуют)
             if hasattr(self, 'wine_cpu_progress'):
                 try:
@@ -10193,12 +11378,17 @@ class AutomationGUI(object):
         
         # Запускаем проверку в отдельном потоке
         import threading
-        check_thread = threading.Thread(target=self._perform_wine_check)
+        check_thread = threading.Thread(target=self._perform_wine_check, name="WineCheckThread")
         check_thread.daemon = True
+        print(f"Создание потока WineCheckThread для проверки компонентов", level='DEBUG')
         check_thread.start()
+        print(f"Поток WineCheckThread запущен (имя: {check_thread.name})", level='DEBUG')
     
     def _perform_wine_check(self):
         """Выполнение проверки Wine компонентов с использованием новой архитектуры (в отдельном потоке)"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_perform_wine_check)", level='DEBUG')
         try:
             # Создаем экземпляр проверщика для совместимости
             self.wine_checker = WineComponentsChecker()
@@ -10220,6 +11410,10 @@ class AutomationGUI(object):
             error_msg = "Ошибка проверки: %s" % str(e)
             self.root.after(0, lambda: self.wine_status_label.config(text=error_msg))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+        finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_perform_wine_check)", level='DEBUG')
     
     def set_component_pending(self, component_name):
         """Установить компонент в состояние ожидания установки"""
@@ -10347,6 +11541,12 @@ class AutomationGUI(object):
         # Проверяем, что GUI элементы созданы
         if not hasattr(self, 'wine_tree') or not self.wine_tree:
             return
+        
+        # УБРАНО: Автоматическое обновление статусов компонентов
+        # Статусы обновляются только:
+        # 1. При запуске GUI (один раз через _auto_check_components)
+        # 2. Во время операций установки/удаления (через update_single_component_row)
+        # 3. По запросу пользователя (кнопка "Обновить")
         
         # Сохраняем текущее состояние выбора перед обновлением
         current_selection = set()
@@ -10584,12 +11784,17 @@ class AutomationGUI(object):
         # Запускаем установку в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         import threading
-        install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,))
+        install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,), name="WineInstallThread")
         install_thread.daemon = True
+        print(f"Создание потока WineInstallThread для установки компонентов: {', '.join(selected)}", level='DEBUG')
         install_thread.start()
+        print(f"Поток WineInstallThread запущен (имя: {install_thread.name})", level='DEBUG')
     
     def _perform_wine_install(self, selected):
         """Выполнение установки Wine компонентов в отдельном потоке"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_perform_wine_install) для компонентов: {', '.join(selected)}", level='DEBUG')
         try:
             # Используем новую универсальную архитектуру для установки
             success = self.universal_installer.install_components(selected)
@@ -10602,6 +11807,10 @@ class AutomationGUI(object):
             import traceback
             traceback.print_exc()
             self.root.after(0, self._install_completed, False)
+        finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_perform_wine_install)", level='DEBUG')
     
     def _install_completed(self, success):
         """Завершение установки (вызывается в главном потоке)"""
@@ -11272,9 +12481,11 @@ class AutomationGUI(object):
         # Запускаем удаление в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         import threading
-        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,))
+        uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,), name="WineUninstallThread")
         uninstall_thread.daemon = True
+        print(f"Создание потока WineUninstallThread для удаления компонентов: {', '.join(selected)}", level='DEBUG')
         uninstall_thread.start()
+        print(f"Поток WineUninstallThread запущен (имя: {uninstall_thread.name})", level='DEBUG')
     
     def _uninstall_completed(self, success):
         """Завершение удаления (вызывается в главном потоке)"""
@@ -11316,12 +12527,17 @@ class AutomationGUI(object):
         
         # Запускаем полную очистку в отдельном потоке
         import threading
-        cleanup_thread = threading.Thread(target=self._perform_full_cleanup)
+        cleanup_thread = threading.Thread(target=self._perform_full_cleanup, name="FullCleanupThread")
         cleanup_thread.daemon = True
+        print(f"Создание потока FullCleanupThread для полной очистки", level='DEBUG')
         cleanup_thread.start()
+        print(f"Поток FullCleanupThread запущен (имя: {cleanup_thread.name})", level='DEBUG')
     
     def _perform_full_cleanup(self):
         """Выполнение полной очистки (в отдельном потоке)"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_perform_full_cleanup)", level='DEBUG')
         try:
             # Создаем callback для обновления статуса
             def update_callback(message):
@@ -11341,6 +12557,10 @@ class AutomationGUI(object):
             self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             self.root.after(0, lambda: self.full_cleanup_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+        finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_perform_full_cleanup)", level='DEBUG')
     
     def _full_cleanup_completed(self, success):
         """Обработка завершения полной очистки (вызывается из главного потока)"""
@@ -11360,6 +12580,9 @@ class AutomationGUI(object):
     
     def _perform_wine_uninstall(self, selected_components):
         """Выполнение удаления Wine компонентов (в отдельном потоке)"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_perform_wine_uninstall) для компонентов: {', '.join(selected_components)}", level='DEBUG')
         try:
             # Создаем callback для обновления статуса
             def update_callback(message):
@@ -11399,6 +12622,10 @@ class AutomationGUI(object):
             traceback.print_exc()
             self.root.after(0, lambda: self.uninstall_wine_button.config(state=self.tk.NORMAL))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+        finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_perform_wine_uninstall)", level='DEBUG')
 
     def _wine_uninstall_completed(self, success):
         """Обработка завершения удаления (вызывается из главного потока)"""
@@ -11535,12 +12762,17 @@ class AutomationGUI(object):
         
         # Запускаем в отдельном потоке
         import threading
-        check_thread = threading.Thread(target=self._check_repos_availability_thread)
+        check_thread = threading.Thread(target=self._check_repos_availability_thread, name="ReposCheckThread")
         check_thread.daemon = True
+        print(f"Создание потока ReposCheckThread для проверки репозиториев", level='DEBUG')
         check_thread.start()
+        print(f"Поток ReposCheckThread запущен (имя: {check_thread.name})", level='DEBUG')
     
     def _check_repos_availability_thread(self):
         """Проверка доступности репозиториев (в потоке)"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_check_repos_availability_thread)", level='DEBUG')
         try:
             self.root.after(0, lambda: print("\n[REPOS] Проверка доступности репозиториев...", gui_log=True))
             
@@ -11579,12 +12811,17 @@ class AutomationGUI(object):
         
         # Запускаем в отдельном потоке
         import threading
-        update_thread = threading.Thread(target=self._run_apt_update_universal)
+        update_thread = threading.Thread(target=self._run_apt_update_universal, name="AptUpdateThread")
         update_thread.daemon = True
+        print(f"Создание потока AptUpdateThread для обновления APT", level='DEBUG')
         update_thread.start()
+        print(f"Поток AptUpdateThread запущен (имя: {update_thread.name})", level='DEBUG')
     
     def _run_apt_update_universal(self):
         """Выполнение apt-get update через UniversalProcessRunner"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_run_apt_update_universal)", level='DEBUG')
         try:
             # Используем новый универсальный обработчик
             return_code = self.universal_runner.run_process(
@@ -11606,6 +12843,9 @@ class AutomationGUI(object):
             self.root.after(0, lambda: self.repos_status_label.config(text="Ошибка обновления", fg='red'))
         
         finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (_run_apt_update_universal)", level='DEBUG')
             # Разблокируем кнопку
             self.root.after(0, lambda: self.update_repos_button.config(state=self.tk.NORMAL))
     
@@ -12564,10 +13804,11 @@ Path={os.path.dirname(script_path)}
         # Запускаем автоматизацию в отдельном потоке
         print("[AUTOMATION] Запускаем поток автоматизации...")
         import threading
-        self.process_thread = threading.Thread(target=self.run_automation)
+        self.process_thread = threading.Thread(target=self.run_automation, name="AutomationThread")
         self.process_thread.daemon = True
+        print(f"Создание потока AutomationThread для автоматизации", level='DEBUG')
         self.process_thread.start()
-        print("[AUTOMATION] Поток автоматизации запущен!")
+        print(f"Поток AutomationThread запущен (имя: {self.process_thread.name})", level='DEBUG')
         
     def stop_automation(self):
         """Остановка автоматизации"""
@@ -12781,6 +14022,9 @@ Path={os.path.dirname(script_path)}
         
     def run_automation(self):
         """Запуск автоматизации в отдельном потоке"""
+        import threading
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (run_automation)", level='DEBUG')
         print("[AUTOMATION] run_automation() начал выполнение!")
         
         try:
@@ -12952,6 +14196,9 @@ Path={os.path.dirname(script_path)}
             print("[INFO] Очистка блокировок", gui_log=True)
             
         finally:
+            import threading
+            thread_name = threading.current_thread().name
+            print(f"Поток {thread_name} завершил выполнение (run_automation)", level='DEBUG')
             # НОВОЕ: Останавливаем таймер прогресса
             self.stop_progress_timer()
             
@@ -13156,7 +14403,61 @@ Path={os.path.dirname(script_path)}
             
     def run(self):
         """Запуск GUI"""
-        self.root.mainloop()
+        # Защита от повторного выполнения finally блока
+        if hasattr(self, '_run_finally_executed') and self._run_finally_executed:
+            return
+        self._run_finally_executed = False
+        
+        try:
+            self.root.mainloop()
+        finally:
+            # Защита от повторного выполнения
+            if self._run_finally_executed:
+                return
+            self._run_finally_executed = True
+            
+            # Логирование завершения после выхода из mainloop
+            print("[INFO] GUI mainloop завершен", gui_log=True)
+            
+            # Останавливаем системный мониторинг
+            if hasattr(self, 'system_monitor') and self.system_monitor:
+                try:
+                    self.system_monitor.stop_monitoring()
+                    print("Системный мониторинг остановлен", level='DEBUG')
+                except Exception as e:
+                    print(f"Ошибка остановки системного мониторинга: {e}", level='DEBUG')
+            
+            # Принудительно записываем все оставшиеся логи перед остановкой DualStreamLogger
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                try:
+                    # Принудительно записываем буферы перед остановкой
+                    globals()['_global_dual_logger'].flush_buffers()
+                    # Даем время на запись
+                    import time
+                    time.sleep(0.1)
+                except Exception as e:
+                    pass
+            
+            print("[INFO] Программа завершена", gui_log=True)
+            
+            # Останавливаем DualStreamLogger ПОСЛЕДНИМ, чтобы все логи успели записаться
+            if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                try:
+                    print("[DUAL_STREAM] Остановка файлового логирования...", gui_log=True)
+                    # Принудительно записываем буферы еще раз перед остановкой
+                    globals()['_global_dual_logger'].flush_buffers()
+                    # Даем время на запись сообщения об остановке
+                    import time
+                    time.sleep(0.1)
+                    # Записываем сообщение об успешной остановке ПЕРЕД остановкой
+                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен", gui_log=True)
+                    # Еще раз записываем буферы с финальным сообщением
+                    globals()['_global_dual_logger'].flush_buffers()
+                    time.sleep(0.1)
+                    # Теперь останавливаем логирование
+                    globals()['_global_dual_logger'].stop_file_logging(flush=True)
+                except Exception as e:
+                    print(f"[DUAL_STREAM] WARNING: Ошибка остановки: {e}", gui_log=True)
 
 # ============================================================================
 # КЛАССЫ ОБРАБОТКИ ИНТЕРАКТИВНЫХ ЗАПРОСОВ И ОБНОВЛЕНИЙ
@@ -15222,6 +16523,7 @@ class SystemUpdater(object):
         except Exception as e:
             print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
     
+    @track_class_activity('SystemUpdater')
     def update_system(self, dry_run=False):
         """Обновление системы"""
         print("[PACKAGE] Обновление системы...")
