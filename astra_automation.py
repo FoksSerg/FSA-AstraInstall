@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.104 (2025.11.07)
+Версия: V2.4.105 (2025.11.07)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.104 (2025.11.07)"
+APP_VERSION = "V2.4.105 (2025.11.07)"
 import os
 import sys
 import tempfile
@@ -8171,6 +8171,12 @@ class AutomationGUI(object):
         self.process_monitor = ProcessMonitor()
         self.last_net_speed = 0.0
         
+        # Переменные для отслеживания изменений терминала (оптимизация обновления)
+        self._last_terminal_buffer_size = 0  # Последний размер буфера
+        self._last_terminal_mode = None  # Последний режим отображения
+        self._last_terminal_search = ""  # Последний поисковый запрос
+        self._force_terminal_update = False  # Флаг принудительного обновления
+        
         # Создаем интерфейс
         self.create_widgets()
         
@@ -8341,13 +8347,7 @@ class AutomationGUI(object):
                         'queue_size': queue_size,
                         'info': f'Очередь сообщений UniversalProcessRunner | Необработанных: {queue_size}'
                     })
-                else:
-                    threads_info.append({
-                        'name': 'UniversalProcessRunner-Queue',
-                        'status': 'ОЖИДАНИЕ',
-                        'queue_size': 0,
-                        'info': 'Очередь сообщений UniversalProcessRunner пуста'
-                    })
+                # Не показываем очередь когда она пуста
         
         except Exception as e:
             # Игнорируем ошибки при проверке
@@ -9162,26 +9162,32 @@ class AutomationGUI(object):
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.main_frame, text=" Обновление ОС ")
+        self.main_tab_index = 0  # Сохраняем индекс вкладки
         
         # Вкладка Wine & Astra.IDE
         self.wine_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.wine_frame, text=" Установка Программ ")
+        self.wine_tab_index = 1  # Сохраняем индекс вкладки
         
         # Вкладка Репозитории
         self.repos_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.repos_frame, text=" Репозитории ")
+        self.repos_tab_index = 2  # Сохраняем индекс вкладки
         
         # Терминальная вкладка
         self.terminal_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.terminal_frame, text=" Терминал ")
+        self.terminal_tab_index = 3  # Сохраняем индекс вкладки
         
         # Вкладка Пакеты
         self.packages_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.packages_frame, text=" Пакеты ")
+        self.packages_tab_index = 4  # Сохраняем индекс вкладки
         
-        # Вкладка Информация о Системе (последняя)
+        # Вкладка Информация о Системе
         self.system_info_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.system_info_frame, text=" Информация о Системе ")
+        self.system_info_tab_index = 5  # Сохраняем индекс вкладки
         
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
@@ -9853,7 +9859,8 @@ class AutomationGUI(object):
         
     def filter_terminal_by_search(self, *args):
         """Фильтрация терминала по поисковому запросу - ПОЛНОЕ ОБНОВЛЕНИЕ"""
-        # Полное обновление только при изменении фильтра
+        # Устанавливаем флаг принудительного обновления
+        self._force_terminal_update = True
         self._update_terminal_display()
     
     def clear_terminal_search(self):
@@ -9865,11 +9872,12 @@ class AutomationGUI(object):
     def switch_terminal_stream(self):
         """Переключение отображаемого потока логирования"""
         try:
-            # Просто обновляем отображение - _update_terminal_display() сам выберет нужный поток
+            # Устанавливаем флаг принудительного обновления
+            self._force_terminal_update = True
             self._update_terminal_display()
             
         except Exception as e:
-            print(f"[ERROR] Ошибка переключения потока: {e}")
+            print(f"Ошибка переключения потока: {e}", level='ERROR')
     
     def _get_log_file_path(self):
         """
@@ -10470,10 +10478,12 @@ class AutomationGUI(object):
         # Инициализация уже выполнена в AutomationGUI.__init__
         
     def create_processes_monitor_tab(self):
-        """Создание вкладки Мониторинг процессов"""
+        """Создание вкладки Мониторинг"""
         # Создаем фрейм для вкладки
         self.processes_monitor_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.processes_monitor_frame, text=" Мониторинг процессов ")
+        self.notebook.add(self.processes_monitor_frame, text=" Мониторинг ")
+        # Сохраняем индекс вкладки для быстрой проверки
+        self.processes_monitor_tab_index = len(self.notebook.tabs()) - 1
         
         # Заголовок
         header_frame = self.tk.Frame(self.processes_monitor_frame)
@@ -10481,11 +10491,7 @@ class AutomationGUI(object):
         self.tk.Label(header_frame, text="Процессы приложения и установки", 
                      font=('Arial', 12, 'bold')).pack(side=self.tk.LEFT)
         
-        # Кнопка обновления
-        refresh_button = self.tk.Button(header_frame, text="Обновить", 
-                                       command=self._refresh_processes_monitor, width=12)
-        refresh_button.pack(side=self.tk.RIGHT, padx=5)
-        ToolTip(refresh_button, "Обновить список процессов вручную")
+        # Кнопка обновления удалена - обновление происходит автоматически
         
         # Таблица процессов
         processes_frame = self.tk.Frame(self.processes_monitor_frame)
@@ -10638,10 +10644,10 @@ class AutomationGUI(object):
                                 component_info = f" | Компоненты: {', '.join(component_names)}"
                 
                 self.processes_tree.insert('', self.tk.END, values=(
-                    'N/A',
+                    '---',
                     class_method,
-                    'N/A',
-                    'N/A',
+                    '---',
+                    '---',
                     f'РАБОТАЕТ ({duration}с)',
                     f"Активная операция: {class_method}{component_info}"
                 ), tags=('class_op',))
@@ -10655,8 +10661,8 @@ class AutomationGUI(object):
                 self.processes_tree.insert('', self.tk.END, values=(
                     proc.get('pid', ''),
                     proc.get('name', ''),
-                    'N/A',
-                    'N/A',
+                    '---',
+                    '---',
                     'УСТАНОВКА',
                     info
                 ), tags=('install',))
@@ -10765,10 +10771,10 @@ class AutomationGUI(object):
                     status_tag = 'system_idle'
                 
                 self.processes_tree.insert('', self.tk.END, values=(
-                    'N/A',
+                    '---',
                     name,
-                    'N/A',
-                    'N/A',
+                    '---',
+                    '---',
                     status,
                     info
                 ), tags=(status_tag,))
@@ -10790,10 +10796,10 @@ class AutomationGUI(object):
                     status_tag = 'logger_idle'
                 
                 self.processes_tree.insert('', self.tk.END, values=(
-                    'N/A',
+                    '---',
                     name,
-                    'N/A',
-                    'N/A',
+                    '---',
+                    '---',
                     status,
                     info
                 ), tags=(status_tag,))
@@ -10825,7 +10831,7 @@ class AutomationGUI(object):
             total_runner_children = sum(len(proc.get('children', [])) for proc in universal_runner_processes)
             total_processes = len(app_processes) + len(active_operations) + len(install_processes) + len(wine_processes) + len(universal_runner_processes) + total_runner_children + len(logger_threads) + len(system_threads)
             self.processes_status_label.config(
-                text=f"Всего процессов: {total_processes} | Обновление каждые 2 секунды..."
+                text=f"Всего процессов: {total_processes} | Обновление каждые 0.5 секунды..."
             )
         except Exception as e:
             self.processes_status_label.config(text=f"Ошибка обновления: {str(e)}", fg='red')
@@ -10835,22 +10841,30 @@ class AutomationGUI(object):
         if not hasattr(self, 'processes_tree'):
             return  # Прекращаем если таблица не существует
         
-        # Проверяем, открыта ли вкладка мониторинга процессов
+        # Проверяем, открыта ли вкладка мониторинга
         try:
             current_tab_index = self.notebook.index(self.notebook.select())
-            current_tab_text = self.notebook.tab(current_tab_index, 'text').strip()
             
-            if current_tab_text == 'Мониторинг процессов':
-                # Вкладка видна - обновляем более активно
-                self._refresh_processes_monitor()
-                # Планируем следующее обновление через 1 секунду (более частое обновление)
-                self.root.after(1000, self._auto_refresh_processes_monitor)
+            # Проверяем по индексу вкладки (более надежно)
+            if hasattr(self, 'processes_monitor_tab_index'):
+                is_monitor_tab = (current_tab_index == self.processes_monitor_tab_index)
             else:
-                # Вкладка не видна - планируем проверку через 5 секунд (реже)
-                self.root.after(5000, self._auto_refresh_processes_monitor)
+                # Fallback: проверка по тексту
+                current_tab_text = self.notebook.tab(current_tab_index, 'text').strip()
+                is_monitor_tab = ('Мониторинг' in current_tab_text)
+            
+            if is_monitor_tab:
+                # Вкладка открыта - обновляем каждые 0.5 секунды
+                self._refresh_processes_monitor()
+                # Планируем следующее обновление через 0.5 секунды
+                self.root.after(500, self._auto_refresh_processes_monitor)
+            else:
+                # Вкладка не открыта - не обновляем, но планируем проверку через 1 секунду
+                # чтобы когда пользователь откроет вкладку, обновление возобновилось
+                self.root.after(1000, self._auto_refresh_processes_monitor)
         except Exception as e:
-            # При ошибке планируем проверку через 5 секунд
-            self.root.after(5000, self._auto_refresh_processes_monitor)
+            # При ошибке планируем проверку через 1 секунду
+            self.root.after(1000, self._auto_refresh_processes_monitor)
     
     def create_packages_tab(self):
         """Создание вкладки Пакеты с динамическим обновлением"""
@@ -11165,9 +11179,10 @@ class AutomationGUI(object):
             # Обновляем только если элемент существует (на новой вкладке)
             if hasattr(self, 'disk_space_label'):
                 self.disk_space_label.config(text=disk_text, fg=disk_color)
-                # Принудительно обновляем GUI если открыта вкладка "Система"
-                if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 2:
-                    self.root.update_idletasks()
+                # Принудительно обновляем GUI если открыта вкладка "Информация о Системе"
+                if hasattr(self, 'notebook') and hasattr(self, 'system_info_tab_index'):
+                    if self.notebook.index(self.notebook.select()) == self.system_info_tab_index:
+                        self.root.update_idletasks()
             # Проверяем память
             try:
                 with open('/proc/meminfo', 'r') as f:
@@ -13225,6 +13240,7 @@ Path={os.path.dirname(script_path)}
     
     def _manual_refresh_terminal(self):
         """Ручное обновление терминала с прокруткой в конец"""
+        self._force_terminal_update = True
         self._update_terminal_display()
         # После обновления прокручиваем в конец
         if hasattr(self, 'terminal_text'):
@@ -13272,39 +13288,61 @@ Path={os.path.dirname(script_path)}
             
             # Режим отображения
             mode = getattr(self, 'terminal_stream_mode', None)
+            mode_value = None
             if mode:
                 mode_value = mode.get()
-                
-                if mode_value == "raw":
-                    # Только RAW поток
-                    messages = dual_logger.get_raw_buffer()
-                    
-                elif mode_value == "analysis":
-                    # Только ANALYSIS поток
-                    messages = dual_logger.get_analysis_buffer()
-                    
-                elif mode_value == "both":
-                    # Объединяем оба потока ПО ВРЕМЕНИ
-                    raw_messages = dual_logger.get_raw_buffer()
-                    analysis_messages = dual_logger.get_analysis_buffer()
-                    
-                    # Объединяем и сортируем по времени (метки времени уже есть в каждом сообщении)
-                    all_messages = raw_messages + analysis_messages
-                    all_messages.sort(key=lambda x: self._extract_timestamp(x))
-                    
-                    messages = all_messages
-                else:
-                    messages = []
             else:
-                # Fallback: используем analysis по умолчанию
+                mode_value = "analysis"  # По умолчанию
+            
+            # Поисковый фильтр
+            search_text = self.terminal_search_var.get().lower()
+            
+            # Проверяем, нужно ли обновление (используем быстрые методы O(1))
+            if mode_value == "raw":
+                current_buffer_size = dual_logger.get_raw_buffer_size()
+            elif mode_value == "analysis":
+                current_buffer_size = dual_logger.get_analysis_buffer_size()
+            elif mode_value == "both":
+                current_buffer_size = dual_logger.get_raw_buffer_size() + dual_logger.get_analysis_buffer_size()
+            else:
+                current_buffer_size = 0
+            
+            # Проверяем, изменились ли данные
+            buffer_changed = current_buffer_size != getattr(self, '_last_terminal_buffer_size', 0)
+            mode_changed = mode_value != getattr(self, '_last_terminal_mode', None)
+            search_changed = search_text != getattr(self, '_last_terminal_search', "")
+            force_update = getattr(self, '_force_terminal_update', False)
+            
+            # Если ничего не изменилось и не требуется принудительное обновление - пропускаем
+            if not buffer_changed and not mode_changed and not search_changed and not force_update:
+                self._updating_terminal = False
+                return
+            
+            # Сохраняем текущее состояние
+            self._last_terminal_buffer_size = current_buffer_size
+            self._last_terminal_mode = mode_value
+            self._last_terminal_search = search_text
+            self._force_terminal_update = False
+            
+            # Получаем сообщения в зависимости от режима (теперь копируем данные только при необходимости)
+            if mode_value == "raw":
+                messages = dual_logger.get_raw_buffer()
+            elif mode_value == "analysis":
                 messages = dual_logger.get_analysis_buffer()
+            elif mode_value == "both":
+                raw_messages = dual_logger.get_raw_buffer()
+                analysis_messages = dual_logger.get_analysis_buffer()
+                all_messages = list(raw_messages) + list(analysis_messages)
+                all_messages.sort(key=lambda x: self._extract_timestamp(x))
+                messages = all_messages
+            else:
+                messages = []
             
             if not messages:
                 self._updating_terminal = False
                 return
             
             # Применяем поисковый фильтр
-            search_text = self.terminal_search_var.get().lower()
             if search_text:
                 messages = [msg for msg in messages if search_text in msg.lower()]
             
@@ -13326,7 +13364,7 @@ Path={os.path.dirname(script_path)}
             
         except Exception as e:
             # Используем стандартный print() с gui_log=True (поддерживается universal_print)
-            print(f"[ERROR] Ошибка обновления терминала: {e}", gui_log=True)
+            print(f"Ошибка обновления терминала: {e}", level='ERROR', gui_log=True)
             if hasattr(self, '_updating_terminal'):
                 self._updating_terminal = False
     
@@ -13335,17 +13373,17 @@ Path={os.path.dirname(script_path)}
         try:
             # Проверяем входные параметры
             if not log_file_path:
-                print("[ERROR] Путь к лог-файлу пустой или None", gui_log=True)
+                print("Путь к лог-файлу пустой или None", level='ERROR', gui_log=True)
                 return
             
             if not isinstance(log_file_path, str):
-                print(f"[ERROR] Путь к лог-файлу должен быть строкой: {type(log_file_path)}", gui_log=True)
+                print(f"Путь к лог-файлу должен быть строкой: {type(log_file_path)}", level='ERROR', gui_log=True)
                 return
             
             # Получаем размер файла
             import os
             if not os.path.exists(log_file_path):
-                print(f"[ERROR] Файл не существует: {log_file_path}", gui_log=True)
+                print(f"Файл не существует: {log_file_path}", level='ERROR', gui_log=True)
                 return
             
             file_size = os.path.getsize(log_file_path)
@@ -13381,7 +13419,7 @@ Path={os.path.dirname(script_path)}
             
             # Для больших файлов (>10MB) загружаем только последние строки
             if file_size_mb > 10:
-                print(f"[INFO] Большой файл - загружаем только последние 20,000 строк", gui_log=True)
+                print(f"Большой файл - загружаем только последние 20,000 строк", level='INFO', gui_log=True)
                 lines = lines[-20000:]  # Последние 20,000 строк
             
             # Добавляем строки из лога в DualStreamLogger (analysis buffer)
@@ -13395,14 +13433,14 @@ Path={os.path.dirname(script_path)}
                         dual_logger.write_analysis(line)
                     loaded_count += 1
             
-            # Обновляем отображение терминала
+            # Обновляем отображение терминала (принудительно, так как загрузили данные)
+            self._force_terminal_update = True
             self._update_terminal_display()
-            print(f"[INFO] Загружено строк из лога: {loaded_count}", gui_log=True)
+            print(f"Загружено строк из лога: {loaded_count}", level='INFO', gui_log=True)
             
         except Exception as e:
             import traceback
-            error_msg = f"[ERROR] Ошибка загрузки лога: {e}"
-            print(error_msg, gui_log=True)
+            print(f"Ошибка загрузки лога: {e}", level='ERROR', gui_log=True)
             traceback.print_exc()
     
     def add_gui_log_output(self, message):
@@ -15035,24 +15073,26 @@ class SystemUpdateParser:
         size_str = size_str.replace(',', '.')
         
         try:
-            # Убираем все пробелы из числа (разделители тысяч)
-            # Определяем единицу измерения
-            if size_str.endswith('b') and not size_str.endswith('kb') and not size_str.endswith('mb') and not size_str.endswith('gb'):
+            # ИСПРАВЛЕНИЕ: Сначала определяем единицу измерения, затем убираем пробелы
+            # Это важно для формата "2 129 kb" (с пробелом между числом и единицей)
+            
+            # Определяем единицу измерения (проверяем в обратном порядке - сначала длинные)
+            if size_str.endswith('gb'):
+                # Гигабайты: "1,5 GB" или "2 129 GB" -> 1.5 * 1024 * 1024 * 1024
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024 * 1024 * 1024)
+            elif size_str.endswith('mb'):
+                # Мегабайты: "23,1 MB" или "73.5 mb" или "2 129 mb" -> 23.1 * 1024 * 1024
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024 * 1024)
+            elif size_str.endswith('kb'):
+                # Килобайты: "67,2 kB" или "2 129 kb" -> 67.2 * 1024 или 2129 * 1024
+                number_str = size_str[:-2].strip().replace(' ', '')
+                return int(float(number_str) * 1024)
+            elif size_str.endswith('b') and not size_str.endswith('kb') and not size_str.endswith('mb') and not size_str.endswith('gb'):
                 # Байты: "9 704 B" -> 9704
                 number_str = size_str[:-1].strip().replace(' ', '')
                 return int(float(number_str))
-            elif size_str.endswith('kb'):
-                # Килобайты: "67,2 kB" -> 67.2 * 1024 = 68812
-                number_str = size_str[:-2].strip().replace(' ', '')
-                return int(float(number_str) * 1024)
-            elif size_str.endswith('mb'):
-                # Мегабайты: "23,1 MB" или "73.5 mb" -> 23.1 * 1024 * 1024 = 24222105
-                number_str = size_str[:-2].strip().replace(' ', '')
-                return int(float(number_str) * 1024 * 1024)
-            elif size_str.endswith('gb'):
-                # Гигабайты: "1,5 GB" -> 1.5 * 1024 * 1024 * 1024
-                number_str = size_str[:-2].strip().replace(' ', '')
-                return int(float(number_str) * 1024 * 1024 * 1024)
             else:
                 # Пробуем как число без единиц
                 number_str = size_str.replace(' ', '')
@@ -15060,7 +15100,7 @@ class SystemUpdateParser:
         except (ValueError, IndexError, AttributeError):
             # Не выводим предупреждение для 'unknown' - это нормально
             if size_str and size_str.lower() not in ('unknown', 'none', 'n/a', ''):
-                print(f"[WARNING] Не удалось распарсить размер: '{size_str}'")
+                print(f"Не удалось распарсить размер: '{size_str}'", level='WARNING')
             return 0
     
     def format_bytes(self, bytes_value):
