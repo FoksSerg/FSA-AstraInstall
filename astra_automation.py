@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.111 (2025.11.11)
+Версия: V2.4.112 (2025.11.11)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.111 (2025.11.11)"
+APP_VERSION = "V2.4.112 (2025.11.11)"
 import os
 import sys
 import tempfile
@@ -1140,15 +1140,19 @@ class ComponentHandler(ABC):
         
         return True
     
-    def _update_progress(self, stage_name, stage_progress, global_progress, details=""):
+    def _update_progress(self, stage_name, stage_progress, global_progress, details="", **kwargs):
         """Обновление прогресса через UniversalProgressManager"""
         if self.progress_manager:
+            # НОВОЕ: Извлекаем elapsed_time из kwargs если есть
+            elapsed_time = kwargs.get('elapsed_time', 0)
+            
             self.progress_manager.update_progress(
                 process_type='wine_install',  # КРИТИЧНО: для различения от system_update
                 stage_name=stage_name,
                 stage_progress=stage_progress,
                 global_progress=global_progress,
-                details=details
+                details=details,
+                elapsed_time=elapsed_time  # НОВОЕ: Передаем время
             )
     
     def _update_status(self, component_id, status):
@@ -2530,6 +2534,9 @@ class WineApplicationHandler(ComponentHandler):
         component_name = get_component_field(component_id, 'name', 'Unknown')
         print(f"Установка Wine приложения: {component_name}")
         
+        # НОВОЕ: Отслеживание времени начала установки
+        install_start_time = time.time()
+        
         # НОВОЕ: Определяем путь к префиксу из конфигурации
         wineprefix_path = config.get('wineprefix_path')
         if wineprefix_path:
@@ -2540,7 +2547,8 @@ class WineApplicationHandler(ComponentHandler):
             stage_name=f"Установка {component_name}",
             stage_progress=0,
             global_progress=0,
-            details=f"Подготовка к установке {component_id}"
+            details=f"Подготовка к установке {component_id}",
+            elapsed_time=0
         )
         
         # НОВОЕ: Проверяем наличие метода копирования предустановленной конфигурации
@@ -2548,8 +2556,8 @@ class WineApplicationHandler(ComponentHandler):
         source_dir = config.get('source_dir')
         
         if copy_method == 'replace' and source_dir:
-            # Копируем предустановленную конфигурацию
-            if not self._copy_preinstalled_config(component_id, config):
+            # Копируем предустановленную конфигурацию с передачей времени начала
+            if not self._copy_preinstalled_config(component_id, config, install_start_time):
                 self._update_status(component_id, 'error')
                 return False
         
@@ -2593,77 +2601,256 @@ class WineApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
-    def _copy_preinstalled_config(self, component_id: str, config: dict) -> bool:
+    def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
         """
         Копирование предустановленной конфигурации Wine префикса
         
         Args:
             component_id: ID компонента
             config: Конфигурация компонента
+            install_start_time: Время начала установки (для отслеживания времени)
         
         Returns:
             bool: True если копирование успешно
         """
+        # НОВОЕ: Если время начала не передано, используем текущее время
+        if install_start_time is None:
+            install_start_time = time.time()
         source_dir = config.get('source_dir')
         if not source_dir:
             print("source_dir не указан в конфигурации", level='ERROR')
             return False
         
-        # Получаем путь к папке с предустановленной конфигурацией через универсальный метод
-        full_source_dir = self._get_source_dir(source_dir)
+        # НОВОЕ: Сначала проверяем наличие архива .tar.gz
+        archive_path = None
+        temp_extract_dir = None
         
-        if not full_source_dir or not os.path.exists(full_source_dir):
-            print(f"Папка с предустановленной конфигурацией не найдена: {full_source_dir}", level='ERROR')
-            return False
+        # Определяем возможные пути к архиву
+        # Для CountPack ищем в AstraPack/Cont/CountPack.tar.gz
+        if self.astrapack_dir:
+            # Определяем группу по component_id (cont -> Cont, astra -> Astra)
+            group_name = None
+            if 'cont' in component_id.lower():
+                group_name = 'Cont'
+            elif 'astra' in component_id.lower():
+                group_name = 'Astra'
+            
+            if group_name:
+                archive_path = os.path.join(self.astrapack_dir, group_name, f"{source_dir}.tar.gz")
+            else:
+                # Если группа не определена, ищем в корне AstraPack
+                archive_path = os.path.join(self.astrapack_dir, f"{source_dir}.tar.gz")
         
         # Определяем путь к целевому префиксу
         wineprefix_path = config.get('wineprefix_path', self.wineprefix)
         wineprefix_path = expand_user_path(wineprefix_path)
         
-        print(f"Копирование предустановленной конфигурации из {full_source_dir} в {wineprefix_path}")
+        # Проверяем наличие архива
+        if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
+            print(f"Найден архив: {archive_path}")
+            print(f"Распаковка архива напрямую в {wineprefix_path}...")
+            
+            try:
+                # Удаляем существующие файлы/папки перед распаковкой
+                items_to_remove = ['dosdevices', 'drive_c', 'system.reg', 'user.reg', 'userdef.reg']
+                for item in items_to_remove:
+                    item_path = os.path.join(wineprefix_path, item)
+                    if os.path.exists(item_path):
+                        print(f"Удаление существующего элемента: {item}")
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                        else:
+                            os.remove(item_path)
+                
+                # Распаковываем архив напрямую в целевую папку
+                with tarfile.open(archive_path, 'r:gz') as tar:
+                    # Определяем, содержит ли архив папку с именем source_dir
+                    members = tar.getmembers()
+                    has_source_dir = any(m.name.startswith(f"{source_dir}/") or m.name == source_dir for m in members)
+                    
+                    if has_source_dir:
+                        # Архив содержит папку source_dir - извлекаем только её содержимое
+                        print(f"Архив содержит папку {source_dir}, извлекаем содержимое...")
+                        prefix = f"{source_dir}/"
+                        # Сортируем members для правильного порядка создания папок
+                        sorted_members = sorted(members, key=lambda m: (m.isdir(), m.name))
+                        
+                        # Фильтруем только нужные элементы (с префиксом source_dir/)
+                        items_to_extract = [m for m in sorted_members if m.name.startswith(prefix) and m.name != source_dir]
+                        total_items = len(items_to_extract)
+                        files_count = sum(1 for m in items_to_extract if m.isfile())
+                        dirs_count = sum(1 for m in items_to_extract if m.isdir())
+                        
+                        print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
+                        
+                        # НОВОЕ: Вычисляем прошедшее время
+                        elapsed_time = int(time.time() - install_start_time)
+                        
+                        self._update_progress(
+                            stage_name=f"Распаковка архива {source_dir}",
+                            stage_progress=0,
+                            global_progress=0,
+                            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count})",
+                            elapsed_time=elapsed_time
+                        )
+                        
+                        extracted_count = 0
+                        for member in items_to_extract:
+                            # Создаем новый путь, убирая префикс source_dir/
+                            new_name = member.name[len(prefix):]
+                            if not new_name:  # Пропускаем пустые имена
+                                continue
+                            
+                            target_path = os.path.join(wineprefix_path, new_name)
+                            
+                            # Извлекаем файл/папку
+                            if member.isfile():
+                                # Создаем родительские папки если нужно
+                                parent_dir = os.path.dirname(target_path)
+                                if parent_dir:
+                                    os.makedirs(parent_dir, exist_ok=True)
+                                # Извлекаем файл
+                                fileobj = tar.extractfile(member)
+                                if fileobj:
+                                    with open(target_path, 'wb') as f:
+                                        f.write(fileobj.read())
+                                
+                                extracted_count += 1
+                                if extracted_count % 100 == 0 or extracted_count == total_items:
+                                    progress = int((extracted_count / total_items) * 100) if total_items > 0 else 0
+                                    # НОВОЕ: Вычисляем прошедшее время
+                                    elapsed_time = int(time.time() - install_start_time)
+                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({progress}%) | Время: {elapsed_time} сек")
+                                    self._update_progress(
+                                        stage_name=f"Распаковка архива {source_dir}",
+                                        stage_progress=progress,
+                                        global_progress=progress,
+                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...)",
+                                        elapsed_time=elapsed_time
+                                    )
+                            elif member.isdir():
+                                # Создаем папку
+                                os.makedirs(target_path, exist_ok=True)
+                                extracted_count += 1
+                            elif member.issym() or member.islnk():
+                                # Для символических ссылок и жестких ссылок
+                                # Создаем родительские папки если нужно
+                                parent_dir = os.path.dirname(target_path)
+                                if parent_dir:
+                                    os.makedirs(parent_dir, exist_ok=True)
+                                # Извлекаем ссылку
+                                tar.extract(member, wineprefix_path)
+                                # Переименовываем после извлечения
+                                old_path = os.path.join(wineprefix_path, member.name)
+                                if os.path.exists(old_path):
+                                    if os.path.exists(target_path):
+                                        if os.path.isdir(target_path):
+                                            shutil.rmtree(target_path)
+                                        else:
+                                            os.remove(target_path)
+                                    os.rename(old_path, target_path)
+                                extracted_count += 1
+                        
+                        # НОВОЕ: Финальное обновление с временем
+                        elapsed_time = int(time.time() - install_start_time)
+                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов | Время: {elapsed_time} сек")
+                        self._update_progress(
+                            stage_name=f"Распаковка архива {source_dir}",
+                            stage_progress=100,
+                            global_progress=100,
+                            details=f"Успешно извлечено {extracted_count} элементов",
+                            elapsed_time=elapsed_time
+                        )
+                    else:
+                        # Архив содержит файлы в корне - извлекаем всё
+                        print("Архив содержит файлы в корне, извлекаем всё...")
+                        total_items = len([m for m in members if m.isfile()])
+                        print(f"Всего файлов для извлечения: {total_items}")
+                        
+                        self._update_progress(
+                            stage_name=f"Распаковка архива {source_dir}",
+                            stage_progress=0,
+                            global_progress=0,
+                            details=f"Найдено файлов: {total_items}"
+                        )
+                        
+                        tar.extractall(wineprefix_path)
+                        
+                        # НОВОЕ: Финальное обновление с временем
+                        elapsed_time = int(time.time() - install_start_time)
+                        print(f"Распаковка завершена: извлечено {total_items} файлов | Время: {elapsed_time} сек")
+                        self._update_progress(
+                            stage_name=f"Распаковка архива {source_dir}",
+                            stage_progress=100,
+                            global_progress=100,
+                            details=f"Успешно извлечено {total_items} файлов",
+                            elapsed_time=elapsed_time
+                        )
+                
+                print(f"Архив успешно распакован в {wineprefix_path}")
+                
+            except Exception as e:
+                print(f"Ошибка распаковки архива: {e}", level='ERROR')
+                traceback.print_exc()
+                return False
+        else:
+            # Архив не найден - используем существующую логику с папкой
+            full_source_dir = self._get_source_dir(source_dir)
+            
+            if not full_source_dir or not os.path.exists(full_source_dir):
+                print(f"Папка с предустановленной конфигурацией не найдена: {full_source_dir}", level='ERROR')
+                return False
+            
+            print(f"Копирование предустановленной конфигурации из {full_source_dir} в {wineprefix_path}")
+            
+            try:
+                # КРИТИЧНО: Копируем с заменой всех файлов
+                # Копируем dosdevices и drive_c (НЕ копируем Ярлыки - они обрабатываются отдельно)
+                items_to_copy = ['dosdevices', 'drive_c']
+                
+                for item in items_to_copy:
+                    src = os.path.join(full_source_dir, item)
+                    dst = os.path.join(wineprefix_path, item)
+                    
+                    if not os.path.exists(src):
+                        print(f"Предупреждение: {item} не найден в {full_source_dir}", level='WARNING')
+                        continue
+                    
+                    if os.path.isdir(src):
+                        # Копируем директорию с заменой
+                        if os.path.exists(dst):
+                            print(f"Удаление существующей директории: {dst}")
+                            shutil.rmtree(dst)
+                        print(f"Копирование директории: {item}")
+                        shutil.copytree(src, dst)
+                        print(f"  Директория скопирована: {item}")
+                    else:
+                        # Копируем файл с заменой
+                        if os.path.exists(dst):
+                            os.remove(dst)
+                        print(f"Копирование файла: {item}")
+                        shutil.copy2(src, dst)
+                        print(f"  Файл скопирован: {item}")
+                
+                # Копируем файлы реестра (если есть)
+                reg_files = ['system.reg', 'user.reg', 'userdef.reg']
+                for reg_file in reg_files:
+                    src = os.path.join(full_source_dir, reg_file)
+                    dst = os.path.join(wineprefix_path, reg_file)
+                    
+                    if os.path.exists(src):
+                        if os.path.exists(dst):
+                            os.remove(dst)
+                        shutil.copy2(src, dst)
+                        print(f"  Файл реестра скопирован: {reg_file}")
+                
+            except Exception as e:
+                print(f"Ошибка копирования предустановленной конфигурации: {str(e)}", level='ERROR')
+                traceback.print_exc()
+                return False
         
+        # Устанавливаем правильного владельца
         try:
-            # КРИТИЧНО: Копируем с заменой всех файлов
-            # Копируем dosdevices и drive_c (НЕ копируем Ярлыки - они обрабатываются отдельно)
-            items_to_copy = ['dosdevices', 'drive_c']
-            
-            for item in items_to_copy:
-                src = os.path.join(full_source_dir, item)
-                dst = os.path.join(wineprefix_path, item)
-                
-                if not os.path.exists(src):
-                    print(f"Предупреждение: {item} не найден в {full_source_dir}", level='WARNING')
-                    continue
-                
-                if os.path.isdir(src):
-                    # Копируем директорию с заменой
-                    if os.path.exists(dst):
-                        print(f"Удаление существующей директории: {dst}")
-                        shutil.rmtree(dst)
-                    print(f"Копирование директории: {item}")
-                    shutil.copytree(src, dst)
-                    print(f"  Директория скопирована: {item}")
-                else:
-                    # Копируем файл с заменой
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                    print(f"Копирование файла: {item}")
-                    shutil.copy2(src, dst)
-                    print(f"  Файл скопирован: {item}")
-            
-            # Копируем файлы реестра (если есть)
-            reg_files = ['system.reg', 'user.reg', 'userdef.reg']
-            for reg_file in reg_files:
-                src = os.path.join(full_source_dir, reg_file)
-                dst = os.path.join(wineprefix_path, reg_file)
-                
-                if os.path.exists(src):
-                    if os.path.exists(dst):
-                        os.remove(dst)
-                    shutil.copy2(src, dst)
-                    print(f"  Файл реестра скопирован: {reg_file}")
-            
-            # Устанавливаем правильного владельца
             real_user = os.environ.get('SUDO_USER')
             if os.geteuid() == 0 and real_user and real_user != 'root':
                 uid = pwd.getpwnam(real_user).pw_uid
@@ -2678,14 +2865,11 @@ class WineApplicationHandler(ComponentHandler):
                         os.chown(os.path.join(root, f), uid, gid)
                 
                 print(f"Установлен владелец префикса: {real_user}")
-            
-            print("Предустановленная конфигурация успешно скопирована")
-            return True
-            
         except Exception as e:
-            print(f"Ошибка копирования предустановленной конфигурации: {str(e)}", level='ERROR')
-            traceback.print_exc()
-            return False
+            print(f"Предупреждение: не удалось установить владельца: {e}", level='WARNING')
+        
+        print("Предустановленная конфигурация успешно установлена")
+        return True
     
     def _install_wine_executable(self, component_id: str, config: dict) -> bool:
         """Установка исполняемого файла в Wine (для Wine приложений)"""
@@ -13154,6 +13338,13 @@ class AutomationGUI(object):
                 speed_text = progress_data['speed']
                 time_remaining = progress_data['time_remaining']
                 time_elapsed = progress_data.get('time_elapsed', '')
+                # НОВОЕ: Если time_elapsed нет, используем elapsed_time
+                if not time_elapsed and 'elapsed_time' in progress_data:
+                    elapsed_seconds = progress_data['elapsed_time']
+                    elapsed_minutes = elapsed_seconds // 60
+                    elapsed_secs = elapsed_seconds % 60
+                    time_elapsed = f"{elapsed_minutes} мин {elapsed_secs} сек"
+                
                 disk_usage = progress_data.get('disk_usage', '')
                 
                 # Формируем текст для отображения
@@ -13171,6 +13362,13 @@ class AutomationGUI(object):
                     self.speed_label.config(text=" | ".join(display_parts))
                 else:
                     self.speed_label.config(text="")
+            
+            # НОВОЕ: Обновляем wine_time_label напрямую
+            if hasattr(self, 'wine_time_label') and 'elapsed_time' in progress_data:
+                elapsed_seconds = progress_data['elapsed_time']
+                elapsed_minutes = elapsed_seconds // 60
+                elapsed_secs = elapsed_seconds % 60
+                self.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_secs} сек")
             
             # Обновляем статус
             if hasattr(self, 'status_label'):
@@ -14336,6 +14534,9 @@ class UniversalProgressManager:
         self.stage_name = stage_name
         self.details = details
         
+        # НОВОЕ: Сохраняем elapsed_time из kwargs
+        self.elapsed_time = kwargs.get('elapsed_time', 0)
+        
         # Сохраняем дополнительные параметры
         self.extra_data = kwargs
         
@@ -14364,7 +14565,8 @@ class UniversalProgressManager:
                 'stage_progress': self.stage_progress,
                 'global_progress': self.global_progress,
                 'details': self.details,
-                'timestamp': datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                'timestamp': datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
+                'elapsed_time': getattr(self, 'elapsed_time', 0)  # НОВОЕ: Добавляем время
             }
             
             # Добавляем дополнительные данные из kwargs
