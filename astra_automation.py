@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.107 (2025.11.10)
+Версия: V2.4.109 (2025.11.10)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.107 (2025.11.10)"
+APP_VERSION = "V2.4.109 (2025.11.10)"
 import os
 import sys
 import tempfile
@@ -44,6 +44,23 @@ except Exception:
 # УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
 # ============================================================================
 COMPONENTS_CONFIG = {
+    # Системные настройки
+    'ptrace_scope': {
+        'name': 'Настройка ptrace_scope',
+        'command_name': None,  # Не используется для системных настроек
+        'path': '/proc/sys/kernel/yama/ptrace_scope',
+        'category': 'system_config',
+        'dependencies': [],
+        'check_paths': ['/proc/sys/kernel/yama/ptrace_scope'],
+        'check_method': 'system_config',  # Специальный метод проверки значения файла
+        'check_value': '0',  # Ожидаемое значение файла (0 = настройка применена)
+        'install_method': 'system_config',
+        'uninstall_method': 'system_config',
+        'gui_selectable': True,  # Скрыт от пользователя, устанавливается автоматически
+        'description': 'Настройка ptrace_scope для Wine',
+        'sort_order': 0  # В самом начале списка
+    },
+    
     # Wine пакеты системы
     'wine_9': {
         'name': 'Wine 9.0',
@@ -72,21 +89,6 @@ COMPONENTS_CONFIG = {
         'description': 'Основной Wine пакет Astraregul',
         'sort_order': 2,  # Wine Astraregul после Wine 9.0
         'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки
-    },
-    
-    # Системные настройки
-    'ptrace_scope': {
-        'name': 'Настройка ptrace_scope',
-        'command_name': None,  # Не используется для системных настроек
-        'path': '/proc/sys/kernel/yama/ptrace_scope',
-        'category': 'system_config',
-        'dependencies': [],
-        'check_paths': ['/proc/sys/kernel/yama/ptrace_scope'],
-        'install_method': 'system_config',
-        'uninstall_method': 'system_config',
-        'gui_selectable': False,  # Скрыт от пользователя, устанавливается автоматически
-        'description': 'Настройка ptrace_scope для Wine',
-        'sort_order': 3  # После wine пакетов, перед wineprefix
     },
     
     # Wine окружение
@@ -294,6 +296,7 @@ COMPONENTS_CONFIG = {
         'check_paths': ['~/Desktop/AstraRegul.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
+        'script_path': '~/start-astraide.sh',  # Скрипт для запуска Astra.IDE
         'gui_selectable': True,
         'description': 'Ярлык Astra.IDE на рабочем столе',
         'sort_order': 14
@@ -473,13 +476,8 @@ def check_component_status(component_id, wineprefix_path=None):
             wineprefix_path = expand_user_path(config_wineprefix_path)
         else:
             # Используем стандартный префикс
-            real_user = os.environ.get('SUDO_USER')
-            if real_user and real_user != 'root':
-                import pwd
-                home = pwd.getpwnam(real_user).pw_dir
-            else:
-                home = os.path.expanduser("~")
-            wineprefix_path = os.path.join(home, ".wine-astraregul")
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            wineprefix_path = expand_user_path("~/.wine-astraregul")
     
     # Специальная проверка для wineprefix
     if check_method == 'wineprefix':
@@ -498,6 +496,32 @@ def check_component_status(component_id, wineprefix_path=None):
         
         return False
     
+    # Специальная проверка для системных настроек (проверка значения файла)
+    if check_method == 'system_config':
+        check_paths = config.get('check_paths', [])
+        check_value = config.get('check_value')  # Ожидаемое значение файла
+        
+        if not check_paths or check_value is None:
+            return False
+        
+        # Проверяем первый путь из check_paths
+        check_path = check_paths[0]
+        
+        # Обрабатываем абсолютные пути
+        if not os.path.isabs(check_path):
+            check_path = os.path.abspath(check_path)
+        
+        if os.path.exists(check_path):
+            try:
+                with open(check_path, 'r') as f:
+                    actual_value = f.read().strip()
+                    # Сравниваем фактическое значение с ожидаемым
+                    return actual_value == check_value
+            except Exception:
+                return False
+        
+        return False
+    
     # Простая проверка через check_paths (по умолчанию)
     check_paths = config.get('check_paths', [])
     if not check_paths:
@@ -506,14 +530,24 @@ def check_component_status(component_id, wineprefix_path=None):
     for path in check_paths:
         # Обрабатываем специальные пути
         if path.startswith('~/'):
-            full_path = os.path.expanduser(path)
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            full_path = expand_user_path(path)
+            # КРИТИЧНО: Преобразуем в абсолютный путь
+            full_path = os.path.abspath(full_path)
         elif path.startswith('drive_c/'):
             # Путь внутри WINEPREFIX - КРИТИЧНО: проверяем сначала существование WINEPREFIX
             if not os.path.exists(wineprefix_path):
                 return False
             full_path = os.path.join(wineprefix_path, path)
+            # КРИТИЧНО: Преобразуем в абсолютный путь
+            full_path = os.path.abspath(full_path)
         else:
-            full_path = path
+            # Для абсолютных путей используем как есть, для относительных - преобразуем
+            if os.path.isabs(path):
+                full_path = path
+            else:
+                # Относительный путь - преобразуем в абсолютный
+                full_path = os.path.abspath(path)
         
         # Проверяем существование файла/директории
         if os.path.exists(full_path):
@@ -1626,18 +1660,8 @@ class SystemConfigHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса системной настройки"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        # Для ptrace_scope требуется специальная проверка содержимого файла
-        if component_id == 'ptrace_scope':
-            check_path = '/proc/sys/kernel/yama/ptrace_scope'
-            if os.path.exists(check_path):
-                try:
-                    with open(check_path, 'r') as f:
-                        value = f.read().strip()
-                        # ptrace_scope=0 означает что настройка применена
-                        return value == '0'
-                except Exception:
-                    return False
-        # Для остальных системных настроек используем единую функцию
+        # Для системных настроек с check_method='system_config' проверка значения файла
+        # выполняется автоматически в check_component_status()
         return check_component_status(component_id, wineprefix_path=self.wineprefix)
 
 # ============================================================================
@@ -2147,7 +2171,8 @@ export PATH="/opt/wine-9.0/bin:$PATH" && \
                 # Путь внутри WINEPREFIX
                 full_path = os.path.join(self.wineprefix, path)
             elif path.startswith('~/'):
-                full_path = os.path.expanduser(path)
+                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                full_path = expand_user_path(path)
             else:
                 full_path = path
             
@@ -3033,22 +3058,17 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
             
             # Определяем путь к файлу ярлыка
             desktop_file_path = config.get('path', '~/Desktop/AstraRegul.desktop')
-            desktop_file = os.path.expanduser(desktop_file_path)
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            desktop_file = expand_user_path(desktop_file_path)
             desktop_dir = os.path.dirname(desktop_file)
             desktop_name = config.get('name', 'Astra IDE (Wine)')
-            
-            # Создаем папку Desktop если нужно
-            desktop1_dir = os.path.join(self.home, "Desktops", "Desktop1")
-            
-            if not os.path.exists(desktop_dir) and not os.path.islink(desktop_dir):
-                if os.path.exists(desktop1_dir):
-                    os.symlink(desktop1_dir, desktop_dir)
-                    print("Создан симлинк Desktop -> Desktop1")
             
             if shortcut_type == 'folder':
                 # Создаем ярлык для открытия папки
                 folder_path = config.get('folder_path', wineprefix_path)
-                folder_path = os.path.expanduser(folder_path)
+                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                if '~' in folder_path:
+                    folder_path = expand_user_path(folder_path)
                 
                 desktop_content = f"""[Desktop Entry]
 Type=Link
@@ -3059,26 +3079,24 @@ URL={folder_path}
             else:
                 # Создаем ярлык для запуска приложения
                 executable_path = config.get('executable_path')
-                if not executable_path:
-                    # Для старых компонентов (Astra.IDE) используем скрипт запуска
-                    if component_id == 'desktop_shortcut':
-                        # Старая логика для Astra.IDE
-                        desktop_content = f"""[Desktop Entry]
+                script_path = config.get('script_path')
+                
+                if script_path:
+                    # Используем скрипт запуска (например, для Astra.IDE)
+                    # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                    full_script_path = expand_user_path(script_path)
+                    desktop_content = f"""[Desktop Entry]
 Comment=
-Exec={self.home}/start-astraide.sh
+Exec={full_script_path}
 Icon=
-Name=Astra IDE (Wine)
+Name={desktop_name}
 Path=
 StartupNotify=true
 Terminal=true
 Type=Application
 """
-                    else:
-                        print("executable_path не указан в конфигурации", level='ERROR')
-                        self._update_status(component_id, 'error')
-                        return False
-                else:
-                    # НОВОЕ: Создаем ярлык для Wine приложения
+                elif executable_path:
+                    # Создаем ярлык для Wine приложения
                     # Полный путь к исполняемому файлу в Wine префиксе
                     full_executable = os.path.join(wineprefix_path, executable_path)
                     
@@ -3095,18 +3113,25 @@ Type=Application
                     # Путь для рабочей директории
                     work_dir = os.path.dirname(full_executable)
                     
+                    # Иконка из конфигурации (если есть)
+                    icon = config.get('icon', '47FF_CONT-Designer.0')
+                    
                     desktop_content = f"""[Desktop Entry]
 Name={desktop_name}
 Type=Application
 NoDisplay=false
 Exec={exec_cmd}
-Icon=47FF_CONT-Designer.0
+Icon={icon}
 Hidden=false
 Path={work_dir}
 Terminal=false
 StartupNotify=true
 StartupWMClass=cont-designer.exe
 """
+                else:
+                    print("executable_path или script_path не указан в конфигурации", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
             
             # Записываем ярлык
             with open(desktop_file, 'w', encoding='utf-8') as f:
@@ -3239,8 +3264,10 @@ StartupWMClass=cont-designer.exe
         print(f"Удаление ярлыка рабочего стола: {component_id}")
         
         try:
-            desktop_dir = os.path.join(self.home, "Desktop")
-            desktop_file = os.path.join(desktop_dir, "AstraRegul.desktop")
+            # КРИТИЧНО: Используем путь из конфигурации компонента
+            desktop_file_path = config.get('path', '~/Desktop/AstraRegul.desktop')
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            desktop_file = expand_user_path(desktop_file_path)
             
             if os.path.exists(desktop_file):
                 os.remove(desktop_file)
@@ -6629,37 +6656,29 @@ class ComponentStatusManager(object):
         Returns:
             tuple: (статус_текст, статус_тег)
         """
-        print(f"ComponentStatusManager.get_component_status() вызван: component_id={component_id}, component_name={component_name}", level='DEBUG')
         # ПРИОРИТЕТ: сначала проверяем состояния установки/удаления
         # Проверяем, есть ли компонент в списке ожидающих установки
         if component_name in self.pending_install:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} в pending_install, возвращаем 'pending'", level='DEBUG')
             return '[Ожидание]', 'pending'
         
         # Проверяем, есть ли компонент в списке устанавливаемых
         if component_name in self.installing:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} в installing, возвращаем 'installing'", level='DEBUG')
             return '[Установка]', 'installing'
         
         # Проверяем, есть ли компонент в списке удаляемых
         if component_name in self.removing:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} в removing, возвращаем 'removing'", level='DEBUG')
             return '[Удаление]', 'removing'
         
         # КРИТИЧНО: Проверяем статус ошибки ПЕРЕД проверкой реального статуса
         # Это гарантирует, что статус 'error' отображается даже если компонент не установлен
         if component_name in self.error_components:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} в error_components, возвращаем 'error'", level='DEBUG')
             return '[Ошибка]', 'error'
         
         # Всегда проверяем напрямую (без кэша!)
         is_installed = self.check_component_status(component_id)
-        print(f"ComponentStatusManager.get_component_status() проверка статуса: is_installed={is_installed}", level='DEBUG')
         if is_installed:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} установлен, возвращаем 'ok'", level='DEBUG')
             return '[OK]', 'ok'
         else:
-            print(f"ComponentStatusManager.get_component_status() компонент {component_name} не установлен, возвращаем 'missing'", level='DEBUG')
             return '[---]', 'missing'
     
     def sync_with_wine_checker(self, wine_checker):
@@ -7283,7 +7302,8 @@ class ComponentInstaller(object):
             folder_exists = False
             if path_field:
                 if path_field.startswith('~/'):
-                    folder_path = os.path.expanduser(path_field)
+                    # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                    folder_path = expand_user_path(path_field)
                 elif path_field.startswith('drive_c/'):
                     # Для компонентов внутри WINEPREFIX проверяем через wineprefix
                     if component_id == 'wineprefix':
@@ -11545,27 +11565,174 @@ class AutomationGUI(object):
     
     def on_wine_tree_double_click(self, event):
         """Обработка двойного клика по таблице Wine компонентов - открытие папки компонента"""
+        print(f"[DEBUG] Двойной клик: x={event.x}, y={event.y}", gui_log=True)
         region = self.wine_tree.identify('region', event.x, event.y)
+        print(f"[DEBUG] Region: {region}", gui_log=True)
         if region == 'heading':
+            print("[DEBUG] Клик по заголовку - пропускаем", gui_log=True)
             return  # Заголовок не обрабатываем
         
         item = self.wine_tree.identify_row(event.y)
+        print(f"[DEBUG] Item ID: {item}", gui_log=True)
         if not item:
+            print("[DEBUG] Item не найден", gui_log=True)
             return
         
         # Получаем component_id из обратного словаря соответствия
         component_id = self.wine_tree_item_id_to_component_id.get(item)
+        print(f"[DEBUG] Component ID: {component_id}", gui_log=True)
+        print(f"[DEBUG] Словарь содержит {len(self.wine_tree_item_id_to_component_id)} записей", gui_log=True)
         if not component_id or component_id not in COMPONENTS_CONFIG:
+            print(f"[DEBUG] Component ID не найден или не в конфигурации: {component_id}", gui_log=True)
             return
         
-        # Получаем путь компонента
-        target_path = self._get_component_path(component_id)
-        if not target_path:
-            print(f"Путь компонента {component_id} не найден", level='WARNING')
+        # Проверяем, является ли компонент системной настройкой
+        config = COMPONENTS_CONFIG.get(component_id, {})
+        check_method = config.get('check_method')
+        
+        if check_method == 'system_config':
+            # Для системных компонентов показываем содержимое файла
+            print(f"[DEBUG] Системный компонент, показываем содержимое файла: {component_id}", gui_log=True)
+            self._show_system_config_content(component_id, config)
+        else:
+            # Для остальных компонентов открываем папку/файл
+            print(f"[DEBUG] Получаем путь для компонента: {component_id}", gui_log=True)
+            target_path = self._get_component_path(component_id)
+            print(f"[DEBUG] Полученный путь: {target_path}", gui_log=True)
+            if not target_path:
+                print(f"Путь компонента {component_id} не найден", level='WARNING', gui_log=True)
+                return
+            
+            # Открываем папку компонента
+            print(f"[DEBUG] Открываем путь: {target_path}", gui_log=True)
+            self._open_component_path(target_path)
+    
+    def _show_system_config_content(self, component_id, config):
+        """
+        Показывает содержимое файла системной настройки в диалоговом окне
+        
+        Args:
+            component_id: ID компонента из COMPONENTS_CONFIG
+            config: Конфигурация компонента
+        """
+        print(f"[DEBUG] _show_system_config_content вызван для: {component_id}", gui_log=True)
+        
+        # Получаем путь к файлу из check_paths
+        check_paths = config.get('check_paths', [])
+        if not check_paths:
+            # Если нет check_paths, используем path из конфигурации
+            file_path = config.get('path')
+        else:
+            file_path = check_paths[0]
+        
+        if not file_path:
+            print(f"Путь к файлу для компонента {component_id} не найден", level='WARNING', gui_log=True)
             return
         
-        # Открываем папку компонента
-        self._open_component_path(target_path)
+        # Преобразуем путь в абсолютный
+        if not os.path.isabs(file_path):
+            file_path = os.path.abspath(file_path)
+        
+        print(f"[DEBUG] Путь к файлу: {file_path}", gui_log=True)
+        
+        # Читаем содержимое файла
+        content = ""
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    content = f.read().strip()
+            else:
+                content = f"Файл не существует: {file_path}"
+        except Exception as e:
+            content = f"Ошибка при чтении файла: {str(e)}"
+        
+        # Получаем ожидаемое значение из конфигурации
+        check_value = config.get('check_value', 'N/A')
+        component_name = config.get('name', component_id)
+        
+        # Создаем диалоговое окно
+        import tkinter as tk
+        from tkinter import messagebox, scrolledtext
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Содержимое файла: {component_name}")
+        dialog.resizable(True, True)
+        dialog.geometry("600x400")
+        
+        # Делаем окно модальным
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Заголовок
+        title_label = tk.Label(dialog, text=f"{component_name}", 
+                             font=("Arial", 14, "bold"))
+        title_label.pack(pady=10)
+        
+        # Путь к файлу
+        path_label = tk.Label(dialog, text=f"Путь: {file_path}", 
+                            font=("Arial", 10), fg="#666666")
+        path_label.pack(pady=5)
+        
+        # Ожидаемое значение
+        expected_label = tk.Label(dialog, text=f"Ожидаемое значение: {check_value}", 
+                                font=("Arial", 10), fg="#0066cc")
+        expected_label.pack(pady=5)
+        
+        # Текущее значение
+        current_value = content if content else "N/A"
+        current_label = tk.Label(dialog, text=f"Текущее значение: {current_value}", 
+                               font=("Arial", 10, "bold"), 
+                               fg="#00aa00" if current_value == check_value else "#ff4444")
+        current_label.pack(pady=5)
+        
+        # Разделитель
+        separator = tk.Frame(dialog, height=2, bg="#cccccc")
+        separator.pack(fill=tk.X, padx=20, pady=10)
+        
+        # Содержимое файла
+        content_label = tk.Label(dialog, text="Содержимое файла:", 
+                               font=("Arial", 11, "bold"))
+        content_label.pack(anchor=tk.W, padx=20, pady=(10, 5))
+        
+        # Текстовое поле с прокруткой
+        text_frame = tk.Frame(dialog)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        text_widget = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, 
+                                               font=("Courier", 10),
+                                               bg="#f5f5f5", fg="#000000")
+        text_widget.pack(fill=tk.BOTH, expand=True)
+        text_widget.insert(tk.END, content if content else "Файл пуст или не существует")
+        text_widget.config(state=tk.DISABLED)  # Только для чтения
+        
+        # Кнопка закрытия
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=10)
+        
+        close_button = tk.Button(button_frame, text="Закрыть", 
+                               command=dialog.destroy,
+                               width=15, height=1)
+        close_button.pack()
+        
+        # Центрируем окно относительно главного окна
+        dialog.update_idletasks()
+        root_x = self.root.winfo_x()
+        root_y = self.root.winfo_y()
+        root_width = self.root.winfo_width()
+        root_height = self.root.winfo_height()
+        
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+        
+        x = root_x + (root_width // 2) - (dialog_width // 2)
+        y = root_y + (root_height // 2) - (dialog_height // 2)
+        
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Делаем окно поверх всех и фокусируем
+        dialog.attributes('-topmost', True)
+        dialog.lift()
+        dialog.focus_set()
     
     def _get_component_path(self, component_id):
         """
@@ -11577,37 +11744,63 @@ class AutomationGUI(object):
         Returns:
             str: Полный путь к файлу/папке компонента или None
         """
+        print(f"[DEBUG] _get_component_path вызван для: {component_id}", gui_log=True)
         if component_id not in COMPONENTS_CONFIG:
+            print(f"[DEBUG] Компонент {component_id} не найден в COMPONENTS_CONFIG", gui_log=True)
             return None
         
         config = COMPONENTS_CONFIG[component_id]
+        print(f"[DEBUG] Конфигурация компонента: {list(config.keys())}", gui_log=True)
         
-        # Определяем путь к WINEPREFIX
-        real_user = os.environ.get('SUDO_USER')
-        if real_user and real_user != 'root':
-            import pwd
-            home = pwd.getpwnam(real_user).pw_dir
+        # Определяем путь к WINEPREFIX из конфигурации компонента
+        config_wineprefix_path = config.get('wineprefix_path')
+        print(f"[DEBUG] wineprefix_path из конфигурации: {config_wineprefix_path}", gui_log=True)
+        if config_wineprefix_path:
+            wineprefix_path = expand_user_path(config_wineprefix_path)
+            print(f"[DEBUG] Разрешенный wineprefix_path: {wineprefix_path}", gui_log=True)
         else:
-            home = os.path.expanduser("~")
-        wineprefix_path = os.path.join(home, ".wine-astraregul")
+            # Используем стандартный префикс
+            wineprefix_path = self._get_wineprefix()
+            print(f"[DEBUG] Стандартный wineprefix_path: {wineprefix_path}", gui_log=True)
+        
+        # Проверяем наличие source_dir в конфигурации
+        source_dir = config.get('source_dir')
+        print(f"[DEBUG] source_dir из конфигурации: {source_dir}", gui_log=True)
+        if source_dir:
+            # Компонент имеет исходную директорию - открываем её
+            full_source_dir = self._get_source_dir(source_dir)
+            print(f"[DEBUG] Полный путь к source_dir: {full_source_dir}", gui_log=True)
+            if full_source_dir and os.path.exists(full_source_dir):
+                print(f"[DEBUG] Возвращаем source_dir: {full_source_dir}", gui_log=True)
+                return full_source_dir
+            else:
+                print(f"[DEBUG] source_dir не существует, продолжаем с обычной логикой", gui_log=True)
+            # Если исходная директория не найдена, продолжаем с обычной логикой
         
         # Получаем check_paths из конфигурации
         check_paths = config.get('check_paths', [])
+        print(f"[DEBUG] check_paths из конфигурации: {check_paths}", gui_log=True)
         if not check_paths:
             # Если нет check_paths, используем path из конфигурации
             path_field = config.get('path')
+            print(f"[DEBUG] path из конфигурации: {path_field}", gui_log=True)
             if path_field:
                 check_paths = [path_field]
             else:
+                print(f"[DEBUG] Нет ни check_paths, ни path - возвращаем None", gui_log=True)
                 return None
         
         # Берем первый путь для открытия
         path = check_paths[0]
+        print(f"[DEBUG] Используемый путь: {path}", gui_log=True)
         
         # КРИТИЧНО: Специальная обработка для WINEPREFIX
         if component_id == 'wineprefix':
             # Для WINEPREFIX пробуем открыть drive_c внутри него (это не скрытая папка)
             drive_c_path = os.path.join(wineprefix_path, 'drive_c')
+            # КРИТИЧНО: Преобразуем в абсолютный путь
+            drive_c_path = os.path.abspath(drive_c_path)
+            wineprefix_path = os.path.abspath(wineprefix_path)
             if os.path.exists(drive_c_path):
                 # Если drive_c существует - открываем его
                 return drive_c_path
@@ -11617,14 +11810,27 @@ class AutomationGUI(object):
         
         # Преобразуем путь в полный путь
         if path.startswith('~/'):
-            full_path = os.path.expanduser(path)
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            full_path = expand_user_path(path)
+            # КРИТИЧНО: Преобразуем в абсолютный путь
+            full_path = os.path.abspath(full_path)
+            print(f"[DEBUG] Путь начинается с ~/ - развернут в: {full_path}", gui_log=True)
         elif path.startswith('drive_c/'):
             # Путь внутри WINEPREFIX
             # КРИТИЧНО: Всегда возвращаем путь, даже если WINEPREFIX не существует
             # (откроем папку, где должен быть WINEPREFIX)
             full_path = os.path.join(wineprefix_path, path)
+            # КРИТИЧНО: Преобразуем в абсолютный путь
+            full_path = os.path.abspath(full_path)
+            print(f"[DEBUG] Путь начинается с drive_c/ - объединен с wineprefix: {full_path}", gui_log=True)
         else:
-            full_path = path
+            # Для абсолютных путей используем как есть, для относительных - преобразуем
+            if os.path.isabs(path):
+                full_path = path
+            else:
+                # Относительный путь - преобразуем в абсолютный
+                full_path = os.path.abspath(path)
+            print(f"[DEBUG] Путь используется: {full_path}", gui_log=True)
         
         # КРИТИЧНО: Всегда возвращаем путь, даже если компонент не установлен
         # Это позволяет открыть папку, где должен быть компонент
@@ -11672,17 +11878,24 @@ class AutomationGUI(object):
         Args:
             target_path: Полный путь к файлу/папке компонента
         """
+        print(f"[DEBUG] _open_component_path вызван с: {target_path}", gui_log=True)
         if not target_path:
-            print(f"Путь компонента не указан", level='WARNING')
+            print(f"Путь компонента не указан", level='WARNING', gui_log=True)
             return
         
         # КРИТИЧНО: Преобразуем путь в абсолютный путь (убираем ~ и относительные пути)
         # Это гарантирует, что файловый менеджер правильно откроет папку
-        target_path = os.path.abspath(os.path.expanduser(target_path))
+        original_path = target_path
+        # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+        if '~' in target_path:
+            target_path = expand_user_path(target_path)
+        target_path = os.path.abspath(target_path)
+        print(f"[DEBUG] Преобразован путь: {original_path} -> {target_path}", gui_log=True)
         
         # Определяем, файл это или папка
         if os.path.exists(target_path):
             is_file = os.path.isfile(target_path)
+            print(f"[DEBUG] Путь существует, is_file={is_file}", gui_log=True)
         else:
             # Если путь не существует, определяем по структуре пути
             # Если путь заканчивается на расширение файла - это файл
@@ -11691,6 +11904,7 @@ class AutomationGUI(object):
             # КРИТИЧНО: Определяем файл по наличию точки и расширения
             # Файл должен иметь точку и расширение (например, .dll, .exe, .reg)
             is_file = '.' in last_part and not last_part.startswith('.') and not last_part.endswith('/') and len(last_part.split('.')) > 1
+            print(f"[DEBUG] Путь не существует, определяем по структуре: is_file={is_file}, last_part={last_part}", gui_log=True)
         
         # КРИТИЧНО: Если это файл - сохраняем путь к файлу для выделения
         # Для файлов всегда используем выделение, даже если файл не существует
@@ -11700,17 +11914,23 @@ class AutomationGUI(object):
             file_path_for_selection = target_path
             # Определяем родительскую папку для открытия
             parent_dir = os.path.dirname(target_path)
+            print(f"[DEBUG] Это файл, parent_dir={parent_dir}", gui_log=True)
             if os.path.exists(parent_dir):
                 # Родительская папка существует - открываем её с выделением файла
                 target_path = parent_dir
                 is_file = False
+                print(f"[DEBUG] Родительская папка существует, открываем её: {target_path}", gui_log=True)
             else:
                 # Родительская папка не существует - открываем её (попробуем открыть)
                 target_path = parent_dir
                 is_file = False
+                print(f"[DEBUG] Родительская папка не существует, пробуем открыть: {target_path}", gui_log=True)
         elif not os.path.exists(target_path):
             # Это папка, которая не существует - открываем её (попробуем открыть)
+            print(f"[DEBUG] Это папка, которая не существует, пробуем открыть: {target_path}", gui_log=True)
             pass
+        else:
+            print(f"[DEBUG] Это папка, которая существует: {target_path}", gui_log=True)
         
         try:
             import subprocess
@@ -11724,56 +11944,79 @@ class AutomationGUI(object):
                 file_to_select = file_path_for_selection if file_path_for_selection else target_path
                 
                 # КРИТИЧНО: Преобразуем путь к файлу в абсолютный путь
-                file_to_select = os.path.abspath(os.path.expanduser(file_to_select))
+                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                if '~' in file_to_select:
+                    file_to_select = expand_user_path(file_to_select)
+                file_to_select = os.path.abspath(file_to_select)
                 parent_dir = os.path.dirname(file_to_select)
+                
+                print(f"[DEBUG] Открываем файл с выделением: file_to_select={file_to_select}, parent_dir={parent_dir}", gui_log=True)
                 
                 # КРИТИЧНО: Для выделения файла используем полный путь к файлу
                 # Пробуем открыть папку с выделением файла через nautilus
                 try:
                     # Используем --select с полным путем к файлу
                     # Это должно выделить файл, даже если он не существует
+                    print(f"[DEBUG] Пробуем nautilus --select {file_to_select}", gui_log=True)
                     subprocess.Popen(['nautilus', '--select', file_to_select], 
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    print(f"[DEBUG] nautilus запущен успешно", gui_log=True)
                     return
                 except FileNotFoundError:
+                    print(f"[DEBUG] nautilus не найден, пробуем dolphin", gui_log=True)
                     # Если nautilus не найден, пробуем dolphin
                     try:
                         # Dolphin использует --select для выделения файла
+                        print(f"[DEBUG] Пробуем dolphin --select {file_to_select}", gui_log=True)
                         subprocess.Popen(['dolphin', '--select', file_to_select], 
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        print(f"[DEBUG] dolphin запущен успешно", gui_log=True)
                         return
                     except FileNotFoundError:
+                        print(f"[DEBUG] dolphin не найден, пробуем thunar", gui_log=True)
                         # Если dolphin не найден, пробуем thunar
                         try:
                             # Thunar использует --select для выделения файла
+                            print(f"[DEBUG] Пробуем thunar --select {file_to_select}", gui_log=True)
                             subprocess.Popen(['thunar', '--select', file_to_select], 
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            print(f"[DEBUG] thunar запущен успешно", gui_log=True)
                             return
                         except FileNotFoundError:
+                            print(f"[DEBUG] thunar не найден, пробуем pcmanfm", gui_log=True)
                             # Если thunar не найден, пробуем pcmanfm
                             try:
+                                print(f"[DEBUG] Пробуем pcmanfm --select {file_to_select}", gui_log=True)
                                 subprocess.Popen(['pcmanfm', '--select', file_to_select], 
                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                print(f"[DEBUG] pcmanfm запущен успешно", gui_log=True)
                                 return
                             except FileNotFoundError:
                                 # Если ничего не работает, просто открываем папку
+                                print(f"[DEBUG] Все файловые менеджеры не найдены, используем xdg-open {parent_dir}", gui_log=True)
                                 subprocess.Popen(['xdg-open', parent_dir], 
                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                print(f"[DEBUG] xdg-open запущен для {parent_dir}", gui_log=True)
             else:
                 # Для папки: открываем напрямую (используем абсолютный путь)
+                print(f"[DEBUG] Открываем папку: {target_path}", gui_log=True)
                 # КРИТИЧНО: Для скрытых папок (начинающихся с .) используем специальную обработку
                 # Проверяем, является ли папка скрытой
                 is_hidden = os.path.basename(target_path).startswith('.')
+                print(f"[DEBUG] Папка скрытая: {is_hidden}", gui_log=True)
                 
                 if is_hidden:
                     # Для скрытых папок: пробуем разные способы открытия
                     # 1. Пробуем использовать file:// URI с полным путем
                     try:
                         file_uri = 'file://' + target_path
+                        print(f"[DEBUG] Пробуем xdg-open с file_uri для скрытой папки: {file_uri}", gui_log=True)
                         subprocess.Popen(['xdg-open', file_uri], 
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        print(f"[DEBUG] xdg-open запущен успешно для скрытой папки", gui_log=True)
                         return
-                    except:
+                    except Exception as e:
+                        print(f"[DEBUG] Ошибка при открытии скрытой папки через xdg-open: {e}", gui_log=True)
                         pass
                     
                     # 2. Пробуем открыть через nautilus с параметром --new-window
@@ -12527,12 +12770,13 @@ class AutomationGUI(object):
             import subprocess
             
             # Получаем путь к рабочему столу
-            desktop_path = os.path.expanduser("~/Desktop")
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            desktop_path = expand_user_path("~/Desktop")
             if not os.path.exists(desktop_path):
                 # Альтернативные пути для рабочего стола
                 desktop_paths = [
-                    os.path.expanduser("~/Рабочий стол"),
-                    os.path.expanduser("~/Desktop"),
+                    expand_user_path("~/Рабочий стол"),
+                    expand_user_path("~/Desktop"),
                     "/home/$USER/Desktop",
                     "/home/$USER/Рабочий стол"
                 ]
@@ -12563,9 +12807,10 @@ class AutomationGUI(object):
             import subprocess
             
             # Получаем путь к рабочему столу
-            desktop_path = os.path.expanduser("~/Desktop")
+            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+            desktop_path = expand_user_path("~/Desktop")
             if not os.path.exists(desktop_path):
-                desktop_path = os.path.expanduser("~/Рабочий стол")
+                desktop_path = expand_user_path("~/Рабочий стол")
             
             if not os.path.exists(desktop_path):
                 print("[ERROR] Не удалось найти папку рабочего стола", gui_log=True)
