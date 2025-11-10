@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.110 (2025.11.10)
+Версия: V2.4.111 (2025.11.11)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.110 (2025.11.10)"
+APP_VERSION = "V2.4.111 (2025.11.11)"
 import os
 import sys
 import tempfile
@@ -340,11 +340,26 @@ COMPONENTS_CONFIG = {
     },
     
     # CONT-Designer компоненты
+    # Системный Wine для CONT-Designer
+    'wine_system': {
+        'name': 'Wine (системный)',
+        'command_name': 'wine',  # Пакет для установки через apt
+        'path': '/usr/bin/wine',
+        'category': 'apt_packages',
+        'dependencies': [],  # НЕЗАВИСИМ от других компонентов
+        'check_paths': ['/usr/bin/wine', '/usr/bin/wineboot'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Системный Wine из репозиториев для CONT-Designer',
+        'sort_order': 16,  # После компонентов Astra (notepad_plus_plus: 15)
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки
+    },
     'cont_wineprefix': {
         'name': 'CONT Wine Prefix',
         'path': '~/.local/share/wineprefixes/cont',
         'category': 'wine_environment',
-        'dependencies': [],  # НЕ зависит от wine_astraregul
+        'dependencies': ['wine_system'],  # Зависит от системного Wine
         'check_paths': ['~/.local/share/wineprefixes/cont'],
         'check_method': 'wineprefix',  # Проверка наличия system.reg или drive_c
         'install_method': 'wine_init',
@@ -353,7 +368,7 @@ COMPONENTS_CONFIG = {
         'wine_source': 'system',  # НОВОЕ: использовать системный Wine из apt
         'gui_selectable': True,
         'description': 'Wine префикс для CONT-Designer',
-        'sort_order': 20
+        'sort_order': 17  # После wine_system (16), рядом с компонентами Astra
     },
     'cont_designer': {
         'name': 'CONT-Designer 3.0',
@@ -369,7 +384,7 @@ COMPONENTS_CONFIG = {
         'wine_source': 'system',  # НОВОЕ: использовать системный Wine
         'gui_selectable': True,
         'description': 'CONT-Designer 3.0',
-        'sort_order': 21
+        'sort_order': 18  # После cont_wineprefix (17)
     },
     'cont_desktop_shortcut': {
         'name': 'CONT-Designer Ярлык',
@@ -385,7 +400,7 @@ COMPONENTS_CONFIG = {
         'wine_source': 'system',  # НОВОЕ: использовать системный Wine
         'gui_selectable': True,
         'description': 'Ярлык CONT-Designer на рабочем столе',
-        'sort_order': 22
+        'sort_order': 19  # После cont_designer (18)
     },
     'cont_workspace_shortcut': {
         'name': 'CONT Рабочие каталоги',
@@ -401,7 +416,7 @@ COMPONENTS_CONFIG = {
         'wine_source': 'system',  # НОВОЕ: использовать системный Wine
         'gui_selectable': True,
         'description': 'Ярлык для открытия папки wineprefix',
-        'sort_order': 23
+        'sort_order': 20  # После cont_desktop_shortcut (19)
     },
 }
 
@@ -1904,9 +1919,17 @@ class WineEnvironmentHandler(ComponentHandler):
         
         time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
         
+        # НОВОЕ: Определяем путь к префиксу из конфигурации (как в методе install)
+        wineprefix_path = config.get('wineprefix_path')
+        if wineprefix_path:
+            target_wineprefix = expand_user_path(wineprefix_path)
+        else:
+            # Используем стандартный префикс
+            target_wineprefix = self.wineprefix
+        
         # Проверяем, существует ли компонент
         # Если компонент уже удален, устанавливаем статус 'missing' и выходим
-        if not os.path.exists(self.wineprefix):
+        if not os.path.exists(target_wineprefix):
             print("WINEPREFIX не найден (папка уже удалена или не была создана)")
             # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'missing' для уже удаленного компонента
             self._update_status(component_id, 'missing')
@@ -1924,9 +1947,9 @@ class WineEnvironmentHandler(ComponentHandler):
             
             # КРИТИЧНО: Удаляем WINEPREFIX в любом случае
             # Даже если компонент числится как неустановленный - папка может существовать
-            if os.path.exists(self.wineprefix):
-                print(f"Удаление WINEPREFIX: {self.wineprefix}")
-                shutil.rmtree(self.wineprefix)
+            if os.path.exists(target_wineprefix):
+                print(f"Удаление WINEPREFIX: {target_wineprefix}")
+                shutil.rmtree(target_wineprefix)
                 print("WINEPREFIX удален успешно")
             else:
                 print("WINEPREFIX не найден (папка уже удалена или не была создана)")
@@ -1969,7 +1992,8 @@ class WineEnvironmentHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса Wine окружения"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # НЕ передаем wineprefix_path - глобальная функция сама определит его из конфигурации компонента
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК WINETRICKS КОМПОНЕНТОВ
@@ -6689,7 +6713,8 @@ class ComponentStatusManager(object):
             bool: True если компонент установлен, False если нет
         """
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # НЕ передаем wineprefix_path - глобальная функция сама определит его из конфигурации компонента
+        return check_component_status(component_id, wineprefix_path=None)
     
     def get_component_status(self, component_id, component_name):
         """
