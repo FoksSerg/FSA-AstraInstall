@@ -3842,6 +3842,15 @@ def universal_print(*args, **kwargs):
             dual_logger.write_raw(formatted_message)  # ВСЕГДА с меткой времени
         else:
             dual_logger.write_analysis(formatted_message)  # ВСЕГДА с меткой времени
+        
+        # КРИТИЧНО: В консольном режиме выводим в stdout для видимости
+        # Проверяем, не в GUI режиме ли мы (если нет GUI instance, значит консольный режим)
+        if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
+            # Выводим в консоль через оригинальный print
+            import builtins
+            if not hasattr(builtins, '_original_print'):
+                builtins._original_print = builtins.print
+            builtins._original_print(message)
     else:
         # Fallback: если dual_logger недоступен, используем оригинальный print
         # (только для самых ранних этапов инициализации)
@@ -16072,7 +16081,6 @@ class SystemUpdater(object):
         print("\n[SYSTEM] Проверка системных ресурсов перед обновлением...")
         if not self.check_system_resources():
             print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-            print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
             return False
         
         # ПРИНУДИТЕЛЬНАЯ ОЧИСТКА APT ПЕРЕД ОБНОВЛЕНИЕМ
@@ -17279,12 +17287,10 @@ def main():
                 if gui_install_success:
                     print("[SUCCESS] GUI компоненты установлены успешно!", gui_log=True)
                 else:
-                    print("[ERROR] Установка GUI компонентов завершена с ошибками")
                     print("[ERROR] Установка GUI компонентов завершена с ошибками", gui_log=True)
                     
             elif start_mode == "console_forced":
                 # Принудительный консольный режим - но мы в GUI режиме!
-                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме")
                 print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", gui_log=True)
                 print("[INFO] Перезапустите с флагом --console:")
                 print("       bash astra_install.sh --console")
@@ -17337,161 +17343,160 @@ def main():
                 print("\n[UPDATE] Обновление системы...")
                 universal_runner = get_global_universal_runner()
                 updater = SystemUpdater(universal_runner)
-            
-            if dry_run:
-                print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-                print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
-                update_success = True
-            else:
-                # Проверяем системные ресурсы
-                if not updater.check_system_resources():
-                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления")
-                    print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", gui_log=True)
-                    sys.exit(1)
                 
-                # Запускаем обновление
-                update_success = updater.update_system(dry_run)
+                if dry_run:
+                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
+                    print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
+                    update_success = True
+                else:
+                    # Проверяем системные ресурсы
+                    if not updater.check_system_resources():
+                        print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", gui_log=True)
+                        sys.exit(1)
+                    
+                    # Запускаем обновление
+                    update_success = updater.update_system(dry_run)
             
-            # Устанавливаем компоненты после успешного обновления системы
-            components_install_success = True
-            if update_success:
-                print("\n[INSTALL] Определение отсутствующих компонентов...")
-                print("[INFO] Создание ComponentStatusManager и ComponentInstaller...", gui_log=True)
-                
-                try:
-                    # Создаем ComponentStatusManager (без GUI callback)
-                    component_status_manager = ComponentStatusManager(callback=None)
+                # Устанавливаем компоненты после успешного обновления системы
+                components_install_success = True
+                if update_success:
+                    print("\n[INSTALL] Определение отсутствующих компонентов...")
+                    print("[INFO] Создание ComponentStatusManager и ComponentInstaller...", gui_log=True)
                     
-                    # Вспомогательные функции для получения путей
-                    def _get_script_dir():
-                        import sys
-                        if os.path.isabs(sys.argv[0]):
-                            script_path = sys.argv[0]
-                        else:
-                            script_path = os.path.join(os.getcwd(), sys.argv[0])
-                        return os.path.dirname(os.path.abspath(script_path))
-                    
-                    def _get_astrapack_dir():
-                        script_dir = _get_script_dir()
-                        return os.path.join(script_dir, "AstraPack")
-                    
-                    # Создаем handlers для всех категорий компонентов
-                    component_handlers = {}
-                    common_params = {
-                        'astrapack_dir': _get_astrapack_dir(),
-                        'logger': None,  # В консоли не используется
-                        'callback': None,  # В консоли нет GUI callback
-                        'universal_runner': get_global_universal_runner(),
-                        'progress_manager': None,  # В консоли может быть None
-                        'dual_logger': globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
-                        'status_manager': component_status_manager
-                    }
-                    
-                    # Регистрируем все handlers
-                    component_handlers['wine_packages'] = WinePackageHandler(**common_params)
-                    component_handlers['wine_environment'] = WineEnvironmentHandler(**common_params)
-                    component_handlers['winetricks'] = WinetricksHandler(use_minimal=True, **common_params)
-                    component_handlers['system_config'] = SystemConfigHandler(**common_params)
-                    component_handlers['application'] = ApplicationHandler(**common_params)
-                    component_handlers['apt_packages'] = AptPackageHandler(**common_params)
-                    component_handlers['wine_application'] = WineApplicationHandler(**common_params)
-                    
-                    print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
-                    
-                    # Создаем ComponentInstaller
-                    component_installer = ComponentInstaller(
-                        component_handlers=component_handlers,
-                        status_manager=component_status_manager,
-                        progress_manager=None,  # В консоли нет GUI прогресса
-                        universal_runner=get_global_universal_runner(),
-                        dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
-                        use_minimal_winetricks=True
-                    )
-                    
-                    # Определяем отсутствующие компоненты
-                    missing_components = component_status_manager.get_missing_components()
-                    
-                    if missing_components:
-                        print("[INFO] Найдено отсутствующих компонентов: %d" % len(missing_components))
-                        print("[INFO] Компоненты для установки: %s" % ', '.join(missing_components))
+                    try:
+                        # Создаем ComponentStatusManager (без GUI callback)
+                        component_status_manager = ComponentStatusManager(callback=None)
                         
-                        if dry_run:
-                            print("\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка компонентов НЕ выполняется")
-                            print("[OK] Будет выполнена установка следующих компонентов:")
-                            for idx, comp_id in enumerate(missing_components, 1):
-                                config = COMPONENTS_CONFIG.get(comp_id, {})
-                                comp_name = config.get('name', comp_id)
-                                print("  %d. %s (%s)" % (idx, comp_name, comp_id))
-                            components_install_success = True
-                        else:
-                            print("\n[INSTALL] Установка отсутствующих компонентов...")
-                            print("Начало установки компонентов: %s" % ', '.join(missing_components))
+                        # Вспомогательные функции для получения путей
+                        def _get_script_dir():
+                            import sys
+                            if os.path.isabs(sys.argv[0]):
+                                script_path = sys.argv[0]
+                            else:
+                                script_path = os.path.join(os.getcwd(), sys.argv[0])
+                            return os.path.dirname(os.path.abspath(script_path))
+                        
+                        def _get_astrapack_dir():
+                            script_dir = _get_script_dir()
+                            return os.path.join(script_dir, "AstraPack")
+                        
+                        # Создаем handlers для всех категорий компонентов
+                        component_handlers = {}
+                        common_params = {
+                            'astrapack_dir': _get_astrapack_dir(),
+                            'logger': None,  # В консоли не используется
+                            'callback': None,  # В консоли нет GUI callback
+                            'universal_runner': get_global_universal_runner(),
+                            'progress_manager': None,  # В консоли может быть None
+                            'dual_logger': globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
+                            'status_manager': component_status_manager
+                        }
+                        
+                        # Регистрируем все handlers
+                        component_handlers['wine_packages'] = WinePackageHandler(**common_params)
+                        component_handlers['wine_environment'] = WineEnvironmentHandler(**common_params)
+                        component_handlers['winetricks'] = WinetricksHandler(use_minimal=True, **common_params)
+                        component_handlers['system_config'] = SystemConfigHandler(**common_params)
+                        component_handlers['application'] = ApplicationHandler(**common_params)
+                        component_handlers['apt_packages'] = AptPackageHandler(**common_params)
+                        component_handlers['wine_application'] = WineApplicationHandler(**common_params)
+                        
+                        print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
+                        
+                        # Создаем ComponentInstaller
+                        component_installer = ComponentInstaller(
+                            component_handlers=component_handlers,
+                            status_manager=component_status_manager,
+                            progress_manager=None,  # В консоли нет GUI прогресса
+                            universal_runner=get_global_universal_runner(),
+                            dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
+                            use_minimal_winetricks=True
+                        )
+                        
+                        # Определяем отсутствующие компоненты
+                        missing_components = component_status_manager.get_missing_components()
+                        
+                        if missing_components:
+                            print("[INFO] Найдено отсутствующих компонентов: %d" % len(missing_components))
+                            print("[INFO] Компоненты для установки: %s" % ', '.join(missing_components))
                             
-                            # Устанавливаем компоненты
-                            install_success = component_installer.install_components(missing_components)
-                            
-                            if install_success:
-                                print("\n[SUCCESS] Все компоненты установлены успешно!")
-                                print("[INFO] Установлено компонентов: %d" % len(missing_components))
+                            if dry_run:
+                                print("\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка компонентов НЕ выполняется")
+                                print("[OK] Будет выполнена установка следующих компонентов:")
+                                for idx, comp_id in enumerate(missing_components, 1):
+                                    config = COMPONENTS_CONFIG.get(comp_id, {})
+                                    comp_name = config.get('name', comp_id)
+                                    print("  %d. %s (%s)" % (idx, comp_name, comp_id))
                                 components_install_success = True
                             else:
-                                # Проверяем, сколько компонентов установлено успешно
-                                installed_count = 0
-                                error_count = 0
-                                skipped_count = 0
+                                print("\n[INSTALL] Установка отсутствующих компонентов...")
+                                print("Начало установки компонентов: %s" % ', '.join(missing_components))
                                 
-                                for comp_id in missing_components:
-                                    is_installed = component_installer.check_component_status(comp_id)
-                                    if is_installed:
-                                        installed_count += 1
-                                    else:
-                                        # Проверяем, был ли компонент пропущен (уже установлен)
-                                        # или была ошибка
-                                        error_count += 1
+                                # Устанавливаем компоненты
+                                install_success = component_installer.install_components(missing_components)
                                 
-                                print("\n[WARNING] Установка компонентов завершена с ошибками")
-                                print("[INFO] Установлено компонентов: %d" % installed_count)
-                                print("[INFO] Пропущено компонентов (уже установлены): %d" % skipped_count)
-                                print("[INFO] Ошибок при установке: %d" % error_count)
-                                components_install_success = False
+                                if install_success:
+                                    print("\n[SUCCESS] Все компоненты установлены успешно!")
+                                    print("[INFO] Установлено компонентов: %d" % len(missing_components))
+                                    components_install_success = True
+                                else:
+                                    # Проверяем, сколько компонентов установлено успешно
+                                    installed_count = 0
+                                    error_count = 0
+                                    skipped_count = 0
+                                    
+                                    for comp_id in missing_components:
+                                        is_installed = component_installer.check_component_status(comp_id)
+                                        if is_installed:
+                                            installed_count += 1
+                                        else:
+                                            # Проверяем, был ли компонент пропущен (уже установлен)
+                                            # или была ошибка
+                                            error_count += 1
+                                    
+                                    print("\n[WARNING] Установка компонентов завершена с ошибками")
+                                    print("[INFO] Установлено компонентов: %d" % installed_count)
+                                    print("[INFO] Пропущено компонентов (уже установлены): %d" % skipped_count)
+                                    print("[INFO] Ошибок при установке: %d" % error_count)
+                                    components_install_success = False
+                        else:
+                            print("[INFO] Все компоненты уже установлены")
+                            components_install_success = True
+                        
+                    except Exception as e:
+                        print(f"[ERROR] Ошибка при установке компонентов: {e}", gui_log=True)
+                        print(f"[ERROR] Ошибка при установке компонентов: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        components_install_success = False
+                
+                # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
+                repo_success = True
+                stats_success = True
+                interactive_success = True
+                
+                if repo_success and stats_success and interactive_success and update_success and components_install_success:
+                    if dry_run:
+                        print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
+                        print("[INFO] Автоматизация завершена успешно в режиме тестирования", gui_log=True)
+                        print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
+                        print("=============================")
+                        print("[OK] Все проверки пройдены успешно")
+                        print("[OK] Система готова к автоматизации")
+                        print("[WARNING] Никаких изменений в системе НЕ внесено")
+                        print("[START] Для реальной установки запустите без --dry-run")
                     else:
-                        print("[INFO] Все компоненты уже установлены")
-                        components_install_success = True
-                    
-                except Exception as e:
-                    print(f"[ERROR] Ошибка при установке компонентов: {e}", gui_log=True)
-                    print(f"[ERROR] Ошибка при установке компонентов: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    components_install_success = False
-            
-            # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
-            repo_success = True
-            stats_success = True
-            interactive_success = True
-            
-            if repo_success and stats_success and interactive_success and update_success and components_install_success:
-                if dry_run:
-                    print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                    print("[INFO] Автоматизация завершена успешно в режиме тестирования", gui_log=True)
-                    print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
-                    print("=============================")
-                    print("[OK] Все проверки пройдены успешно")
-                    print("[OK] Система готова к автоматизации")
-                    print("[WARNING] Никаких изменений в системе НЕ внесено")
-                    print("[START] Для реальной установки запустите без --dry-run")
+                        print("\n[SUCCESS] Автоматизация завершена успешно!")
+                        print("[INFO] Автоматизация завершена успешно", gui_log=True)
                 else:
-                    print("\n[SUCCESS] Автоматизация завершена успешно!")
-                    print("[INFO] Автоматизация завершена успешно", gui_log=True)
+                    print("\n[ERROR] Автоматизация завершена с ошибками")
+                    print("[ERROR] Автоматизация завершена с ошибками", gui_log=True)
             else:
-                print("\n[ERROR] Автоматизация завершена с ошибками")
-                print("[ERROR] Автоматизация завершена с ошибками", gui_log=True)
-            
-            # Неожиданный режим в консольном режиме
-            print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
-            print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", gui_log=True)
-            print("[INFO] Ожидался режим: console_forced")
-            sys.exit(1)
+                # Неожиданный режим в консольном режиме
+                print("[ERROR] Неожиданный режим в консольном режиме: %s" % start_mode)
+                print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", gui_log=True)
+                print("[INFO] Ожидался режим: console_forced")
+                sys.exit(1)
             
         except KeyboardInterrupt:
             print("[WARNING] Программа остановлена пользователем (Ctrl+C)", gui_log=True)

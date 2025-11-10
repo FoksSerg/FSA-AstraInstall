@@ -90,9 +90,18 @@ fi
 
 export TERMINAL_PID
 
-# Сворачиваем все окна в первый раз (ДО sudo, если доступен xdotool)
-if command -v xdotool >/dev/null 2>&1; then
-    xdotool key Super+d 2>/dev/null  # Сворачиваем все окна
+# Проверяем, не в консольном режиме ли мы
+SKIP_TERMINAL=false
+for arg in "$@"; do
+    if [[ "$arg" == "--console" ]]; then
+        SKIP_TERMINAL=true
+        break
+    fi
+done
+
+# Сворачиваем окно терминала (ДО sudo, если доступен xdotool)
+# НЕ сворачиваем в консольном режиме
+if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
     minimize_terminal_window "$TERMINAL_PID"  # Сворачиваем терминал по PID
 fi
 
@@ -109,9 +118,24 @@ if [ ! -z "$1" ] && [[ "$1" == "--terminal-pid" ]]; then
     log_message "Используем переданный PID терминала: $TERMINAL_PID"
     shift 2  # Убираем --terminal-pid и значение из аргументов
     
+    # Проверяем, не в консольном режиме ли мы
+    SKIP_TERMINAL_AFTER_SUDO=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--console" ]]; then
+            SKIP_TERMINAL_AFTER_SUDO=true
+            break
+        fi
+    done
+    
     # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
-    minimize_terminal_window "$TERMINAL_PID"
+    # НЕ сворачиваем в консольном режиме
+    if [ "$SKIP_TERMINAL_AFTER_SUDO" != "true" ]; then
+        minimize_terminal_window "$TERMINAL_PID"
+    fi
 fi
+
+# Сохраняем оставшиеся аргументы для передачи в astra_install.sh
+INSTALL_ARGS=("$@")
 
 # Проверяем доступность сервера
 log_message "Проверка доступности сервера 10.10.55.77..."
@@ -145,8 +169,10 @@ if [ ! -f "$CREDENTIALS_FILE" ]; then
     echo "username=FokinSA" >> "$CREDENTIALS_FILE"
     chmod 600 "$CREDENTIALS_FILE"
     log_message "Учетные данные сохранены"
-    # Сворачиваем терминал после запроса пароля
-    minimize_terminal_window "$TERMINAL_PID"
+    # Сворачиваем терминал после запроса пароля (НЕ в консольном режиме)
+    if [ "$SKIP_TERMINAL" != "true" ]; then
+        minimize_terminal_window "$TERMINAL_PID"
+    fi
 fi
 
 # Копируем файлы используя сохраненные учетные данные
@@ -166,7 +192,10 @@ done
 log_message "Все файлы успешно скопированы!"
 
 # Сворачиваем терминал после копирования файлов (на всякий случай)
-minimize_terminal_window "$TERMINAL_PID"
+# НЕ сворачиваем в консольном режиме
+if [ "$SKIP_TERMINAL" != "true" ]; then
+    minimize_terminal_window "$TERMINAL_PID"
+fi
 
 # Очищаем логи (ОТКЛЮЧЕНО для сохранения диагностики)
 log_message "Очистка старых логов ОТКЛЮЧЕНА для сохранения диагностики..."
@@ -183,8 +212,27 @@ log_message "Права установлены"
 log_message "Запуск установки..."
 cd "$LINUX_ASTRA_PATH" 2>/dev/null
 if [ -f "astra_install.sh" ]; then
-    log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID --windows-minimized"
-    ./astra_install.sh --terminal-pid "$TERMINAL_PID" --windows-minimized
+    # Проверяем, передан ли --console, и добавляем --mode console_forced
+    ADD_MODE_ARG=""
+    for arg in "${INSTALL_ARGS[@]}"; do
+        if [[ "$arg" == "--console" ]]; then
+            ADD_MODE_ARG="--mode console_forced"
+            break
+        fi
+    done
+    
+    if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
+        if [ -n "$ADD_MODE_ARG" ]; then
+            log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID --windows-minimized ${INSTALL_ARGS[*]} $ADD_MODE_ARG"
+            ./astra_install.sh --terminal-pid "$TERMINAL_PID" --windows-minimized "${INSTALL_ARGS[@]}" "$ADD_MODE_ARG"
+        else
+            log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID --windows-minimized ${INSTALL_ARGS[*]}"
+            ./astra_install.sh --terminal-pid "$TERMINAL_PID" --windows-minimized "${INSTALL_ARGS[@]}"
+        fi
+    else
+        log_message "Запускаем: ./astra_install.sh --terminal-pid $TERMINAL_PID --windows-minimized"
+        ./astra_install.sh --terminal-pid "$TERMINAL_PID" --windows-minimized
+    fi
 else
     log_message "ОШИБКА: Файл astra_install.sh не найден"
     echo "Ошибка Обновления"

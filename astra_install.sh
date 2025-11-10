@@ -60,19 +60,6 @@ if [ "$EUID" -ne 0 ] && command -v xdotool >/dev/null 2>&1; then
     if [ "$SKIP_TERMINAL" != "true" ]; then
         minimize_terminal_window ""  # Пробуем найти автоматически
     fi
-    
-    # Сворачиваем все остальные окна (если не передан --windows-minimized)
-    SKIP_ALL_WINDOWS=false
-    for arg in "$@"; do
-        if [[ "$arg" == "--console" ]] || [[ "$arg" == "--windows-minimized" ]]; then
-            SKIP_ALL_WINDOWS=true
-            break
-        fi
-    done
-    
-    if [ "$SKIP_ALL_WINDOWS" != "true" ]; then
-        xdotool key Super+d 2>/dev/null
-    fi
 fi
 
 # КРИТИЧНО: Принудительно переходим в каталог скрипта
@@ -269,6 +256,7 @@ log_message "Начинаем выполнение astra_install.sh"
 CONSOLE_MODE=false
 DRY_RUN=false
 TERMINAL_PID_ARG=""
+START_MODE_ARG=""
 
 for arg in "$@"; do
     case $arg in
@@ -284,6 +272,12 @@ for arg in "$@"; do
             DRY_RUN=true
             echo "[i] Режим: ТЕСТИРОВАНИЕ (dry-run)"
             log_message "Включен режим тестирования (--dry-run)"
+            ;;
+        --mode)
+            # Следующий аргумент - режим запуска
+            shift
+            START_MODE_ARG="$1"
+            log_message "Получен режим запуска через аргумент: $START_MODE_ARG"
             ;;
         --terminal-pid=*)
             TERMINAL_PID_ARG="${arg#*=}"
@@ -647,6 +641,17 @@ echo "[INFO] Финальные параметры запуска:"
 echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
 echo "   [i] START_MODE: $START_MODE"
 log_message "Финальные параметры: CONSOLE_MODE=$CONSOLE_MODE, START_MODE=$START_MODE"
+
+# Устанавливаем START_MODE для консольного режима
+# Если режим передан через аргумент --mode, используем его
+if [ -n "$START_MODE_ARG" ]; then
+    START_MODE="$START_MODE_ARG"
+    log_message "Используем START_MODE из аргумента: $START_MODE"
+elif [ "$CONSOLE_MODE" = true ] && [ -z "$START_MODE" ]; then
+    # Если режим не передан, но включен консольный режим, устанавливаем по умолчанию
+    START_MODE="console_forced"
+    log_message "Установлен START_MODE=console_forced для консольного режима"
+fi
 
 if [ "$CONSOLE_MODE" = true ]; then
     echo "[>] Консольный режим - обновление системы..."
