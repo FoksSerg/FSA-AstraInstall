@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall Automation - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.105 (2025.11.07)
+Версия: V2.4.106 (2025.11.10)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.105 (2025.11.07)"
+APP_VERSION = "V2.4.106 (2025.11.10)"
 import os
 import sys
 import tempfile
@@ -313,11 +313,108 @@ COMPONENTS_CONFIG = {
         'description': 'Notepad++ - текстовый редактор для Windows',
         'sort_order': 15
     },
+    
+    # CONT-Designer компоненты
+    'cont_wineprefix': {
+        'name': 'CONT Wine Prefix',
+        'path': '~/.local/share/wineprefixes/cont',
+        'category': 'wine_environment',
+        'dependencies': [],  # НЕ зависит от wine_astraregul
+        'check_paths': ['~/.local/share/wineprefixes/cont'],
+        'check_method': 'wineprefix',  # Проверка наличия system.reg или drive_c
+        'install_method': 'wine_init',
+        'uninstall_method': 'wine_cleanup',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',  # НОВОЕ: отдельный префикс
+        'wine_source': 'system',  # НОВОЕ: использовать системный Wine из apt
+        'gui_selectable': True,
+        'description': 'Wine префикс для CONT-Designer',
+        'sort_order': 20
+    },
+    'cont_designer': {
+        'name': 'CONT-Designer 3.0',
+        'path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
+        'category': 'wine_application',
+        'dependencies': ['cont_wineprefix'],
+        'check_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe'],
+        'install_method': 'wine_application',
+        'uninstall_method': 'wine_application',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'source_dir': 'CountPack',  # НОВОЕ: папка с предустановленной конфигурацией
+        'copy_method': 'replace',  # НОВОЕ: копировать с заменой
+        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
+        'gui_selectable': True,
+        'description': 'CONT-Designer 3.0',
+        'sort_order': 21
+    },
+    'cont_desktop_shortcut': {
+        'name': 'CONT-Designer Ярлык',
+        'path': '~/Desktop/CONT-Designer.desktop',
+        'category': 'application',
+        'dependencies': ['cont_designer'],
+        'check_paths': ['~/Desktop/CONT-Designer.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'executable_path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
+        'executable_args': '--Profile="CONT-Designer 3.0.0.0"',  # НОВОЕ: аргументы запуска
+        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
+        'gui_selectable': True,
+        'description': 'Ярлык CONT-Designer на рабочем столе',
+        'sort_order': 22
+    },
+    'cont_workspace_shortcut': {
+        'name': 'CONT Рабочие каталоги',
+        'path': '~/Desktop/Рабочие каталоги.desktop',
+        'category': 'application',
+        'dependencies': ['cont_designer'],
+        'check_paths': ['~/Desktop/Рабочие каталоги.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'shortcut_type': 'folder',  # НОВОЕ: тип ярлыка - папка
+        'folder_path': '~/.local/share/wineprefixes',  # НОВОЕ: путь к папке
+        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
+        'gui_selectable': True,
+        'description': 'Ярлык для открытия папки wineprefix',
+        'sort_order': 23
+    },
 }
 
 # ============================================================================
 # УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С КОМПОНЕНТАМИ
 # ============================================================================
+
+def expand_user_path(path):
+    """
+    Расширяет путь с учетом SUDO_USER для корректной работы при запуске с sudo
+    
+    КРИТИЧНО: При запуске с sudo os.path.expanduser("~") возвращает /root
+    вместо домашней директории реального пользователя. Эта функция
+    корректно определяет домашнюю директорию реального пользователя.
+    
+    Args:
+        path: Путь для расширения (может содержать ~)
+    
+    Returns:
+        Расширенный путь с учетом реального пользователя
+    """
+    if not path or '~' not in path:
+        return path
+    
+    # Определяем домашнюю директорию реального пользователя
+    real_user = os.environ.get('SUDO_USER')
+    if real_user and real_user != 'root':
+        import pwd
+        try:
+            home = pwd.getpwnam(real_user).pw_dir
+        except KeyError:
+            # Если пользователь не найден, используем стандартный expanduser
+            home = os.path.expanduser("~")
+    else:
+        home = os.path.expanduser("~")
+    
+    # Заменяем ~ на реальную домашнюю директорию
+    return path.replace('~', home)
 
 def get_component_field(component_id, field_name, default=None):
     """
@@ -370,13 +467,19 @@ def check_component_status(component_id, wineprefix_path=None):
     
     # Определяем путь к WINEPREFIX если не передан
     if wineprefix_path is None:
-        real_user = os.environ.get('SUDO_USER')
-        if real_user and real_user != 'root':
-            import pwd
-            home = pwd.getpwnam(real_user).pw_dir
+        # НОВОЕ: Проверяем наличие wineprefix_path в конфигурации компонента
+        config_wineprefix_path = config.get('wineprefix_path')
+        if config_wineprefix_path:
+            wineprefix_path = expand_user_path(config_wineprefix_path)
         else:
-            home = os.path.expanduser("~")
-        wineprefix_path = os.path.join(home, ".wine-astraregul")
+            # Используем стандартный префикс
+            real_user = os.environ.get('SUDO_USER')
+            if real_user and real_user != 'root':
+                import pwd
+                home = pwd.getpwnam(real_user).pw_dir
+            else:
+                home = os.path.expanduser("~")
+            wineprefix_path = os.path.join(home, ".wine-astraregul")
     
     # Специальная проверка для wineprefix
     if check_method == 'wineprefix':
@@ -1330,6 +1433,17 @@ class WineEnvironmentHandler(ComponentHandler):
         print(f"Инициализация Wine окружения: {config['name']}")
         
         try:
+            # НОВОЕ: Определяем путь к префиксу из конфигурации
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+            else:
+                # Используем стандартный префикс
+                self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+            
+            # НОВОЕ: Определяем источник Wine
+            wine_source = config.get('wine_source', 'astrapack')
+            
             # Создаем директории кэша
             cache_wine = os.path.join(self.home, ".cache", "wine")
             cache_winetricks = os.path.join(self.home, ".cache", "winetricks")
@@ -1350,53 +1464,75 @@ class WineEnvironmentHandler(ComponentHandler):
                 os.chown(cache_winetricks, uid, gid)
                 print(f"Установлен владелец директорий кэша: {real_user}")
             
-            # Копируем wine-gecko компоненты
-            wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
-            if os.path.exists(wine_gecko_dir):
-                import shutil
-                print("Копирование wine-gecko компонентов...")
-                for item in os.listdir(wine_gecko_dir):
-                    src = os.path.join(wine_gecko_dir, item)
-                    dst = os.path.join(cache_wine, item)
-                    if os.path.isfile(src):
-                        shutil.copy2(src, dst)
-                        if uid is not None and gid is not None:
-                            os.chown(dst, uid, gid)
-                        print(f"  Скопирован: {item}")
-                print("wine-gecko компоненты скопированы")
+            # Копируем wine-gecko компоненты (только если используется AstraPack Wine)
+            if wine_source != 'system' and self.astrapack_dir:
+                wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
+                if os.path.exists(wine_gecko_dir):
+                    import shutil
+                    print("Копирование wine-gecko компонентов...")
+                    for item in os.listdir(wine_gecko_dir):
+                        src = os.path.join(wine_gecko_dir, item)
+                        dst = os.path.join(cache_wine, item)
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                            if uid is not None and gid is not None:
+                                os.chown(dst, uid, gid)
+                            print(f"  Скопирован: {item}")
+                    print("wine-gecko компоненты скопированы")
             
-            # Копируем winetricks кэш
-            winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
-            if os.path.exists(winetricks_cache_dir):
-                import shutil
-                print("Копирование winetricks кэша...")
-                for item in os.listdir(winetricks_cache_dir):
-                    src = os.path.join(winetricks_cache_dir, item)
-                    dst = os.path.join(cache_winetricks, item)
-                    if os.path.isdir(src):
-                        if os.path.exists(dst):
-                            shutil.rmtree(dst)
-                        shutil.copytree(src, dst)
-                        if uid is not None and gid is not None:
-                            for root_dir, dirs, files in os.walk(dst):
-                                os.chown(root_dir, uid, gid)
-                                for fname in files:
-                                    os.chown(os.path.join(root_dir, fname), uid, gid)
-                        print(f"  Скопирована папка: {item}")
-                    else:
-                        shutil.copy2(src, dst)
-                        if uid is not None and gid is not None:
-                            os.chown(dst, uid, gid)
-                        print(f"  Скопирован файл: {item}")
-                print("winetricks кэш скопирован")
+            # Копируем winetricks кэш (только если используется AstraPack Wine)
+            if wine_source != 'system' and self.astrapack_dir:
+                winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
+                if os.path.exists(winetricks_cache_dir):
+                    import shutil
+                    print("Копирование winetricks кэша...")
+                    for item in os.listdir(winetricks_cache_dir):
+                        src = os.path.join(winetricks_cache_dir, item)
+                        dst = os.path.join(cache_winetricks, item)
+                        if os.path.isdir(src):
+                            if os.path.exists(dst):
+                                shutil.rmtree(dst)
+                            shutil.copytree(src, dst)
+                            if uid is not None and gid is not None:
+                                for root_dir, dirs, files in os.walk(dst):
+                                    os.chown(root_dir, uid, gid)
+                                    for fname in files:
+                                        os.chown(os.path.join(root_dir, fname), uid, gid)
+                            print(f"  Скопирована папка: {item}")
+                        else:
+                            shutil.copy2(src, dst)
+                            if uid is not None and gid is not None:
+                                os.chown(dst, uid, gid)
+                            print(f"  Скопирован файл: {item}")
+                    print("winetricks кэш скопирован")
             
             # Инициализируем WINEPREFIX если его еще нет
             if not os.path.exists(os.path.join(self.wineprefix, 'system.reg')):
                 print(f"Инициализация WINEPREFIX: {self.wineprefix}")
                 
-                # Определяем путь к wineboot (используем wine-astraregul)
-                wine_path = '/opt/wine-astraregul/bin'
-                wineboot_path = os.path.join(wine_path, 'wineboot')
+                # НОВОЕ: Определяем путь к wineboot в зависимости от источника Wine
+                if wine_source == 'system':
+                    # Используем системный Wine
+                    wine_path = '/usr/bin'
+                    wineboot_path = '/usr/bin/wineboot'
+                    if not os.path.exists(wineboot_path):
+                        # Пробуем найти в PATH
+                        import subprocess
+                        result = subprocess.run(['which', 'wineboot'], 
+                                              stdout=subprocess.PIPE, 
+                                              stderr=subprocess.PIPE, 
+                                              text=True, timeout=5)
+                        if result.returncode == 0:
+                            wineboot_path = result.stdout.strip()
+                            wine_path = os.path.dirname(wineboot_path)
+                        else:
+                            print("wineboot не найден в системе", level='ERROR')
+                            self._update_status(component_id, 'error')
+                            return False
+                else:
+                    # Используем Wine из AstraPack
+                    wine_path = '/opt/wine-astraregul/bin'
+                    wineboot_path = os.path.join(wine_path, 'wineboot')
                 
                 if not os.path.exists(wineboot_path):
                     print(f"wineboot не найден в {wine_path}", level='ERROR')
@@ -2074,6 +2210,11 @@ class WineApplicationHandler(ComponentHandler):
         component_name = get_component_field(component_id, 'name', 'Unknown')
         print(f"Установка Wine приложения: {component_name}")
         
+        # НОВОЕ: Определяем путь к префиксу из конфигурации
+        wineprefix_path = config.get('wineprefix_path')
+        if wineprefix_path:
+            self.wineprefix = expand_user_path(wineprefix_path)
+        
         # Обновляем прогресс
         self._update_progress(
             stage_name=f"Установка {component_name}",
@@ -2082,11 +2223,29 @@ class WineApplicationHandler(ComponentHandler):
             details=f"Подготовка к установке {component_id}"
         )
         
-        # Для Wine приложений используем метод wine_executable
-        # Используем ту же логику что и в ApplicationHandler
+        # НОВОЕ: Проверяем наличие метода копирования предустановленной конфигурации
+        copy_method = config.get('copy_method')
+        source_dir = config.get('source_dir')
+        
+        if copy_method == 'replace' and source_dir:
+            # Копируем предустановленную конфигурацию
+            if not self._copy_preinstalled_config(component_id, config):
+                self._update_status(component_id, 'error')
+                return False
+        
+        # Для Wine приложений используем метод wine_executable или wine_application
         install_method = get_component_field(component_id, 'install_method')
         if install_method == 'wine_executable':
             return self._install_wine_executable(component_id, config)
+        elif install_method == 'wine_application':
+            # Для wine_application просто проверяем статус после копирования
+            if self.check_status(component_id, config):
+                self._update_status(component_id, 'ok')
+                return True
+            else:
+                print(f"Приложение не найдено после копирования конфигурации", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
         else:
             print(f"Неизвестный метод установки для {component_id}: {install_method}", level='ERROR')
             self._update_status(component_id, 'error')
@@ -2110,6 +2269,116 @@ class WineApplicationHandler(ComponentHandler):
         else:
             print(f"Неизвестный метод удаления для {component_id}: {uninstall_method}", level='ERROR')
             self._update_status(component_id, 'error')
+            return False
+    
+    def _copy_preinstalled_config(self, component_id: str, config: dict) -> bool:
+        """
+        Копирование предустановленной конфигурации Wine префикса
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+        
+        Returns:
+            bool: True если копирование успешно
+        """
+        source_dir = config.get('source_dir')
+        if not source_dir:
+            print("source_dir не указан в конфигурации", level='ERROR')
+            return False
+        
+        # Определяем путь к папке CountPack
+        import sys
+        if os.path.isabs(sys.argv[0]):
+            script_path = sys.argv[0]
+        else:
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        script_dir = os.path.dirname(os.path.abspath(script_path))
+        
+        # Полный путь к папке с предустановленной конфигурацией
+        if os.path.isabs(source_dir):
+            full_source_dir = source_dir
+        else:
+            # Относительный путь - ищем в директории скрипта
+            full_source_dir = os.path.join(script_dir, source_dir)
+        
+        if not os.path.exists(full_source_dir):
+            print(f"Папка с предустановленной конфигурацией не найдена: {full_source_dir}", level='ERROR')
+            return False
+        
+        # Определяем путь к целевому префиксу
+        wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+        wineprefix_path = expand_user_path(wineprefix_path)
+        
+        print(f"Копирование предустановленной конфигурации из {full_source_dir} в {wineprefix_path}")
+        
+        try:
+            import shutil
+            
+            # КРИТИЧНО: Копируем с заменой всех файлов
+            # Копируем dosdevices и drive_c (НЕ копируем Ярлыки - они обрабатываются отдельно)
+            items_to_copy = ['dosdevices', 'drive_c']
+            
+            for item in items_to_copy:
+                src = os.path.join(full_source_dir, item)
+                dst = os.path.join(wineprefix_path, item)
+                
+                if not os.path.exists(src):
+                    print(f"Предупреждение: {item} не найден в {full_source_dir}", level='WARNING')
+                    continue
+                
+                if os.path.isdir(src):
+                    # Копируем директорию с заменой
+                    if os.path.exists(dst):
+                        print(f"Удаление существующей директории: {dst}")
+                        shutil.rmtree(dst)
+                    print(f"Копирование директории: {item}")
+                    shutil.copytree(src, dst)
+                    print(f"  Директория скопирована: {item}")
+                else:
+                    # Копируем файл с заменой
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    print(f"Копирование файла: {item}")
+                    shutil.copy2(src, dst)
+                    print(f"  Файл скопирован: {item}")
+            
+            # Копируем файлы реестра (если есть)
+            reg_files = ['system.reg', 'user.reg', 'userdef.reg']
+            for reg_file in reg_files:
+                src = os.path.join(full_source_dir, reg_file)
+                dst = os.path.join(wineprefix_path, reg_file)
+                
+                if os.path.exists(src):
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    shutil.copy2(src, dst)
+                    print(f"  Файл реестра скопирован: {reg_file}")
+            
+            # Устанавливаем правильного владельца
+            real_user = os.environ.get('SUDO_USER')
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                import pwd
+                uid = pwd.getpwnam(real_user).pw_uid
+                gid = pwd.getpwnam(real_user).pw_gid
+                
+                # Устанавливаем владельца на всю директорию префикса
+                os.chown(wineprefix_path, uid, gid)
+                for root, dirs, files in os.walk(wineprefix_path):
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), uid, gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), uid, gid)
+                
+                print(f"Установлен владелец префикса: {real_user}")
+            
+            print("Предустановленная конфигурация успешно скопирована")
+            return True
+            
+        except Exception as e:
+            print(f"Ошибка копирования предустановленной конфигурации: {str(e)}", level='ERROR')
+            import traceback
+            traceback.print_exc()
             return False
     
     def _install_wine_executable(self, component_id: str, config: dict) -> bool:
@@ -2520,8 +2789,42 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
         print(f"Создание ярлыка рабочего стола: {component_id}")
         
         try:
-            # Проверяем/создаем симлинк Desktop
-            desktop_dir = os.path.join(self.home, "Desktop")
+            # Определяем путь к целевому префиксу
+            wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+            wineprefix_path = expand_user_path(wineprefix_path)
+            
+            # Определяем источник Wine
+            wine_source = config.get('wine_source', 'astrapack')
+            
+            if wine_source == 'system':
+                # Используем системный Wine
+                wine_path = '/usr/bin/wine'
+                if not os.path.exists(wine_path):
+                    import subprocess
+                    result = subprocess.run(['which', 'wine'], 
+                                          stdout=subprocess.PIPE, 
+                                          stderr=subprocess.PIPE, 
+                                          text=True, timeout=5)
+                    if result.returncode == 0:
+                        wine_path = result.stdout.strip()
+                    else:
+                        print("wine не найден в системе", level='ERROR')
+                        self._update_status(component_id, 'error')
+                        return False
+            else:
+                # Используем Wine из AstraPack
+                wine_path = '/opt/wine-astraregul/bin/wine'
+            
+            # Проверяем тип ярлыка
+            shortcut_type = config.get('shortcut_type', 'application')
+            
+            # Определяем путь к файлу ярлыка
+            desktop_file_path = config.get('path', '~/Desktop/AstraRegul.desktop')
+            desktop_file = os.path.expanduser(desktop_file_path)
+            desktop_dir = os.path.dirname(desktop_file)
+            desktop_name = config.get('name', 'Astra IDE (Wine)')
+            
+            # Создаем папку Desktop если нужно
             desktop1_dir = os.path.join(self.home, "Desktops", "Desktop1")
             
             if not os.path.exists(desktop_dir) and not os.path.islink(desktop_dir):
@@ -2529,10 +2832,25 @@ cd "${WINEPREFIX}"/drive_c/"Program Files"/AstraRegul/Astra.IDE_64_*/Astra.IDE/C
                     os.symlink(desktop1_dir, desktop_dir)
                     print("Создан симлинк Desktop -> Desktop1")
             
-            # Создаем ярлык
-            desktop_file = os.path.join(desktop_dir, "AstraRegul.desktop")
-            
-            desktop_content = f"""[Desktop Entry]
+            if shortcut_type == 'folder':
+                # Создаем ярлык для открытия папки
+                folder_path = config.get('folder_path', wineprefix_path)
+                folder_path = os.path.expanduser(folder_path)
+                
+                desktop_content = f"""[Desktop Entry]
+Type=Link
+NoDisplay=false
+Hidden=false
+URL={folder_path}
+"""
+            else:
+                # Создаем ярлык для запуска приложения
+                executable_path = config.get('executable_path')
+                if not executable_path:
+                    # Для старых компонентов (Astra.IDE) используем скрипт запуска
+                    if component_id == 'desktop_shortcut':
+                        # Старая логика для Astra.IDE
+                        desktop_content = f"""[Desktop Entry]
 Comment=
 Exec={self.home}/start-astraide.sh
 Icon=
@@ -2542,14 +2860,50 @@ StartupNotify=true
 Terminal=true
 Type=Application
 """
+                    else:
+                        print("executable_path не указан в конфигурации", level='ERROR')
+                        self._update_status(component_id, 'error')
+                        return False
+                else:
+                    # НОВОЕ: Создаем ярлык для Wine приложения
+                    # Полный путь к исполняемому файлу в Wine префиксе
+                    full_executable = os.path.join(wineprefix_path, executable_path)
+                    
+                    # Аргументы запуска (если есть)
+                    executable_args = config.get('executable_args', '')
+                    
+                    # Формируем команду запуска (конвертируем путь в формат Wine)
+                    wine_executable_path = executable_path.replace('/', '\\')
+                    if executable_args:
+                        exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}" {executable_args}'
+                    else:
+                        exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}"'
+                    
+                    # Путь для рабочей директории
+                    work_dir = os.path.dirname(full_executable)
+                    
+                    desktop_content = f"""[Desktop Entry]
+Name={desktop_name}
+Type=Application
+NoDisplay=false
+Exec={exec_cmd}
+Icon=47FF_CONT-Designer.0
+Hidden=false
+Path={work_dir}
+Terminal=false
+StartupNotify=true
+StartupWMClass=cont-designer.exe
+"""
             
-            with open(desktop_file, 'w') as f:
+            # Записываем ярлык
+            with open(desktop_file, 'w', encoding='utf-8') as f:
                 f.write(desktop_content)
             
+            # Устанавливаем права на выполнение
             os.chmod(desktop_file, 0o755)
             print(f"Создан ярлык: {desktop_file}")
             
-            # Устанавливаем правильного владельца если запущено от root
+            # Устанавливаем правильного владельца
             real_user = os.environ.get('SUDO_USER')
             if os.geteuid() == 0 and real_user and real_user != 'root':
                 import pwd
@@ -2558,21 +2912,22 @@ Type=Application
                 os.chown(desktop_file, uid, gid)
                 print(f"Установлен владелец ярлыка: {real_user}")
             
-            # Удаляем лишние ярлыки созданные установщиком
-            import time
-            time.sleep(2)
-            
-            unwanted_shortcuts = [
-                os.path.join(desktop_dir, "Astra.IDE 1.7.2.0.lnk"),
-                os.path.join(desktop_dir, "Astra.IDE 1.7.2.1.lnk"),
-                os.path.join(desktop_dir, "IDE Selector.lnk"),
-                os.path.join(desktop_dir, "IDE Selector.desktop")
-            ]
-            
-            for shortcut in unwanted_shortcuts:
-                if os.path.exists(shortcut):
-                    os.remove(shortcut)
-                    print(f"Удален лишний ярлык: {os.path.basename(shortcut)}")
+            # Удаляем лишние ярлыки созданные установщиком (только для Astra.IDE)
+            if component_id == 'desktop_shortcut':
+                import time
+                time.sleep(2)
+                
+                unwanted_shortcuts = [
+                    os.path.join(desktop_dir, "Astra.IDE 1.7.2.0.lnk"),
+                    os.path.join(desktop_dir, "Astra.IDE 1.7.2.1.lnk"),
+                    os.path.join(desktop_dir, "IDE Selector.lnk"),
+                    os.path.join(desktop_dir, "IDE Selector.desktop")
+                ]
+                
+                for shortcut in unwanted_shortcuts:
+                    if os.path.exists(shortcut):
+                        os.remove(shortcut)
+                        print(f"Удален лишний ярлык: {os.path.basename(shortcut)}")
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
             actual_status = self.check_status(component_id, config)
@@ -6406,6 +6761,9 @@ class UniversalInstaller(object):
                 return self._install_winetricks(component_id, config)
             elif install_method == 'wine_executable':
                 return self._install_wine_executable(component_id, config)
+            elif install_method == 'wine_application':
+                # НОВОЕ: Обработка wine_application через копирование предустановленной конфигурации
+                return self._install_wine_application(component_id, config)
             elif install_method == 'script_creation':
                 return self._install_script_creation(component_id, config)
             elif install_method == 'desktop_shortcut':
@@ -6482,6 +6840,9 @@ class UniversalInstaller(object):
                 return self._uninstall_winetricks(component_id, config)
             elif uninstall_method == 'wine_executable':
                 return self._uninstall_wine_executable(component_id, config)
+            elif uninstall_method == 'wine_application':
+                # НОВОЕ: Обработка wine_application через удаление префикса или директории приложения
+                return self._uninstall_wine_application(component_id, config)
             elif uninstall_method == 'script_removal':
                 return self._uninstall_script_removal(component_id, config)
             elif uninstall_method == 'desktop_shortcut':
@@ -6682,10 +7043,10 @@ class UniversalInstaller(object):
                 elif path_field.startswith('drive_c/'):
                     # Для компонентов внутри WINEPREFIX проверяем через wineprefix
                     if component_id == 'wineprefix':
-                        folder_path = os.path.expanduser('~/.wine-astraregul')
+                        folder_path = expand_user_path('~/.wine-astraregul')
                     else:
                         # Определяем путь к родительской папке
-                        wineprefix_path = os.path.expanduser('~/.wine-astraregul')
+                        wineprefix_path = expand_user_path('~/.wine-astraregul')
                         folder_path = os.path.join(wineprefix_path, path_field)
                 else:
                     folder_path = path_field
@@ -6836,6 +7197,17 @@ class UniversalInstaller(object):
         print("Инициализация Wine окружения: %s" % component_id)
         
         try:
+            # НОВОЕ: Определяем путь к префиксу из конфигурации
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+            else:
+                # Используем стандартный префикс
+                self.wineprefix = os.path.join(self.home, ".wine-astraregul")
+            
+            # НОВОЕ: Определяем источник Wine
+            wine_source = config.get('wine_source', 'astrapack')
+            
             # Создаем директории кэша
             cache_wine = os.path.join(self.home, ".cache", "wine")
             cache_winetricks = os.path.join(self.home, ".cache", "winetricks")
@@ -6856,53 +7228,74 @@ class UniversalInstaller(object):
                 os.chown(cache_winetricks, uid, gid)
                 print("Установлен владелец директорий кэша: %s" % real_user)
             
-            # Копируем wine-gecko компоненты
-            wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
-            if os.path.exists(wine_gecko_dir):
-                import shutil
-                print("Копирование wine-gecko компонентов...")
-                for item in os.listdir(wine_gecko_dir):
-                    src = os.path.join(wine_gecko_dir, item)
-                    dst = os.path.join(cache_wine, item)
-                    if os.path.isfile(src):
-                        shutil.copy2(src, dst)
-                        if uid is not None and gid is not None:
-                            os.chown(dst, uid, gid)
-                        print("  Скопирован: %s" % item)
-                print("wine-gecko компоненты скопированы")
+            # Копируем wine-gecko компоненты (только если используется AstraPack Wine)
+            if wine_source != 'system' and self.astrapack_dir:
+                wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
+                if os.path.exists(wine_gecko_dir):
+                    import shutil
+                    print("Копирование wine-gecko компонентов...")
+                    for item in os.listdir(wine_gecko_dir):
+                        src = os.path.join(wine_gecko_dir, item)
+                        dst = os.path.join(cache_wine, item)
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                            if uid is not None and gid is not None:
+                                os.chown(dst, uid, gid)
+                            print("  Скопирован: %s" % item)
+                    print("wine-gecko компоненты скопированы")
             
-            # Копируем winetricks кэш
-            winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
-            if os.path.exists(winetricks_cache_dir):
-                import shutil
-                print("Копирование winetricks кэша...")
-                for item in os.listdir(winetricks_cache_dir):
-                    src = os.path.join(winetricks_cache_dir, item)
-                    dst = os.path.join(cache_winetricks, item)
-                    if os.path.isdir(src):
-                        if os.path.exists(dst):
-                            shutil.rmtree(dst)
-                        shutil.copytree(src, dst)
-                        if uid is not None and gid is not None:
-                            for root_dir, dirs, files in os.walk(dst):
-                                os.chown(root_dir, uid, gid)
-                                for fname in files:
-                                    os.chown(os.path.join(root_dir, fname), uid, gid)
-                        print("  Скопирована папка: %s" % item)
-                    else:
-                        shutil.copy2(src, dst)
-                        if uid is not None and gid is not None:
-                            os.chown(dst, uid, gid)
-                        print("  Скопирован файл: %s" % item)
-                print("winetricks кэш скопирован")
+            # Копируем winetricks кэш (только если используется AstraPack Wine)
+            if wine_source != 'system' and self.astrapack_dir:
+                winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
+                if os.path.exists(winetricks_cache_dir):
+                    import shutil
+                    print("Копирование winetricks кэша...")
+                    for item in os.listdir(winetricks_cache_dir):
+                        src = os.path.join(winetricks_cache_dir, item)
+                        dst = os.path.join(cache_winetricks, item)
+                        if os.path.isdir(src):
+                            if os.path.exists(dst):
+                                shutil.rmtree(dst)
+                            shutil.copytree(src, dst)
+                            if uid is not None and gid is not None:
+                                for root_dir, dirs, files in os.walk(dst):
+                                    os.chown(root_dir, uid, gid)
+                                    for fname in files:
+                                        os.chown(os.path.join(root_dir, fname), uid, gid)
+                            print("  Скопирована папка: %s" % item)
+                        else:
+                            shutil.copy2(src, dst)
+                            if uid is not None and gid is not None:
+                                os.chown(dst, uid, gid)
+                            print("  Скопирован файл: %s" % item)
+                    print("winetricks кэш скопирован")
             
             # Инициализируем WINEPREFIX если его еще нет
             if not os.path.exists(os.path.join(self.wineprefix, 'system.reg')):
                 print("Инициализация WINEPREFIX: %s" % self.wineprefix)
                 
-                # Определяем путь к wineboot (используем wine-astraregul)
-                wine_path = '/opt/wine-astraregul/bin'
-                wineboot_path = os.path.join(wine_path, 'wineboot')
+                # НОВОЕ: Определяем путь к wineboot в зависимости от источника Wine
+                if wine_source == 'system':
+                    # Используем системный Wine
+                    wine_path = '/usr/bin'
+                    wineboot_path = '/usr/bin/wineboot'
+                    if not os.path.exists(wineboot_path):
+                        # Пробуем найти в PATH
+                        import subprocess
+                        result = subprocess.run(['which', 'wineboot'], 
+                                              stdout=subprocess.PIPE, 
+                                              stderr=subprocess.PIPE, 
+                                              text=True, timeout=5)
+                        if result.returncode == 0:
+                            wineboot_path = result.stdout.strip()
+                            wine_path = os.path.dirname(wineboot_path)
+                        else:
+                            print("wineboot не найден в системе", level='ERROR')
+                            return False
+                else:
+                    # Используем Wine из AstraPack
+                    wine_path = '/opt/wine-astraregul/bin'
+                    wineboot_path = os.path.join(wine_path, 'wineboot')
                 
                 if not os.path.exists(wineboot_path):
                     print("wineboot не найден в %s" % wine_path, level='ERROR')
@@ -6910,6 +7303,24 @@ class UniversalInstaller(object):
                 
                 # Создаем директорию WINEPREFIX если не существует
                 os.makedirs(self.wineprefix, exist_ok=True)
+                
+                # КРИТИЧНО: Если запущено от root - устанавливаем владельца директории на пользователя
+                # Иначе wineboot не сможет работать с директорией
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    import pwd
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                    # Устанавливаем владельца на всю директорию WINEPREFIX
+                    os.chown(self.wineprefix, uid, gid)
+                    # Рекурсивно устанавливаем владельца для всех существующих файлов/директорий
+                    for root_dir, dirs, files in os.walk(self.wineprefix):
+                        try:
+                            os.chown(root_dir, uid, gid)
+                            for fname in files:
+                                os.chown(os.path.join(root_dir, fname), uid, gid)
+                        except (OSError, PermissionError):
+                            pass  # Игнорируем ошибки доступа к отдельным файлам
+                    print("Установлен владелец WINEPREFIX на пользователя: %s" % real_user)
                 
                 # Настраиваем переменные окружения
                 env = os.environ.copy()
@@ -7012,6 +7423,152 @@ export PATH="%s:$PATH" && \
             traceback.print_exc()
             return False
     
+    def _install_wine_application(self, component_id, config):
+        """Установка Wine приложения через копирование предустановленной конфигурации"""
+        print("Установка Wine приложения: %s" % component_id)
+        
+        try:
+            # Определяем путь к префиксу из конфигурации
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+            
+            # Проверяем наличие метода копирования предустановленной конфигурации
+            copy_method = config.get('copy_method')
+            source_dir = config.get('source_dir')
+            
+            if copy_method == 'replace' and source_dir:
+                # Копируем предустановленную конфигурацию
+                if not self._copy_preinstalled_config(component_id, config):
+                    return False
+            else:
+                print("copy_method или source_dir не указаны в конфигурации", level='ERROR')
+                return False
+            
+            # Проверяем статус установки
+            if self.check_component_status(component_id):
+                print("Wine приложение %s успешно установлено" % component_id)
+                return True
+            else:
+                print("Wine приложение не найдено после копирования конфигурации", level='ERROR')
+                return False
+                
+        except Exception as e:
+            print("ОШИБКА установки Wine приложения: %s" % str(e), level='ERROR')
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _copy_preinstalled_config(self, component_id, config):
+        """
+        Копирование предустановленной конфигурации Wine префикса
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+        
+        Returns:
+            bool: True если копирование успешно
+        """
+        source_dir = config.get('source_dir')
+        if not source_dir:
+            print("source_dir не указан в конфигурации", level='ERROR')
+            return False
+        
+        # Определяем путь к папке CountPack
+        import sys
+        if os.path.isabs(sys.argv[0]):
+            script_path = sys.argv[0]
+        else:
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        script_dir = os.path.dirname(os.path.abspath(script_path))
+        
+        # Полный путь к папке с предустановленной конфигурацией
+        if os.path.isabs(source_dir):
+            full_source_dir = source_dir
+        else:
+            # Относительный путь - ищем в директории скрипта
+            full_source_dir = os.path.join(script_dir, source_dir)
+        
+        if not os.path.exists(full_source_dir):
+            print("Папка с предустановленной конфигурацией не найдена: %s" % full_source_dir, level='ERROR')
+            return False
+        
+        # Определяем путь к целевому префиксу
+        wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+        wineprefix_path = expand_user_path(wineprefix_path)
+        
+        print("Копирование предустановленной конфигурации из %s в %s" % (full_source_dir, wineprefix_path))
+        
+        try:
+            import shutil
+            
+            # КРИТИЧНО: Копируем с заменой всех файлов
+            # Копируем dosdevices и drive_c (НЕ копируем Ярлыки - они обрабатываются отдельно)
+            items_to_copy = ['dosdevices', 'drive_c']
+            
+            for item in items_to_copy:
+                src = os.path.join(full_source_dir, item)
+                dst = os.path.join(wineprefix_path, item)
+                
+                if not os.path.exists(src):
+                    print("Предупреждение: %s не найден в %s" % (item, full_source_dir), level='WARNING')
+                    continue
+                
+                if os.path.isdir(src):
+                    # Копируем директорию с заменой
+                    if os.path.exists(dst):
+                        print("Удаление существующей директории: %s" % dst)
+                        shutil.rmtree(dst)
+                    print("Копирование директории: %s" % item)
+                    shutil.copytree(src, dst)
+                    print("  Директория скопирована: %s" % item)
+                else:
+                    # Копируем файл с заменой
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    print("Копирование файла: %s" % item)
+                    shutil.copy2(src, dst)
+                    print("  Файл скопирован: %s" % item)
+            
+            # Копируем файлы реестра (если есть)
+            reg_files = ['system.reg', 'user.reg', 'userdef.reg']
+            for reg_file in reg_files:
+                src = os.path.join(full_source_dir, reg_file)
+                dst = os.path.join(wineprefix_path, reg_file)
+                
+                if os.path.exists(src):
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    shutil.copy2(src, dst)
+                    print("  Файл реестра скопирован: %s" % reg_file)
+            
+            # Устанавливаем правильного владельца
+            real_user = os.environ.get('SUDO_USER')
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                import pwd
+                uid = pwd.getpwnam(real_user).pw_uid
+                gid = pwd.getpwnam(real_user).pw_gid
+                
+                # Устанавливаем владельца на всю директорию префикса
+                os.chown(wineprefix_path, uid, gid)
+                for root, dirs, files in os.walk(wineprefix_path):
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), uid, gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), uid, gid)
+                
+                print("Установлен владелец префикса: %s" % real_user)
+            
+            print("Предустановленная конфигурация успешно скопирована")
+            return True
+            
+        except Exception as e:
+            print("Ошибка копирования предустановленной конфигурации: %s" % str(e), level='ERROR')
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def _install_wine_executable(self, component_id, config):
         """Установка исполняемого файла в Wine (Astra.IDE)"""
         print("Установка исполняемого файла в Wine: %s" % component_id)
@@ -7024,42 +7581,51 @@ export PATH="%s:$PATH" && \
                 print("Установщик Astra.IDE не найден: %s" % astra_ide_exe, level='ERROR')
                 return False
             
-            # Определяем реального пользователя
-            real_user = os.environ.get('SUDO_USER')
+            # Настраиваем переменные окружения
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINEDEBUG'] = '-all'
+            env['WINE'] = '/opt/wine-astraregul/bin/wine'
+            env['WINEARCH'] = 'win64'
+            env['WINEBUILD'] = 'x86_64'
+            env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
+            env['WINEDLLPATH'] = '/opt/wine-astraregul/lib64/wine'
+            env['DISPLAY'] = ':0'
             
-            # Astra.IDE НЕЛЬЗЯ устанавливать от root! Запускаем от имени пользователя
-            if os.geteuid() == 0:
-                if not real_user or real_user == 'root':
-                    print("Не удалось определить реального пользователя для установки Astra.IDE", level='ERROR')
-                    print("Astra.IDE не может устанавливаться от root!", level='ERROR')
-                    return False
-                
-                print("Запуск установки Astra.IDE от пользователя: %s" % real_user)
-                
-                # Настраиваем переменные окружения
-                env = {
-                    'WINEPREFIX': self.wineprefix,
-                    'WINEDEBUG': '-all',
-                    'WINE': '/opt/wine-astraregul/bin/wine',
-                    'WINEARCH': 'win64',
-                    'WINEBUILD': 'x86_64',
-                    'WINEDLLOVERRIDES': 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d',
-                    'WINEDLLPATH': '/opt/wine-astraregul/lib64/wine',
-                    'DISPLAY': ':0'
-                }
-                
-                # Формируем команду для выполнения от имени пользователя
-                env_str = ' '.join(['%s="%s"' % (k, v) for k, v in env.items()])
-                cmd_string = '%s %s "%s"' % (env_str, env['WINE'], astra_ide_exe)
-                
-                import subprocess
-                result = subprocess.run(
-                    ['su', real_user, '-c', cmd_string],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                    errors='replace',
+            # ИСПРАВЛЕНИЕ: Для GUI-установщика Astra.IDE НЕ перехватываем stdout/stderr
+            # чтобы окно установщика могло отображаться на экране
+            # Используем UniversalProcessRunner если доступен, иначе subprocess.run без перехвата
+            import subprocess
+            
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                # Используем UniversalProcessRunner для запуска процесса
+                # Он правильно обрабатывает GUI-приложения
+                print("Запуск установки Astra.IDE через UniversalProcessRunner...")
+                return_code = self.universal_runner.run_process(
+                    [env['WINE'], astra_ide_exe],
+                    process_type="install",
+                    channels=["file", "terminal"],
+                    env=env,
                     timeout=600  # 10 минут максимум
+                )
+                
+                if return_code == 0:
+                    print("Установщик Astra.IDE завершен успешно")
+                    import time
+                    time.sleep(3)  # Даем время на завершение установки
+                    return True
+                else:
+                    print("Установщик завершился с кодом: %d" % return_code, level='ERROR')
+                    return False
+            else:
+                # Fallback: используем subprocess.run БЕЗ перехвата stdout/stderr
+                # чтобы GUI-установщик мог отображаться
+                print("Запуск установки Astra.IDE напрямую (без перехвата вывода)...")
+                result = subprocess.run(
+                    [env['WINE'], astra_ide_exe],
+                    env=env,
+                    timeout=600  # 10 минут максимум
+                    # НЕ перехватываем stdout/stderr для GUI-приложений
                 )
                 
                 if result.returncode == 0:
@@ -7069,45 +7635,6 @@ export PATH="%s:$PATH" && \
                     return True
                 else:
                     print("Установщик завершился с кодом: %d" % result.returncode, level='ERROR')
-                    if result.stderr:
-                        for line in result.stderr.split('\n')[:20]:
-                            if line.strip():
-                                print("  %s" % line, level='ERROR')
-                    return False
-            else:
-                # Уже не root - запускаем напрямую
-                env = os.environ.copy()
-                env['WINEPREFIX'] = self.wineprefix
-                env['WINEDEBUG'] = '-all'
-                env['WINE'] = '/opt/wine-astraregul/bin/wine'
-                env['WINEARCH'] = 'win64'
-                env['WINEBUILD'] = 'x86_64'
-                env['WINEDLLOVERRIDES'] = 'winemenubuilder.exe=d;rundll32.exe=d;mshtml=d;mscoree=d'
-                env['WINEDLLPATH'] = '/opt/wine-astraregul/lib64/wine'
-                env['DISPLAY'] = ':0'
-                
-                import subprocess
-                result = subprocess.run(
-                    [env['WINE'], astra_ide_exe],
-                    env=env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True,
-                    errors='replace',
-                    timeout=600
-                )
-                
-                if result.returncode == 0:
-                    print("Установщик Astra.IDE завершен успешно")
-                    import time
-                    time.sleep(3)
-                    return True
-                else:
-                    print("Установщик завершился с кодом: %d" % result.returncode, level='ERROR')
-                    if result.stderr:
-                        for line in result.stderr.split('\n')[:20]:
-                            if line.strip():
-                                print("  %s" % line, level='ERROR')
                     return False
                     
         except subprocess.TimeoutExpired:
@@ -7546,6 +8073,47 @@ export PATH="/opt/wine-astraregul/bin:$PATH" && \
             
         except Exception as e:
             print("ОШИБКА удаления Astra.IDE: %s" % str(e), level='ERROR')
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _uninstall_wine_application(self, component_id, config):
+        """Удаление Wine приложения через удаление директории приложения"""
+        print("Удаление Wine приложения: %s" % component_id)
+        
+        try:
+            # Определяем путь к префиксу из конфигурации
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+            
+            # Для Wine приложений удаляем директорию приложения из WINEPREFIX
+            check_paths = get_component_field(component_id, 'check_paths', [])
+            if not check_paths:
+                print("Не указаны check_paths для %s" % component_id, level='ERROR')
+                return False
+            
+            # Берем первый путь и определяем директорию приложения
+            app_path = check_paths[0]
+            if app_path.startswith('drive_c/'):
+                full_path = os.path.join(self.wineprefix, app_path)
+                # Определяем директорию приложения (родительскую директорию)
+                app_dir = os.path.dirname(full_path)
+                if os.path.exists(app_dir):
+                    import shutil
+                    print("Удаление директории приложения: %s" % app_dir)
+                    shutil.rmtree(app_dir)
+                    print("Директория приложения удалена: %s" % app_dir)
+                    return True
+                else:
+                    print("Директория приложения не найдена: %s" % app_dir)
+                    return True
+            else:
+                print("Неподдерживаемый путь для Wine приложения: %s" % app_path, level='ERROR')
+                return False
+                
+        except Exception as e:
+            print("ОШИБКА удаления Wine приложения: %s" % str(e), level='ERROR')
             import traceback
             traceback.print_exc()
             return False
@@ -8152,7 +8720,7 @@ class AutomationGUI(object):
         # поэтому передаем None, а затем обновим после создания
         self.universal_installer = UniversalInstaller(
             callback=self._component_status_callback,
-            use_handlers=True,  # Включаем новую архитектуру
+            use_handlers=False,  # ВРЕМЕННО: тестируем старую архитектуру для проверки зависаний
             use_minimal_winetricks=self.use_minimal_winetricks.get() if hasattr(self, 'use_minimal_winetricks') else True,
             universal_runner=None,  # Будет установлен позже
             progress_manager=None,  # Будет установлен позже (component_progress_manager)
