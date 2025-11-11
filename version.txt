@@ -1,6 +1,6 @@
 FSA-AstraInstall
 MAJOR=2
-MINOR=4
+MINOR=5
 PATCH=AUTO
 Date: AUTO
 Developer: @FoksSegr

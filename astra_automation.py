@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.113 (2025.11.12)
+Версия: V2.5.114 (2025.11.12)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.113 (2025.11.12)"
+APP_VERSION = "V2.5.114 (2025.11.12)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -8123,6 +8123,10 @@ class AutomationGUI(object):
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} {APP_VERSION}")
         
+        # КРИТИЧНО: Скрываем окно сразу после создания
+        # Оно будет показано после полной инициализации и центрирования
+        self.root.withdraw()
+        
         # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
         self.root.after(7000, lambda: self.root.attributes('-topmost', False))
@@ -8145,9 +8149,10 @@ class AutomationGUI(object):
         # Устанавливаем геометрию окна БЕЗ позиции (будет центрировано в _center_window)
         self.root.geometry('%dx%d' % (window_width, window_height))
         
+        # УБРАНО: Раннее центрирование (будет выполнено после создания всех виджетов)
         # Принудительно центрируем окно после создания
-        self.root.update_idletasks()
-        self._center_window()  # Центрирование с учетом панели задач
+        # self.root.update_idletasks()
+        # self._center_window()  # Центрирование с учетом панели задач
         
         # Разрешаем изменение размера окна
         self.root.resizable(True, True)
@@ -8210,6 +8215,19 @@ class AutomationGUI(object):
         
         # Создаем интерфейс
         self.create_widgets()
+        
+        # КРИТИЧНО: Обновляем размеры окна после создания всех виджетов
+        self.root.update_idletasks()
+        
+        # КРИТИЧНО: Центрируем окно после создания всех компонентов
+        self._center_window()
+        
+        # КРИТИЧНО: Обновляем размеры окна после центрирования
+        self.root.update_idletasks()
+        
+        # КРИТИЧНО: Показываем окно только после полной готовности
+        # Небольшая задержка для гарантии полной инициализации всех компонентов
+        self.root.after(100, self._show_window_ready)
         
         # Устанавливаем глобальную ссылку на GUI для перенаправления print()
         sys._gui_instance = self
@@ -10459,6 +10477,28 @@ class AutomationGUI(object):
         except Exception as e:
             # Игнорируем ошибки центрирования
             print(f"[GUI] Ошибка центрирования окна: {e}")
+    
+    def _show_window_ready(self):
+        """Показ окна после полной готовности"""
+        try:
+            # Финальное обновление размеров перед показом
+            self.root.update_idletasks()
+            
+            # Показываем окно
+            self.root.deiconify()
+            
+            # Поднимаем окно наверх (если нужно)
+            self.root.lift()
+            self.root.focus_force()
+            
+            print("Окно GUI готово и отображено", gui_log=True)
+        except Exception as e:
+            print(f"Ошибка при показе окна: {e}", level='ERROR')
+            # В случае ошибки все равно показываем окно
+            try:
+                self.root.deiconify()
+            except:
+                pass
     
     def _limit_tab_height(self, event):
         """Ограничиваем высоту вкладок, чтобы панель прогресса была видна"""
@@ -18439,6 +18479,76 @@ class DirectoryMonitor(object):
         
         return "\n".join(output) if output else "Изменений не обнаружено"
 
+def find_running_instance():
+    """Поиск запущенного экземпляра программы (только для Linux)"""
+    current_pid = os.getpid()
+    
+    try:
+        result = subprocess.run(
+            ['pgrep', '-f', 'astra_automation.py'],
+            capture_output=True,
+            text=True,
+            timeout=1
+        )
+        
+        if result.returncode == 0:
+            for pid_str in result.stdout.strip().split('\n'):
+                if not pid_str:
+                    continue
+                
+                try:
+                    proc_pid = int(pid_str.strip())
+                    if proc_pid == current_pid:
+                        continue
+                    
+                    try:
+                        with open(f'/proc/{proc_pid}/cmdline', 'r') as f:
+                            cmdline = f.read().replace('\x00', ' ')
+                            if 'astra_automation.py' in cmdline:
+                                return proc_pid
+                    except (IOError, OSError):
+                        continue
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    
+    return None
+
+def activate_existing_window():
+    """Активация существующего окна программы"""
+    app_name = "FSA-AstraInstall"
+    
+    # Метод 1: wmctrl
+    try:
+        result = subprocess.run(['wmctrl', '-l'], 
+                               capture_output=True, 
+                               text=True, 
+                               timeout=1)
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                if app_name in line:
+                    window_id = line.split()[0]
+                    subprocess.run(['wmctrl', '-i', '-a', window_id], 
+                                 timeout=1,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                    return True
+    except:
+        pass
+    
+    # Метод 2: xdotool
+    try:
+        subprocess.run(['xdotool', 'search', '--name', app_name, 'windowactivate'],
+                     timeout=1,
+                     stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+        return True
+    except:
+        pass
+    
+    return False
+
 def main():
 # ============================================================================
 # ОСНОВНАЯ ФУНКЦИЯ
@@ -18581,6 +18691,12 @@ def main():
                 print(f"[INFO] Режим запуска: {start_mode}", gui_log=True)
                 i += 1  # Пропускаем следующий аргумент
         i += 1
+    
+    # КРИТИЧНО: Проверка single instance ПОСЛЕ обработки аргументов (чтобы терминал закрылся)
+    existing_pid = find_running_instance()
+    if existing_pid is not None:
+        activate_existing_window()
+        sys.exit(0)
     
     try:
         # Логируем системную информацию
