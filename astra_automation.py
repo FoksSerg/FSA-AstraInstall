@@ -3,15 +3,17 @@
 from __future__ import print_function
 
 """
-FSA-AstraInstall Automation - Единый исполняемый файл
+FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.4.112 (2025.11.11)
+Версия: V2.5.113 (2025.11.12)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.4.112 (2025.11.11)"
+APP_VERSION = "V2.5.113 (2025.11.12)"
+# Название приложения
+APP_NAME = "FSA-AstraInstall"
 import os
 import sys
 import tempfile
@@ -66,41 +68,142 @@ except ImportError:
 # УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
 # ============================================================================
 COMPONENTS_CONFIG = {
+    # Ярлык Приложения
+    'application_shortcut': {
+        'name': 'Ярлык Приложения',
+        'shortcut_name': 'Автоустановка',
+        'path': 'astra_update.sh.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': [],
+        'check_paths': ['astra_update.sh.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'script_path': 'astra_update.sh',
+        'script_args': '',
+        'working_dir': None,
+        'terminal': True,
+        'icon': 'fly-astra-update',
+        'comment': 'Ярлык для запуска обновления и установки на рабочем столе',
+        'gui_selectable': True,
+        'description': 'Ярлык для запуска обновления и установки на рабочем столе',
+        'sort_order': 1
+    },
+    
     # Системные настройки
     'ptrace_scope': {
         'name': 'Настройка ptrace_scope',
-        'command_name': None,  # Не используется для системных настроек
         'path': '/proc/sys/kernel/yama/ptrace_scope',
         'category': 'system_config',
         'dependencies': [],
         'check_paths': ['/proc/sys/kernel/yama/ptrace_scope'],
-        'check_method': 'system_config',  # Специальный метод проверки значения файла
-        'check_value': '0',  # Ожидаемое значение файла (0 = настройка применена)
+        'check_method': 'system_config',
+        'check_value': '0',
         'install_method': 'system_config',
         'uninstall_method': 'system_config',
-        'gui_selectable': True,  # Скрыт от пользователя, устанавливается автоматически
+        'gui_selectable': True,
         'description': 'Настройка ptrace_scope для Wine',
-        'sort_order': 0  # В самом начале списка
+        'sort_order': 2
+    },
+    
+    # CONT-Designer компоненты
+    'wine_system': {
+        'name': 'Wine (системный с пакетами)',
+        'command_name': 'wine winetricks winbind zenity',
+        'path': '/usr/bin/wine',
+        'category': 'apt_packages',
+        'dependencies': [],
+        'check_paths': ['/usr/bin/wine', '/usr/bin/wineboot', '/usr/bin/winetricks', '/usr/bin/zenity'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Системный Wine и необходимые пакеты для CONT-Designer (wine, winetricks, winbind, zenity)',
+        'sort_order': 3,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
+    },
+    'cont_wineprefix': {
+        'name': 'CONT Wine Prefix',
+        'path': '~/.local/share/wineprefixes/cont',
+        'category': 'wine_environment',
+        'dependencies': ['wine_system'],
+        'check_paths': ['~/.local/share/wineprefixes/cont'],
+        'check_method': 'wineprefix',
+        'install_method': 'wine_init',
+        'uninstall_method': 'wine_cleanup',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'wine_source': 'system',
+        'gui_selectable': True,
+        'description': 'Wine префикс для CONT-Designer',
+        'sort_order': 4
+    },
+    'cont_designer': {
+        'name': 'CONT-Designer 3.0',
+        'path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
+        'category': 'wine_application',
+        'dependencies': ['cont_wineprefix'],
+        'check_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe'],
+        'install_method': 'wine_application',
+        'uninstall_method': 'wine_application',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'source_dir': 'CountPack',
+        'copy_method': 'replace',
+        'wine_source': 'system',
+        'gui_selectable': True,
+        'description': 'CONT-Designer 3.0',
+        'sort_order': 5
+    },
+    'cont_desktop_shortcut': {
+        'name': 'CONT-Designer Ярлык',
+        'shortcut_name': 'CONT-Designer',
+        'path': 'CONT-Designer.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': ['cont_designer'],
+        'check_paths': ['CONT-Designer.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'wineprefix_path': '~/.local/share/wineprefixes/cont',
+        'executable_path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
+        'executable_args': '--Profile="CONT-Designer 3.0.0.0"',
+        'wine_source': 'system',
+        'icon': '47FF_CONT-Designer.0',
+        'terminal': False,
+        'comment': 'Ярлык CONT-Designer на рабочем столе',
+        'gui_selectable': True,
+        'description': 'Ярлык CONT-Designer на рабочем столе',
+        'sort_order': 6
+    },
+    'cont_workspace_shortcut': {
+        'name': 'CONT Рабочие каталоги',
+        'shortcut_name': 'Рабочие каталоги',
+        'path': 'Рабочие каталоги.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': ['cont_designer'],
+        'check_paths': ['Рабочие каталоги.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'shortcut_type': 'folder',
+        'folder_path': '~/.local/share/wineprefixes',
+        'comment': 'Ярлык для открытия папки wineprefix',
+        'gui_selectable': True,
+        'description': 'Ярлык для открытия папки wineprefix',
+        'sort_order': 7
     },
     
     # Wine пакеты системы
     'wine_9': {
         'name': 'Wine 9.0',
-        'command_name': None,  # Не используется для wine пакетов
         'path': '/opt/wine-9.0/bin/wine',
         'category': 'wine_packages',
-        'dependencies': [],  # НЕЗАВИСИМ от wine_astraregul
+        'dependencies': [],
         'check_paths': ['/opt/wine-9.0/bin/wine'],
         'install_method': 'package_manager',
         'uninstall_method': 'package_manager',
         'gui_selectable': True,
         'description': 'Wine версии 9.0 для совместимости',
-        'sort_order': 1,  # Wine 9.0 в начало списка
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки
+        'sort_order': 8,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
     },
     'wine_astraregul': {
         'name': 'Wine Astraregul',
-        'command_name': None,  # Не используется для wine пакетов
         'path': '/opt/wine-astraregul/bin/wine',
         'category': 'wine_packages',
         'dependencies': [],
@@ -109,25 +212,24 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'package_manager',
         'gui_selectable': True,
         'description': 'Основной Wine пакет Astraregul',
-        'sort_order': 2,  # Wine Astraregul после Wine 9.0
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки
+        'sort_order': 9,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
     },
     
     # Wine окружение
     'wineprefix': {
         'name': 'WINEPREFIX',
-        'command_name': None,  # Не используется для wine окружения
         'path': '~/.wine-astraregul',
         'category': 'wine_environment',
         'dependencies': ['wine_astraregul'],
-        'check_method': 'wineprefix',  # Специальная проверка: наличие system.reg или drive_c
+        'check_method': 'wineprefix',
         'check_paths': ['~/.wine-astraregul'],
         'install_method': 'wine_init',
         'uninstall_method': 'wine_cleanup',
         'gui_selectable': True,
         'description': 'Wine префикс для Astra.IDE',
-        'sort_order': 4,
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки (родительский компонент)
+        'sort_order': 10,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
     },
     
     # Winetricks компоненты
@@ -145,7 +247,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Mono runtime для Wine',
-        'sort_order': 5,
+        'sort_order': 11,
         # Параметры загрузки wine-mono из интернета (для удобства обновления версии)
         'download_url': 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi',
         'download_sha256': '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810',
@@ -165,7 +267,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': '.NET Framework 4.8',
-        'sort_order': 6,
+        'sort_order': 12,
         # Параметры загрузки .NET Framework 4.8 из интернета (для удобства обновления версии)
         'download_url': 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe',
         'download_sha256': '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53',
@@ -187,7 +289,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2013 Redistributable',
-        'sort_order': 7,
+        'sort_order': 13,
         # Параметры загрузки Visual C++ 2013 из интернета (для удобства обновления версии)
         'download_url_x86': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe',
         'download_sha256_x86': '89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17',
@@ -212,7 +314,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2022 Redistributable',
-        'sort_order': 8,
+        'sort_order': 14,
         # Параметры загрузки Visual C++ 2022 из интернета (для удобства обновления версии)
         # ВНИМАНИЕ: SHA256 хеши временные, нужно обновить при получении актуальных
         'download_url_x86': 'https://aka.ms/vs/17/release/vc_redist.x86.exe',
@@ -236,7 +338,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_43',
-        'sort_order': 9
+        'sort_order': 15
     },
     'd3dcompiler_47': {
         'name': 'DirectX d3dcompiler_47',
@@ -252,7 +354,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_47',
-        'sort_order': 10,
+        'sort_order': 16,
         # Параметры загрузки d3dcompiler_47 из интернета (для удобства обновления версии)
         'download_url_32': 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47_32.dll',
         'download_sha256_32': '2ad0d4987fc4624566b190e747c9d95038443956ed816abfd1e2d389b5ec0851',
@@ -275,7 +377,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DXVK - Vulkan-based D3D11 implementation',
-        'sort_order': 11,
+        'sort_order': 17,
         # Параметры загрузки DXVK из интернета (для удобства обновления версии)
         'download_url': 'https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz',
         'download_sha256': 'd8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8',
@@ -285,7 +387,6 @@ COMPONENTS_CONFIG = {
     # Astra.IDE и связанные компоненты
     'astra_ide': {
         'name': 'Astra.IDE',
-        'command_name': None,  # Не используется для wine приложений
         'path': 'drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe',
         'category': 'application',
         'dependencies': ['wineprefix', 'dotnet48', 'vcrun2013', 'vcrun2022'],
@@ -294,11 +395,10 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'wine_executable',
         'gui_selectable': True,
         'description': 'Astra.IDE приложение',
-        'sort_order': 12
+        'sort_order': 18
     },
     'start_script': {
         'name': 'Скрипт запуска',
-        'command_name': None,  # Не используется для скриптов
         'path': '~/start-astraide.sh',
         'category': 'application',
         'dependencies': ['astra_ide'],
@@ -307,27 +407,32 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'script_removal',
         'gui_selectable': True,
         'description': 'Скрипт для запуска Astra.IDE',
-        'sort_order': 13
+        'sort_order': 19
     },
     'desktop_shortcut': {
         'name': 'Ярлык рабочего стола',
-        'command_name': None,  # Не используется для ярлыков
-        'path': '~/Desktop/AstraRegul.desktop',
-        'category': 'application',
+        'shortcut_name': 'Astra.IDE',
+        'path': 'AstraRegul.desktop',
+        'category': 'desktop_shortcut',
         'dependencies': ['astra_ide'],
-        'check_paths': ['~/Desktop/AstraRegul.desktop'],
+        'check_paths': ['AstraRegul.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
-        'script_path': '~/start-astraide.sh',  # Скрипт для запуска Astra.IDE
+        'script_path': '~/start-astraide.sh',
+        'script_args': '',
+        'working_dir': None,
+        'terminal': True,
+        'icon': '',
+        'comment': 'Ярлык Astra.IDE на рабочем столе',
         'gui_selectable': True,
         'description': 'Ярлык Astra.IDE на рабочем столе',
-        'sort_order': 14
+        'sort_order': 20
     },
     
     # Wine приложения (Windows через Wine)
     'notepad_plus_plus': {
         'name': 'Notepad++',
-        'command_name': 'notepad++.exe',  # Имя исполняемого файла
+        'command_name': 'notepad++.exe',
         'path': 'drive_c/Program Files/Notepad++/notepad++.exe',
         'category': 'wine_application',
         'dependencies': ['wineprefix'],
@@ -336,87 +441,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'wine_executable',
         'gui_selectable': True,
         'description': 'Notepad++ - текстовый редактор для Windows',
-        'sort_order': 15
-    },
-    
-    # CONT-Designer компоненты
-    # Системный Wine для CONT-Designer
-    'wine_system': {
-        'name': 'Wine (системный)',
-        'command_name': 'wine',  # Пакет для установки через apt
-        'path': '/usr/bin/wine',
-        'category': 'apt_packages',
-        'dependencies': [],  # НЕЗАВИСИМ от других компонентов
-        'check_paths': ['/usr/bin/wine', '/usr/bin/wineboot'],
-        'install_method': 'package_manager',
-        'uninstall_method': 'package_manager',
-        'gui_selectable': True,
-        'description': 'Системный Wine из репозиториев для CONT-Designer',
-        'sort_order': 16,  # После компонентов Astra (notepad_plus_plus: 15)
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']  # Процессы Wine для остановки
-    },
-    'cont_wineprefix': {
-        'name': 'CONT Wine Prefix',
-        'path': '~/.local/share/wineprefixes/cont',
-        'category': 'wine_environment',
-        'dependencies': ['wine_system'],  # Зависит от системного Wine
-        'check_paths': ['~/.local/share/wineprefixes/cont'],
-        'check_method': 'wineprefix',  # Проверка наличия system.reg или drive_c
-        'install_method': 'wine_init',
-        'uninstall_method': 'wine_cleanup',
-        'wineprefix_path': '~/.local/share/wineprefixes/cont',  # НОВОЕ: отдельный префикс
-        'wine_source': 'system',  # НОВОЕ: использовать системный Wine из apt
-        'gui_selectable': True,
-        'description': 'Wine префикс для CONT-Designer',
-        'sort_order': 17  # После wine_system (16), рядом с компонентами Astra
-    },
-    'cont_designer': {
-        'name': 'CONT-Designer 3.0',
-        'path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
-        'category': 'wine_application',
-        'dependencies': ['cont_wineprefix'],
-        'check_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe'],
-        'install_method': 'wine_application',
-        'uninstall_method': 'wine_application',
-        'wineprefix_path': '~/.local/share/wineprefixes/cont',
-        'source_dir': 'CountPack',  # НОВОЕ: папка с предустановленной конфигурацией
-        'copy_method': 'replace',  # НОВОЕ: копировать с заменой
-        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
-        'gui_selectable': True,
-        'description': 'CONT-Designer 3.0',
-        'sort_order': 18  # После cont_wineprefix (17)
-    },
-    'cont_desktop_shortcut': {
-        'name': 'CONT-Designer Ярлык',
-        'path': '~/Desktop/CONT-Designer.desktop',
-        'category': 'application',
-        'dependencies': ['cont_designer'],
-        'check_paths': ['~/Desktop/CONT-Designer.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'wineprefix_path': '~/.local/share/wineprefixes/cont',
-        'executable_path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
-        'executable_args': '--Profile="CONT-Designer 3.0.0.0"',  # НОВОЕ: аргументы запуска
-        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
-        'gui_selectable': True,
-        'description': 'Ярлык CONT-Designer на рабочем столе',
-        'sort_order': 19  # После cont_designer (18)
-    },
-    'cont_workspace_shortcut': {
-        'name': 'CONT Рабочие каталоги',
-        'path': '~/Desktop/Рабочие каталоги.desktop',
-        'category': 'application',
-        'dependencies': ['cont_designer'],
-        'check_paths': ['~/Desktop/Рабочие каталоги.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'wineprefix_path': '~/.local/share/wineprefixes/cont',
-        'shortcut_type': 'folder',  # НОВОЕ: тип ярлыка - папка
-        'folder_path': '~/.local/share/wineprefixes',  # НОВОЕ: путь к папке
-        'wine_source': 'system',  # НОВОЕ: использовать системный Wine
-        'gui_selectable': True,
-        'description': 'Ярлык для открытия папки wineprefix',
-        'sort_order': 20  # После cont_desktop_shortcut (19)
+        'sort_order': 21
     },
 }
 
@@ -563,6 +588,26 @@ def check_component_status(component_id, wineprefix_path=None):
     if not check_paths:
         return False
     
+    # КРИТИЧНО: Для desktop_shortcut используем ~/Desktop (система сама управляет активным рабочим столом)
+    if config.get('category') == 'desktop_shortcut':
+        # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+        desktop_dir = expand_user_path('~/Desktop')
+        
+        # Если ~/Desktop существует - проверяем там
+        if os.path.exists(desktop_dir):
+            for path in check_paths:
+                # Если путь содержит полный путь (старый формат) - извлекаем только имя файла
+                if '/' in path or '~' in path:
+                    path_name = os.path.basename(path)
+                else:
+                    path_name = path
+                
+                full_path = os.path.join(desktop_dir, path_name)
+                if os.path.exists(full_path):
+                    return True
+            return False
+    
+    # Для остальных компонентов - стандартная проверка
     for path in check_paths:
         # Обрабатываем специальные пути
         if path.startswith('~/'):
@@ -947,6 +992,40 @@ class ComponentHandler(ABC):
         script_dir = os.path.dirname(os.path.abspath(script_path))
         full_path = os.path.join(script_dir, source_dir_name)
         return full_path
+    
+    def _get_script_dir(self):
+        """
+        Получить директорию скрипта
+        
+        Returns:
+            str: Полный путь к директории скрипта
+        """
+        if os.path.isabs(sys.argv[0]):
+            script_path = sys.argv[0]
+        else:
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        return os.path.dirname(os.path.abspath(script_path))
+    
+    def _get_active_desktop_dir(self):
+        """
+        Определяет активный рабочий стол
+        
+        Система сама управляет ~/Desktop и всегда показывает активный рабочий стол.
+        КРИТИЧНО: Использует expand_user_path для учета SUDO_USER.
+        
+        Returns:
+            str: Полный путь к активному рабочему столу (~/Desktop)
+        """
+        # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+        desktop_dir = expand_user_path('~/Desktop')
+        
+        # Если ~/Desktop существует - используем его (система сама управляет активным рабочим столом)
+        if os.path.exists(desktop_dir):
+            return desktop_dir
+        
+        # Если ~/Desktop не существует - используем Desktop1 как fallback
+        # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+        return expand_user_path('~/Desktops/Desktop1')
     
     def _check_wine_processes_running(self):
         """
@@ -1432,6 +1511,11 @@ class WinePackageHandler(ComponentHandler):
     @track_class_activity('WinePackageHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка Wine пакета через apt"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         self._update_status(component_id, 'installing')
         
@@ -1615,7 +1699,9 @@ class WinePackageHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса Wine пакета"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК СИСТЕМНЫХ НАСТРОЕК
@@ -1629,6 +1715,11 @@ class SystemConfigHandler(ComponentHandler):
     @track_class_activity('SystemConfigHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка системной настройки"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         self._update_status(component_id, 'installing')
         
@@ -1700,7 +1791,9 @@ class SystemConfigHandler(ComponentHandler):
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
         # Для системных настроек с check_method='system_config' проверка значения файла
         # выполняется автоматически в check_component_status()
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК WINE ОКРУЖЕНИЯ
@@ -1714,6 +1807,11 @@ class WineEnvironmentHandler(ComponentHandler):
     @track_class_activity('WineEnvironmentHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Инициализация Wine окружения"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         self._update_status(component_id, 'installing')
         
@@ -2021,10 +2119,27 @@ class WinetricksHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'winetricks'
     
+    def set_use_minimal(self, use_minimal):
+        """
+        Обновление режима использования минимального winetricks
+        
+        Args:
+            use_minimal: True для минимального, False для оригинального
+        """
+        self.use_minimal = use_minimal
+        if self.winetricks_manager:
+            self.winetricks_manager.set_use_minimal(use_minimal)
+        print(f"[WinetricksHandler] Режим изменен: {'минимальный' if use_minimal else 'оригинальный'} winetricks")
+    
     @track_class_activity('WinetricksHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка winetricks компонента"""
         print(f"WinetricksHandler.install() вызван с component_id={component_id}, config={config}", level='DEBUG')
+        
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку", level='DEBUG')
+            return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         print(f"WinetricksHandler.install() устанавливаем статус installing для {component_id}", level='DEBUG')
@@ -2364,7 +2479,9 @@ class WinetricksHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса winetricks компонента"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК APT ПАКЕТОВ
@@ -2378,6 +2495,11 @@ class AptPackageHandler(ComponentHandler):
     @track_class_activity('AptPackageHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка APT пакета"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         self._update_status(component_id, 'installing')
         
@@ -2407,9 +2529,12 @@ class AptPackageHandler(ComponentHandler):
             details=f"Установка через apt..."
         )
         
+        # НОВОЕ: Разбиваем command_name на список пакетов (если содержит пробелы)
+        packages = command_name.split() if ' ' in command_name else [command_name]
+        
         # Используем UniversalProcessRunner для установки через apt
         return_code = self._run_process(
-            ['apt', 'install', '-y', command_name],
+            ['apt', 'install', '-y'] + packages,
             process_type="install",
             channels=["file", "terminal", "gui"]
         )
@@ -2481,9 +2606,12 @@ class AptPackageHandler(ComponentHandler):
                 print(f"Остановка всех процессов (родитель): {', '.join(sorted(all_processes))}")
                 self._stop_processes(list(all_processes))
         
+        # НОВОЕ: Разбиваем command_name на список пакетов (если содержит пробелы)
+        packages = command_name.split() if ' ' in command_name else [command_name]
+        
         # Удаляем пакет через apt-get purge
         return_code = self._run_process(
-            ['apt-get', 'purge', '-y', command_name],
+            ['apt-get', 'purge', '-y'] + packages,
             process_type="remove",
             channels=["file", "terminal"]
         )
@@ -2514,7 +2642,9 @@ class AptPackageHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса APT пакета"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК WINE ПРИЛОЖЕНИЙ
@@ -2528,7 +2658,12 @@ class WineApplicationHandler(ComponentHandler):
     @track_class_activity('WineApplicationHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка Wine приложения"""
-        # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
+        # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing' только если компонент не установлен
         self._update_status(component_id, 'installing')
         
         component_name = get_component_field(component_id, 'name', 'Unknown')
@@ -2649,20 +2784,12 @@ class WineApplicationHandler(ComponentHandler):
         if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
             print(f"Найден архив: {archive_path}")
             print(f"Распаковка архива напрямую в {wineprefix_path}...")
+            print("Файлы из архива заменят существующие, файлы которых нет в архиве останутся нетронутыми")
             
             try:
-                # Удаляем существующие файлы/папки перед распаковкой
-                items_to_remove = ['dosdevices', 'drive_c', 'system.reg', 'user.reg', 'userdef.reg']
-                for item in items_to_remove:
-                    item_path = os.path.join(wineprefix_path, item)
-                    if os.path.exists(item_path):
-                        print(f"Удаление существующего элемента: {item}")
-                        if os.path.isdir(item_path):
-                            shutil.rmtree(item_path)
-                        else:
-                            os.remove(item_path)
-                
                 # Распаковываем архив напрямую в целевую папку
+                # Файлы из архива автоматически заменят существующие при записи (режим 'wb')
+                # Файлы, которых нет в архиве, останутся нетронутыми
                 with tarfile.open(archive_path, 'r:gz') as tar:
                     # Определяем, содержит ли архив папку с именем source_dir
                     members = tar.getmembers()
@@ -2683,15 +2810,13 @@ class WineApplicationHandler(ComponentHandler):
                         
                         print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
                         
-                        # НОВОЕ: Вычисляем прошедшее время
-                        elapsed_time = int(time.time() - install_start_time)
-                        
+                        # НОВОЕ: Обновляем только global_progress (не stage_progress)
+                        # Время обновляется автоматически через таймер
                         self._update_progress(
                             stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=0,
-                            global_progress=0,
-                            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count})",
-                            elapsed_time=elapsed_time
+                            stage_progress=0,  # Не обновляем
+                            global_progress=0,  # Начальный прогресс
+                            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count})"
                         )
                         
                         extracted_count = 0
@@ -2717,16 +2842,15 @@ class WineApplicationHandler(ComponentHandler):
                                 
                                 extracted_count += 1
                                 if extracted_count % 100 == 0 or extracted_count == total_items:
-                                    progress = int((extracted_count / total_items) * 100) if total_items > 0 else 0
-                                    # НОВОЕ: Вычисляем прошедшее время
-                                    elapsed_time = int(time.time() - install_start_time)
-                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({progress}%) | Время: {elapsed_time} сек")
+                                    # НОВОЕ: Обновляем только global_progress на основе количества файлов
+                                    global_progress = int((extracted_count / total_items) * 100) if total_items > 0 else 0
+                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({global_progress}%)")
+                                    # Время обновляется автоматически через таймер
                                     self._update_progress(
                                         stage_name=f"Распаковка архива {source_dir}",
-                                        stage_progress=progress,
-                                        global_progress=progress,
-                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...)",
-                                        elapsed_time=elapsed_time
+                                        stage_progress=0,  # Не обновляем
+                                        global_progress=global_progress,  # Только global_progress
+                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...)"
                                     )
                             elif member.isdir():
                                 # Создаем папку
@@ -2751,15 +2875,14 @@ class WineApplicationHandler(ComponentHandler):
                                     os.rename(old_path, target_path)
                                 extracted_count += 1
                         
-                        # НОВОЕ: Финальное обновление с временем
-                        elapsed_time = int(time.time() - install_start_time)
-                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов | Время: {elapsed_time} сек")
+                        # НОВОЕ: Финальное обновление - только global_progress
+                        # Время обновляется автоматически через таймер
+                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов")
                         self._update_progress(
                             stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=100,
-                            global_progress=100,
-                            details=f"Успешно извлечено {extracted_count} элементов",
-                            elapsed_time=elapsed_time
+                            stage_progress=0,  # Не обновляем
+                            global_progress=100,  # Завершено
+                            details=f"Успешно извлечено {extracted_count} элементов"
                         )
                     else:
                         # Архив содержит файлы в корне - извлекаем всё
@@ -2776,15 +2899,14 @@ class WineApplicationHandler(ComponentHandler):
                         
                         tar.extractall(wineprefix_path)
                         
-                        # НОВОЕ: Финальное обновление с временем
-                        elapsed_time = int(time.time() - install_start_time)
-                        print(f"Распаковка завершена: извлечено {total_items} файлов | Время: {elapsed_time} сек")
+                        # НОВОЕ: Финальное обновление - только global_progress
+                        # Время обновляется автоматически через таймер
+                        print(f"Распаковка завершена: извлечено {total_items} файлов")
                         self._update_progress(
                             stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=100,
-                            global_progress=100,
-                            details=f"Успешно извлечено {total_items} файлов",
-                            elapsed_time=elapsed_time
+                            stage_progress=0,  # Не обновляем
+                            global_progress=100,  # Завершено
+                            details=f"Успешно извлечено {total_items} файлов"
                         )
                 
                 print(f"Архив успешно распакован в {wineprefix_path}")
@@ -2966,7 +3088,9 @@ class WineApplicationHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса Wine приложения"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        return check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
 
 # ============================================================================
 # ОБРАБОТЧИК ПРИЛОЖЕНИЙ
@@ -2980,6 +3104,11 @@ class ApplicationHandler(ComponentHandler):
     @track_class_activity('ApplicationHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка приложения"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
         self._update_status(component_id, 'installing')
         
@@ -3003,9 +3132,6 @@ class ApplicationHandler(ComponentHandler):
             elif install_method == 'script_creation':
                 # Создание скрипта запуска
                 return self._install_script_creation(component_id, config)
-            elif install_method == 'desktop_shortcut':
-                # Создание ярлыка рабочего стола
-                return self._install_desktop_shortcut(component_id, config)
             else:
                 print(f"Неизвестный метод установки для {component_id}: {install_method}", level='ERROR')
                 self._update_status(component_id, 'error')
@@ -3040,9 +3166,6 @@ class ApplicationHandler(ComponentHandler):
             elif uninstall_method == 'script_removal':
                 # Удаление скрипта запуска
                 return self._uninstall_script_removal(component_id, config)
-            elif uninstall_method == 'desktop_shortcut':
-                # Удаление ярлыка рабочего стола
-                return self._uninstall_desktop_shortcut(component_id, config)
             else:
                 print(f"Неизвестный метод удаления для {component_id}: {uninstall_method}", level='ERROR')
                 self._update_status(component_id, 'error')
@@ -3057,7 +3180,9 @@ class ApplicationHandler(ComponentHandler):
     def check_status(self, component_id: str, config: dict) -> bool:
         """Проверка статуса приложения"""
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
-        status = check_component_status(component_id, wineprefix_path=self.wineprefix)
+        # Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        status = check_component_status(component_id, wineprefix_path=None)
         
         # Дополнительная проверка для компонентов с glob-шаблонами (например, Astra.IDE_64_*)
         if not status:
@@ -3276,168 +3401,6 @@ class ApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
-    def _install_desktop_shortcut(self, component_id: str, config: dict) -> bool:
-        """Создание ярлыка рабочего стола"""
-        print(f"Создание ярлыка рабочего стола: {component_id}")
-        
-        try:
-            # Определяем путь к целевому префиксу
-            wineprefix_path = config.get('wineprefix_path', self.wineprefix)
-            wineprefix_path = expand_user_path(wineprefix_path)
-            
-            # Определяем источник Wine
-            wine_source = config.get('wine_source', 'astrapack')
-            
-            if wine_source == 'system':
-                # Используем системный Wine
-                wine_path = '/usr/bin/wine'
-                if not os.path.exists(wine_path):
-                    result = subprocess.run(['which', 'wine'], 
-                                          stdout=subprocess.PIPE, 
-                                          stderr=subprocess.PIPE, 
-                                          text=True, timeout=5)
-                    if result.returncode == 0:
-                        wine_path = result.stdout.strip()
-                    else:
-                        print("wine не найден в системе", level='ERROR')
-                        self._update_status(component_id, 'error')
-                        return False
-            else:
-                # Используем Wine из AstraPack
-                wine_path = '/opt/wine-astraregul/bin/wine'
-            
-            # Проверяем тип ярлыка
-            shortcut_type = config.get('shortcut_type', 'application')
-            
-            # Определяем путь к файлу ярлыка
-            desktop_file_path = config.get('path', '~/Desktop/AstraRegul.desktop')
-            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-            desktop_file = expand_user_path(desktop_file_path)
-            desktop_dir = os.path.dirname(desktop_file)
-            desktop_name = config.get('name', 'Astra IDE (Wine)')
-            
-            if shortcut_type == 'folder':
-                # Создаем ярлык для открытия папки
-                folder_path = config.get('folder_path', wineprefix_path)
-                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-                if '~' in folder_path:
-                    folder_path = expand_user_path(folder_path)
-                
-                desktop_content = textwrap.dedent(f"""
-                    [Desktop Entry]
-                    Type=Link
-                    NoDisplay=false
-                    Hidden=false
-                    URL={folder_path}
-                """).strip()
-            else:
-                # Создаем ярлык для запуска приложения
-                executable_path = config.get('executable_path')
-                script_path = config.get('script_path')
-                
-                if script_path:
-                    # Используем скрипт запуска (например, для Astra.IDE)
-                    # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-                    full_script_path = expand_user_path(script_path)
-                    desktop_content = textwrap.dedent(f"""
-                        [Desktop Entry]
-                        Comment=
-                        Exec={full_script_path}
-                        Icon=
-                        Name={desktop_name}
-                        Path=
-                        StartupNotify=true
-                        Terminal=true
-                        Type=Application
-                    """).strip()
-                elif executable_path:
-                    # Создаем ярлык для Wine приложения
-                    # Полный путь к исполняемому файлу в Wine префиксе
-                    full_executable = os.path.join(wineprefix_path, executable_path)
-                    
-                    # Аргументы запуска (если есть)
-                    executable_args = config.get('executable_args', '')
-                    
-                    # Формируем команду запуска (конвертируем путь в формат Wine)
-                    wine_executable_path = executable_path.replace('/', '\\')
-                    if executable_args:
-                        exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}" {executable_args}'
-                    else:
-                        exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}"'
-                    
-                    # Путь для рабочей директории
-                    work_dir = os.path.dirname(full_executable)
-                    
-                    # Иконка из конфигурации (если есть)
-                    icon = config.get('icon', '47FF_CONT-Designer.0')
-                    
-                    desktop_content = textwrap.dedent(f"""
-                        [Desktop Entry]
-                        Name={desktop_name}
-                        Type=Application
-                        NoDisplay=false
-                        Exec={exec_cmd}
-                        Icon={icon}
-                        Hidden=false
-                        Path={work_dir}
-                        Terminal=false
-                        StartupNotify=true
-                        StartupWMClass=cont-designer.exe
-                    """).strip()
-                else:
-                    print("executable_path или script_path не указан в конфигурации", level='ERROR')
-                    self._update_status(component_id, 'error')
-                    return False
-            
-            # Записываем ярлык
-            with open(desktop_file, 'w', encoding='utf-8') as f:
-                f.write(desktop_content)
-            
-            # Устанавливаем права на выполнение
-            os.chmod(desktop_file, 0o755)
-            print(f"Создан ярлык: {desktop_file}")
-            
-            # Устанавливаем правильного владельца
-            real_user = os.environ.get('SUDO_USER')
-            if os.geteuid() == 0 and real_user and real_user != 'root':
-                uid = pwd.getpwnam(real_user).pw_uid
-                gid = pwd.getpwnam(real_user).pw_gid
-                os.chown(desktop_file, uid, gid)
-                print(f"Установлен владелец ярлыка: {real_user}")
-            
-            # Удаляем лишние ярлыки созданные установщиком (только для Astra.IDE)
-            if component_id == 'desktop_shortcut':
-                time.sleep(1)
-                
-                unwanted_shortcuts = [
-                    os.path.join(desktop_dir, "Astra.IDE 1.7.2.0.lnk"),
-                    os.path.join(desktop_dir, "Astra.IDE 1.7.2.1.lnk"),
-                    os.path.join(desktop_dir, "IDE Selector.lnk"),
-                    os.path.join(desktop_dir, "IDE Selector.desktop")
-                ]
-                
-                for shortcut in unwanted_shortcuts:
-                    if os.path.exists(shortcut):
-                        os.remove(shortcut)
-                        print(f"Удален лишний ярлык: {os.path.basename(shortcut)}")
-            
-            # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
-            actual_status = self.check_status(component_id, config)
-            if actual_status:
-                # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
-                self._update_status(component_id, 'ok')
-                return True
-            else:
-                print(f"Ярлык создан, но проверка статуса не подтвердила установку", level='ERROR')
-                self._update_status(component_id, 'error')
-                return False
-            
-        except Exception as e:
-            print(f"Создание ярлыка: {str(e)}", level='ERROR')
-            traceback.print_exc()
-            self._update_status(component_id, 'error')
-            return False
-    
     def _uninstall_wine_executable(self, component_id: str, config: dict) -> bool:
         """Удаление исполняемого файла из Wine (Astra.IDE)"""
         print(f"Удаление исполняемого файла из Wine: {component_id}")
@@ -3532,6 +3495,354 @@ class ApplicationHandler(ComponentHandler):
             traceback.print_exc()
             self._update_status(component_id, 'error')
             return False
+
+# ============================================================================
+# ОБРАБОТЧИК ЯРЛЫКОВ РАБОЧЕГО СТОЛА
+# ============================================================================
+class DesktopShortcutHandler(ComponentHandler):
+    """Обработчик создания ярлыков рабочего стола"""
+    
+    def get_category(self) -> str:
+        return 'desktop_shortcut'
+    
+    @track_class_activity('DesktopShortcutHandler')
+    def install(self, component_id: str, config: dict) -> bool:
+        """Установка ярлыка рабочего стола"""
+        # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
+        if self.check_status(component_id, config):
+            print(f"Компонент {component_id} уже установлен, пропускаем установку")
+            return True
+        
+        # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
+        self._update_status(component_id, 'installing')
+        
+        print(f"Установка ярлыка: {config['name']}")
+        
+        # Обновляем прогресс
+        self._update_progress(
+            stage_name=f"Установка {config['name']}",
+            stage_progress=0,
+            global_progress=0,
+            details=f"Подготовка к установке {component_id}"
+        )
+        
+        try:
+            return self._install_desktop_shortcut(component_id, config)
+        except Exception as e:
+            print(f"Установка ярлыка: {str(e)}", level='ERROR')
+            traceback.print_exc()
+            self._update_status(component_id, 'error')
+            return False
+    
+    @track_class_activity('DesktopShortcutHandler')
+    def uninstall(self, component_id: str, config: dict) -> bool:
+        """Удаление ярлыка рабочего стола"""
+        self._update_status(component_id, 'removing')
+        
+        print(f"Удаление ярлыка: {config['name']}")
+        
+        try:
+            return self._uninstall_desktop_shortcut(component_id, config)
+        except Exception as e:
+            print(f"Удаление ярлыка: {str(e)}", level='ERROR')
+            traceback.print_exc()
+            self._update_status(component_id, 'error')
+            return False
+    
+    def check_status(self, component_id: str, config: dict) -> bool:
+        """Проверка статуса ярлыка"""
+        # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
+        return check_component_status(component_id, wineprefix_path=None)
+    
+    def _install_desktop_shortcut(self, component_id: str, config: dict) -> bool:
+        """Создание ярлыка рабочего стола"""
+        print(f"Создание ярлыка рабочего стола: {component_id}")
+        
+        try:
+            # Определяем путь к файлу ярлыка из конфигурации
+            desktop_file_path = config.get('path')
+            if not desktop_file_path:
+                print("path не указан в конфигурации", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+            # КРИТИЧНО: Определяем активный рабочий стол
+            active_desktop_dir = self._get_active_desktop_dir()
+            
+            # Если путь содержит полный путь (старый формат) - извлекаем только имя файла
+            if '/' in desktop_file_path or '~' in desktop_file_path:
+                # Старый формат - извлекаем имя файла
+                desktop_file_name = os.path.basename(desktop_file_path)
+            else:
+                # Новый формат - только имя файла
+                desktop_file_name = desktop_file_path
+            
+            # Формируем полный путь к ярлыку в активном рабочем столе
+            desktop_file = os.path.join(active_desktop_dir, desktop_file_name)
+            desktop_name = config.get('shortcut_name', config.get('name', 'Application'))
+            
+            # Определяем тип ярлыка
+            shortcut_type = config.get('shortcut_type', 'application')
+            
+            if shortcut_type == 'folder':
+                # Создаем ярлык для открытия папки
+                folder_path = config.get('folder_path')
+                if not folder_path:
+                    print("folder_path не указан в конфигурации для типа 'folder'", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                
+                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                if '~' in folder_path:
+                    folder_path = expand_user_path(folder_path)
+                
+                comment = config.get('comment', '')
+                
+                desktop_content = textwrap.dedent(f"""
+                    [Desktop Entry]
+                    Type=Link
+                    Name={desktop_name}
+                    Comment={comment}
+                    NoDisplay=false
+                    Hidden=false
+                    URL={folder_path}
+                """).strip()
+            else:
+                # Создаем ярлык для запуска приложения
+                executable_path = config.get('executable_path')
+                script_path = config.get('script_path')
+                command = config.get('command')
+                
+                # Определяем команду запуска
+                exec_cmd = None
+                work_dir = None
+                terminal = config.get('terminal', False)
+                icon = config.get('icon', '')
+                comment = config.get('comment', '')
+                categories = config.get('categories', '')
+                
+                if command:
+                    # Произвольная команда
+                    exec_cmd = command
+                    work_dir = config.get('working_dir', '')
+                elif script_path:
+                    # Linux скрипт
+                    # КРИТИЧНО: Для скриптов используем Type=Link с URL
+                    # КРИТИЧНО: Используем os.path.abspath для получения абсолютного пути
+                    if '~' in script_path:
+                        # Путь с ~ - используем expand_user_path
+                        full_script_path = expand_user_path(script_path)
+                    elif os.path.isabs(script_path):
+                        # Абсолютный путь - используем как есть
+                        full_script_path = script_path
+                    else:
+                        # Относительный путь - используем os.path.abspath
+                        # Это ищет файл относительно текущей рабочей директории
+                        full_script_path = os.path.abspath(script_path)
+                    
+                    # Проверяем существование скрипта
+                    if not os.path.exists(full_script_path):
+                        print(f"Скрипт не найден: {full_script_path}", level='ERROR')
+                        self._update_status(component_id, 'error')
+                        return False
+                    
+                    # Для скриптов создаем Type=Link с URL
+                    icon = config.get('icon', '')
+                    desktop_content = textwrap.dedent(f"""
+                        [Desktop Entry]
+                        Name={desktop_name}
+                        Type=Link
+                        URL={full_script_path}
+                        Icon={icon if icon else ''}
+                    """).strip()
+                    
+                    # Записываем ярлык
+                    with open(desktop_file, 'w', encoding='utf-8') as f:
+                        f.write(desktop_content)
+                        f.write('\n')  # Пустая строка в конце файла
+                    
+                    # Устанавливаем права на выполнение
+                    os.chmod(desktop_file, 0o755)
+                    print(f"Создан ярлык: {desktop_file}")
+                    
+                    # Устанавливаем правильного владельца
+                    real_user = os.environ.get('SUDO_USER')
+                    if os.geteuid() == 0 and real_user and real_user != 'root':
+                        uid = pwd.getpwnam(real_user).pw_uid
+                        gid = pwd.getpwnam(real_user).pw_gid
+                        os.chown(desktop_file, uid, gid)
+                        print(f"Установлен владелец ярлыка: {real_user}")
+                    
+                    # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
+                    actual_status = self.check_status(component_id, config)
+                    if actual_status:
+                        # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
+                        self._update_status(component_id, 'ok')
+                        return True
+                    else:
+                        print(f"Ярлык создан, но проверка статуса не подтвердила установку", level='ERROR')
+                        self._update_status(component_id, 'error')
+                        return False
+                elif executable_path:
+                    # Wine приложение или Linux исполняемый файл
+                    wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+                    wineprefix_path = expand_user_path(wineprefix_path)
+                    
+                    # Определяем источник Wine
+                    wine_source = config.get('wine_source', 'astrapack')
+                    
+                    if wine_source == 'system':
+                        # Используем системный Wine
+                        wine_path = '/usr/bin/wine'
+                        if not os.path.exists(wine_path):
+                            result = subprocess.run(['which', 'wine'], 
+                                                  stdout=subprocess.PIPE, 
+                                                  stderr=subprocess.PIPE, 
+                                                  text=True, timeout=5)
+                            if result.returncode == 0:
+                                wine_path = result.stdout.strip()
+                            else:
+                                print("wine не найден в системе", level='ERROR')
+                                self._update_status(component_id, 'error')
+                                return False
+                    else:
+                        # Используем Wine из AstraPack
+                        wine_path = '/opt/wine-astraregul/bin/wine'
+                    
+                    # Проверяем, это Wine приложение или Linux исполняемый файл
+                    if executable_path.startswith('drive_c/'):
+                        # Wine приложение
+                        full_executable = os.path.join(wineprefix_path, executable_path)
+                        
+                        # Аргументы запуска
+                        executable_args = config.get('executable_args', '')
+                        
+                        # Формируем команду запуска (конвертируем путь в формат Wine)
+                        wine_executable_path = executable_path.replace('/', '\\')
+                        if executable_args:
+                            exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}" {executable_args}'
+                        else:
+                            exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}"'
+                        
+                        # Путь для рабочей директории
+                        work_dir = os.path.dirname(full_executable)
+                        
+                        # Для Wine приложений по умолчанию terminal=False
+                        if terminal is None:
+                            terminal = False
+                    else:
+                        # Linux исполняемый файл
+                        # КРИТИЧНО: Используем os.path.abspath как для script_path для получения абсолютного пути
+                        if os.path.isabs(executable_path):
+                            # Абсолютный путь - используем как есть
+                            full_executable = executable_path
+                        else:
+                            # Относительный путь - используем os.path.abspath как для script_path
+                            # Это ищет файл относительно текущей рабочей директории
+                            full_executable = os.path.abspath(executable_path)
+                        
+                        # Проверяем существование файла
+                        if not os.path.exists(full_executable):
+                            # Если файл не найден, проверяем, может быть он в PATH
+                            executable_name = os.path.basename(executable_path)
+                            result = subprocess.run(['which', executable_name], 
+                                                  stdout=subprocess.PIPE, 
+                                                  stderr=subprocess.PIPE, 
+                                                  text=True, timeout=5)
+                            if result.returncode == 0:
+                                # Файл найден в PATH - используем только имя
+                                executable_path_for_exec = executable_name
+                                full_executable = None  # Не нужен полный путь, файл в PATH
+                            else:
+                                print(f"Исполняемый файл не найден: {full_executable}", level='ERROR')
+                                self._update_status(component_id, 'error')
+                                return False
+                        else:
+                            # Файл найден - используем полный путь
+                            executable_path_for_exec = full_executable
+                        
+                        # Аргументы запуска
+                        executable_args = config.get('executable_args', '')
+                        
+                        # Формируем команду запуска (точно как для script_path - без cd)
+                        # НЕ используем cd - используем поле Path для рабочей директории
+                        if executable_args:
+                            exec_cmd = f'"{executable_path_for_exec}" {executable_args}'
+                        else:
+                            exec_cmd = f'"{executable_path_for_exec}"'
+                        
+                        # Рабочая директория для исполняемого файла (используется в поле Path)
+                        work_dir = config.get('working_dir')
+                        if not work_dir:
+                            if full_executable:
+                                work_dir = os.path.dirname(full_executable)
+                            else:
+                                # Файл в PATH - рабочая директория не нужна
+                                work_dir = ''
+                        
+                        # Для Linux приложений по умолчанию terminal=False
+                        if terminal is None:
+                            terminal = False
+                else:
+                    print("executable_path, script_path или command не указан в конфигурации", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                
+                if not exec_cmd:
+                    print("Не удалось определить команду запуска", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                
+                # Формируем содержимое .desktop файла (ТОЧНО как в рабочем файле - многострочная строка с отступами)
+                # Используем textwrap.dedent с многострочной строкой f-string
+                # Порядок полей ТОЧНО как в рабочем файле astra_update.desktop
+                desktop_content = textwrap.dedent(f"""
+                    [Desktop Entry]
+                    Version=1.0
+                    Type=Application
+                    Name={desktop_name}
+                    Exec={exec_cmd}
+                    Terminal={'true' if terminal else 'false'}
+                    StartupNotify=true
+                    Comment={comment if comment else ''}
+                    Icon={icon if icon else ''}
+                    Path={work_dir if work_dir else ''}
+                    Categories={categories if categories else 'Development;'}
+                """).strip()
+            
+            # Записываем ярлык
+            with open(desktop_file, 'w', encoding='utf-8') as f:
+                f.write(desktop_content)
+                f.write('\n')  # Пустая строка в конце файла (как в стандартных .desktop файлах)
+            
+            # Устанавливаем права на выполнение
+            os.chmod(desktop_file, 0o755)
+            print(f"Создан ярлык: {desktop_file}")
+            
+            # Устанавливаем правильного владельца
+            real_user = os.environ.get('SUDO_USER')
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                uid = pwd.getpwnam(real_user).pw_uid
+                gid = pwd.getpwnam(real_user).pw_gid
+                os.chown(desktop_file, uid, gid)
+                print(f"Установлен владелец ярлыка: {real_user}")
+            
+            # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
+            actual_status = self.check_status(component_id, config)
+            if actual_status:
+                # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
+                self._update_status(component_id, 'ok')
+                return True
+            else:
+                print(f"Ярлык создан, но проверка статуса не подтвердила установку", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+        except Exception as e:
+            print(f"Создание ярлыка: {str(e)}", level='ERROR')
+            traceback.print_exc()
+            self._update_status(component_id, 'error')
+            return False
     
     def _uninstall_desktop_shortcut(self, component_id: str, config: dict) -> bool:
         """Удаление ярлыка рабочего стола"""
@@ -3539,9 +3850,25 @@ class ApplicationHandler(ComponentHandler):
         
         try:
             # КРИТИЧНО: Используем путь из конфигурации компонента
-            desktop_file_path = config.get('path', '~/Desktop/AstraRegul.desktop')
-            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-            desktop_file = expand_user_path(desktop_file_path)
+            desktop_file_path = config.get('path')
+            if not desktop_file_path:
+                print("path не указан в конфигурации", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+            # КРИТИЧНО: Определяем активный рабочий стол
+            active_desktop_dir = self._get_active_desktop_dir()
+            
+            # Если путь содержит полный путь (старый формат) - извлекаем только имя файла
+            if '/' in desktop_file_path or '~' in desktop_file_path:
+                # Старый формат - извлекаем имя файла
+                desktop_file_name = os.path.basename(desktop_file_path)
+            else:
+                # Новый формат - только имя файла
+                desktop_file_name = desktop_file_path
+            
+            # Формируем полный путь к ярлыку в активном рабочем столе
+            desktop_file = os.path.join(active_desktop_dir, desktop_file_name)
             
             if os.path.exists(desktop_file):
                 os.remove(desktop_file)
@@ -3550,7 +3877,6 @@ class ApplicationHandler(ComponentHandler):
                 print("Ярлык рабочего стола не найден, пропускаем удаление")
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
-            # Это гарантирует, что статус 'missing' устанавливается только после проверки
             time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
             
             # Проверяем статус компонента
@@ -7193,6 +7519,10 @@ class ComponentInstaller(object):
         self.universal_runner = universal_runner
         self.dual_logger = dual_logger
         self.use_minimal_winetricks = use_minimal_winetricks
+        
+        # НОВОЕ: Мониторинг времени и дискового пространства (как в SystemUpdater)
+        self.start_time = None
+        self.initial_disk_space = None
     
     def _get_script_dir(self):
         """
@@ -7286,13 +7616,32 @@ class ComponentInstaller(object):
         """
         Проверка статуса компонента
         
+        КРИТИЧНО: Использует wineprefix_path=None, чтобы путь определялся автоматически
+        из конфигурации компонента, а не из стандартного префикса.
+        
         Args:
             component_id: ID компонента
             
         Returns:
             bool: True если компонент установлен, False если нет
         """
-        return check_component_status(component_id, wineprefix_path=self._get_wineprefix())
+        # КРИТИЧНО: Используем wineprefix_path=None, чтобы путь определялся автоматически
+        # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+        return check_component_status(component_id, wineprefix_path=None)
+    
+    def start_monitoring(self):
+        """Начать мониторинг времени и дискового пространства (как в SystemUpdater)"""
+        self.start_time = time.time()
+        
+        # Получаем начальное дисковое пространство
+        try:
+            disk_usage = shutil.disk_usage('/')
+            self.initial_disk_space = disk_usage.used  # Используем занятое место
+            print(f"Начальное занятое место: {self.initial_disk_space / (1024**3):.2f} ГБ")
+            print(f"Начальное свободное место: {disk_usage.free / (1024**3):.2f} ГБ")
+        except Exception as e:
+            print(f"Не удалось получить дисковое пространство: {e}", level='WARNING')
+            self.initial_disk_space = 0
     
     def install_component(self, component_id):
         """
@@ -7473,6 +7822,19 @@ class ComponentInstaller(object):
             else:
                 print(f"install_components() {component_id} уже установлен, пропускаем", level='DEBUG')
                 print("Компонент %s уже установлен, пропускаем" % component_id)
+                # КРИТИЧНО: Обновляем статус пропущенного компонента на 'ok' если он установлен
+                # Это гарантирует, что статус в GUI будет правильным
+                if self.status_manager:
+                    # Проверяем реальный статус компонента
+                    actual_status = self.check_component_status(component_id)
+                    if actual_status:
+                        # Компонент действительно установлен - обновляем статус на 'ok'
+                        self.status_manager.update_component_status(component_id, 'ok')
+                        print(f"install_components() статус {component_id} обновлен на 'ok' (компонент пропущен, но установлен)", level='DEBUG')
+                    else:
+                        # Компонент не установлен - обновляем статус на 'missing'
+                        self.status_manager.update_component_status(component_id, 'missing')
+                        print(f"install_components() статус {component_id} обновлен на 'missing' (компонент пропущен, но не установлен)", level='DEBUG')
         
         # Финальная проверка: убеждаемся что все процессы wine завершены после всех установок
         if handler:
@@ -7759,7 +8121,7 @@ class AutomationGUI(object):
         self.ttk = ttk
         
         self.root = tk.Tk()
-        self.root.title(f"FSA-AstraInstall Automation {APP_VERSION}")
+        self.root.title(f"{APP_NAME} {APP_VERSION}")
         
         # Делаем окно всплывающим поверх других окон на 7 секунд
         self.root.attributes('-topmost', True)
@@ -7792,6 +8154,10 @@ class AutomationGUI(object):
         
         # Обработчик изменения размера окна
         self.root.bind('<Configure>', self._on_window_resize)
+        
+        # НОВОЕ: Независимый мониторинг времени и дискового пространства
+        self.progress_start_time = None
+        self.progress_initial_disk_space = None
         
         # Переменные состояния
         self.is_running = False
@@ -7950,6 +8316,7 @@ class AutomationGUI(object):
         )
         self.component_handlers['system_config'] = SystemConfigHandler(**common_params)
         self.component_handlers['application'] = ApplicationHandler(**common_params)
+        self.component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
         self.component_handlers['apt_packages'] = AptPackageHandler(**common_params)
         self.component_handlers['wine_application'] = WineApplicationHandler(**common_params)
         
@@ -8902,25 +9269,30 @@ class AutomationGUI(object):
         self.notebook.add(self.wine_frame, text=" Установка Программ ")
         self.wine_tab_index = 1  # Сохраняем индекс вкладки
         
-        # Вкладка Репозитории
-        self.repos_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.repos_frame, text=" Репозитории ")
-        self.repos_tab_index = 2  # Сохраняем индекс вкладки
-        
         # Терминальная вкладка
         self.terminal_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.terminal_frame, text=" Терминал ")
-        self.terminal_tab_index = 3  # Сохраняем индекс вкладки
+        self.terminal_tab_index = 2  # Сохраняем индекс вкладки
+        
+        # Вкладка Мониторинг процессов
+        self.processes_monitor_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.processes_monitor_frame, text=" Мониторинг ")
+        self.processes_monitor_tab_index = 3  # Сохраняем индекс вкладки
         
         # Вкладка Пакеты
         self.packages_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.packages_frame, text=" Пакеты ")
         self.packages_tab_index = 4  # Сохраняем индекс вкладки
         
-        # Вкладка Информация о Системе
+        # Вкладка Репозитории
+        self.repos_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.repos_frame, text=" Репозитории ")
+        self.repos_tab_index = 5  # Сохраняем индекс вкладки
+        
+        # Вкладка О системе
         self.system_info_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.system_info_frame, text=" Информация о Системе ")
-        self.system_info_tab_index = 5  # Сохраняем индекс вкладки
+        self.notebook.add(self.system_info_frame, text=" О системе ")
+        self.system_info_tab_index = 6  # Сохраняем индекс вкладки
         
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
@@ -8932,20 +9304,20 @@ class AutomationGUI(object):
         # Создаем элементы вкладки Wine
         self.create_wine_tab()
         
-        # Создаем элементы вкладки Репозитории
-        self.create_repos_tab()
-        
         # Создаем элементы терминальной вкладки
         self.create_terminal_tab()
+        
+        # Создаем вкладку Мониторинг процессов
+        self.create_processes_monitor_tab()
         
         # Создаем элементы вкладки Пакеты
         self.create_packages_tab()
         
+        # Создаем элементы вкладки Репозитории
+        self.create_repos_tab()
+        
         # Создаем элементы вкладки Информация о Системе
         self.create_system_info_tab()
-        
-        # Создаем вкладку Мониторинг процессов
-        self.create_processes_monitor_tab()
         
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
@@ -9068,6 +9440,7 @@ class AutomationGUI(object):
         self.last_net_time = 0
         
         # Запускаем фоновое обновление системных ресурсов
+        # (включает периодическое обновление информации о системе)
         self.start_background_resource_update()
         
         
@@ -9081,11 +9454,6 @@ class AutomationGUI(object):
         dry_run_check = self.tk.Checkbutton(control_frame, text="Режим тестирования (dry-run)", 
                                            variable=self.dry_run)
         dry_run_check.pack(side=self.tk.LEFT, padx=5, pady=3)
-        
-        # Чекбокс для выбора версии winetricks
-        winetricks_check = self.tk.Checkbutton(control_frame, text="Использовать минимальный winetricks", 
-                                              variable=self.use_minimal_winetricks)
-        winetricks_check.pack(side=self.tk.LEFT, padx=5, pady=3)
         
         # Кнопки управления
         button_frame = self.tk.Frame(control_frame)
@@ -9992,14 +10360,16 @@ class AutomationGUI(object):
         self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
         ToolTip(self.uninstall_wine_button, "Удалить отмеченные галочками компоненты")
         
-        self.full_cleanup_button = self.tk.Button(main_buttons_frame, 
-                                                  text="Полная очистка", 
-                                                  command=self.run_full_cleanup,
+        # Кнопка отмены (активна только во время установки/удаления)
+        self.cancel_operation_button = self.tk.Button(main_buttons_frame, 
+                                                     text="Отменить", 
+                                                     command=self.cancel_operation,
                                                   font=('Arial', 10, 'bold'),
-                                                  bg='#E91E63',
-                                                  fg='white')
-        self.full_cleanup_button.pack(side=self.tk.LEFT, padx=5)
-        ToolTip(self.full_cleanup_button, "Полностью удалить Wine и все связанные файлы")
+                                                     bg='#FF9800',
+                                                     fg='white',
+                                                     state=self.tk.DISABLED)
+        self.cancel_operation_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.cancel_operation_button, "Прервать текущую операцию установки/удаления")
         
         # Вторая строка: Флажок использования минимального winetricks и статус
         second_row_frame = self.tk.Frame(button_frame)
@@ -10007,7 +10377,8 @@ class AutomationGUI(object):
         
         winetricks_check = self.tk.Checkbutton(second_row_frame, 
                                               text="Использовать минимальный winetricks", 
-                                              variable=self.use_minimal_winetricks)
+                                              variable=self.use_minimal_winetricks,
+                                              command=self._on_winetricks_mode_changed)
         winetricks_check.pack(side=self.tk.LEFT, padx=5, pady=3)
         ToolTip(winetricks_check, "Использовать встроенный Python winetricks вместо оригинального bash скрипта")
         
@@ -10030,6 +10401,19 @@ class AutomationGUI(object):
         
         # Запускаем первое обновление через 1 секунду
         self.root.after(1000, update_resources)
+        
+        # Запускаем периодическое обновление информации о системе
+        def update_system():
+            try:
+                self.update_system_info()
+            except Exception as e:
+                # Игнорируем ошибки обновления
+                pass
+            # Планируем следующее обновление через 30 секунд
+            self.root.after(30000, update_system)
+        
+        # Запускаем первое обновление через 2 секунды (после инициализации)
+        self.root.after(2000, update_system)
     
     def _center_window(self):
         """Центрирование окна на экране с учетом панели задач"""
@@ -10090,122 +10474,289 @@ class AutomationGUI(object):
     
     def create_system_info_tab(self):
         """Создание вкладки Информация о Системе"""
-        # Системные ресурсы
+        
+        # ========== СЕКЦИЯ: О ПРОГРАММЕ ==========
+        about_frame = self.tk.LabelFrame(self.system_info_frame, text="О программе")
+        about_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Строка 1: Название и версия | Компания | Сайт компании | Разработчик | Email
+        row1_about = self.tk.Frame(about_frame)
+        row1_about.pack(fill=self.tk.X, padx=5, pady=3)
+        name_version_frame = self.tk.Frame(row1_about)
+        name_version_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(name_version_frame, text=APP_NAME, font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.tk.Label(name_version_frame, text=APP_VERSION, font=('Arial', 9)).pack(side=self.tk.LEFT, padx=(5, 0))
+        self.tk.Label(name_version_frame, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(name_version_frame, text='ООО "НПА Вира-Реалтайм"', font=('Arial', 9)).pack(side=self.tk.LEFT)
+        self.tk.Label(name_version_frame, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        # Ссылка на сайт компании (используем Button с прозрачным фоном для надежности)
+        company_site_button = self.tk.Button(name_version_frame, text="https://rlt.ru/", 
+                                           command=self.open_company_site,
+                                           font=('Arial', 9, 'underline'), 
+                                           fg='blue', 
+                                           bg=name_version_frame.cget('bg'),
+                                           activeforeground='darkblue',
+                                           activebackground=name_version_frame.cget('bg'),
+                                           relief='flat',
+                                           borderwidth=0,
+                                           cursor='hand2',
+                                           padx=2,
+                                           pady=0)
+        company_site_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(company_site_button, "Открыть сайт компании")
+        
+        self.tk.Label(name_version_frame, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(name_version_frame, text="Разработчик:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.tk.Label(name_version_frame, text="@FoksSerg", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(name_version_frame, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        # Ссылка на email разработчика (используем Button с прозрачным фоном для надежности)
+        developer_email_button = self.tk.Button(name_version_frame, text="s.fokin@rlt.ru", 
+                                               command=self.open_developer_email,
+                                               font=('Arial', 9, 'underline'), 
+                                               fg='blue', 
+                                               bg=name_version_frame.cget('bg'),
+                                               activeforeground='darkblue',
+                                               activebackground=name_version_frame.cget('bg'),
+                                               relief='flat',
+                                               borderwidth=0,
+                                               cursor='hand2',
+                                               padx=2,
+                                               pady=0)
+        developer_email_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(developer_email_button, "Открыть почтовый клиент")
+        
+        # Строка 2: Python | Кнопки документации
+        row2_about = self.tk.Frame(about_frame)
+        row2_about.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row2_about, text="Python:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        self.tk.Label(row2_about, text=python_version, font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(row2_about, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        readme_button = self.tk.Button(row2_about, text="README.md", 
+                                      command=self.open_readme, width=12)
+        readme_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(readme_button, "Открыть документацию проекта")
+        
+        wine_guide_button = self.tk.Button(row2_about, text="Руководство Wine", 
+                                          command=self.open_wine_guide, width=15)
+        wine_guide_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(wine_guide_button, "Открыть руководство по установке Wine")
+        
+        sysmon_button = self.tk.Button(row2_about, text="Системный монитор", 
+                                      command=self.open_system_monitor, width=18)
+        sysmon_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(sysmon_button, "Открыть системный монитор для отслеживания ресурсов")
+        # ===============================================
+        
+        # ========== СЕКЦИЯ: СИСТЕМНЫЕ РЕСУРСЫ ==========
         resources_frame = self.tk.LabelFrame(self.system_info_frame, text="Системные ресурсы")
         resources_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        # Строка 1: Диск слева, Мониторинг справа
-        row1_frame = self.tk.Frame(resources_frame)
-        row1_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(row1_frame, text="Дисковое пространство:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.disk_space_label = self.tk.Label(row1_frame, text="Проверка...", font=('Arial', 9))
+        # Строка 1: Диск | Память
+        row1_resources = self.tk.Frame(resources_frame)
+        row1_resources.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row1_resources, text="Диск:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.disk_space_label = self.tk.Label(row1_resources, text="Проверка...", font=('Arial', 9))
         self.disk_space_label.pack(side=self.tk.LEFT, padx=5)
-        
-        self.sysmon_button = self.tk.Button(row1_frame, text="Системный монитор", 
-                                           command=self.open_system_monitor, width=15)
-        self.sysmon_button.pack(side=self.tk.RIGHT, padx=5)
-        ToolTip(self.sysmon_button, "Открыть системный монитор для отслеживания ресурсов")
-        
-        # Строка 2: Память слева, Ярлык справа
-        row2_frame = self.tk.Frame(resources_frame)
-        row2_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(row2_frame, text="Доступная память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.memory_label = self.tk.Label(row2_frame, text="Проверка...", font=('Arial', 9))
+        self.tk.Label(row1_resources, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        self.tk.Label(row1_resources, text="Память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.memory_label = self.tk.Label(row1_resources, text="Проверка...", font=('Arial', 9))
         self.memory_label.pack(side=self.tk.LEFT, padx=5)
         
-        self.shortcut_button = self.tk.Button(row2_frame, text="Проверка...", 
-                                             command=self.toggle_desktop_shortcut, width=15)
-        self.shortcut_button.pack(side=self.tk.RIGHT, padx=5)
-        ToolTip(self.shortcut_button, "Создать или удалить ярлык Astra.IDE на рабочем столе")
-        
-        # Строка 3: Использование CPU приложения
-        row3_frame = self.tk.Frame(resources_frame)
-        row3_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(row3_frame, text="Использование CPU приложения:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.app_cpu_progress = self.ttk.Progressbar(row3_frame, length=100, mode='determinate', maximum=100)
+        # Строка 2: CPU
+        row2_resources = self.tk.Frame(resources_frame)
+        row2_resources.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row2_resources, text="CPU:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.app_cpu_progress = self.ttk.Progressbar(row2_resources, length=100, mode='determinate', maximum=100)
         self.app_cpu_progress.pack(side=self.tk.LEFT, padx=(5, 5))
-        self.app_cpu_label = self.tk.Label(row3_frame, text="0.0%", font=('Arial', 9))
+        self.app_cpu_label = self.tk.Label(row2_resources, text="0.0%", font=('Arial', 9))
         self.app_cpu_label.pack(side=self.tk.LEFT, padx=5)
         ToolTip(self.app_cpu_progress, "Использование CPU процессами приложения (включая дочерние)")
         
         # Предупреждения о ресурсах
         self.resources_warning_label = self.tk.Label(resources_frame, text="", font=('Arial', 8))
+        # ===============================================
         
-        # Проверяем статус ярлыка при запуске
-        self.root.after(1000, self.check_desktop_shortcut_status)
-        
-        # Информация о Linux
+        # ========== СЕКЦИЯ: ИНФОРМАЦИЯ О LINUX (три колонки) ==========
         linux_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о Linux")
         linux_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
-        # Дистрибутив
-        distro_frame = self.tk.Frame(linux_frame)
-        distro_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(distro_frame, text="Дистрибутив:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.distro_label = self.tk.Label(distro_frame, text="Определение...", font=('Arial', 9))
+        # Строка 1: Дистрибутив | Версия | Имя компьютера
+        row1_linux = self.tk.Frame(linux_frame)
+        row1_linux.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row1_linux)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Дистрибутив:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.distro_label = self.tk.Label(col1_frame, text="Определение...", font=('Arial', 9))
         self.distro_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Версия ядра
-        kernel_frame = self.tk.Frame(linux_frame)
-        kernel_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(kernel_frame, text="Версия ядра:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.kernel_label = self.tk.Label(kernel_frame, text="Определение...", font=('Arial', 9))
+        self.tk.Label(row1_linux, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row1_linux)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Версия:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.distro_version_label = self.tk.Label(col2_frame, text="Определение...", font=('Arial', 9))
+        self.distro_version_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row1_linux, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col3_frame = self.tk.Frame(row1_linux)
+        col3_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col3_frame, text="Имя компьютера:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.hostname_label = self.tk.Label(col3_frame, text="Определение...", font=('Arial', 9))
+        self.hostname_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Строка 2: Ядро | Архитектура | Платформа
+        row2_linux = self.tk.Frame(linux_frame)
+        row2_linux.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row2_linux)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Ядро:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.kernel_label = self.tk.Label(col1_frame, text="Определение...", font=('Arial', 9))
         self.kernel_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Архитектура
-        arch_frame = self.tk.Frame(linux_frame)
-        arch_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(arch_frame, text="Архитектура:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.arch_label = self.tk.Label(arch_frame, text="Определение...", font=('Arial', 9))
+        self.tk.Label(row2_linux, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row2_linux)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Архитектура:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.arch_label = self.tk.Label(col2_frame, text="Определение...", font=('Arial', 9))
         self.arch_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Информация о Wine
-        wine_info_frame = self.tk.LabelFrame(self.system_info_frame, text="Информация о Wine")
-        wine_info_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(row2_linux, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
         
-        # Версия Wine
-        wine_version_frame = self.tk.Frame(wine_info_frame)
-        wine_version_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(wine_version_frame, text="Версия Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.wine_version_label = self.tk.Label(wine_version_frame, text="Не установлен", font=('Arial', 9))
+        col3_frame = self.tk.Frame(row2_linux)
+        col3_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col3_frame, text="Платформа:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.platform_label = self.tk.Label(col3_frame, text="Определение...", font=('Arial', 9))
+        self.platform_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Строка 3: Уровень защищенности | Исполнение
+        row3_linux = self.tk.Frame(linux_frame)
+        row3_linux.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row3_linux)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Уровень защищенности:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.security_level_label = self.tk.Label(col1_frame, text="Определение...", font=('Arial', 9))
+        self.security_level_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row3_linux, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row3_linux)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Исполнение:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.execution_label = self.tk.Label(col2_frame, text="Определение...", font=('Arial', 9))
+        self.execution_label.pack(side=self.tk.LEFT, padx=5)
+        # ===============================================
+        
+        # ========== СЕКЦИЯ: ОБОРУДОВАНИЕ (три колонки) ==========
+        hardware_frame = self.tk.LabelFrame(self.system_info_frame, text="Оборудование")
+        hardware_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Строка 1: Процессоры | Память | Графический процессор
+        row1_hardware = self.tk.Frame(hardware_frame)
+        row1_hardware.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row1_hardware)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Процессоры:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.cpu_info_label = self.tk.Label(col1_frame, text="Определение...", font=('Arial', 9))
+        self.cpu_info_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row1_hardware, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row1_hardware)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Память:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.total_memory_label = self.tk.Label(col2_frame, text="Определение...", font=('Arial', 9))
+        self.total_memory_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row1_hardware, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col3_frame = self.tk.Frame(row1_hardware)
+        col3_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col3_frame, text="Графический процессор:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.gpu_label = self.tk.Label(col3_frame, text="Определение...", font=('Arial', 9))
+        self.gpu_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Строка 2: Производитель | Название изделия | Версия изделия
+        row2_hardware = self.tk.Frame(hardware_frame)
+        row2_hardware.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row2_hardware)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Производитель:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.manufacturer_label = self.tk.Label(col1_frame, text="Определение...", font=('Arial', 9))
+        self.manufacturer_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row2_hardware, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row2_hardware)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Название изделия:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.product_name_label = self.tk.Label(col2_frame, text="Определение...", font=('Arial', 9))
+        self.product_name_label.pack(side=self.tk.LEFT, padx=5)
+        
+        self.tk.Label(row2_hardware, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col3_frame = self.tk.Frame(row2_hardware)
+        col3_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col3_frame, text="Версия изделия:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.product_version_label = self.tk.Label(col3_frame, text="Определение...", font=('Arial', 9))
+        self.product_version_label.pack(side=self.tk.LEFT, padx=5)
+        # ===============================================
+        
+        # ========== СЕКЦИЯ: WINE И ПРОЦЕССЫ (объединенные) ==========
+        wine_frame = self.tk.LabelFrame(self.system_info_frame, text="Wine и процессы")
+        wine_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Строка 1: Версия Wine | Путь к Wine | WINEPREFIX
+        row1_wine = self.tk.Frame(wine_frame)
+        row1_wine.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        col1_frame = self.tk.Frame(row1_wine)
+        col1_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col1_frame, text="Версия Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_version_label = self.tk.Label(col1_frame, text="Не установлен", font=('Arial', 9))
         self.wine_version_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Путь к Wine
-        wine_path_frame = self.tk.Frame(wine_info_frame)
-        wine_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(wine_path_frame, text="Путь к Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.wine_path_label = self.tk.Label(wine_path_frame, text="Не найден", font=('Arial', 9))
+        self.tk.Label(row1_wine, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        col2_frame = self.tk.Frame(row1_wine)
+        col2_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col2_frame, text="Путь к Wine:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_path_label = self.tk.Label(col2_frame, text="Не найден", font=('Arial', 9))
         self.wine_path_label.pack(side=self.tk.LEFT, padx=5)
         
-        # Процессы Wine (перенесенные с основной панели)
-        wine_proc_frame = self.tk.LabelFrame(self.system_info_frame, text="Процессы Wine")
-        wine_proc_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(row1_wine, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
         
-        # Количество процессов
-        proc_count_frame = self.tk.Frame(wine_proc_frame)
-        proc_count_frame.pack(fill=self.tk.X, padx=5, pady=3)
-        self.tk.Label(proc_count_frame, text="Активные процессы:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-        self.wine_proc_label = self.tk.Label(proc_count_frame, text="неактивны", font=('Arial', 9))
+        col3_frame = self.tk.Frame(row1_wine)
+        col3_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.tk.Label(col3_frame, text="WINEPREFIX:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wineprefix_label = self.tk.Label(col3_frame, text="Не найден", font=('Arial', 9))
+        self.wineprefix_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Строка 2: Активные процессы Wine
+        row2_wine = self.tk.Frame(wine_frame)
+        row2_wine.pack(fill=self.tk.X, padx=5, pady=3)
+        self.tk.Label(row2_wine, text="Процессы:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.wine_proc_label = self.tk.Label(row2_wine, text="неактивны", font=('Arial', 9))
         self.wine_proc_label.pack(side=self.tk.LEFT, padx=5)
-        
-        # Итоговая сводка (перенесенная с основной вкладки)
-        summary_frame = self.tk.LabelFrame(self.system_info_frame, text="Итоговая сводка")
-        summary_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
-        
-        self.wine_summary_text = self.tk.Text(summary_frame, height=12, wrap=self.tk.WORD,
-                                             font=('Courier', 9))
-        self.wine_summary_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
-        self.wine_summary_text.config(state=self.tk.DISABLED)
+        # ===============================================
         
         # Инициализация уже выполнена в AutomationGUI.__init__
         
     def create_processes_monitor_tab(self):
         """Создание вкладки Мониторинг"""
-        # Создаем фрейм для вкладки
-        self.processes_monitor_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.processes_monitor_frame, text=" Мониторинг ")
-        # Сохраняем индекс вкладки для быстрой проверки
-        self.processes_monitor_tab_index = len(self.notebook.tabs()) - 1
+        # Фрейм для вкладки уже создан в create_widgets
+        # Индекс вкладки уже установлен в create_widgets
         
         # Заголовок
         header_frame = self.tk.Frame(self.processes_monitor_frame)
@@ -10793,14 +11344,278 @@ class AutomationGUI(object):
             # В случае ошибки возвращаем исходный список
             return packages_list
     
+    def open_readme(self):
+        """Открыть README.md"""
+        script_dir = self._get_script_dir()
+        readme_path = os.path.join(script_dir, "README.md")
+        if os.path.exists(readme_path):
+            if platform.system() == "Darwin":  # macOS
+                os.system(f'open "{readme_path}"')
+            elif platform.system() == "Linux":
+                os.system(f'xdg-open "{readme_path}"')
+            else:
+                # Windows
+                os.startfile(readme_path)
+        else:
+            self.tk.messagebox.showwarning("Файл не найден", 
+                                          f"Файл README.md не найден:\n{readme_path}")
+    
+    def open_wine_guide(self):
+        """Открыть WINE_INSTALL_GUIDE.md"""
+        script_dir = self._get_script_dir()
+        guide_path = os.path.join(script_dir, "WINE_INSTALL_GUIDE.md")
+        if os.path.exists(guide_path):
+            if platform.system() == "Darwin":  # macOS
+                os.system(f'open "{guide_path}"')
+            elif platform.system() == "Linux":
+                os.system(f'xdg-open "{guide_path}"')
+            else:
+                # Windows
+                os.startfile(guide_path)
+        else:
+            self.tk.messagebox.showwarning("Файл не найден", 
+                                          f"Файл WINE_INSTALL_GUIDE.md не найден:\n{guide_path}")
+    
+    def open_company_site(self):
+        """Открыть сайт компании"""
+        company_url = "https://rlt.ru/"
+        try:
+            if platform.system() == "Darwin":  # macOS
+                os.system(f'open "{company_url}"')
+            elif platform.system() == "Linux":
+                os.system(f'xdg-open "{company_url}"')
+            else:
+                # Windows
+                os.startfile(company_url)
+        except Exception as e:
+            self.tk.messagebox.showerror("Ошибка", 
+                                        f"Не удалось открыть сайт компании:\n{e}")
+    
+    def open_developer_email(self):
+        """Открыть почтовый клиент для разработчика"""
+        email = "s.fokin@rlt.ru"
+        try:
+            if platform.system() == "Darwin":  # macOS
+                os.system(f'open "mailto:{email}"')
+            elif platform.system() == "Linux":
+                # Пытаемся использовать xdg-email, если доступен
+                result = subprocess.run(['which', 'xdg-email'], capture_output=True, timeout=2)
+                if result.returncode == 0:
+                    os.system(f'xdg-email "{email}"')
+                else:
+                    # Fallback: пытаемся открыть через mailto: в браузере
+                    os.system(f'xdg-open "mailto:{email}"')
+            else:
+                # Windows
+                os.startfile(f"mailto:{email}")
+        except Exception as e:
+            self.tk.messagebox.showerror("Ошибка", 
+                                        f"Не удалось открыть почтовый клиент:\n{e}\n\nEmail: {email}")
+    
+    def _get_hostname(self):
+        """Получить имя компьютера"""
+        try:
+            return platform.node()
+        except:
+            try:
+                return os.uname().nodename
+            except:
+                return "Неизвестно"
+    
+    def _get_security_level(self):
+        """Получить уровень защищенности (для Astra Linux)"""
+        try:
+            if os.path.exists('/etc/astra-release'):
+                with open('/etc/astra-release', 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    content_lower = content.lower()
+                    if 'базовый' in content_lower or 'basic' in content_lower:
+                        return "базовый"
+                    elif 'расширенный' in content_lower or 'extended' in content_lower:
+                        return "расширенный"
+                    elif 'максимальный' in content_lower or 'maximum' in content_lower:
+                        return "максимальный"
+            # Пытаемся получить из других источников
+            if os.path.exists('/etc/os-release'):
+                with open('/etc/os-release', 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if 'SECURITY_LEVEL' in line or 'security' in line.lower():
+                            parts = line.split('=')
+                            if len(parts) > 1:
+                                level = parts[1].strip().strip('"').strip("'")
+                                if level:
+                                    return level
+            return "Не определено"
+        except Exception as e:
+            print(f"Ошибка получения уровня защищенности: {e}", level='DEBUG')
+            return "Не определено"
+    
+    def _get_execution(self):
+        """Получить информацию об исполнении (для Astra Linux)"""
+        try:
+            if os.path.exists('/etc/astra-release'):
+                with open('/etc/astra-release', 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    # Пытаемся найти информацию об исполнении
+                    content_lower = content.lower()
+                    if 'исполнение' in content_lower or 'execution' in content_lower:
+                        for line in content.split('\n'):
+                            line_lower = line.lower()
+                            if 'исполнение' in line_lower or 'execution' in line_lower:
+                                if ':' in line:
+                                    return line.split(':', 1)[1].strip()
+                                elif '=' in line:
+                                    return line.split('=', 1)[1].strip().strip('"').strip("'")
+            return "Не определено"
+        except Exception as e:
+            print(f"Ошибка получения информации об исполнении: {e}", level='DEBUG')
+            return "Не определено"
+    
+    def _get_cpu_info(self):
+        """Получить информацию о процессорах"""
+        try:
+            if os.path.exists('/proc/cpuinfo'):
+                with open('/proc/cpuinfo', 'r', encoding='utf-8') as f:
+                    cpuinfo = f.read()
+                    # Подсчитываем количество процессоров (логических ядер)
+                    processors = set()
+                    model = "Unknown"
+                    current_processor = None
+                    
+                    for line in cpuinfo.split('\n'):
+                        line_lower = line.lower()
+                        if line_lower.startswith('processor'):
+                            # Извлекаем номер процессора
+                            parts = line.split(':')
+                            if len(parts) > 1:
+                                try:
+                                    current_processor = int(parts[1].strip())
+                                    processors.add(current_processor)
+                                except:
+                                    pass
+                        elif 'model name' in line_lower or 'cpu model' in line_lower:
+                            if model == "Unknown":
+                                parts = line.split(':')
+                                if len(parts) > 1:
+                                    model = parts[1].strip()
+                    
+                    cores = len(processors) if processors else cpuinfo.count('processor')
+                    
+                    if cores > 0 and model != "Unknown":
+                        # Сокращаем длинное название процессора
+                        if len(model) > 40:
+                            model = model[:37] + "..."
+                        return f"{cores} × {model}"
+                    elif cores > 0:
+                        return f"{cores} процессоров"
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения информации о процессорах: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_total_memory(self):
+        """Получить общий объем памяти"""
+        try:
+            if os.path.exists('/proc/meminfo'):
+                with open('/proc/meminfo', 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('MemTotal:'):
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                mem_kb = int(parts[1])
+                                mem_gb = mem_kb / (1024 * 1024)
+                                return f"{mem_gb:.1f} ГБ ОЗУ"
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения информации о памяти: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_gpu_info(self):
+        """Получить информацию о графическом процессоре"""
+        try:
+            # Пытаемся использовать lspci
+            result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    line_lower = line.lower()
+                    if 'vga' in line_lower or 'display' in line_lower or '3d' in line_lower or 'graphics' in line_lower:
+                        # Извлекаем название GPU
+                        parts = line.split(':')
+                        if len(parts) > 2:
+                            gpu_name = parts[-1].strip()
+                            # Сокращаем длинное название
+                            if len(gpu_name) > 50:
+                                gpu_name = gpu_name[:47] + "..."
+                            return gpu_name
+            # Если lspci не работает, пытаемся через /proc
+            if os.path.exists('/proc/driver/nvidia/version'):
+                return "NVIDIA (драйвер установлен)"
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения информации о GPU: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_manufacturer(self):
+        """Получить производителя системы"""
+        try:
+            if os.path.exists('/sys/class/dmi/id/sys_vendor'):
+                with open('/sys/class/dmi/id/sys_vendor', 'r', encoding='utf-8') as f:
+                    manufacturer = f.read().strip()
+                    if manufacturer:
+                        return manufacturer
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения производителя: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_product_name(self):
+        """Получить название изделия"""
+        try:
+            if os.path.exists('/sys/class/dmi/id/product_name'):
+                with open('/sys/class/dmi/id/product_name', 'r', encoding='utf-8') as f:
+                    product_name = f.read().strip()
+                    if product_name:
+                        return product_name
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения названия изделия: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_product_version(self):
+        """Получить версию изделия"""
+        try:
+            if os.path.exists('/sys/class/dmi/id/product_version'):
+                with open('/sys/class/dmi/id/product_version', 'r', encoding='utf-8') as f:
+                    product_version = f.read().strip()
+                    if product_version:
+                        return product_version
+            return "Неизвестно"
+        except Exception as e:
+            print(f"Ошибка получения версии изделия: {e}", level='DEBUG')
+            return "Неизвестно"
+    
+    def _get_wineprefix_path(self):
+        """Получить путь к WINEPREFIX"""
+        try:
+            wineprefix = self._get_wineprefix()
+            if wineprefix and os.path.exists(wineprefix):
+                return wineprefix
+            return "Не найден"
+        except:
+            return "Не найден"
+    
     def update_system_info(self):
         """Обновление информации о системе"""
         try:
+            # Проверяем, что все элементы GUI созданы
+            if not hasattr(self, 'distro_label'):
+                return
+            
             # Информация о дистрибутиве Linux
             if platform.system() == "Linux":
                 try:
                     # Пытаемся получить информацию о дистрибутиве
-                    with open('/etc/os-release', 'r') as f:
+                    with open('/etc/os-release', 'r', encoding='utf-8') as f:
                         os_info = f.read()
                     
                     distro_name = "Unknown"
@@ -10808,67 +11623,202 @@ class AutomationGUI(object):
                     
                     for line in os_info.split('\n'):
                         if line.startswith('PRETTY_NAME='):
-                            distro_name = line.split('=')[1].strip('"')
+                            distro_name = line.split('=', 1)[1].strip('"').strip("'")
                         elif line.startswith('VERSION='):
-                            distro_version = line.split('=')[1].strip('"')
+                            distro_version = line.split('=', 1)[1].strip('"').strip("'")
                     
-                    if distro_name != "Unknown":
-                        self.distro_label.config(text="%s %s" % (distro_name, distro_version))
-                    else:
+                    if distro_name != "Unknown" and hasattr(self, 'distro_label'):
+                        self.distro_label.config(text=distro_name)
+                    elif hasattr(self, 'distro_label'):
                         self.distro_label.config(text="Linux (неизвестный дистрибутив)")
                         
-                except Exception:
-                    self.distro_label.config(text="Linux (информация недоступна)")
+                    if distro_version != "Unknown" and hasattr(self, 'distro_version_label'):
+                        self.distro_version_label.config(text=distro_version)
+                    elif hasattr(self, 'distro_version_label'):
+                        self.distro_version_label.config(text="Неизвестно")
+                        
+                except Exception as e:
+                    if hasattr(self, 'distro_label'):
+                        self.distro_label.config(text="Linux (информация недоступна)")
+                    if hasattr(self, 'distro_version_label'):
+                        self.distro_version_label.config(text="Неизвестно")
                 
                 # Версия ядра
                 try:
-                    kernel_version = platform.release()
-                    self.kernel_label.config(text=kernel_version)
+                    if hasattr(self, 'kernel_label'):
+                        kernel_version = platform.release()
+                        self.kernel_label.config(text=kernel_version)
                 except Exception:
-                    self.kernel_label.config(text="Неизвестно")
+                    if hasattr(self, 'kernel_label'):
+                        self.kernel_label.config(text="Неизвестно")
                 
                 # Архитектура
                 try:
-                    arch = platform.machine()
-                    self.arch_label.config(text=arch)
+                    if hasattr(self, 'arch_label'):
+                        arch = platform.machine()
+                        self.arch_label.config(text=arch)
                 except Exception:
-                    self.arch_label.config(text="Неизвестно")
+                    if hasattr(self, 'arch_label'):
+                        self.arch_label.config(text="Неизвестно")
+                
+                # Имя компьютера
+                try:
+                    if hasattr(self, 'hostname_label'):
+                        hostname = self._get_hostname()
+                        self.hostname_label.config(text=hostname)
+                except Exception:
+                    if hasattr(self, 'hostname_label'):
+                        self.hostname_label.config(text="Неизвестно")
+                
+                # Платформа (X11/Wayland)
+                try:
+                    if hasattr(self, 'platform_label'):
+                        display = os.environ.get('DISPLAY', '')
+                        if display:
+                            self.platform_label.config(text="X11")
+                        else:
+                            wayland = os.environ.get('WAYLAND_DISPLAY', '')
+                            if wayland:
+                                self.platform_label.config(text="Wayland")
+                            else:
+                                self.platform_label.config(text="Неизвестно")
+                except Exception:
+                    if hasattr(self, 'platform_label'):
+                        self.platform_label.config(text="Неизвестно")
+                
+                # Уровень защищенности
+                try:
+                    if hasattr(self, 'security_level_label'):
+                        security_level = self._get_security_level()
+                        self.security_level_label.config(text=security_level)
+                except Exception:
+                    if hasattr(self, 'security_level_label'):
+                        self.security_level_label.config(text="Не определено")
+                
+                # Исполнение
+                try:
+                    if hasattr(self, 'execution_label'):
+                        execution = self._get_execution()
+                        self.execution_label.config(text=execution)
+                except Exception:
+                    if hasattr(self, 'execution_label'):
+                        self.execution_label.config(text="Не определено")
+                
+                # Информация об оборудовании
+                try:
+                    if hasattr(self, 'cpu_info_label'):
+                        cpu_info = self._get_cpu_info()
+                        self.cpu_info_label.config(text=cpu_info)
+                except Exception:
+                    if hasattr(self, 'cpu_info_label'):
+                        self.cpu_info_label.config(text="Неизвестно")
+                
+                try:
+                    if hasattr(self, 'total_memory_label'):
+                        total_memory = self._get_total_memory()
+                        self.total_memory_label.config(text=total_memory)
+                except Exception:
+                    if hasattr(self, 'total_memory_label'):
+                        self.total_memory_label.config(text="Неизвестно")
+                
+                try:
+                    if hasattr(self, 'gpu_label'):
+                        gpu_info = self._get_gpu_info()
+                        self.gpu_label.config(text=gpu_info)
+                except Exception:
+                    if hasattr(self, 'gpu_label'):
+                        self.gpu_label.config(text="Неизвестно")
+                
+                try:
+                    if hasattr(self, 'manufacturer_label'):
+                        manufacturer = self._get_manufacturer()
+                        self.manufacturer_label.config(text=manufacturer)
+                except Exception:
+                    if hasattr(self, 'manufacturer_label'):
+                        self.manufacturer_label.config(text="Неизвестно")
+                
+                try:
+                    if hasattr(self, 'product_name_label'):
+                        product_name = self._get_product_name()
+                        self.product_name_label.config(text=product_name)
+                except Exception:
+                    if hasattr(self, 'product_name_label'):
+                        self.product_name_label.config(text="Неизвестно")
+                
+                try:
+                    if hasattr(self, 'product_version_label'):
+                        product_version = self._get_product_version()
+                        self.product_version_label.config(text=product_version)
+                except Exception:
+                    if hasattr(self, 'product_version_label'):
+                        self.product_version_label.config(text="Неизвестно")
                     
             else:
                 # Для macOS и других систем
-                self.distro_label.config(text="%s %s" % (platform.system(), platform.release()))
-                self.kernel_label.config(text=platform.release())
-                self.arch_label.config(text=platform.machine())
+                if hasattr(self, 'distro_label'):
+                    self.distro_label.config(text="%s %s" % (platform.system(), platform.release()))
+                if hasattr(self, 'distro_version_label'):
+                    self.distro_version_label.config(text=platform.release())
+                if hasattr(self, 'kernel_label'):
+                    self.kernel_label.config(text=platform.release())
+                if hasattr(self, 'arch_label'):
+                    self.arch_label.config(text=platform.machine())
+                if hasattr(self, 'hostname_label'):
+                    self.hostname_label.config(text=self._get_hostname())
+                if hasattr(self, 'platform_label'):
+                    self.platform_label.config(text=platform.system())
+                if hasattr(self, 'security_level_label'):
+                    self.security_level_label.config(text="Не определено")
+                if hasattr(self, 'execution_label'):
+                    self.execution_label.config(text="Не определено")
             
             # Информация о Wine
             try:
-                # Проверяем наличие Wine
-                result = subprocess.run(['wine', '--version'], 
-                                      capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    wine_version = result.stdout.strip()
-                    self.wine_version_label.config(text=wine_version, fg='green')
-                    
-                    # Путь к Wine
-                    wine_path_result = subprocess.run(['which', 'wine'], 
-                                                    capture_output=True, text=True, timeout=5)
-                    if wine_path_result.returncode == 0:
-                        wine_path = wine_path_result.stdout.strip()
-                        self.wine_path_label.config(text=wine_path, fg='green')
+                if hasattr(self, 'wine_version_label'):
+                    # Проверяем наличие Wine
+                    result = subprocess.run(['wine', '--version'], 
+                                          capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        wine_version = result.stdout.strip()
+                        self.wine_version_label.config(text=wine_version, fg='green')
+                        
+                        # Путь к Wine
+                        if hasattr(self, 'wine_path_label'):
+                            wine_path_result = subprocess.run(['which', 'wine'], 
+                                                            capture_output=True, text=True, timeout=5)
+                            if wine_path_result.returncode == 0:
+                                wine_path = wine_path_result.stdout.strip()
+                                self.wine_path_label.config(text=wine_path, fg='green')
+                            else:
+                                self.wine_path_label.config(text="Путь не найден", fg='orange')
+                        
+                        # WINEPREFIX
+                        if hasattr(self, 'wineprefix_label'):
+                            wineprefix_path = self._get_wineprefix_path()
+                            self.wineprefix_label.config(text=wineprefix_path, fg='green' if wineprefix_path != "Не найден" else 'orange')
                     else:
-                        self.wine_path_label.config(text="Путь не найден", fg='orange')
-                else:
-                    self.wine_version_label.config(text="Не установлен", fg='red')
-                    self.wine_path_label.config(text="Не найден", fg='red')
-                    
+                        if hasattr(self, 'wine_version_label'):
+                            self.wine_version_label.config(text="Не установлен", fg='red')
+                        if hasattr(self, 'wine_path_label'):
+                            self.wine_path_label.config(text="Не найден", fg='red')
+                        if hasattr(self, 'wineprefix_label'):
+                            self.wineprefix_label.config(text="Не найден", fg='red')
+                        
             except Exception:
-                self.wine_version_label.config(text="Ошибка проверки", fg='red')
-                self.wine_path_label.config(text="Ошибка проверки", fg='red')
+                if hasattr(self, 'wine_version_label'):
+                    self.wine_version_label.config(text="Ошибка проверки", fg='red')
+                if hasattr(self, 'wine_path_label'):
+                    self.wine_path_label.config(text="Ошибка проверки", fg='red')
+                if hasattr(self, 'wineprefix_label'):
+                    self.wineprefix_label.config(text="Ошибка проверки", fg='red')
                 
         except Exception as e:
-            self.distro_label.config(text="Ошибка: %s" % str(e), fg='red')
-            self.kernel_label.config(text="Ошибка", fg='red')
-            self.arch_label.config(text="Ошибка", fg='red')
+            if hasattr(self, 'distro_label'):
+                self.distro_label.config(text="Ошибка: %s" % str(e), fg='red')
+            if hasattr(self, 'kernel_label'):
+                self.kernel_label.config(text="Ошибка", fg='red')
+            if hasattr(self, 'arch_label'):
+                self.arch_label.config(text="Ошибка", fg='red')
     
     def update_resources_info(self):
         """Обновление информации о системных ресурсах в GUI"""
@@ -11426,33 +12376,16 @@ class AutomationGUI(object):
         self.wine_tree.update()
         self.root.update()
         
-        self.wine_summary_text.config(state=self.tk.NORMAL)
-        self.wine_summary_text.delete('1.0', self.tk.END)
-        
+        # Обновляем только статус (wine_summary_text удален)
         if self.wine_checker.is_fully_installed():
-            self.wine_summary_text.insert(self.tk.END, "[OK] Все компоненты установлены и готовы к работе!\n", 'ok_tag')
             self.wine_status_label.config(text="Все компоненты установлены", fg='green')
         elif self.wine_checker.is_wine_installed() and not self.wine_checker.is_astra_ide_installed():
-            self.wine_summary_text.insert(self.tk.END, "[!] Wine установлен, но Astra.IDE не установлена\n", 'warn_tag')
-            self.wine_summary_text.insert(self.tk.END, "    Требуется установка Astra.IDE\n")
             self.wine_status_label.config(text="Требуется установка Astra.IDE", fg='orange')
         elif not self.wine_checker.is_wine_installed():
-            self.wine_summary_text.insert(self.tk.END, "[ERR] Wine не установлен или настроен неправильно\n", 'error_tag')
-            self.wine_summary_text.insert(self.tk.END, "      Требуется установка Wine пакетов\n")
             self.wine_status_label.config(text="Требуется установка Wine", fg='red')
         else:
             missing = self.wine_checker.get_missing_components()
-            self.wine_summary_text.insert(self.tk.END, "[!] Некоторые компоненты отсутствуют:\n", 'warn_tag')
-            for comp in missing:
-                self.wine_summary_text.insert(self.tk.END, "    - %s\n" % comp)
             self.wine_status_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
-        
-        # Настраиваем цветовые теги
-        self.wine_summary_text.tag_configure('ok_tag', foreground='green', font=('Courier', 9, 'bold'))
-        self.wine_summary_text.tag_configure('warn_tag', foreground='orange', font=('Courier', 9, 'bold'))
-        self.wine_summary_text.tag_configure('error_tag', foreground='red', font=('Courier', 9, 'bold'))
-        
-        self.wine_summary_text.config(state=self.tk.DISABLED)
         
         # Управляем доступностью кнопок
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -11479,7 +12412,11 @@ class AutomationGUI(object):
         
         # Блокируем кнопки во время установки
         self.install_wine_button.config(state=self.tk.DISABLED)
+        self.uninstall_wine_button.config(state=self.tk.DISABLED)
         self.check_wine_button.config(state=self.tk.DISABLED)
+        # Активируем кнопку отмены
+        self.cancel_operation_button.config(state=self.tk.NORMAL)
+        self.operation_cancelled = False
         self.wine_status_label.config(text="Установка...", fg='blue')
         
         # КРИТИЧНО: Устанавливаем статус 'pending' для всех компонентов, которые будут установлены
@@ -11494,7 +12431,9 @@ class AutomationGUI(object):
             for component_id in resolved_components:
                 if component_id in COMPONENTS_CONFIG:
                     # Проверяем, установлен ли компонент перед установкой статуса pending
-                    is_installed = check_component_status(component_id, wineprefix_path=self._get_wineprefix())
+                    # КРИТИЧНО: Используем wineprefix_path=None, чтобы путь определялся автоматически
+                    # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+                    is_installed = check_component_status(component_id, wineprefix_path=None)
                     if not is_installed:
                         self.component_status_manager.update_component_status(component_id, 'pending')
                         # КРИТИЧНО: Принудительно обновляем GUI после каждого обновления статуса
@@ -11505,6 +12444,9 @@ class AutomationGUI(object):
         # Это гарантирует, что все статусы 'pending' отобразятся в GUI до начала установки
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
+        
+        # НОВОЕ: Запускаем таймер обновления времени и дискового пространства
+        self.start_progress_timer()
         
         # Запускаем установку в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
@@ -11539,9 +12481,15 @@ class AutomationGUI(object):
     
     def _install_completed(self, success):
         """Завершение установки (вызывается в главном потоке)"""
+        # НОВОЕ: Останавливаем таймер обновления времени и диска
+        self.stop_progress_timer()
+        
         # Разблокируем кнопки
         self.install_wine_button.config(state=self.tk.NORMAL)
+        self.uninstall_wine_button.config(state=self.tk.NORMAL)
         self.check_wine_button.config(state=self.tk.NORMAL)
+        # Деактивируем кнопку отмены
+        self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         if success:
             self.wine_status_label.config(text="Установка завершена успешно", fg='green')
@@ -11549,6 +12497,26 @@ class AutomationGUI(object):
         else:
             self.wine_status_label.config(text="Ошибка установки", fg='red')
             print("[ERROR] Ошибка установки компонентов", gui_log=True)
+        
+        # КРИТИЧНО: Обновляем статусы всех компонентов после завершения установки
+        # Это гарантирует, что статусы пропущенных компонентов будут правильными
+        if hasattr(self, 'component_installer') and self.component_installer:
+            # Проверяем статусы всех компонентов и обновляем их в ComponentStatusManager
+            for component_id in COMPONENTS_CONFIG.keys():
+                # Проверяем реальный статус компонента
+                actual_status = self.component_installer.check_component_status(component_id)
+                # Получаем текущий статус из ComponentStatusManager
+                current_status_dict = self.component_status_manager.get_all_components_status()
+                if component_id in current_status_dict:
+                    current_status_text, current_status_tag = current_status_dict[component_id]
+                    # Обновляем статус только если компонент не в процессе установки/удаления
+                    if current_status_tag not in ['installing', 'removing', 'pending']:
+                        if actual_status:
+                            # Компонент установлен - обновляем статус на 'ok'
+                            self.component_status_manager.update_component_status(component_id, 'ok')
+                        else:
+                            # Компонент не установлен - обновляем статус на 'missing'
+                            self.component_status_manager.update_component_status(component_id, 'missing')
         
         # КРИТИЧНО: Снимаем галочки с завершенных компонентов на основе фактического статуса
         # (независимо от флага success - компонент может быть установлен даже при ошибках)
@@ -11569,7 +12537,7 @@ class AutomationGUI(object):
                             values[0] = '☐'
                             self.wine_tree.item(item_id, values=values)
         
-        # Обновляем статус компонентов
+        # Обновляем статус компонентов в GUI
         self._update_wine_status()
     
     def _reset_progress_panel(self):
@@ -11734,6 +12702,9 @@ class AutomationGUI(object):
     
     def _wine_install_completed(self, success):
         """Обработка завершения установки (вызывается из главного потока)"""
+        # НОВОЕ: Останавливаем таймер обновления времени и диска
+        self.stop_progress_timer()
+        
         if success:
             self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
             self.wine_stage_label.config(text="Установка завершена!", fg='green')
@@ -12324,8 +13295,12 @@ class AutomationGUI(object):
             return
         
         # Блокируем кнопки во время удаления
+        self.install_wine_button.config(state=self.tk.DISABLED)
         self.uninstall_wine_button.config(state=self.tk.DISABLED)
         self.check_wine_button.config(state=self.tk.DISABLED)
+        # Активируем кнопку отмены
+        self.cancel_operation_button.config(state=self.tk.NORMAL)
+        self.operation_cancelled = False
         self.wine_status_label.config(text="Удаление...", fg='blue')
         
         # КРИТИЧНО: Устанавливаем статус 'pending' для всех компонентов, которые будут удалены
@@ -12341,7 +13316,9 @@ class AutomationGUI(object):
             for component_id in resolved_components:
                 if component_id in COMPONENTS_CONFIG:
                     # Проверяем, установлен ли компонент перед установкой статуса pending
-                    is_installed = check_component_status(component_id, wineprefix_path=self._get_wineprefix())
+                    # КРИТИЧНО: Используем wineprefix_path=None, чтобы путь определялся автоматически
+                    # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
+                    is_installed = check_component_status(component_id, wineprefix_path=None)
                     if is_installed:
                         self.component_status_manager.update_component_status(component_id, 'pending')
                         # КРИТИЧНО: Принудительно обновляем GUI после каждого обновления статуса
@@ -12360,6 +13337,9 @@ class AutomationGUI(object):
         
         time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
         
+        # НОВОЕ: Запускаем таймер обновления времени и дискового пространства
+        self.start_progress_timer()
+        
         # Запускаем удаление в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,), name="WineUninstallThread")
@@ -12371,8 +13351,11 @@ class AutomationGUI(object):
     def _uninstall_completed(self, success):
         """Завершение удаления (вызывается в главном потоке)"""
         # Разблокируем кнопки
+        self.install_wine_button.config(state=self.tk.NORMAL)
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
         self.check_wine_button.config(state=self.tk.NORMAL)
+        # Деактивируем кнопку отмены
+        self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         if success:
             self.wine_status_label.config(text="Удаление завершено успешно", fg='green')
@@ -12384,81 +13367,69 @@ class AutomationGUI(object):
         # Обновляем статус компонентов
         self._update_wine_status()
     
-    def run_full_cleanup(self):
-        """Запуск полной очистки всех данных Wine"""
-        # Подтверждение от пользователя
+    def cancel_operation(self):
+        """Прервать текущую операцию установки/удаления"""
         import tkinter.messagebox as messagebox
-        message = ("ВНИМАНИЕ! Полная очистка удалит ВСЕ данные Wine:\n\n"
-                  "• WINEPREFIX (~/.wine-astraregul)\n"
-                  "• Все кэши Wine (~/.cache/wine, ~/.cache/winetricks)\n"
-                  "• Временные файлы Wine\n"
-                  "• Логи Wine\n"
-                  "• Другие WINEPREFIX (~/.wine, ~/.wine-*)\n\n"
-                  "Это действие НЕОБРАТИМО!\n\n"
-                  "Продолжить?")
         
-        if not messagebox.askyesno("Подтверждение полной очистки", message):
+        if not messagebox.askyesno("Подтверждение отмены", 
+                                  "Вы уверены, что хотите прервать текущую операцию?\n\n"
+                                  "Это может привести к неполной установке/удалению компонентов."):
             return
         
-        self.wine_status_label.config(text="Полная очистка запущена...", fg='orange')
-        self.full_cleanup_button.config(state=self.tk.DISABLED)
-        self.uninstall_wine_button.config(state=self.tk.DISABLED)
-        self.install_wine_button.config(state=self.tk.DISABLED)
-        self.check_wine_button.config(state=self.tk.DISABLED)
+        print("[INFO] Пользователь запросил отмену операции", gui_log=True)
+        self.wine_status_label.config(text="Отмена операции...", fg='orange')
+        self.cancel_operation_button.config(state=self.tk.DISABLED)
         
-        # Запускаем полную очистку в отдельном потоке
-        cleanup_thread = threading.Thread(target=self._perform_full_cleanup, name="FullCleanupThread")
-        cleanup_thread.daemon = True
-        print(f"Создание потока FullCleanupThread для полной очистки", level='DEBUG')
-        cleanup_thread.start()
-        print(f"Поток FullCleanupThread запущен (имя: {cleanup_thread.name})", level='DEBUG')
-    
-    def _perform_full_cleanup(self):
-        """Выполнение полной очистки (в отдельном потоке)"""
-        thread_name = threading.current_thread().name
-        print(f"Поток {thread_name} начал выполнение (_perform_full_cleanup)", level='DEBUG')
-        try:
-            # Создаем callback для обновления статуса
-            def update_callback(message):
-                self.root.after(0, lambda: self._update_install_status(message))
-            
-            # Используем handlers через ComponentInstaller для полной очистки
-            # Удаляем: wineprefix (который удалит все дочерние компоненты), astra_ide, start_script, desktop_shortcut
-            components_to_remove = ['wineprefix', 'astra_ide', 'start_script', 'desktop_shortcut']
-            if not hasattr(self, 'component_installer') or not self.component_installer:
-                print("[ERROR] ComponentInstaller не инициализирован", level='ERROR')
-                self.root.after(0, lambda: self._full_cleanup_completed(False))
-                return
-            success = self.component_installer.uninstall_components(components_to_remove)
-            
-            # Уведомляем о завершении
-            self.root.after(0, lambda: self._full_cleanup_completed(success))
-            
-        except Exception as e:
-            error_msg = "Ошибка полной очистки: %s" % str(e)
-            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
-            self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
-            self.root.after(0, lambda: self.full_cleanup_button.config(state=self.tk.NORMAL))
-            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
-        finally:
-            thread_name = threading.current_thread().name
-            print(f"Поток {thread_name} завершил выполнение (_perform_full_cleanup)", level='DEBUG')
-    
-    def _full_cleanup_completed(self, success):
-        """Обработка завершения полной очистки (вызывается из главного потока)"""
-        if success:
-            self.wine_status_label.config(text="Полная очистка завершена успешно!", fg='green')
-            print("[SUCCESS] Полная очистка Wine завершена успешно", gui_log=True)
-            
-            # Автоматически запускаем проверку
-            self.root.after(2000, self.run_wine_check)
-        else:
-            self.wine_status_label.config(text="Ошибка полной очистки", fg='red')
-            print("[ERROR] Ошибка полной очистки Wine", gui_log=True)
+        # Устанавливаем флаг отмены
+        if not hasattr(self, 'operation_cancelled'):
+            self.operation_cancelled = False
+        self.operation_cancelled = True
+        
+        # Прерываем процессы через ComponentInstaller
+        if hasattr(self, 'component_installer') and self.component_installer:
+            handler = self.component_installer._get_any_handler()
+            if handler:
+                # Останавливаем все процессы Wine
+                print("[INFO] Остановка процессов Wine...", gui_log=True)
+                handler._force_terminate_wine_processes()
+                handler._terminate_wineserver()
+                handler._wait_for_all_processes_terminated(max_wait=10)
+        
+        # Прерываем процессы через UniversalProcessRunner
+        if hasattr(self, 'universal_runner') and self.universal_runner:
+            try:
+                # Получаем список активных процессов и останавливаем их
+                running_processes = self.universal_runner.get_running_processes()
+                if running_processes:
+                    print(f"[INFO] Найдено {len(running_processes)} активных процессов для остановки", gui_log=True)
+                    for pid, name, cmdline in running_processes:
+                        try:
+                            proc = psutil.Process(pid)
+                            proc.terminate()
+                            print(f"[INFO] Отправлен сигнал SIGTERM процессу {pid} ({name})", gui_log=True)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                            print(f"[WARNING] Не удалось остановить процесс {pid}: {e}", gui_log=True)
+                print("[INFO] Все процессы UniversalProcessRunner остановлены", gui_log=True)
+            except Exception as e:
+                print(f"[ERROR] Ошибка остановки процессов: {e}", gui_log=True)
         
         # Восстанавливаем кнопки
-        self.full_cleanup_button.config(state=self.tk.NORMAL)
+        self.root.after(1000, self._cancel_operation_completed)
+    
+    def _cancel_operation_completed(self):
+        """Завершение отмены операции"""
+        self.operation_cancelled = False
+        self.wine_status_label.config(text="Операция отменена", fg='orange')
+        print("[INFO] Операция отменена пользователем", gui_log=True)
+        
+        # Восстанавливаем кнопки
+        self.install_wine_button.config(state=self.tk.NORMAL)
+        self.uninstall_wine_button.config(state=self.tk.NORMAL)
         self.check_wine_button.config(state=self.tk.NORMAL)
+        self.cancel_operation_button.config(state=self.tk.DISABLED)
+        
+        # Обновляем статусы компонентов
+        self._update_wine_status()
     
     def _perform_wine_uninstall(self, selected_components):
         """Выполнение удаления Wine компонентов (в отдельном потоке)"""
@@ -12510,8 +13481,18 @@ class AutomationGUI(object):
             thread_name = threading.current_thread().name
             print(f"Поток {thread_name} завершил выполнение (_perform_wine_uninstall)", level='DEBUG')
 
+    def _on_winetricks_mode_changed(self):
+        """Обработчик изменения режима winetricks"""
+        if hasattr(self, 'component_handlers') and 'winetricks' in self.component_handlers:
+            use_minimal = self.use_minimal_winetricks.get()
+            self.component_handlers['winetricks'].set_use_minimal(use_minimal)
+            print(f"[GUI] Режим winetricks изменен: {'минимальный' if use_minimal else 'оригинальный'}", gui_log=True)
+    
     def _wine_uninstall_completed(self, success):
         """Обработка завершения удаления (вызывается из главного потока)"""
+        # НОВОЕ: Останавливаем таймер обновления времени и диска
+        self.stop_progress_timer()
+        
         # Разблокируем кнопки
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -13584,6 +14565,16 @@ class AutomationGUI(object):
         # Останавливаем предыдущий таймер если был
         self.stop_progress_timer()
         
+        # НОВОЕ: Начинаем независимый мониторинг времени и диска
+        self.progress_start_time = time.time()
+        try:
+            disk_usage = shutil.disk_usage('/')
+            self.progress_initial_disk_space = disk_usage.used
+            print(f"[MONITORING] Мониторинг запущен: начальное занятое место {self.progress_initial_disk_space / (1024**3):.2f} ГБ")
+        except Exception as e:
+            print(f"[MONITORING] Не удалось получить дисковое пространство: {e}", level='WARNING')
+            self.progress_initial_disk_space = 0
+        
         # Сбрасываем счетчик обновления диска
         self.disk_update_counter = 0
         
@@ -13598,31 +14589,34 @@ class AutomationGUI(object):
             except:
                 pass
             self.installation_progress_timer = None
+        
+        # НОВОЕ: Сбрасываем мониторинг
+        self.progress_start_time = None
+        self.progress_initial_disk_space = None
     
     def _update_progress_timer(self):
         """Периодическое обновление времени и дискового пространства"""
         try:
-            # Проверяем что процесс еще работает
-            if not self.is_running:
+            # НОВОЕ: Независимый мониторинг - просто считаем от progress_start_time
+            if self.progress_start_time is None:
+                # Мониторинг не запущен, планируем следующую проверку
+                self.installation_progress_timer = self.root.after(1000, self._update_progress_timer)
                 return
             
-            # Получаем статистику от SystemUpdater
-            if hasattr(self, 'system_updater') and self.system_updater and self.system_updater.start_time:
-                
-                # Вычисляем прошедшее время
-                elapsed_time = time.time() - self.system_updater.start_time
-                minutes = int(elapsed_time // 60)
-                seconds = int(elapsed_time % 60)
-                
-                # Обновляем метку времени
-                if hasattr(self, 'wine_time_label'):
-                    self.wine_time_label.config(text=f"{minutes} мин {seconds} сек")
-                
-                # Увеличиваем счетчик и обновляем диск каждые 3 вызова (3 секунды)
-                self.disk_update_counter += 1
-                if self.disk_update_counter >= 3:
-                    self.disk_update_counter = 0
-                    self._update_disk_space()
+            # Вычисляем прошедшее время
+            elapsed_time = time.time() - self.progress_start_time
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            
+            # Обновляем метку времени
+            if hasattr(self, 'wine_time_label'):
+                self.wine_time_label.config(text=f"{minutes} мин {seconds} сек")
+            
+            # Увеличиваем счетчик и обновляем диск каждые 3 вызова (3 секунды)
+            self.disk_update_counter += 1
+            if self.disk_update_counter >= 3:
+                self.disk_update_counter = 0
+                self._update_disk_space()
             
             # Планируем следующее обновление через 1 секунду
             self.installation_progress_timer = self.root.after(1000, self._update_progress_timer)
@@ -13635,36 +14629,30 @@ class AutomationGUI(object):
     def _update_disk_space(self):
         """Обновление информации о дисковом пространстве"""
         try:
-            if hasattr(self, 'system_updater') and self.system_updater and self.system_updater.initial_disk_space is not None:
-                # Получаем текущее ЗАНЯТОЕ место
-                disk_usage = shutil.disk_usage('/')
-                current_used = disk_usage.used
+            if self.progress_initial_disk_space is None:
+                return
+            
+            # Получаем текущее ЗАНЯТОЕ место
+            disk_usage = shutil.disk_usage('/')
+            current_used = disk_usage.used
+            
+            # Вычисляем разницу
+            disk_change = current_used - self.progress_initial_disk_space
+            size_mb = disk_change / (1024**2)
+            
+            if disk_change > 0:
+                # Место занято (установлено больше)
+                if hasattr(self, 'wine_size_label'):
+                    self.wine_size_label.config(text=f"{size_mb:.0f} MB")
+            elif disk_change < 0:
+                # Место освобождено (удалено)
+                if hasattr(self, 'wine_size_label'):
+                    self.wine_size_label.config(text=f"{abs(size_mb):.0f} MB освобождено")
+            else:
+                # Без изменений
+                if hasattr(self, 'wine_size_label'):
+                    self.wine_size_label.config(text="0 MB")
                 
-                # Вычисляем разницу (сколько добавилось)
-                disk_change = current_used - self.system_updater.initial_disk_space
-                
-                # Отладочное логирование
-                size_mb = disk_change / (1024**2)
-                print(f"[DISK_DEBUG] Начальное занято: {self.system_updater.initial_disk_space/(1024**3):.2f} ГБ, "
-                      f"Текущее занято: {current_used/(1024**3):.2f} ГБ, "
-                      f"Добавлено: {size_mb:.1f} МБ")
-                
-                if disk_change > 0:
-                    # Место занято (установлено больше)
-                    if hasattr(self, 'wine_size_label'):
-                        self.wine_size_label.config(text=f"{size_mb:.0f} MB")
-                        print(f"[DISK_UPDATE] Установлено: {size_mb:.0f} MB")
-                elif disk_change < 0:
-                    # Место освобождено (удалено)
-                    if hasattr(self, 'wine_size_label'):
-                        self.wine_size_label.config(text=f"{abs(size_mb):.0f} MB освобождено")
-                        print(f"[DISK_UPDATE] Освобождено: {abs(size_mb):.0f} MB")
-                else:
-                    # Без изменений
-                    if hasattr(self, 'wine_size_label'):
-                        self.wine_size_label.config(text="0 MB")
-                        print(f"[DISK_UPDATE] Без изменений")
-                        
         except Exception as e:
             print(f"[DISK_ERROR] Ошибка обновления диска: {e}")
             traceback.print_exc()
@@ -13689,12 +14677,7 @@ class AutomationGUI(object):
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
         
-        # НОВОЕ: Запускаем мониторинг времени и дискового пространства
-        if hasattr(self, 'system_updater') and self.system_updater:
-            self.system_updater.start_monitoring()
-            print("[MONITORING] Мониторинг времени и диска запущен", gui_log=True)
-        
-        # НОВОЕ: Запускаем периодическое обновление таймера
+        # НОВОЕ: Запускаем периодическое обновление таймера (он сам запустит мониторинг)
         self.start_progress_timer()
         
         # Запускаем автоматизацию в отдельном потоке
@@ -13921,7 +14904,7 @@ class AutomationGUI(object):
             print("[INFO] Начинаем автоматизацию в GUI режиме")
             self.update_status("Запуск автоматизации...")
             print("=" * 60, gui_log=True)
-            print("FSA-AstraInstall Automation", gui_log=True)
+            print(APP_NAME, gui_log=True)
             print("Автоматизация установки Astra.IDE", gui_log=True)
             print("=" * 60, gui_log=True)
             
@@ -15765,6 +16748,10 @@ class SystemUpdater(object):
         print("[INFO] Начинаем проверку системных ресурсов")
         
         try:
+            # НОВОЕ: Сначала исправляем сломанные зависимости (если есть)
+            if not self._fix_broken_dependencies():
+                print("[WARNING] Не удалось исправить сломанные зависимости, продолжаем проверку...")
+            
             # Проверяем свободное место на диске
             if not self._check_disk_space():
                 print("[ERROR] Недостаточно свободного места на диске")
@@ -15913,9 +16900,21 @@ class SystemUpdater(object):
         """Проверка свободного места на диске"""
         try:
             total, used, free = shutil.disk_usage('/')
+            
+            # НОВОЕ: Детальное логирование для диагностики
+            total_gb = total / (1024**3)
+            used_gb = used / (1024**3)
             free_gb = free / (1024**3)
             
-            print("   [DISK] Свободно места: %.2f ГБ (минимум: %.1f ГБ)" % (free_gb, self.min_free_space_gb))
+            print("   [DISK] Детальная информация о диске:")
+            print("   [DISK]   Всего места: %.2f ГБ" % total_gb)
+            print("   [DISK]   Занято места: %.2f ГБ" % used_gb)
+            print("   [DISK]   Свободно места: %.2f ГБ (минимум: %.1f ГБ)" % (free_gb, self.min_free_space_gb))
+            
+            # НОВОЕ: Проверка на аномальные значения
+            if total == 0:
+                print("   [ERROR] ОШИБКА: shutil.disk_usage('/') вернул total=0 - возможно проблема с правами доступа или монтированием!")
+                return False
             
             if free_gb < self.min_free_space_gb:
                 print("   [ERROR] Недостаточно свободного места на диске!")
@@ -15925,6 +16924,49 @@ class SystemUpdater(object):
             
         except Exception as e:
             print("   [ERROR] Ошибка проверки диска: %s" % str(e))
+            import traceback
+            print("   [ERROR] Детали ошибки:")
+            traceback.print_exc()
+            return False
+    
+    def _fix_broken_dependencies(self):
+        """Исправление сломанных зависимостей APT"""
+        try:
+            print("   [APT] Проверка сломанных зависимостей...")
+            
+            # Проверяем наличие сломанных зависимостей
+            result = subprocess.run(['apt-get', 'check'], 
+                                  capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0:
+                print("   [OK] Сломанных зависимостей не обнаружено")
+                return True
+            
+            # Если есть ошибки, пытаемся исправить
+            if 'Неудовлетворённые зависимости' in result.stderr or 'Unmet dependencies' in result.stderr:
+                print("   [WARNING] Обнаружены сломанные зависимости, пытаемся исправить...")
+                print("[INFO] Исправление сломанных зависимостей APT...", gui_log=True)
+                
+                # Выполняем apt --fix-broken install
+                fix_result = subprocess.run(['apt-get', 'install', '--fix-broken', '-y'], 
+                                          capture_output=True, text=True, timeout=300)
+                
+                if fix_result.returncode == 0:
+                    print("   [OK] Сломанные зависимости успешно исправлены")
+                    print("[OK] Сломанные зависимости исправлены", gui_log=True)
+                    return True
+                else:
+                    print(f"   [WARNING] Не удалось автоматически исправить зависимости: {fix_result.stderr[:200]}")
+                    print("[WARNING] Не удалось автоматически исправить зависимости", gui_log=True)
+                    return False
+            
+            return True
+            
+        except subprocess.TimeoutExpired:
+            print("   [ERROR] Таймаут при проверке/исправлении зависимостей")
+            return False
+        except Exception as e:
+            print(f"   [ERROR] Ошибка при исправлении зависимостей: {e}")
             return False
     
     def _check_memory(self):
@@ -17466,7 +18508,7 @@ def main():
     print(f"[INFO] Аргументы командной строки: {sys.argv}", gui_log=True)
     print(f"[INFO] Количество аргументов: {len(sys.argv)}", gui_log=True)
     print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", gui_log=True)
-    print(f"[INFO] FSA-AstraInstall версия: {APP_VERSION}", gui_log=True)
+    print(f"[INFO] {APP_NAME} версия: {APP_VERSION}", gui_log=True)
     print(f"[INFO] Python версия: {sys.version}", gui_log=True)
     
     # КРИТИЧНО: Обрабатываем --close-terminal СРАЗУ после создания лог файла
@@ -17672,9 +18714,9 @@ def main():
         print("[INFO] Запускаем консольный режим", gui_log=True)
         print("=" * 60)
         if dry_run:
-            print("FSA-AstraInstall Automation (РЕЖИМ ТЕСТИРОВАНИЯ)")
+            print(f"{APP_NAME} (РЕЖИМ ТЕСТИРОВАНИЯ)")
         else:
-            print("FSA-AstraInstall Automation")
+            print(APP_NAME)
         print("Автоматизация установки Astra.IDE")
         print("=" * 60)
         
@@ -17752,6 +18794,7 @@ def main():
                         component_handlers['winetricks'] = WinetricksHandler(use_minimal=True, **common_params)
                         component_handlers['system_config'] = SystemConfigHandler(**common_params)
                         component_handlers['application'] = ApplicationHandler(**common_params)
+                        component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
                         component_handlers['apt_packages'] = AptPackageHandler(**common_params)
                         component_handlers['wine_application'] = WineApplicationHandler(**common_params)
                         
