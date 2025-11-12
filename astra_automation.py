@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.120 (2025.11.12)
+Версия: V2.5.121 (2025.11.12)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.120 (2025.11.12)"
+APP_VERSION = "V2.5.121 (2025.11.12)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -54,6 +54,8 @@ import ast
 import builtins
 import textwrap
 from collections import deque
+import urllib.request
+import urllib.parse
 
 # GUI components (tkinter) - опционально для консольного режима
 try:
@@ -200,7 +202,10 @@ COMPONENTS_CONFIG = {
         'gui_selectable': True,
         'description': 'Wine версии 9.0 для совместимости',
         'sort_order': 8,
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine_9.0-1_amd64.deb',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'wine_astraregul': {
         'name': 'Wine Astraregul',
@@ -213,7 +218,10 @@ COMPONENTS_CONFIG = {
         'gui_selectable': True,
         'description': 'Основной Wine пакет Astraregul',
         'sort_order': 9,
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine-astraregul_10.0-rc6-3_amd64.deb',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     
     # Wine окружение
@@ -251,7 +259,9 @@ COMPONENTS_CONFIG = {
         # Параметры загрузки wine-mono из интернета (для удобства обновления версии)
         'download_url': 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi',
         'download_sha256': '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810',
-        'download_filename': 'wine-mono-8.1.0-x86.msi'
+        'download_filename': 'wine-mono-8.1.0-x86.msi',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'dotnet48': {
         'name': '.NET Framework 4.8',
@@ -271,7 +281,9 @@ COMPONENTS_CONFIG = {
         # Параметры загрузки .NET Framework 4.8 из интернета (для удобства обновления версии)
         'download_url': 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe',
         'download_sha256': '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53',
-        'download_filename': 'ndp48-x86-x64-allos-enu.exe'
+        'download_filename': 'ndp48-x86-x64-allos-enu.exe',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'vcrun2013': {
         'name': 'Visual C++ 2013',
@@ -296,7 +308,9 @@ COMPONENTS_CONFIG = {
         'download_filename_x86': 'vcredist_2013_x86.exe',
         'download_url_x64': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x64.exe',
         'download_sha256_x64': '20e2645b7cd5873b1fa3462b99a665ac8d6e14aae83ded9d875fea35ffdd7d7e',
-        'download_filename_x64': 'vcredist_2013_x64.exe'
+        'download_filename_x64': 'vcredist_2013_x64.exe',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'vcrun2022': {
         'name': 'Visual C++ 2022',
@@ -322,7 +336,9 @@ COMPONENTS_CONFIG = {
         'download_filename_x86': 'vc_redist_2022_x86.exe',
         'download_url_x64': 'https://aka.ms/vs/17/release/vc_redist.x64.exe',
         'download_sha256_x64': None,  # Временный хеш не установлен, проверка отключена
-        'download_filename_x64': 'vc_redist_2022_x64.exe'
+        'download_filename_x64': 'vc_redist_2022_x64.exe',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'd3dcompiler_43': {
         'name': 'DirectX d3dcompiler_43',
@@ -361,7 +377,9 @@ COMPONENTS_CONFIG = {
         'download_filename_32': 'd3dcompiler_47_32.dll',
         'download_url_64': 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47.dll',
         'download_sha256_64': '4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3',
-        'download_filename_64': 'd3dcompiler_47_64.dll'
+        'download_filename_64': 'd3dcompiler_47_64.dll',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     'dxvk': {
         'name': 'DXVK',
@@ -381,7 +399,9 @@ COMPONENTS_CONFIG = {
         # Параметры загрузки DXVK из интернета (для удобства обновления версии)
         'download_url': 'https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz',
         'download_sha256': 'd8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8',
-        'download_filename': 'dxvk-2.5.3.tar.gz'
+        'download_filename': 'dxvk-2.5.3.tar.gz',
+        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+        'source_fallback': True  # Использовать fallback на другие источники
     },
     
     # Astra.IDE и связанные компоненты
@@ -1011,6 +1031,389 @@ class ComponentHandler(ABC):
             script_path = os.path.join(os.getcwd(), sys.argv[0])
         return os.path.dirname(os.path.abspath(script_path))
     
+    def _resolve_single_file(self, file_path, config=None, script_dir=None, cleanup_temp=True, 
+                             source_priority=None, fallback=True):
+        """
+        Вспомогательная функция для получения одного файла из различных источников
+        
+        Поддерживает:
+        - Прямые пути (относительные от скрипта или абсолютные)
+        - Файлы в архивах (формат: "Wine/wine_packages.tar.gz/файл.deb")
+        - URL для загрузки из интернета (http://, https://)
+        - Несколько путей (список) - возвращает первый найденный
+        
+        Args:
+            file_path: Путь к файлу (строка) или список путей
+            config: Конфигурация компонента (для получения download_sha256 и download_filename)
+            script_dir: Директория скрипта (если None, определяется автоматически)
+            cleanup_temp: Если True, временная директория будет удалена при выходе из контекста
+            source_priority: Приоритет источника ('archive', 'url', 'direct', None)
+                            Если указан, проверяет сначала этот тип источника
+            fallback: Если True, при недоступности приоритетного источника пробует другие
+                     Если False, возвращает None если приоритетный источник недоступен
+            
+        Returns:
+            tuple: (путь_к_файлу, временная_директория, источник) или (None, None, None) если файл не найден
+                   Источник: 'url', 'archive', 'direct' или None
+        """
+        if script_dir is None:
+            script_dir = self._get_script_dir()
+        
+        # Нормализуем входные данные: всегда список
+        if isinstance(file_path, str):
+            file_paths = [file_path]
+        else:
+            file_paths = file_path
+        
+        # Группируем пути по типам источников
+        url_paths = []
+        archive_paths = []
+        direct_paths = []
+        
+        for path in file_paths:
+            if not path:
+                continue
+            
+            if path.startswith('http://') or path.startswith('https://'):
+                url_paths.append(path)
+            elif '.tar.gz/' in path or '.tar/' in path:
+                archive_paths.append(path)
+            else:
+                direct_paths.append(path)
+        
+        # Определяем порядок проверки источников
+        if source_priority:
+            if fallback:
+                # С fallback: приоритетный источник первый, потом остальные
+                if source_priority == 'url':
+                    check_order = ['url', 'archive', 'direct']
+                elif source_priority == 'archive':
+                    check_order = ['archive', 'url', 'direct']
+                elif source_priority == 'direct':
+                    check_order = ['direct', 'archive', 'url']
+                else:
+                    check_order = ['url', 'archive', 'direct']
+            else:
+                # Без fallback: только приоритетный источник
+                check_order = [source_priority]
+        else:
+            # Без приоритета: стандартный порядок
+            check_order = ['url', 'archive', 'direct']
+        
+        temp_dirs = []
+        
+        # Пробуем источники в порядке приоритета
+        for source_type in check_order:
+            # Выбираем пути для текущего типа источника
+            if source_type == 'url':
+                paths_to_check = url_paths
+            elif source_type == 'archive':
+                paths_to_check = archive_paths
+            elif source_type == 'direct':
+                paths_to_check = direct_paths
+            else:
+                continue
+            
+            for path in paths_to_check:
+                # 1. URL (http:// или https://)
+                if source_type == 'url':
+                    try:
+                        download_filename = None
+                        if config:
+                            download_filename = config.get('download_filename')
+                        
+                        if not download_filename:
+                            download_filename = os.path.basename(urllib.parse.urlparse(path).path)
+                            if not download_filename:
+                                download_filename = 'downloaded_file'
+                        
+                        temp_dir = tempfile.mkdtemp(prefix='astra_download_')
+                        temp_dirs.append(temp_dir)
+                        download_path = os.path.join(temp_dir, download_filename)
+                        
+                        print(f"[INFO] Загрузка файла из интернета: {path}", level='INFO')
+                        # Обработка SSL ошибок (для macOS и других систем без сертификатов)
+                        try:
+                            import ssl
+                            ssl_context = ssl.create_default_context()
+                            ssl_context.check_hostname = False
+                            ssl_context.verify_mode = ssl.CERT_NONE
+                            # Создаем opener с SSL контекстом
+                            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
+                            urllib.request.install_opener(opener)
+                            urllib.request.urlretrieve(path, download_path)
+                        except Exception as ssl_error:
+                            # Если не удалось с SSL контекстом, пробуем без него
+                            try:
+                                urllib.request.urlretrieve(path, download_path)
+                            except Exception as e:
+                                raise e
+                        
+                        # Проверка SHA256
+                        if config and config.get('download_sha256'):
+                            expected_sha256 = config.get('download_sha256')
+                            if expected_sha256:
+                                sha256_hash = hashlib.sha256()
+                                with open(download_path, 'rb') as f:
+                                    for chunk in iter(lambda: f.read(4096), b''):
+                                        sha256_hash.update(chunk)
+                                actual_sha256 = sha256_hash.hexdigest()
+                                
+                                if actual_sha256.lower() != expected_sha256.lower():
+                                    print(f"[ERROR] SHA256 не совпадает! Ожидался: {expected_sha256}, получен: {actual_sha256}", level='ERROR')
+                                    for td in temp_dirs:
+                                        try:
+                                            shutil.rmtree(td)
+                                        except:
+                                            pass
+                                    continue
+                                else:
+                                    print(f"[INFO] SHA256 проверка пройдена: {actual_sha256}", level='INFO')
+                        
+                        print(f"[INFO] Файл успешно загружен: {download_path}", level='INFO')
+                        return (download_path, temp_dir if not cleanup_temp else None, 'url')
+                        
+                    except Exception as e:
+                        print(f"[ERROR] Ошибка загрузки файла из {path}: {e}", level='ERROR')
+                        for td in temp_dirs:
+                            try:
+                                shutil.rmtree(td)
+                            except:
+                                pass
+                        continue
+                
+                # 2. Архив (формат: "путь/к/архиву.tar.gz/файл.расширение")
+                elif source_type == 'archive':
+                    parts = path.split('/')
+                    archive_part = None
+                    file_in_archive = None
+                    
+                    for i, part in enumerate(parts):
+                        if part.endswith('.tar.gz') or part.endswith('.tar'):
+                            archive_part = '/'.join(parts[:i+1])
+                            file_in_archive = '/'.join(parts[i+1:])
+                            break
+                    
+                    if archive_part and file_in_archive:
+                        if os.path.isabs(archive_part):
+                            archive_path = archive_part
+                        else:
+                            archive_path = os.path.join(script_dir, archive_part)
+                        
+                        if os.path.exists(archive_path):
+                            try:
+                                temp_dir = tempfile.mkdtemp(prefix='astra_extract_')
+                                temp_dirs.append(temp_dir)
+                                
+                                with tarfile.open(archive_path, 'r:gz') as tar:
+                                    try:
+                                        tar.extract(file_in_archive, temp_dir)
+                                        extracted_path = os.path.join(temp_dir, file_in_archive)
+                                        
+                                        if os.path.exists(extracted_path):
+                                            print(f"[INFO] Файл извлечен из архива: {archive_path} -> {extracted_path}", level='INFO')
+                                            return (extracted_path, temp_dir if not cleanup_temp else None, 'archive')
+                                    except KeyError:
+                                        continue
+                            except Exception as e:
+                                print(f"[ERROR] Ошибка извлечения файла из архива {archive_path}: {e}", level='ERROR')
+                                for td in temp_dirs:
+                                    try:
+                                        shutil.rmtree(td)
+                                    except:
+                                        pass
+                                continue
+                
+                # 3. Прямой путь
+                elif source_type == 'direct':
+                    if os.path.isabs(path):
+                        if os.path.exists(path):
+                            return (path, None, 'direct')
+                    else:
+                        full_path = os.path.join(script_dir, path)
+                        if os.path.exists(full_path):
+                            return (full_path, None, 'direct')
+        
+        # Очистка временных директорий
+        for td in temp_dirs:
+            try:
+                shutil.rmtree(td)
+            except:
+                pass
+        
+        return (None, None, None)
+    
+    def _resolve_component_files(self, component_id, cleanup_temp=True, source_priority=None, fallback=True):
+        """
+        Универсальная функция для получения файлов компонента из различных источников
+        
+        Поддерживает:
+        - Прямые пути (относительные от скрипта или абсолютные)
+        - Файлы в архивах (формат: "Wine/wine_packages.tar.gz/файл.deb")
+        - URL для загрузки из интернета (http://, https://)
+        - Несколько файлов для разных архитектур (x86/x64, 32/64)
+        
+        Args:
+            component_id: ID компонента
+            cleanup_temp: Если True, временная директория будет удалена при выходе из контекста
+            source_priority: Приоритет источника ('archive', 'url', 'direct', None)
+                            Если указан, проверяет сначала этот тип источника
+            fallback: Если True, при недоступности приоритетного источника пробует другие
+                     Если False, возвращает None если приоритетный источник недоступен
+            
+        Returns:
+            dict: {
+                'files': {
+                    'default': '/path/to/file',  # Для одного файла
+                    # ИЛИ для нескольких:
+                    'x86': '/path/to/x86', 'x64': '/path/to/x64',
+                    '32': '/path/to/32', '64': '/path/to/64'
+                },
+                'temp_dir': '/tmp/...',  # Временная директория для очистки
+                'cleanup': True,  # Нужно ли очищать temp_dir
+                'source': 'url'  # Источник файла ('url', 'archive', 'direct')
+            }
+            Или None если файлы не найдены
+        """
+        # Получаем конфигурацию компонента
+        config = get_component_data(component_id)
+        if not config:
+            print(f"[ERROR] Компонент {component_id} не найден в конфигурации", level='ERROR')
+            return None
+        
+        script_dir = self._get_script_dir()
+        temp_dirs = []  # Список временных директорий для очистки
+        result_files = {}  # Результирующий словарь файлов
+        source_info = {}  # Информация об источниках для каждого файла
+        
+        # 1. Проверяем package_file (для пакетов)
+        package_file = config.get('package_file')
+        if package_file:
+            file_path, temp_dir, source = self._resolve_single_file(
+                package_file, config, script_dir, cleanup_temp, source_priority, fallback
+            )
+            if file_path:
+                result_files['default'] = file_path
+                source_info['default'] = source
+                if temp_dir:
+                    temp_dirs.append(temp_dir)
+                return {
+                    'files': result_files,
+                    'temp_dir': temp_dirs[0] if temp_dirs else None,
+                    'cleanup': cleanup_temp,
+                    'source': source
+                }
+        
+        # 2. Проверяем download_url (один файл из интернета)
+        download_url = config.get('download_url')
+        if download_url:
+            file_path, temp_dir, source = self._resolve_single_file(
+                download_url, config, script_dir, cleanup_temp, source_priority, fallback
+            )
+            if file_path:
+                result_files['default'] = file_path
+                source_info['default'] = source
+                if temp_dir:
+                    temp_dirs.append(temp_dir)
+                return {
+                    'files': result_files,
+                    'temp_dir': temp_dirs[0] if temp_dirs else None,
+                    'cleanup': cleanup_temp,
+                    'source': source
+                }
+        
+        # 3. Проверяем download_url_x86 / download_url_x64 (два файла для разных архитектур)
+        download_url_x86 = config.get('download_url_x86')
+        download_url_x64 = config.get('download_url_x64')
+        if download_url_x86 or download_url_x64:
+            if download_url_x86:
+                file_path, temp_dir, source = self._resolve_single_file(
+                    download_url_x86, 
+                    {'download_sha256': config.get('download_sha256_x86'), 
+                     'download_filename': config.get('download_filename_x86')},
+                    script_dir, cleanup_temp, source_priority, fallback
+                )
+                if file_path:
+                    result_files['x86'] = file_path
+                    source_info['x86'] = source
+                    if temp_dir:
+                        temp_dirs.append(temp_dir)
+            
+            if download_url_x64:
+                file_path, temp_dir, source = self._resolve_single_file(
+                    download_url_x64,
+                    {'download_sha256': config.get('download_sha256_x64'),
+                     'download_filename': config.get('download_filename_x64')},
+                    script_dir, cleanup_temp, source_priority, fallback
+                )
+                if file_path:
+                    result_files['x64'] = file_path
+                    source_info['x64'] = source
+                    if temp_dir:
+                        temp_dirs.append(temp_dir)
+            
+            if result_files:
+                # Определяем основной источник (если все из одного источника)
+                main_source = source_info.get('x86') or source_info.get('x64')
+                return {
+                    'files': result_files,
+                    'temp_dir': temp_dirs[0] if temp_dirs else None,
+                    'cleanup': cleanup_temp,
+                    'source': main_source,
+                    'sources': source_info  # Детальная информация по каждому файлу
+                }
+        
+        # 4. Проверяем download_url_32 / download_url_64 (альтернативные варианты)
+        download_url_32 = config.get('download_url_32')
+        download_url_64 = config.get('download_url_64')
+        if download_url_32 or download_url_64:
+            if download_url_32:
+                file_path, temp_dir, source = self._resolve_single_file(
+                    download_url_32,
+                    {'download_sha256': config.get('download_sha256_32'),
+                     'download_filename': config.get('download_filename_32')},
+                    script_dir, cleanup_temp, source_priority, fallback
+                )
+                if file_path:
+                    result_files['32'] = file_path
+                    source_info['32'] = source
+                    if temp_dir:
+                        temp_dirs.append(temp_dir)
+            
+            if download_url_64:
+                file_path, temp_dir, source = self._resolve_single_file(
+                    download_url_64,
+                    {'download_sha256': config.get('download_sha256_64'),
+                     'download_filename': config.get('download_filename_64')},
+                    script_dir, cleanup_temp, source_priority, fallback
+                )
+                if file_path:
+                    result_files['64'] = file_path
+                    source_info['64'] = source
+                    if temp_dir:
+                        temp_dirs.append(temp_dir)
+            
+            if result_files:
+                # Определяем основной источник
+                main_source = source_info.get('32') or source_info.get('64')
+                return {
+                    'files': result_files,
+                    'temp_dir': temp_dirs[0] if temp_dirs else None,
+                    'cleanup': cleanup_temp,
+                    'source': main_source,
+                    'sources': source_info
+                }
+        
+        # Файлы не найдены
+        # Очищаем временные директории
+        for td in temp_dirs:
+            try:
+                shutil.rmtree(td)
+            except:
+                pass
+        
+        return None
+    
     def _get_active_desktop_dir(self):
         """
         Определяет активный рабочий стол
@@ -1513,6 +1916,11 @@ class WinePackageHandler(ComponentHandler):
     @track_class_activity('WinePackageHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка Wine пакета через apt"""
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале установки
+        # Это гарантирует, что установка не будет прервана из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
+        
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
             print(f"Компонент {component_id} уже установлен, пропускаем установку")
@@ -1531,74 +1939,253 @@ class WinePackageHandler(ComponentHandler):
             details=f"Подготовка к установке {component_id}"
         )
         
-        # Определяем имя .deb файла из component_id
-        deb_files = {
-            'wine_astraregul': 'wine-astraregul_10.0-rc6-3_amd64.deb',
-            'wine_9': 'wine_9.0-1_amd64.deb'
-        }
+        # Получаем приоритет источника из конфигурации
+        source_priority = config.get('source_priority')  # 'archive', 'url', 'direct' или None
+        source_fallback = config.get('source_fallback', True)  # По умолчанию True
         
-        if component_id not in deb_files:
-            print(f"Неизвестный пакет: {component_id}", level='ERROR')
+        # Если приоритет не указан, определяем автоматически на основе доступных источников
+        if source_priority is None:
+            if config.get('package_file'):
+                package_file = config.get('package_file')
+                # Если package_file указывает на архив - приоритет архива
+                if '.tar.gz/' in package_file or '.tar/' in package_file:
+                    source_priority = 'archive'
+                # Если package_file - URL - приоритет интернета
+                elif package_file.startswith('http://') or package_file.startswith('https://'):
+                    source_priority = 'url'
+                # Иначе - прямой путь
+                else:
+                    source_priority = 'direct'
+            elif config.get('download_url') or config.get('download_url_x86') or config.get('download_url_x64'):
+                # Если есть download_url - приоритет интернета
+                source_priority = 'url'
+        
+        # Получаем файлы компонента через универсальную функцию
+        files_result = self._resolve_component_files(
+            component_id,
+            cleanup_temp=True,
+            source_priority=source_priority,
+            fallback=source_fallback
+        )
+        if not files_result or 'default' not in files_result['files']:
+            source_priority_display = source_priority if source_priority else 'auto'
+            print(f"[ERROR] Файл пакета не найден для {component_id}", level='ERROR')
+            print(f"[ERROR] Приоритет источника: {source_priority_display}, fallback: {source_fallback}", level='ERROR')
             self._update_status(component_id, 'error')
             return False
         
-        deb_name = deb_files[component_id]
-        package_path = os.path.join(self.astrapack_dir, deb_name)
+        package_path = files_result['files']['default']
+        source = files_result.get('source', 'unknown')
+        print(f"[INFO] Файл получен из источника: {source}", level='INFO')
+        if source == 'archive':
+            print(f"[INFO] Файл извлечен из архива", level='INFO')
+        elif source == 'url':
+            print(f"[INFO] Файл загружен из интернета", level='INFO')
+        elif source == 'direct':
+            print(f"[INFO] Файл найден по прямому пути", level='INFO')
+        temp_dir = files_result.get('temp_dir')
         
-        if not os.path.exists(package_path):
-            print(f"Файл пакета не найден: {package_path}", level='ERROR')
-            self._update_status(component_id, 'error')
-            return False
-        
-        # Обновляем прогресс
-        self._update_progress(
-            stage_name=f"Установка {config['name']}",
-            stage_progress=50,
-            global_progress=50,
-            details="Установка через apt..."
-        )
-        
-        # Используем UniversalProcessRunner
-        return_code = self._run_process(
-            ['apt', 'install', '-y', package_path],
-            process_type="install",
-            channels=["file", "terminal", "gui"]
-        )
-        
-        if return_code == 0:
-            # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
-            # apt install может вернуть код 0, но пакет не установится
-            time.sleep(0.5)  # Небольшая задержка для завершения операций файловой системы
+        try:
+            # Обновляем прогресс
+            self._update_progress(
+                stage_name=f"Установка {config['name']}",
+                stage_progress=50,
+                global_progress=50,
+                details="Установка через apt..."
+            )
             
-            # Проверяем статус компонента
-            actual_status = self.check_status(component_id, config)
+            # КРИТИЧНО: Проверяем и исправляем состояние dpkg перед установкой
+            # Если dpkg был прерван ранее, apt не сможет установить пакет
+            print("[INFO] Проверка состояния dpkg перед установкой...", level='INFO')
             
-            if actual_status:
-                print(f"Пакет {config['name']} установлен успешно")
-                self._update_progress(
-                    stage_name=f"Установка {config['name']}",
-                    stage_progress=100,
-                    global_progress=100,
-                    details=f"{config['name']} установлен успешно"
+            # Проверяем состояние dpkg по выводу команды (не только по коду возврата)
+            # dpkg --audit может вернуть 0, но вывести предупреждения о проблемах
+            import subprocess
+            try:
+                dpkg_audit_result = subprocess.run(
+                    ['dpkg', '--audit'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=10
                 )
-                # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
-                self._update_status(component_id, 'ok')
-                return True
+                dpkg_output = dpkg_audit_result.stdout or ""
+                
+                # Проверяем наличие проблем в выводе
+                has_problems = False
+                if "настроены лишь частично" in dpkg_output or \
+                   "частично настроены" in dpkg_output or \
+                   "установлены триггеры" in dpkg_output or \
+                   "триггеров" in dpkg_output.lower():
+                    has_problems = True
+                    print("[WARNING] Обнаружены проблемы с dpkg в выводе команды", level='WARNING')
+                
+                # Если есть проблемы, исправляем автоматически
+                if has_problems or dpkg_audit_result.returncode != 0:
+                    print("[WARNING] Обнаружены проблемы с dpkg, выполняем автоматическое исправление...", level='WARNING')
+                    print("[INFO] Запускаем dpkg --configure -a для восстановления...", level='INFO')
+                    
+                    configure_result = self._run_process(
+                        ['dpkg', '--configure', '-a'],
+                        process_type="fix",
+                        channels=["file", "terminal", "gui"]
+                    )
+                    
+                    # Также обрабатываем триггеры, если они есть
+                    if "триггеров" in dpkg_output.lower() or "триггеры" in dpkg_output.lower():
+                        print("[INFO] Обрабатываем необработанные триггеры...", level='INFO')
+                        self._run_process(
+                            ['dpkg', '--configure', '--pending'],
+                            process_type="fix",
+                            channels=["file", "terminal", "gui"]
+                        )
+                    
+                    if configure_result == 0:
+                        print("[INFO] dpkg восстановлен успешно", level='INFO')
+                    else:
+                        print("[WARNING] dpkg --configure -a завершился с ошибкой, пробуем apt --fix-broken...", level='WARNING')
+                        # Пробуем исправить сломанные зависимости
+                        fix_result = self._run_process(
+                            ['apt', '--fix-broken', 'install', '-y'],
+                            process_type="fix",
+                            channels=["file", "terminal", "gui"]
+                        )
+                        if fix_result == 0:
+                            print("[INFO] Сломанные зависимости исправлены", level='INFO')
+            except Exception as e:
+                print(f"[WARNING] Ошибка проверки состояния dpkg: {e}", level='WARNING')
+                # В случае ошибки проверки, все равно пробуем исправить
+                print("[INFO] Запускаем dpkg --configure -a для восстановления...", level='INFO')
+                self._run_process(
+                    ['dpkg', '--configure', '-a'],
+                    process_type="fix",
+                    channels=["file", "terminal", "gui"]
+                )
+            
+            # Используем UniversalProcessRunner для установки пакета
+            return_code = self._run_process(
+                ['apt', 'install', '-y', package_path],
+                process_type="install",
+                channels=["file", "terminal", "gui"]
+            )
+            
+            # Если установка не удалась из-за проблем с dpkg, пробуем исправить и повторить
+            if return_code != 0:
+                # Проверяем, была ли ошибка связана с dpkg
+                print("[INFO] Проверяем причину ошибки установки...", level='INFO')
+                
+                # Проверяем состояние dpkg по выводу команды
+                import subprocess
+                try:
+                    dpkg_audit_result = subprocess.run(
+                        ['dpkg', '--audit'],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=10
+                    )
+                    dpkg_output = dpkg_audit_result.stdout or ""
+                    
+                    # Проверяем наличие проблем в выводе
+                    has_problems = False
+                    if "настроены лишь частично" in dpkg_output or \
+                       "частично настроены" in dpkg_output or \
+                       "установлены триггеры" in dpkg_output or \
+                       "триггеров" in dpkg_output.lower() or \
+                       dpkg_audit_result.returncode != 0:
+                        has_problems = True
+                    
+                    if has_problems:
+                        print("[WARNING] Проблемы с dpkg обнаружены после неудачной установки, исправляем...", level='WARNING')
+                        print("[INFO] Запускаем dpkg --configure -a...", level='INFO')
+                        configure_result = self._run_process(
+                            ['dpkg', '--configure', '-a'],
+                            process_type="fix",
+                            channels=["file", "terminal", "gui"]
+                        )
+                        
+                        # Также обрабатываем триггеры, если они есть
+                        if "триггеров" in dpkg_output.lower() or "триггеры" in dpkg_output.lower():
+                            print("[INFO] Обрабатываем необработанные триггеры...", level='INFO')
+                            self._run_process(
+                                ['dpkg', '--configure', '--pending'],
+                                process_type="fix",
+                                channels=["file", "terminal", "gui"]
+                            )
+                        
+                        if configure_result == 0:
+                            print("[INFO] dpkg восстановлен, повторяем установку пакета...", level='INFO')
+                            # Повторяем попытку установки
+                            return_code = self._run_process(
+                                ['apt', 'install', '-y', package_path],
+                                process_type="install",
+                                channels=["file", "terminal", "gui"]
+                            )
+                except Exception as e:
+                    print(f"[WARNING] Ошибка проверки состояния dpkg после неудачной установки: {e}", level='WARNING')
+                    # В случае ошибки проверки, все равно пробуем исправить
+                    print("[INFO] Запускаем dpkg --configure -a...", level='INFO')
+                    configure_result = self._run_process(
+                        ['dpkg', '--configure', '-a'],
+                        process_type="fix",
+                        channels=["file", "terminal", "gui"]
+                    )
+                    if configure_result == 0:
+                        print("[INFO] dpkg восстановлен, повторяем установку пакета...", level='INFO')
+                        return_code = self._run_process(
+                            ['apt', 'install', '-y', package_path],
+                            process_type="install",
+                            channels=["file", "terminal", "gui"]
+                        )
+            
+            if return_code == 0:
+                # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
+                # apt install может вернуть код 0, но пакет не установится
+                time.sleep(0.5)  # Небольшая задержка для завершения операций файловой системы
+                
+                # Проверяем статус компонента
+                actual_status = self.check_status(component_id, config)
+                
+                if actual_status:
+                    print(f"Пакет {config['name']} установлен успешно")
+                    self._update_progress(
+                        stage_name=f"Установка {config['name']}",
+                        stage_progress=100,
+                        global_progress=100,
+                        details=f"{config['name']} установлен успешно"
+                    )
+                    # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
+                    self._update_status(component_id, 'ok')
+                    return True
+                else:
+                    print(f"apt install завершился успешно, но компонент {config['name']} не установлен", level='ERROR')
+                    print(f"Проверка статуса компонента не подтвердила установку", level='ERROR')
+                    # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
+                    self._update_status(component_id, 'error')
+                    return False
             else:
-                print(f"apt install завершился успешно, но компонент {config['name']} не установлен", level='ERROR')
-                print(f"Проверка статуса компонента не подтвердила установку", level='ERROR')
+                print(f"Установка пакета {config['name']} (код: {return_code})", level='ERROR')
                 # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
                 self._update_status(component_id, 'error')
                 return False
-        else:
-            print(f"Установка пакета {config['name']} (код: {return_code})", level='ERROR')
-            # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
-            self._update_status(component_id, 'error')
-            return False
+        finally:
+            # Очистка временной директории (если файл был извлечен из архива или загружен)
+            if temp_dir and files_result.get('cleanup'):
+                source = files_result.get('source', 'unknown')
+                print(f"[INFO] Очистка временных файлов (источник: {source})", level='DEBUG')
+                try:
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
     
     @track_class_activity('WinePackageHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление Wine пакета через apt-get purge"""
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале удаления
+        # Это гарантирует, что удаление не будет прервано из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
+        
         print(f"WinePackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         print(f"WinePackageHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
@@ -5109,6 +5696,11 @@ class UniversalProcessRunner(object):
         if self.is_running:
             print("Предупреждение: процесс уже выполняется", "WARNING", channels)
             return -1
+        
+        # КРИТИЧНО: Сбрасываем флаг отмены перед запуском нового процесса
+        # Это гарантирует, что новый процесс не будет прерван из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
             
         self.is_running = True
         
@@ -5176,6 +5768,36 @@ class UniversalProcessRunner(object):
             
             while True:
                 current_time = time.time()
+                
+                # КРИТИЧНО: Проверяем флаг отмены операции
+                # Если пользователь нажал "Отмена", корректно завершаем процесс
+                if CANCEL_OPERATION:
+                    print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ОТМЕНЕН ПОЛЬЗОВАТЕЛЕМ | Завершаем процесс", "INFO", channels)
+                    print("[INFO] Процесс остановлен пользователем", "INFO", channels)
+                    # Отправляем SIGTERM для корректного завершения (не SIGKILL)
+                    try:
+                        process.terminate()
+                        # Даем процессу время на корректное завершение (5 секунд)
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            # Если процесс не завершился за 5 секунд, убиваем принудительно
+                            print("[WARNING] Процесс не завершился за 5 секунд, завершаем принудительно", "WARNING", channels)
+                            process.kill()
+                            # Завершаем все дочерние процессы
+                            if PSUTIL_AVAILABLE:
+                                try:
+                                    parent = psutil.Process(process.pid)
+                                    for child in parent.children(recursive=True):
+                                        try:
+                                            child.kill()
+                                        except:
+                                            pass
+                                except:
+                                    pass
+                    except:
+                        pass
+                    return -1
                 
                 # Проверяем общий таймаут с умной логикой
                 if timeout and start_time:
@@ -7899,6 +8521,11 @@ class ComponentInstaller(object):
         """
         print(f"install_components() вызван с component_ids={component_ids}", level='DEBUG')
         
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале установки компонентов
+        # Это гарантирует, что установка не будет прервана из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
+        
         # КРИТИЧНО: Проверяем, что component_ids - это список, а не строка
         if isinstance(component_ids, str):
             print("component_ids должна быть списком, а не строкой: %s" % component_ids, level='ERROR')
@@ -8021,6 +8648,11 @@ class ComponentInstaller(object):
             bool: True если все компоненты удалены успешно, False если есть ошибки
         """
         print(f"uninstall_components() вызван с component_ids={component_ids}", level='DEBUG')
+        
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале удаления компонентов
+        # Это гарантирует, что удаление не будет прервано из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
         
         # КРИТИЧНО: Проверяем, что component_ids - это список, а не строка
         if isinstance(component_ids, str):
@@ -12261,11 +12893,116 @@ class AutomationGUI(object):
         thread_name = threading.current_thread().name
         print(f"Поток {thread_name} начал выполнение (_perform_wine_check)", level='DEBUG')
         try:
+            # КРИТИЧНО: Проверяем, есть ли активные процессы установки/обновления
+            # Если процессов нет - сбрасываем зависшие статусы и показываем реальное состояние
+            has_active_processes = False
+            
+            # Проверяем процессы через UniversalProcessRunner
+            if hasattr(self, 'universal_runner') and self.universal_runner:
+                if self.universal_runner.is_running:
+                    has_active_processes = True
+                    print("[INFO] Обнаружен активный процесс через UniversalProcessRunner", level='DEBUG')
+                else:
+                    running_processes = self.universal_runner.get_running_processes()
+                    if running_processes:
+                        # Проверяем, есть ли реально активные процессы (не завершенные)
+                        active_count = 0
+                        for proc_info in running_processes:
+                            if isinstance(proc_info, dict):
+                                process = proc_info.get('process')
+                                if process and process.poll() is None:
+                                    active_count += 1
+                        if active_count > 0:
+                            has_active_processes = True
+                            print(f"[INFO] Обнаружено {active_count} активных процессов через UniversalProcessRunner", level='DEBUG')
+            
+            # Проверяем процессы Wine через ComponentInstaller
+            if not has_active_processes and hasattr(self, 'component_installer') and self.component_installer:
+                handler = self.component_installer._get_any_handler()
+                if handler:
+                    wine_processes = handler._check_wine_processes_running()
+                    if wine_processes:
+                        has_active_processes = True
+                        print(f"[INFO] Обнаружено {len(wine_processes)} активных процессов Wine", level='DEBUG')
+            
+            # Проверяем процессы apt/dpkg (критичные для установки пакетов)
+            if not has_active_processes:
+                try:
+                    # Проверяем процессы apt/dpkg через psutil или pgrep
+                    if PSUTIL_AVAILABLE:
+                        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                            try:
+                                name = proc.info['name'] or ''
+                                cmdline = ' '.join(proc.info['cmdline'] or [])
+                                # Проверяем процессы apt/dpkg
+                                if name in ['apt', 'apt-get', 'dpkg', 'aptd'] or \
+                                   'apt' in cmdline.lower() or 'dpkg' in cmdline.lower():
+                                    # Проверяем, что это не просто системный процесс
+                                    if 'install' in cmdline.lower() or 'upgrade' in cmdline.lower() or \
+                                       'configure' in cmdline.lower() or 'remove' in cmdline.lower():
+                                        has_active_processes = True
+                                        print(f"[INFO] Обнаружен активный процесс установки: {name} (PID: {proc.info['pid']})", level='DEBUG')
+                                        break
+                            except (psutil.NoProcess, psutil.AccessDenied):
+                                continue
+                    else:
+                        # Fallback: используем pgrep
+                        for cmd in ['apt', 'apt-get', 'dpkg']:
+                            try:
+                                result = subprocess.run(['pgrep', '-f', cmd], 
+                                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                                      text=True, timeout=2)
+                                if result.returncode == 0 and result.stdout.strip():
+                                    has_active_processes = True
+                                    print(f"[INFO] Обнаружен активный процесс установки: {cmd}", level='DEBUG')
+                                    break
+                            except:
+                                pass
+                except Exception as e:
+                    print(f"[WARNING] Ошибка проверки процессов apt/dpkg: {e}", level='DEBUG')
+            
+            # Если нет активных процессов - очищаем зависшие статусы
+            if not has_active_processes:
+                print("[INFO] Активных процессов установки/обновления не обнаружено, очищаем зависшие статусы", level='INFO')
+                self.component_status_manager.clear_all_states()
+                print("[INFO] Зависшие статусы очищены, будет показано реальное состояние компонентов", level='INFO')
+            else:
+                print("[INFO] Обнаружены активные процессы установки/обновления, статусы не очищаются", level='INFO')
+            
             # Создаем экземпляр проверщика для совместимости
             self.wine_checker = WineComponentsChecker()
             
             # Выполняем все проверки через старый метод для совместимости
             self.wine_checker.check_all_components()
+            
+            # КРИТИЧНО: После проверки компонентов сбрасываем статусы ошибок для всех компонентов
+            # (если нет активных процессов) и устанавливаем правильный статус на основе реального состояния
+            # Это гарантирует, что зависшие статусы ошибок не останутся
+            if not has_active_processes:
+                print("[INFO] Проверяем и сбрасываем зависшие статусы ошибок для всех компонентов", level='INFO')
+                # Создаем копию списка, чтобы не изменять его во время итерации
+                error_components_copy = list(self.component_status_manager.error_components)
+                for component_name in error_components_copy:
+                    # Находим component_id по имени компонента
+                    component_id = None
+                    for cid, config in COMPONENTS_CONFIG.items():
+                        if config.get('name') == component_name:
+                            component_id = cid
+                            break
+                    
+                    if component_id:
+                        # Проверяем реальный статус компонента
+                        is_installed = self.component_status_manager.check_component_status(component_id)
+                        if is_installed:
+                            # Компонент установлен - сбрасываем ошибку и устанавливаем 'ok'
+                            print(f"[INFO] Сбрасываем статус ошибки для установленного компонента: {component_name}", level='INFO')
+                            # update_component_status автоматически удалит из error_components (строка 7491)
+                            self.component_status_manager.update_component_status(component_id, 'ok')
+                        else:
+                            # Компонент не установлен - сбрасываем ошибку и устанавливаем 'missing'
+                            print(f"[INFO] Сбрасываем статус ошибки для не установленного компонента: {component_name}", level='INFO')
+                            # update_component_status автоматически удалит из error_components (строка 7491)
+                            self.component_status_manager.update_component_status(component_id, 'missing')
             
             # Синхронизируем данные с ComponentStatusManager
             self.component_status_manager.sync_with_wine_checker(self.wine_checker)
@@ -12652,6 +13389,12 @@ class AutomationGUI(object):
         """Выполнение установки Wine компонентов в отдельном потоке"""
         thread_name = threading.current_thread().name
         print(f"Поток {thread_name} начал выполнение (_perform_wine_install) для компонентов: {', '.join(selected)}", level='DEBUG')
+        
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале установки
+        # Это гарантирует, что установка не будет прервана из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
+        
         try:
             # Используем новую универсальную архитектуру для установки
             if not hasattr(self, 'component_installer') or not self.component_installer:
@@ -13594,23 +14337,22 @@ class AutomationGUI(object):
                 handler._terminate_wineserver()
                 handler._wait_for_all_processes_terminated(max_wait=10)
         
-        # Прерываем процессы через UniversalProcessRunner
+        # КРИТИЧНО: Не прерываем процессы напрямую через UniversalProcessRunner
+        # Вместо этого полагаемся на проверку CANCEL_OPERATION в run_process
+        # Это гарантирует корректное завершение процессов (особенно apt/dpkg)
+        # Процессы завершатся при следующей проверке CANCEL_OPERATION в цикле run_process
         if hasattr(self, 'universal_runner') and self.universal_runner:
             try:
-                # Получаем список активных процессов и останавливаем их
+                # Получаем список активных процессов для информации
                 running_processes = self.universal_runner.get_running_processes()
                 if running_processes:
-                    print(f"[INFO] Найдено {len(running_processes)} активных процессов для остановки", gui_log=True)
+                    print(f"[INFO] Найдено {len(running_processes)} активных процессов, ожидаем их корректного завершения...", gui_log=True)
                     for pid, name, cmdline in running_processes:
-                        try:
-                            proc = psutil.Process(pid)
-                            proc.terminate()
-                            print(f"[INFO] Отправлен сигнал SIGTERM процессу {pid} ({name})", gui_log=True)
-                        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                            print(f"[WARNING] Не удалось остановить процесс {pid}: {e}", gui_log=True)
-                print("[INFO] Все процессы UniversalProcessRunner остановлены", gui_log=True)
+                        print(f"[INFO] Процесс {pid} ({name}) будет завершен при следующей проверке CANCEL_OPERATION", gui_log=True)
+                else:
+                    print("[INFO] Активных процессов не найдено", gui_log=True)
             except Exception as e:
-                print(f"[ERROR] Ошибка остановки процессов: {e}", gui_log=True)
+                print(f"[ERROR] Ошибка получения списка процессов: {e}", gui_log=True)
         
         # Восстанавливаем кнопки
         self.root.after(1000, self._cancel_operation_completed)
@@ -13636,6 +14378,12 @@ class AutomationGUI(object):
         """Выполнение удаления Wine компонентов (в отдельном потоке)"""
         thread_name = threading.current_thread().name
         print(f"Поток {thread_name} начал выполнение (_perform_wine_uninstall) для компонентов: {', '.join(selected_components)}", level='DEBUG')
+        
+        # КРИТИЧНО: Сбрасываем флаг отмены в начале удаления
+        # Это гарантирует, что удаление не будет прервано из-за старого флага
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
+        
         try:
             # Создаем callback для обновления статуса
             def update_callback(message):
