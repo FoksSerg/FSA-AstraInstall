@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.117 (2025.11.12)
+Версия: V2.5.118 (2025.11.12)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.117 (2025.11.12)"
+APP_VERSION = "V2.5.118 (2025.11.12)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -444,6 +444,11 @@ COMPONENTS_CONFIG = {
         'sort_order': 21
     },
 }
+
+# ============================================================================
+# ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
+# ============================================================================
+CANCEL_OPERATION = False # Прерывание запущенных операций 
 
 # ============================================================================
 # УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С КОМПОНЕНТАМИ
@@ -1236,11 +1241,8 @@ class ComponentHandler(ABC):
     
     def _update_status(self, component_id, status):
         """Обновление статуса компонента через ComponentStatusManager"""
-        print(f"_update_status() вызван: component_id={component_id}, status={status}", level='DEBUG')
         if self.status_manager:
-            print(f"_update_status() вызываем status_manager.update_component_status({component_id}, {status})", level='DEBUG')
             self.status_manager.update_component_status(component_id, status)
-            print(f"_update_status() статус обновлен через status_manager", level='DEBUG')
         else:
             print(f"_update_status() status_manager отсутствует, статус не обновлен", level='WARNING')
     
@@ -2015,9 +2017,7 @@ class WineEnvironmentHandler(ComponentHandler):
         
         # КРИТИЧНО: Устанавливаем статус 'removing' сразу, чтобы он отобразился в GUI
         # Это гарантирует, что пользователь видит статус 'removing' для текущего компонента
-        print(f"WineEnvironmentHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
         self._update_status(component_id, 'removing')
-        print(f"WineEnvironmentHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
         
         time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
         
@@ -2574,9 +2574,7 @@ class AptPackageHandler(ComponentHandler):
         """Удаление APT пакета"""
         print(f"AptPackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
-        print(f"AptPackageHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
         self._update_status(component_id, 'removing')
-        print(f"AptPackageHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
         
         component_name = get_component_field(component_id, 'name', 'Unknown')
         command_name = get_component_field(component_id, 'command_name')
@@ -2719,9 +2717,7 @@ class WineApplicationHandler(ComponentHandler):
         """Удаление Wine приложения"""
         print(f"WineApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
-        print(f"WineApplicationHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
         self._update_status(component_id, 'removing')
-        print(f"WineApplicationHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
         
         time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
         
@@ -2786,7 +2782,34 @@ class WineApplicationHandler(ComponentHandler):
             print(f"Распаковка архива напрямую в {wineprefix_path}...")
             print("Файлы из архива заменят существующие, файлы которых нет в архиве останутся нетронутыми")
             
+            # Инициализируем переменные для восстановления umask (до try блока)
+            old_umask = None
+            
             try:
+                # Инициализируем время начала распаковки и размер
+                unpack_start_time = time.time()
+                extracted_size = 0  # Размер распакованных данных в байтах
+                
+                # Определяем uid/gid для установки прав (один раз в начале)
+                real_user = os.environ.get('SUDO_USER')
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    # Если запущено от root - используем SUDO_USER
+                    unpack_uid = pwd.getpwnam(real_user).pw_uid
+                    unpack_gid = pwd.getpwnam(real_user).pw_gid
+                else:
+                    # Если запущено от обычного пользователя - используем текущего пользователя
+                    unpack_uid = os.getuid()
+                    unpack_gid = os.getgid()
+                
+                # Устанавливаем umask для правильных прав по умолчанию (644 для файлов, 755 для директорий)
+                old_umask = os.umask(0o022)
+                
+                # Счетчики для пакетной установки прав
+                files_since_last_chown = 0
+                last_chown_time = time.time()
+                CHOWN_BATCH_SIZE = 1000  # Устанавливаем права каждые 1000 файлов
+                CHOWN_TIME_INTERVAL = 10  # Или каждые 10 секунд (что наступит раньше)
+                
                 # Распаковываем архив напрямую в целевую папку
                 # Файлы из архива автоматически заменят существующие при записи (режим 'wb')
                 # Файлы, которых нет в архиве, останутся нетронутыми
@@ -2821,6 +2844,14 @@ class WineApplicationHandler(ComponentHandler):
                         
                         extracted_count = 0
                         for member in items_to_extract:
+                            # Проверяем флаг отмены в начале каждой итерации
+                            if CANCEL_OPERATION:
+                                print("Распаковка прервана пользователем")
+                                # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы при отмене
+                                self._set_extracted_files_permissions(wineprefix_path)
+                                os.umask(old_umask)  # Восстанавливаем umask
+                                return False
+                            
                             # Создаем новый путь, убирая префикс source_dir/
                             new_name = member.name[len(prefix):]
                             if not new_name:  # Пропускаем пустые имена
@@ -2837,24 +2868,71 @@ class WineApplicationHandler(ComponentHandler):
                                 # Извлекаем файл
                                 fileobj = tar.extractfile(member)
                                 if fileobj:
+                                    file_data = fileobj.read()
                                     with open(target_path, 'wb') as f:
-                                        f.write(fileobj.read())
+                                        f.write(file_data)
+                                    # Добавляем размер файла к общему размеру
+                                    extracted_size += len(file_data)
                                 
                                 extracted_count += 1
+                                
+                                # Устанавливаем права пакетно (не на каждый файл!)
+                                files_since_last_chown += 1
+                                current_time = time.time()
+                                
+                                # Устанавливаем права пакетно: каждые 1000 файлов или каждые 10 секунд
+                                if files_since_last_chown >= CHOWN_BATCH_SIZE or (current_time - last_chown_time) >= CHOWN_TIME_INTERVAL:
+                                    try:
+                                        os.chown(target_path, unpack_uid, unpack_gid)
+                                        os.chmod(target_path, 0o644)
+                                    except (OSError, PermissionError):
+                                        pass  # Игнорируем ошибки доступа
+                                    files_since_last_chown = 0
+                                    last_chown_time = current_time
+                                    
+                                    # Проверяем отмену после установки прав
+                                    if CANCEL_OPERATION:
+                                        print("Распаковка прервана пользователем")
+                                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы при отмене
+                                        self._set_extracted_files_permissions(wineprefix_path)
+                                        os.umask(old_umask)
+                                        return False
+                                
                                 if extracted_count % 100 == 0 or extracted_count == total_items:
+                                    # Вычисляем прошедшее время
+                                    elapsed_time = time.time() - unpack_start_time
+                                    elapsed_minutes = int(elapsed_time // 60)
+                                    elapsed_seconds = int(elapsed_time % 60)
+                                    
+                                    # Форматируем размер распакованных данных
+                                    if extracted_size < 1024:
+                                        size_str = f"{extracted_size} Б"
+                                    elif extracted_size < 1024 * 1024:
+                                        size_str = f"{extracted_size / 1024:.1f} КБ"
+                                    elif extracted_size < 1024 * 1024 * 1024:
+                                        size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
+                                    else:
+                                        size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
+                                    
                                     # НОВОЕ: Обновляем только global_progress на основе количества файлов
                                     global_progress = int((extracted_count / total_items) * 100) if total_items > 0 else 0
-                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({global_progress}%)")
+                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({global_progress}%) | Время: {elapsed_minutes}м {elapsed_seconds}с | Размер: {size_str}")
                                     # Время обновляется автоматически через таймер
                                     self._update_progress(
                                         stage_name=f"Распаковка архива {source_dir}",
                                         stage_progress=0,  # Не обновляем
                                         global_progress=global_progress,  # Только global_progress
-                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...)"
+                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...) | {size_str}"
                                     )
                             elif member.isdir():
                                 # Создаем папку
                                 os.makedirs(target_path, exist_ok=True)
+                                # Директорий меньше - устанавливаем права сразу
+                                try:
+                                    os.chown(target_path, unpack_uid, unpack_gid)
+                                    os.chmod(target_path, 0o755)
+                                except (OSError, PermissionError):
+                                    pass  # Игнорируем ошибки доступа
                                 extracted_count += 1
                             elif member.issym() or member.islnk():
                                 # Для символических ссылок и жестких ссылок
@@ -2876,14 +2954,34 @@ class WineApplicationHandler(ComponentHandler):
                                 extracted_count += 1
                         
                         # НОВОЕ: Финальное обновление - только global_progress
-                        # Время обновляется автоматически через таймер
-                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов")
+                        # Вычисляем итоговое время и размер
+                        elapsed_time = time.time() - unpack_start_time
+                        elapsed_minutes = int(elapsed_time // 60)
+                        elapsed_seconds = int(elapsed_time % 60)
+                        
+                        # Форматируем итоговый размер
+                        if extracted_size < 1024:
+                            size_str = f"{extracted_size} Б"
+                        elif extracted_size < 1024 * 1024:
+                            size_str = f"{extracted_size / 1024:.1f} КБ"
+                        elif extracted_size < 1024 * 1024 * 1024:
+                            size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
+                        else:
+                            size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
+                        
+                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов | Время: {elapsed_minutes}м {elapsed_seconds}с | Размер: {size_str}")
                         self._update_progress(
                             stage_name=f"Распаковка архива {source_dir}",
                             stage_progress=0,  # Не обновляем
                             global_progress=100,  # Завершено
-                            details=f"Успешно извлечено {extracted_count} элементов"
+                            details=f"Успешно извлечено {extracted_count} элементов | {size_str}"
                         )
+                        
+                        # Восстанавливаем umask
+                        os.umask(old_umask)
+                        
+                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы (на случай пропущенных)
+                        self._set_extracted_files_permissions(wineprefix_path)
                     else:
                         # Архив содержит файлы в корне - извлекаем всё
                         print("Архив содержит файлы в корне, извлекаем всё...")
@@ -2908,12 +3006,29 @@ class WineApplicationHandler(ComponentHandler):
                             global_progress=100,  # Завершено
                             details=f"Успешно извлечено {total_items} файлов"
                         )
+                        
+                        # Восстанавливаем umask
+                        os.umask(old_umask)
+                        
+                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы
+                        self._set_extracted_files_permissions(wineprefix_path)
                 
                 print(f"Архив успешно распакован в {wineprefix_path}")
                 
             except Exception as e:
+                # Восстанавливаем umask даже при ошибке (если был установлен)
+                if old_umask is not None:
+                    try:
+                        os.umask(old_umask)
+                    except:
+                        pass
                 print(f"Ошибка распаковки архива: {e}", level='ERROR')
                 traceback.print_exc()
+                # При ошибке также устанавливаем права на уже распакованные файлы (если есть)
+                try:
+                    self._set_extracted_files_permissions(wineprefix_path)
+                except:
+                    pass
                 return False
         else:
             # Архив не найден - используем существующую логику с папкой
@@ -2992,6 +3107,56 @@ class WineApplicationHandler(ComponentHandler):
         
         print("Предустановленная конфигурация успешно установлена")
         return True
+    
+    def _set_extracted_files_permissions(self, wineprefix_path: str) -> None:
+        """
+        Устанавливает правильные права доступа на распакованные файлы
+        
+        Args:
+            wineprefix_path: Путь к WINEPREFIX
+        """
+        try:
+            real_user = os.environ.get('SUDO_USER')
+            
+            # Определяем uid/gid для установки владельца
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                # Если запущено от root - используем SUDO_USER
+                uid = pwd.getpwnam(real_user).pw_uid
+                gid = pwd.getpwnam(real_user).pw_gid
+            else:
+                # Если запущено от обычного пользователя - используем текущего пользователя
+                uid = os.getuid()
+                gid = os.getgid()
+            
+            # Устанавливаем владельца на все распакованные файлы и директории
+            os.chown(wineprefix_path, uid, gid)
+            
+            # Рекурсивно устанавливаем владельца для всех файлов и директорий
+            for root, dirs, files in os.walk(wineprefix_path):
+                try:
+                    # Устанавливаем владельца для директорий
+                    for d in dirs:
+                        dir_path = os.path.join(root, d)
+                        os.chown(dir_path, uid, gid)
+                        # Устанавливаем права доступа: 755 для директорий
+                        os.chmod(dir_path, 0o755)
+                    
+                    # Устанавливаем владельца для файлов
+                    for f in files:
+                        file_path = os.path.join(root, f)
+                        os.chown(file_path, uid, gid)
+                        # Устанавливаем права доступа: 644 для файлов
+                        os.chmod(file_path, 0o644)
+                except (OSError, PermissionError) as e:
+                    # Игнорируем ошибки доступа к отдельным файлам/директориям
+                    print(f"Предупреждение: не удалось установить права для {root}: {e}", level='DEBUG')
+            
+            if os.geteuid() == 0 and real_user and real_user != 'root':
+                print(f"Установлен владелец распакованных файлов: {real_user}")
+            else:
+                print(f"Установлены права доступа на распакованные файлы")
+        except Exception as e:
+            print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
     
     def _install_wine_executable(self, component_id: str, config: dict) -> bool:
         """Установка исполняемого файла в Wine (для Wine приложений)"""
@@ -3148,12 +3313,8 @@ class ApplicationHandler(ComponentHandler):
         """Удаление приложения"""
         print(f"ApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
-        print(f"ApplicationHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
         self._update_status(component_id, 'removing')
-        print(f"ApplicationHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
-        
         time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
-        
         print(f"Удаление приложения: {config['name']}")
         
         try:
@@ -6303,13 +6464,11 @@ class InstallationMonitor(object):
         """Запустить мониторинг"""
         # Проверяем, не запущен ли уже мониторинг
         if self.is_monitoring and self.monitoring_thread and self.monitoring_thread.is_alive():
-            print(f"Мониторинг уже запущен, пропускаем повторный запуск", level='DEBUG')
             return
         self.start_time = datetime.datetime.now()
         self.is_monitoring = True
         self.monitoring_thread = threading.Thread(target=self._monitor_loop, name="SystemMonitorThread")
         self.monitoring_thread.daemon = True
-        print(f"Создание потока SystemMonitorThread для мониторинга системы", level='DEBUG')
         self.monitoring_thread.start()
         print(f"Поток SystemMonitorThread запущен (имя: {self.monitoring_thread.name})", level='DEBUG')
     
@@ -7105,7 +7264,6 @@ class MinimalWinetricks(object):
         print(f"MinimalWinetricks.install_components() вызван с components={components}, wineprefix={wineprefix}", level='DEBUG')
         try:
             if not components:
-                print(f"MinimalWinetricks.install_components() список компонентов пуст, возврат True", level='DEBUG')
                 return True
                 
             print(f"[MinimalWinetricks] Установка компонентов: {', '.join(components)}")
@@ -8247,13 +8405,10 @@ class AutomationGUI(object):
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
-        print(f"_component_status_callback() вызван: message={message}", level='DEBUG')
         if message.startswith("UPDATE_COMPONENT:"):
             component_id = message.split(":", 1)[1]
-            print(f"_component_status_callback() обновляем компонент {component_id} в GUI", level='DEBUG')
             # НОВОЕ: Обновляем только одну строку вместо полного перестроения таблицы
             self.root.after(0, lambda: self.update_single_component_row(component_id))
-            print(f"_component_status_callback() запланировано обновление GUI для {component_id}", level='DEBUG')
         else:
             # Обычное сообщение - логируем через универсальный логир
             # Используем print() который уже переопределен через universal_print
@@ -12223,11 +12378,9 @@ class AutomationGUI(object):
         component_name = config.get('name', '')
         
         # Используем ComponentStatusManager для получения статуса с учетом состояний
-        print(f"update_single_component_row() получаем статус для {component_id} (name={component_name})", level='DEBUG')
         status_text, status_tag = self.component_status_manager.get_component_status(
             component_id, component_name
         )
-        print(f"update_single_component_row() получен статус: status_text={status_text}, status_tag={status_tag}", level='DEBUG')
         
         # Получаем текущие значения строки
         values = list(self.wine_tree.item(item_id, 'values'))
@@ -12236,7 +12389,6 @@ class AutomationGUI(object):
         if len(values) > 2:
             old_status = values[2]
             values[2] = status_text
-            print(f"update_single_component_row() обновляем статус: {old_status} -> {status_text}", level='DEBUG')
         else:
             # Если значений меньше 3 - пропускаем (неправильная структура)
             print(f"update_single_component_row() неправильная структура значений, пропускаем", level='WARNING')
@@ -12244,12 +12396,10 @@ class AutomationGUI(object):
         
         # Обновляем строку в таблице (O(1) операция - только одна строка!)
         self.wine_tree.item(item_id, values=values, tags=(status_tag))
-        print(f"update_single_component_row() строка обновлена в таблице с тегом {status_tag}", level='DEBUG')
         
         # КРИТИЧНО: Принудительно обновляем GUI сразу после обновления строки
         # Это гарантирует, что изменения статуса отобразятся немедленно
         self.root.update_idletasks()
-        print(f"update_single_component_row() GUI обновлен", level='DEBUG')
     
     def _update_wine_status(self):
         """Обновление статуса в GUI с использованием универсальной архитектуры"""
@@ -12456,6 +12606,8 @@ class AutomationGUI(object):
         self.check_wine_button.config(state=self.tk.DISABLED)
         # Активируем кнопку отмены
         self.cancel_operation_button.config(state=self.tk.NORMAL)
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
         self.operation_cancelled = False
         self.wine_status_label.config(text="Установка...", fg='blue')
         
@@ -13340,6 +13492,8 @@ class AutomationGUI(object):
         self.check_wine_button.config(state=self.tk.DISABLED)
         # Активируем кнопку отмены
         self.cancel_operation_button.config(state=self.tk.NORMAL)
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
         self.operation_cancelled = False
         self.wine_status_label.config(text="Удаление...", fg='blue')
         
@@ -13421,6 +13575,11 @@ class AutomationGUI(object):
         self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         # Устанавливаем флаг отмены
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = True
+        # Синхронизируем UI состояние
+        if hasattr(self, 'is_running'):
+            self.is_running = False
         if not hasattr(self, 'operation_cancelled'):
             self.operation_cancelled = False
         self.operation_cancelled = True
@@ -13458,6 +13617,8 @@ class AutomationGUI(object):
     
     def _cancel_operation_completed(self):
         """Завершение отмены операции"""
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
         self.operation_cancelled = False
         self.wine_status_label.config(text="Операция отменена", fg='orange')
         print("[INFO] Операция отменена пользователем", gui_log=True)
@@ -14706,7 +14867,10 @@ class AutomationGUI(object):
         if self.process_thread and self.process_thread.is_alive():
             print(f"[WARNING] Предыдущий процесс еще выполняется, ожидаем завершения...")
             return
-            
+        
+        # Сбрасываем флаг отмены и устанавливаем UI состояние
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = False
         self.is_running = True
         self.start_button.config(state=self.tk.DISABLED)
         self.stop_button.config(state=self.tk.NORMAL)
@@ -14735,7 +14899,9 @@ class AutomationGUI(object):
         # НОВОЕ: Останавливаем таймер прогресса
         self.stop_progress_timer()
         
-        # Сначала пробуем мягкую остановку
+        # Устанавливаем флаг отмены и синхронизируем UI состояние
+        global CANCEL_OPERATION
+        CANCEL_OPERATION = True
         self.is_running = False
         
         # Даем время на мягкую остановку
@@ -14968,8 +15134,8 @@ class AutomationGUI(object):
             print("[START] Запуск автоматизации проверки репозиториев...", gui_log=True)
             print("[INFO] Начинаем проверку репозиториев")
             
-            # Проверяем флаг остановки
-            if not self.is_running:
+            # Проверяем флаг отмены
+            if CANCEL_OPERATION:
                 print("[INFO] Процесс остановлен пользователем")
                 return
             
@@ -15010,8 +15176,8 @@ class AutomationGUI(object):
             print("[STATS] Запуск анализа статистики системы...", gui_log=True)
             print("[INFO] Начинаем анализ статистики системы")
             
-            # Проверяем флаг остановки
-            if not self.is_running:
+            # Проверяем флаг отмены
+            if CANCEL_OPERATION:
                 print("[INFO] Процесс остановлен пользователем")
                 return
             
@@ -15055,8 +15221,8 @@ class AutomationGUI(object):
             print("[PROCESS] Запуск обновления системы...", gui_log=True)
             print("[INFO] Начинаем обновление системы")
             
-            # Проверяем флаг остановки
-            if not self.is_running:
+            # Проверяем флаг отмены
+            if CANCEL_OPERATION:
                 print("[INFO] Процесс остановлен пользователем")
                 return
             
@@ -17367,8 +17533,8 @@ class SystemUpdater(object):
         else:
             print(f"[INFO] Начинаем выполнение команды: {cmd}", gui_log=True)
         
-        # Проверяем флаг остановки перед выполнением команды
-        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+        # Проверяем флаг отмены перед выполнением команды
+        if CANCEL_OPERATION:
             print("[STOP] Процесс остановлен пользователем")
             print("[INFO] Процесс остановлен пользователем")
             return -1
@@ -17528,8 +17694,8 @@ class SystemUpdater(object):
         # Сначала обновляем списки пакетов
         print("\n[PROCESS] Обновление списков пакетов...")
         
-        # Проверяем флаг остановки перед обновлением списков
-        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+        # Проверяем флаг отмены перед обновлением списков
+        if CANCEL_OPERATION:
             print("[STOP] Процесс остановлен пользователем")
             print("[INFO] Процесс остановлен пользователем")
             return False
@@ -17544,8 +17710,8 @@ class SystemUpdater(object):
         # Затем обновляем систему с опциями dpkg для автоподтверждения
         print("\n[START] Обновление системы...")
         
-        # Проверяем флаг остановки перед обновлением системы
-        if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+        # Проверяем флаг отмены перед обновлением системы
+        if CANCEL_OPERATION:
             print("[STOP] Процесс остановлен пользователем")
             print("[INFO] Процесс остановлен пользователем")
             return False
@@ -17563,8 +17729,8 @@ class SystemUpdater(object):
             # Автоматическая очистка ненужных пакетов
             print("\n[CLEANUP] Автоматическая очистка ненужных пакетов...")
             
-            # Проверяем флаг остановки перед очисткой
-            if hasattr(self, 'gui_instance') and self.gui_instance and not self.gui_instance.is_running:
+            # Проверяем флаг отмены перед очисткой
+            if CANCEL_OPERATION:
                 print("[STOP] Процесс остановлен пользователем")
                 print("[INFO] Процесс остановлен пользователем")
                 return False
