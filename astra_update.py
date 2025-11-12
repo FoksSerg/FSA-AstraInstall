@@ -3,7 +3,7 @@
 """
 Скрипт автоматического обновления FSA-AstraInstall для macOS
 Использует AppleScript для обхода ограничений карантина
-Версия: V2.5.115 (2025.11.10)
+Версия: V2.5.116 (2025.11.12)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
@@ -13,15 +13,25 @@ import subprocess
 import tkinter as tk
 from datetime import datetime
 
+# ============================================================================
+# ПАРАМЕТРЫ ПОДКЛЮЧЕНИЯ К СЕРВЕРУ (настройка)
+# ============================================================================
+SMB_SERVER = "10.10.55.77"          # IP адрес или имя SMB сервера
+SMB_SHARE = "Install"                # Имя SMB шары
+SMB_PATH = "ISO/Linux/Astra"         # Путь к папке с файлами на сервере
+SMB_MOUNT_POINT = "/Volumes/Install"  # Точка монтирования SMB тома (macOS)
+SOURCE_PATH = "/Volumes/FSA-PRJ/Project/FSA-AstraInstall"  # Путь к исходной папке проекта
+# ============================================================================
+
 def connect_smb_volume():
     """Подключает SMB том на macOS"""
     
     # Метод 1: Через AppleScript (Finder)
     try:
-        applescript = '''
+        applescript = f'''
         tell application "Finder"
             try
-                mount volume "smb://10.10.55.77/Install"
+                mount volume "smb://{SMB_SERVER}/{SMB_SHARE}"
                 return "success"
             on error errMsg
                 return "error: " & errMsg
@@ -46,7 +56,7 @@ def connect_smb_volume():
     try:
         print("Пробуем подключить через mount_smbfs...")
         result = subprocess.run([
-            'mount_smbfs', '//10.10.55.77/Install', '/Volumes/Install'
+            'mount_smbfs', f'//{SMB_SERVER}/{SMB_SHARE}', SMB_MOUNT_POINT
         ], capture_output=True, text=True, timeout=30)
         
         if result.returncode == 0:
@@ -62,7 +72,7 @@ def connect_smb_volume():
     try:
         print("Пробуем подключить через open...")
         result = subprocess.run([
-            'open', 'smb://10.10.55.77/Install'
+            'open', f'smb://{SMB_SERVER}/{SMB_SHARE}'
         ], capture_output=True, text=True, timeout=30)
         
         if result.returncode == 0:
@@ -81,8 +91,8 @@ def main():
     """Основная функция для macOS"""
     
     # Пути для macOS
-    source_path = "/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
-    network_path = "/Volumes/Install/ISO/Linux/Astra"
+    source_path = SOURCE_PATH
+    network_path = f"{SMB_MOUNT_POINT}/{SMB_PATH}"
     
     # Файлы для копирования
     files_to_copy = [
@@ -100,7 +110,7 @@ def main():
         
         # Проверяем подключенный том и подключаем если нужно
         if not os.path.exists(network_path):
-            print("Том Install не подключен, пытаемся подключить...")
+            print(f"Том {SMB_SHARE} не подключен, пытаемся подключить...")
             if connect_smb_volume():
                 print("SMB том подключен успешно")
                 # Ждем немного чтобы том успел смонтироваться
@@ -109,11 +119,11 @@ def main():
                 
                 # Проверяем еще раз
                 if not os.path.exists(network_path):
-                    error_msg = f"Не удалось подключить том Install: {network_path}"
+                    error_msg = f"Не удалось подключить том {SMB_SHARE}: {network_path}"
                     show_message("Ошибка", error_msg)
                     return 1
             else:
-                error_msg = f"Не удалось подключить SMB том smb://10.10.55.77/Install"
+                error_msg = f"Не удалось подключить SMB том smb://{SMB_SERVER}/{SMB_SHARE}"
                 show_message("Ошибка", error_msg)
                 return 1
         

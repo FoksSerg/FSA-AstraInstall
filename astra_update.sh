@@ -1,8 +1,17 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.115 (2025.11.05)
+# Версия: V2.5.116 (2025.11.12)
 # Компания: ООО "НПА Вира-Реалтайм"
+
+# ============================================================================
+# ПАРАМЕТРЫ ПОДКЛЮЧЕНИЯ К СЕРВЕРУ (настройка)
+# ============================================================================
+SMB_SERVER="10.10.55.77"          # IP адрес или имя SMB сервера
+SMB_SHARE="Install"                # Имя SMB шары
+SMB_PATH="ISO/Linux/Astra"         # Путь к папке с файлами на сервере
+SMB_USER="FokinSA"                 # Имя пользователя для подключения
+# ============================================================================
 
 # Функция логирования
 log_message() {
@@ -40,8 +49,41 @@ minimize_terminal_window() {
     fi
 }
 
+# Универсальная функция разворачивания окна терминала (для запроса пароля)
+restore_terminal_window() {
+    if ! command -v xdotool >/dev/null 2>&1; then
+        return 0  # xdotool недоступен, выходим тихо
+    fi
+    
+    local terminal_pid="$1"
+    
+    # Если передан PID терминала, используем его
+    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowactivate "$window" 2>/dev/null
+                xdotool windowraise "$window" 2>/dev/null
+            done
+            return 0
+        fi
+    fi
+    
+    # Fallback: пробуем найти терминал через PPID
+    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
+    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
+        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
+        if [ -n "$WINDOW_IDS" ]; then
+            for window in $WINDOW_IDS; do
+                xdotool windowactivate "$window" 2>/dev/null
+                xdotool windowraise "$window" 2>/dev/null
+            done
+        fi
+    fi
+}
+
 # Пути для Linux
-LINUX_SMB_PATH="smb://10.10.55.77/Install/ISO/Linux/Astra"
+LINUX_SMB_PATH="smb://${SMB_SERVER}/${SMB_SHARE}/${SMB_PATH}"
 LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
 
 # Файлы для копирования
@@ -49,6 +91,8 @@ FILES_TO_COPY=(
     "astra_automation.py"
     "astra_install.sh"
     "astra_update.sh"
+    "README.md"
+    "WINE_INSTALL_GUIDE.md"
 )
 
 log_message "Запуск обновления FSA-AstraInstall"
@@ -137,64 +181,164 @@ fi
 # Сохраняем оставшиеся аргументы для передачи в astra_install.sh
 INSTALL_ARGS=("$@")
 
+# Определяем правильную переменную для пропуска терминала (после sudo используем SKIP_TERMINAL_AFTER_SUDO)
+if [ ! -z "$SKIP_TERMINAL_AFTER_SUDO" ]; then
+    SKIP_TERMINAL="$SKIP_TERMINAL_AFTER_SUDO"
+fi
+
 # Проверяем доступность сервера
-log_message "Проверка доступности сервера 10.10.55.77..."
-ping -c 1 -W 3 10.10.55.77 >/dev/null 2>&1
+log_message "Проверка доступности сервера ${SMB_SERVER}..."
+ping -c 1 -W 3 "${SMB_SERVER}" >/dev/null 2>&1
 if [ $? -eq 0 ]; then
     log_message "Сервер доступен"
+    SERVER_AVAILABLE=true
 else
-    log_message "ОШИБКА: Сервер 10.10.55.77 недоступен"
-    echo "Ошибка Обновления"
-    exit 1
+    log_message "Сервер ${SMB_SERVER} недоступен. Продолжаем без обновления."
+    SERVER_AVAILABLE=false
 fi
 
-# Используем smbclient с сохраненными учетными данными
-log_message "Подключение к SMB с учетными данными FokinSA..."
+# Инициализация флага успешности обновления
+UPDATE_SUCCESSFUL=false
 
-# Создаем папку назначения
-mkdir -p "$LINUX_ASTRA_PATH" 2>/dev/null
-
-# Файл с учетными данными
-CREDENTIALS_FILE="$HOME/.smbcredentials"
-
-# Проверяем, есть ли файл с учетными данными
-if [ ! -f "$CREDENTIALS_FILE" ]; then
-    log_message "Файл учетных данных не найден. Создаем..."
-    echo "username=FokinSA" > "$CREDENTIALS_FILE"
-    echo "password=" >> "$CREDENTIALS_FILE"
-    chmod 600 "$CREDENTIALS_FILE"
-    log_message "Введите пароль для пользователя FokinSA:"
-    read -s password
-    echo "password=$password" > "$CREDENTIALS_FILE"
-    echo "username=FokinSA" >> "$CREDENTIALS_FILE"
-    chmod 600 "$CREDENTIALS_FILE"
-    log_message "Учетные данные сохранены"
-    # Сворачиваем терминал после запроса пароля (НЕ в консольном режиме)
-    if [ "$SKIP_TERMINAL" != "true" ]; then
-        minimize_terminal_window "$TERMINAL_PID"
+# Работа с обновлением только если сервер доступен
+if [ "$SERVER_AVAILABLE" = true ]; then
+    # Используем smbclient с сохраненными учетными данными
+    log_message "Подключение к SMB с учетными данными ${SMB_USER}..."
+    
+    # Создаем папку назначения
+    mkdir -p "$LINUX_ASTRA_PATH" 2>/dev/null
+    
+    # Файл с учетными данными
+    CREDENTIALS_FILE="$HOME/.smbcredentials"
+    
+    # Проверяем, есть ли файл с учетными данными
+    if [ ! -f "$CREDENTIALS_FILE" ]; then
+        log_message "Файл учетных данных не найден. Создаем..."
+        echo "username=${SMB_USER}" > "$CREDENTIALS_FILE"
+        echo "password=" >> "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+        
+        # Разворачиваем терминал для запроса пароля (НЕ в консольном режиме)
+        if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
+            restore_terminal_window "$TERMINAL_PID"
+        fi
+        
+        log_message "Введите пароль для пользователя ${SMB_USER}:"
+        read -s password
+        echo "password=$password" > "$CREDENTIALS_FILE"
+        echo "username=${SMB_USER}" >> "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+        log_message "Учетные данные сохранены"
+        
+        # Сворачиваем терминал после запроса пароля (НЕ в консольном режиме)
+        if [ "$SKIP_TERMINAL" != "true" ]; then
+            minimize_terminal_window "$TERMINAL_PID"
+        fi
     fi
-fi
-
-# Копируем файлы используя сохраненные учетные данные
-log_message "Копирование файлов из сети..."
-for file in "${FILES_TO_COPY[@]}"; do
-    log_message "Копируем: $file"
-    smbclient //10.10.55.77/Install -A "$CREDENTIALS_FILE" -c "get ISO/Linux/Astra/$file $LINUX_ASTRA_PATH/$file" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        log_message "Скопирован: $file"
+    
+    # Копируем файлы с обработкой ошибок авторизации
+    log_message "Копирование файлов из сети..."
+    
+    # Первая попытка копирования
+    COPY_SUCCESS=true
+    AUTH_ERROR=false
+    COPIED_COUNT=0
+    
+    for file in "${FILES_TO_COPY[@]}"; do
+        log_message "Копируем: $file"
+        # Сохраняем stderr для анализа ошибки
+        ERROR_OUTPUT=$(smbclient //${SMB_SERVER}/${SMB_SHARE} -A "$CREDENTIALS_FILE" -c "get ${SMB_PATH}/$file $LINUX_ASTRA_PATH/$file" 2>&1 >/dev/null)
+        COPY_RESULT=$?
+        
+        if [ $COPY_RESULT -eq 0 ]; then
+            log_message "Скопирован: $file"
+            COPIED_COUNT=$((COPIED_COUNT + 1))
+        else
+            # Анализируем тип ошибки
+            if echo "$ERROR_OUTPUT" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
+                log_message "ОШИБКА: Ошибка авторизации при копировании $file"
+                AUTH_ERROR=true
+                COPY_SUCCESS=false
+                break  # Прерываем цикл для запроса пароля
+            else
+                # Файл не найден или другая ошибка - пропускаем и продолжаем
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден или недоступен. Пропускаем."
+                # Не устанавливаем COPY_SUCCESS=false, продолжаем копирование других файлов
+            fi
+        fi
+    done
+    
+    # Если первая попытка неудачна из-за ошибки авторизации - запрашиваем пароль заново
+    if [ "$AUTH_ERROR" = true ]; then
+        log_message "Ошибка авторизации. Запрашиваем пароль заново..."
+        
+        # Разворачиваем терминал для запроса пароля (НЕ в консольном режиме)
+        if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
+            restore_terminal_window "$TERMINAL_PID"
+        fi
+        
+        log_message "Введите пароль для пользователя ${SMB_USER}:"
+        read -s password
+        echo "password=$password" > "$CREDENTIALS_FILE"
+        echo "username=${SMB_USER}" >> "$CREDENTIALS_FILE"
+        chmod 600 "$CREDENTIALS_FILE"
+        log_message "Учетные данные обновлены"
+        
+        # Сворачиваем терминал после запроса пароля (НЕ в консольном режиме)
+        if [ "$SKIP_TERMINAL" != "true" ]; then
+            minimize_terminal_window "$TERMINAL_PID"
+        fi
+        
+        # Вторая попытка копирования (только если была ошибка авторизации)
+        COPY_SUCCESS=true
+        AUTH_ERROR=false
+        for file in "${FILES_TO_COPY[@]}"; do
+            log_message "Копируем: $file (повторная попытка)"
+            ERROR_OUTPUT=$(smbclient //${SMB_SERVER}/${SMB_SHARE} -A "$CREDENTIALS_FILE" -c "get ${SMB_PATH}/$file $LINUX_ASTRA_PATH/$file" 2>&1 >/dev/null)
+            COPY_RESULT=$?
+            
+            if [ $COPY_RESULT -eq 0 ]; then
+                log_message "Скопирован: $file"
+                COPIED_COUNT=$((COPIED_COUNT + 1))
+            else
+                # При повторной попытке тоже анализируем ошибку
+                if echo "$ERROR_OUTPUT" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
+                    log_message "ОШИБКА: Ошибка авторизации при копировании $file (повторная попытка)"
+                    AUTH_ERROR=true
+                    COPY_SUCCESS=false
+                else
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден или недоступен. Пропускаем."
+                    # Продолжаем копирование других файлов
+                fi
+            fi
+        done
+    fi
+    
+    # Обработка результата обновления
+    if [ $COPIED_COUNT -gt 0 ]; then
+        log_message "Скопировано файлов: $COPIED_COUNT из ${#FILES_TO_COPY[@]}"
+        if [ "$COPY_SUCCESS" = true ] && [ $COPIED_COUNT -eq ${#FILES_TO_COPY[@]} ]; then
+            log_message "Все файлы успешно скопированы!"
+        else
+            log_message "Некоторые файлы не были скопированы, но продолжаем работу."
+        fi
+        UPDATE_SUCCESSFUL=true
+        
+        # Сворачиваем терминал после копирования файлов (на всякий случай)
+        # НЕ сворачиваем в консольном режиме
+        if [ "$SKIP_TERMINAL" != "true" ]; then
+            minimize_terminal_window "$TERMINAL_PID"
+        fi
     else
-        log_message "ОШИБКА: Не удалось скопировать $file"
-        echo "Ошибка Обновления"
-        exit 1
+        if [ "$AUTH_ERROR" = true ]; then
+            log_message "Не удалось обновить файлы из-за ошибки авторизации. Продолжаем без обновления."
+        else
+            log_message "Не удалось обновить файлы. Продолжаем без обновления."
+        fi
+        UPDATE_SUCCESSFUL=false
     fi
-done
-
-log_message "Все файлы успешно скопированы!"
-
-# Сворачиваем терминал после копирования файлов (на всякий случай)
-# НЕ сворачиваем в консольном режиме
-if [ "$SKIP_TERMINAL" != "true" ]; then
-    minimize_terminal_window "$TERMINAL_PID"
+else
+    log_message "Обновление пропущено (сервер недоступен)"
 fi
 
 # Очищаем логи (ОТКЛЮЧЕНО для сохранения диагностики)
