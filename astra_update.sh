@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.118 (2025.11.12)
+# Версия: V2.5.119 (2025.11.12)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================================
@@ -12,7 +12,7 @@
 
 # SMB как основной, Git как резервный
 SOURCES=(
-    "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
+    # "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"  # ВРЕМЕННО ОТКЛЮЧЕН
     "git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
 )
 
@@ -185,113 +185,41 @@ get_smb_file_info() {
     return 0
 }
 
-# Функция конвертации даты SMB в Unix timestamp (независимо от часового пояса)
-smb_date_to_timestamp() {
-    local date_str="$1"
-    
-    if [ -z "$date_str" ]; then
-        echo "0"
-        return 1
-    fi
-    
-    # Формат 1: "Mon Nov 12 10:30:45 2025"
-    if echo "$date_str" | grep -qE '^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+[0-9]{1,2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4}'; then
-        local timestamp=$(date -u -d "$date_str" +%s 2>/dev/null || date -ujf "%a %b %d %H:%M:%S %Y" "$date_str" +%s 2>/dev/null)
-        if [ -n "$timestamp" ] && [ "$timestamp" != "0" ]; then
-            echo "$timestamp"
-            return 0
-        fi
-    fi
-    
-    # Формат 2: "2025-11-12 10:30:45"
-    if echo "$date_str" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}'; then
-        local timestamp=$(date -u -d "$date_str" +%s 2>/dev/null || date -ujf "%Y-%m-%d %H:%M:%S" "$date_str" +%s 2>/dev/null)
-        if [ -n "$timestamp" ] && [ "$timestamp" != "0" ]; then
-            echo "$timestamp"
-            return 0
-        fi
-    fi
-    
-    # Формат 3: "Mon Nov 12 2025" (без времени)
-    if echo "$date_str" | grep -qE '^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+[0-9]{1,2}\s+[0-9]{4}'; then
-        local timestamp=$(date -u -d "$date_str 00:00:00" +%s 2>/dev/null || date -ujf "%a %b %d %Y" "$date_str" +%s 2>/dev/null)
-        if [ -n "$timestamp" ] && [ "$timestamp" != "0" ]; then
-            echo "$timestamp"
-            return 0
-        fi
-    fi
-    
-    echo "0"
-    return 1
-}
-
-# Функция сравнения файлов (размер и дата модификации)
+# Функция сравнения файлов (только по размеру)
 files_are_same() {
     local file="$1"
     local local_file="$LINUX_ASTRA_PATH/$file"
-    local smb_info="$2"
+    local remote_size="$2"  # Теперь просто размер, без даты
     
     debug_log "files_are_same: проверка файла $file"
-    debug_log "files_are_same: local_file=$local_file, smb_info=$smb_info"
+    debug_log "files_are_same: local_file=$local_file, remote_size=$remote_size"
     
     if [ ! -f "$local_file" ]; then
         debug_log "files_are_same: локальный файл не существует"
         return 1
     fi
     
-    local smb_size=$(echo "$smb_info" | cut -d'|' -f1)
-    local smb_date=$(echo "$smb_info" | cut -d'|' -f2)
+    # Если размер передан в формате "размер|дата", извлекаем только размер
+    if echo "$remote_size" | grep -q "|"; then
+        remote_size=$(echo "$remote_size" | cut -d'|' -f1)
+    fi
     
-    debug_log "files_are_same: smb_size=$smb_size, smb_date=$smb_date"
+    debug_log "files_are_same: remote_size=$remote_size"
     
-    if [ -z "$smb_size" ] || [ "$smb_size" = "0" ]; then
-        debug_log "files_are_same: размер SMB пустой или 0"
+    if [ -z "$remote_size" ] || [ "$remote_size" = "0" ]; then
+        debug_log "files_are_same: размер удаленного файла пустой или 0"
         return 1
     fi
     
     local local_size=$(stat -f%z "$local_file" 2>/dev/null || stat -c%s "$local_file" 2>/dev/null || echo "0")
-    debug_log "files_are_same: local_size=$local_size, smb_size=$smb_size"
+    debug_log "files_are_same: local_size=$local_size, remote_size=$remote_size"
     
-    if [ "$local_size" != "$smb_size" ]; then
-        debug_log "files_are_same: РАЗМЕРЫ НЕ СОВПАДАЮТ: локальный=$local_size, SMB=$smb_size"
+    if [ "$local_size" != "$remote_size" ]; then
+        debug_log "files_are_same: РАЗМЕРЫ НЕ СОВПАДАЮТ: локальный=$local_size, удаленный=$remote_size"
         return 1
     fi
     
-    debug_log "files_are_same: размеры совпадают, проверяем дату"
-    
-    if [ -n "$smb_date" ]; then
-        local smb_timestamp=$(smb_date_to_timestamp "$smb_date")
-        local local_timestamp=$(stat -f%m "$local_file" 2>/dev/null || stat -c%Y "$local_file" 2>/dev/null || echo "0")
-        
-        debug_log "files_are_same: smb_timestamp=$smb_timestamp, local_timestamp=$local_timestamp"
-        debug_log "files_are_same: smb_date=$smb_date"
-        
-        if [ "$smb_timestamp" = "0" ] || [ "$smb_timestamp" = "" ]; then
-            debug_log "files_are_same: не удалось распарсить дату SMB, считаем файлы одинаковыми по размеру"
-            return 0
-        fi
-        
-        local diff=$((local_timestamp - smb_timestamp))
-        local abs_diff=${diff#-}
-        debug_log "files_are_same: разница во времени: $diff секунд (абсолютная: $abs_diff)"
-        
-        # ПРОБЛЕМА: SMB возвращает дату в UTC, а локальный файл - в локальном часовом поясе
-        # Разница может быть до 12 часов (43200 секунд) из-за разных часовых поясов
-        # Решение: если разница меньше 12 часов (43200 секунд) - считаем файлы одинаковыми
-        # Это компенсирует разницу часовых поясов между сервером и клиентом
-        if [ $abs_diff -gt 43200 ]; then
-            # Разница больше 12 часов - файлы действительно разные
-            debug_log "files_are_same: ДАТЫ НЕ СОВПАДАЮТ: разница=$abs_diff секунд (больше 12 часов)"
-            return 1
-        else
-            # Разница меньше 12 часов - скорее всего это разница часовых поясов
-            debug_log "files_are_same: даты совпадают (разница=$abs_diff секунд, вероятно разница часовых поясов)"
-        fi
-    else
-        debug_log "files_are_same: дата SMB пустая, считаем файлы одинаковыми по размеру"
-    fi
-    
-    debug_log "files_are_same: ФАЙЛЫ ОДИНАКОВЫЕ - пропускаем"
+    debug_log "files_are_same: ФАЙЛЫ ОДИНАКОВЫЕ (размеры совпадают) - пропускаем"
     return 0
 }
 
@@ -300,6 +228,7 @@ files_are_same() {
 # ============================================================================
 
 # Функция получения информации о файле из Git репозитория
+# Использует HEAD запрос к raw URL для получения размера файла (без использования API)
 get_git_file_info() {
     local file="$1"
     local repo_url="$2"
@@ -307,24 +236,47 @@ get_git_file_info() {
     local repo_path="$4"
     local full_path="${repo_path}/${file}"
     
+    # Убираем ./ из начала пути, если есть
+    full_path=$(echo "$full_path" | sed 's|^\./||')
+    
+    debug_log "get_git_file_info: file=$file, repo_url=$repo_url, branch=$branch, repo_path=$repo_path, full_path=$full_path"
+    
     if echo "$repo_url" | grep -qE "(github|gitlab)"; then
-        # Убираем .git из конца URL если есть, для работы с API
+        # Убираем .git из конца URL если есть
         local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-        local api_url=$(echo "$clean_url" | sed -E 's|https?://(github\.com|gitlab\.com)/([^/]+)/([^/]+)|https://api.\1/repos/\2/\3/contents|')
         
-        local api_response=$(curl -s "${api_url}/${full_path}?ref=${branch}" 2>/dev/null)
+        # Формируем raw URL для получения размера файла через HEAD запрос
+        if echo "$clean_url" | grep -qE "github\.com"; then
+            local raw_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}|")
+            raw_url="${raw_url}/${full_path}"
+        elif echo "$clean_url" | grep -qE "gitlab\.com"; then
+            local raw_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}|")
+            raw_url="${raw_url}/${full_path}"
+        else
+            debug_log "get_git_file_info: неизвестный хостинг Git"
+            echo ""
+            return 1
+        fi
         
-        if [ $? -eq 0 ] && [ -n "$api_response" ]; then
-            local size=$(echo "$api_response" | grep -oE '"size"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)
+        debug_log "get_git_file_info: clean_url=$clean_url, raw_url=$raw_url"
+        
+        # Получаем размер файла через HEAD запрос (не засчитывается в rate limit, работает быстрее)
+        local head_response=$(curl -s -I "$raw_url" 2>&1)
+        local curl_result=$?
+        debug_log "get_git_file_info: curl HEAD result=$curl_result, response_length=${#head_response}"
+        
+        if [ $curl_result -eq 0 ]; then
+            local content_length=$(echo "$head_response" | grep -iE "^content-length:" | awk '{print $2}' | tr -d '\r\n')
             
-            local commit_url=$(echo "$clean_url" | sed -E 's|https?://(github\.com|gitlab\.com)/([^/]+)/([^/]+)|https://api.\1/repos/\2/\3/commits|')
-            local commit_info=$(curl -s "${commit_url}?path=${full_path}&sha=${branch}&per_page=1" 2>/dev/null)
-            local date=$(echo "$commit_info" | grep -oE '"date"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"date"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-            
-            if [ -n "$size" ]; then
-                echo "${size}|${date}"
+            if [ -n "$content_length" ] && [ "$content_length" != "0" ]; then
+                debug_log "get_git_file_info: Размер файла через HEAD запрос: $content_length байт"
+                echo "$content_length"
                 return 0
+            else
+                debug_log "get_git_file_info: Content-Length не найден или равен 0"
             fi
+        else
+            debug_log "get_git_file_info: HEAD запрос не удался"
         fi
     fi
     
@@ -341,17 +293,42 @@ copy_git_file() {
     local repo_path="$5"
     local full_path="${repo_path}/${file}"
     
+    # Убираем ./ из начала пути, если есть (GitHub/GitLab API не понимают такой формат)
+    full_path=$(echo "$full_path" | sed 's|^\./||')
+    
+    debug_log "copy_git_file: file=$file, dest=$dest, repo_url=$repo_url, branch=$branch, repo_path=$repo_path, full_path=$full_path"
+    
     if echo "$repo_url" | grep -qE "(github|gitlab)"; then
         # Убираем .git из конца URL если есть, для работы с raw
         local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-        local raw_url=$(echo "$clean_url" | sed -E 's|https?://(github\.com|gitlab\.com)/([^/]+)/([^/]+)|https://raw.\1/\2/\3/${branch}|')
-        raw_url="${raw_url}/${full_path}"
-        
-        if curl -s -f -o "$dest" "$raw_url" 2>/dev/null; then
-            return 0
+        # Формат raw URL для GitHub: https://raw.githubusercontent.com/USER/REPO/BRANCH/PATH/TO/FILE
+        # Для GitLab: https://gitlab.com/USER/REPO/-/raw/BRANCH/PATH/TO/FILE
+        if echo "$clean_url" | grep -qE "github\.com"; then
+            local raw_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}|")
+            raw_url="${raw_url}/${full_path}"
+        elif echo "$clean_url" | grep -qE "gitlab\.com"; then
+            local raw_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}|")
+            raw_url="${raw_url}/${full_path}"
+        else
+            debug_log "copy_git_file: неизвестный хостинг Git, используем базовый URL"
+            return 1
         fi
+        
+        debug_log "copy_git_file: clean_url=$clean_url, raw_url=$raw_url"
+        
+        local curl_output=$(curl -s -f -o "$dest" "$raw_url" 2>&1)
+        local curl_result=$?
+        debug_log "copy_git_file: curl result=$curl_result, output_length=${#curl_output}"
+        if [ $curl_result -ne 0 ]; then
+            debug_log "copy_git_file: curl failed, output: $curl_output"
+        else
+            debug_log "copy_git_file: файл успешно скопирован"
+        fi
+        
+        return $curl_result
     fi
     
+    debug_log "copy_git_file: URL не github/gitlab, копирование невозможно"
     return 1
 }
 
@@ -431,37 +408,6 @@ copy_smb_file() {
     fi
     if [ $copy_result -eq 0 ]; then
         debug_log "smbclient УСПЕХ: файл скопирован"
-        
-        # ВАЖНО: smbclient не сохраняет дату модификации файла при копировании
-        # Нужно установить дату модификации локального файла равной дате файла на SMB сервере
-        # Для этого получаем информацию о файле и устанавливаем дату через touch
-        local smb_info=$(get_smb_file_info "$file" "$server" "$share" "$path" "$user")
-        if [ $? -eq 0 ] && [ -n "$smb_info" ]; then
-            local smb_date=$(echo "$smb_info" | cut -d'|' -f2)
-            if [ -n "$smb_date" ]; then
-                # Устанавливаем дату модификации локального файла равной дате файла на SMB
-                # Используем touch -d для установки даты в формате "Tue Nov 11 02:23:24 2025"
-                if touch -d "$smb_date" "$dest" 2>/dev/null; then
-                    debug_log "Дата модификации установлена: $smb_date"
-                else
-                    # Альтернативный способ: конвертируем дату в timestamp и используем touch -t
-                    local smb_timestamp=$(smb_date_to_timestamp "$smb_date")
-                    if [ "$smb_timestamp" != "0" ] && [ -n "$smb_timestamp" ]; then
-                        # Конвертируем timestamp в формат для touch -t: [[CC]YY]MMDDhhmm[.ss]
-                        local touch_date=$(date -u -d "@$smb_timestamp" +"%Y%m%d%H%M.%S" 2>/dev/null || date -ujf "%s" "$smb_timestamp" +"%Y%m%d%H%M.%S" 2>/dev/null)
-                        if [ -n "$touch_date" ]; then
-                            if touch -t "$touch_date" "$dest" 2>/dev/null; then
-                                debug_log "Дата модификации установлена через touch -t: $touch_date (timestamp: $smb_timestamp)"
-                            else
-                                debug_log "ПРЕДУПРЕЖДЕНИЕ: Не удалось установить дату модификации через touch -t"
-                            fi
-                        fi
-                    else
-                        debug_log "ПРЕДУПРЕЖДЕНИЕ: Не удалось конвертировать дату SMB в timestamp"
-                    fi
-                fi
-            fi
-        fi
     else
         debug_log "smbclient ОШИБКА: код=$copy_result"
     fi
@@ -500,36 +446,90 @@ check_source_availability() {
     
     case "$source_type" in
         "git")
-            local repo_url=$(echo "$source_params" | cut -d: -f1)
+            # Парсим параметры Git: URL:ветка:путь
+            # URL может содержать :, поэтому используем awk для правильного парсинга
+            # Формат: https://github.com/user/repo:master:.
+            # Извлекаем URL (все до последних двух :), ветку (предпоследнее поле) и путь (последнее поле)
+            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
+            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
+            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
+            debug_log "check_source_availability git: repo_url=$repo_url, branch=$branch, path=$repo_path"
             
             if command -v git >/dev/null 2>&1; then
+                debug_log "check_source_availability git: git команда найдена"
                 # Для git ls-remote добавляем .git если его нет
                 local git_url="$repo_url"
                 if ! echo "$git_url" | grep -qE '\.git$'; then
                     git_url="${repo_url}.git"
                 fi
-                timeout 3 git ls-remote --heads "$git_url" >/dev/null 2>&1
-                result=$?
-            else
-                if echo "$repo_url" | grep -qE "(github|gitlab)"; then
-                    # Убираем .git из конца URL если есть, для работы с API
-                    local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-                    local api_url=$(echo "$clean_url" | sed -E 's|https?://(github\.com|gitlab\.com)/([^/]+)/([^/]+)|https://api.\1/repos/\2/\3|')
-                    timeout 3 curl -s -f "$api_url" >/dev/null 2>&1
+                debug_log "check_source_availability git: проверяем доступность через git ls-remote: $git_url"
+                # Используем timeout если доступен, иначе без него (для совместимости)
+                # Уменьшен таймаут до 5 секунд для ускорения
+                if command -v timeout >/dev/null 2>&1; then
+                    local git_output=$(timeout 5 git ls-remote --heads "$git_url" 2>&1)
                     result=$?
+                else
+                    # Альтернатива без timeout (для систем где timeout недоступен)
+                    local git_output=$(git ls-remote --heads "$git_url" 2>&1)
+                    result=$?
+                fi
+                debug_log "check_source_availability git: git ls-remote result=$result, output_length=${#git_output}"
+                if [ $result -ne 0 ]; then
+                    debug_log "check_source_availability git: git ls-remote failed, output: $git_output"
+                fi
+            else
+                debug_log "check_source_availability git: git команда НЕ найдена, пробуем через HEAD запрос к raw URL"
+                if echo "$repo_url" | grep -qE "(github|gitlab)"; then
+                    # Убираем .git из конца URL если есть
+                    local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
+                    debug_log "check_source_availability git: clean_url=$clean_url"
+                    
+                    # Формируем raw URL для проверки доступности (проверяем README.md как тестовый файл)
+                    local test_file="README.md"
+                    if echo "$clean_url" | grep -qE "github\.com"; then
+                        local test_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}/${test_file}|")
+                    elif echo "$clean_url" | grep -qE "gitlab\.com"; then
+                        local test_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}/${test_file}|")
+                    else
+                        debug_log "check_source_availability git: URL не github/gitlab"
+                        result=1
+                    fi
+                    
+                    if [ -n "$test_url" ]; then
+                        debug_log "check_source_availability git: проверяем доступность через HEAD запрос: $test_url"
+                        # Используем --max-time вместо timeout для совместимости (работает везде)
+                        # Уменьшен таймаут до 5 секунд для ускорения
+                        local curl_output=$(curl -s -I -f --max-time 5 "$test_url" 2>&1)
+                        result=$?
+                        debug_log "check_source_availability git: curl HEAD result=$result, output_length=${#curl_output}"
+                        if [ $result -ne 0 ]; then
+                            debug_log "check_source_availability git: curl HEAD failed, output: $curl_output"
+                        fi
+                    fi
+                else
+                    debug_log "check_source_availability git: URL не github/gitlab, проверка недоступна"
+                    result=1
                 fi
             fi
             ;;
             
         "smb")
             local server=$(echo "$source_params" | cut -d: -f1)
-            timeout 1 ping -c 1 -W 0.5 "$server" >/dev/null 2>&1
-            result=$?
+            # Используем timeout если доступен, иначе ping с ограничением времени
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 1 ping -c 1 -W 0.5 "$server" >/dev/null 2>&1
+                result=$?
+            else
+                # Альтернатива без timeout (для систем где timeout недоступен)
+                ping -c 1 -W 0.5 "$server" >/dev/null 2>&1
+                result=$?
+            fi
             ;;
             
         "http")
             local base_url="$source_params"
-            timeout 3 curl -s -I -f "$base_url" >/dev/null 2>&1
+            # Используем --max-time вместо timeout для совместимости
+            curl -s -I -f --max-time 3 "$base_url" >/dev/null 2>&1
             result=$?
             ;;
     esac
@@ -572,9 +572,10 @@ get_file_info_from_selected_source() {
     
     case "$source_type" in
         "git")
-            local repo_url=$(echo "$source_params" | cut -d: -f1)
-            local branch=$(echo "$source_params" | cut -d: -f2)
-            local repo_path=$(echo "$source_params" | cut -d: -f3)
+            # Парсим параметры Git: URL:ветка:путь (URL может содержать :)
+            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
+            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
+            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
             get_git_file_info "$file" "$repo_url" "$branch" "$repo_path"
             ;;
             
@@ -611,9 +612,10 @@ copy_file_from_selected_source() {
     
     case "$source_type" in
         "git")
-            local repo_url=$(echo "$source_params" | cut -d: -f1)
-            local branch=$(echo "$source_params" | cut -d: -f2)
-            local repo_path=$(echo "$source_params" | cut -d: -f3)
+            # Парсим параметры Git: URL:ветка:путь (URL может содержать :)
+            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
+            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
+            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
             copy_git_file "$file" "$dest" "$repo_url" "$branch" "$repo_path"
             ;;
             
@@ -642,10 +644,11 @@ copy_file_from_selected_source() {
 LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
 
 # Файлы для копирования
+# ВАЖНО: astra_update.sh НЕ копируем во время выполнения, чтобы не перезаписать сам себя старой версией из Git
 FILES_TO_COPY=(
     "astra_automation.py"
     "astra_install.sh"
-    "astra_update.sh"
+    # "astra_update.sh"  # ИСКЛЮЧЕН: не копируем сам скрипт обновления во время его выполнения
     "README.md"
     "WINE_INSTALL_GUIDE.md"
 )
@@ -831,6 +834,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         # Детальное логирование результата получения информации
         if [ $SMB_INFO_RESULT -eq 0 ]; then
             if [ -n "$SMB_INFO" ]; then
+                # Извлекаем размер (может быть в формате "размер" или "размер|дата")
                 SMB_SIZE=$(echo "$SMB_INFO" | cut -d'|' -f1)
                 log_message "Информация о файле получена: размер $SMB_SIZE байт"
                 debug_log "Информация о файле получена: размер=$SMB_SIZE, полная_инфо=$SMB_INFO"
@@ -848,7 +852,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         if [ $SMB_INFO_RESULT -eq 0 ] && [ -n "$SMB_INFO" ]; then
             # Информация доступна - проверяем, нужно ли копировать (оптимизация)
             if files_are_same "$file" "$SMB_INFO"; then
-                log_message "Пропущен: $file (не изменился - размер и дата совпадают)"
+                log_message "Пропущен: $file (не изменился - размер совпадает)"
                 SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
                 continue
             else
@@ -938,12 +942,13 @@ if [ "$SERVER_AVAILABLE" = true ]; then
                 SMB_INFO_RESULT=$?
                 
                 if [ $SMB_INFO_RESULT -eq 0 ] && files_are_same "$file" "$SMB_INFO"; then
-                    log_message "Пропущен: $file (не изменился - размер и дата совпадают)"
+                    log_message "Пропущен: $file (не изменился - размер совпадает)"
                     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
                     continue
                 fi
                 
                 if [ $SMB_INFO_RESULT -eq 0 ]; then
+                    # Извлекаем размер (может быть в формате "размер" или "размер|дата")
                     SMB_SIZE=$(echo "$SMB_INFO" | cut -d'|' -f1)
                     log_message "Копируем: $file (повторная попытка, изменен или новый, размер: $SMB_SIZE байт)"
                 else
@@ -977,7 +982,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         
         log_message "Синхронизация файловой системы..."
         sync
-        sleep 0.3
+        sleep 0.1  # Уменьшена задержка для ускорения
         
         ALL_FILES_OK=true
         MISSING_FILES=()
@@ -1013,7 +1018,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         if [ "$ALL_FILES_OK" = false ]; then
             log_message "Обнаружены проблемы с файлами. Повторная синхронизация..."
             sync
-            sleep 1
+            sleep 0.2  # Уменьшена задержка для ускорения
             
             for file in "${MISSING_FILES[@]}"; do
                 file_path="$LINUX_ASTRA_PATH/$file"
@@ -1054,6 +1059,15 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         fi
         
         log_message "Проверка файлов завершена"
+        
+        # КРИТИЧНО: Устанавливаем права на выполнение сразу после проверки файлов
+        # Это гарантирует, что все скопированные файлы будут исполняемыми
+        log_message "Установка прав на выполнение для скопированных файлов..."
+        chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
+        chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
+        # Для Python файла права на выполнение не обязательны, но установим для совместимости
+        chmod +x "$LINUX_ASTRA_PATH/astra_automation.py" 2>/dev/null
+        log_message "Права на выполнение установлены"
     fi
     # ============================================================================
     
@@ -1067,10 +1081,22 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         fi
         UPDATE_SUCCESSFUL=true
         
+        # КРИТИЧНО: Дополнительная синхронизация после копирования всех файлов
+        # Это гарантирует, что все данные записаны на диск перед запуском
+        log_message "Финальная синхронизация файловой системы перед запуском..."
+        sync
+        sleep 0.2  # Уменьшена задержка для ускорения (достаточно для завершения операций записи)
+        
         if [ "$SKIP_TERMINAL" != "true" ]; then
             minimize_terminal_window "$TERMINAL_PID"
         fi
+    elif [ $SKIPPED_COUNT -gt 0 ]; then
+        # Все файлы пропущены - это нормально, значит они актуальны и не требуют обновления
+        # Не требуется синхронизация, так как файлы не копировались
+        log_message "Все файлы актуальны (не требуют обновления). Пропущено: $SKIPPED_COUNT из ${#FILES_TO_COPY[@]}"
+        UPDATE_SUCCESSFUL=true
     else
+        # Ничего не скопировано и ничего не пропущено - значит была ошибка
         if [ "$AUTH_ERROR" = true ]; then
             log_message "Не удалось обновить файлы из-за ошибки авторизации. Продолжаем без обновления."
         else
@@ -1087,11 +1113,23 @@ log_message "Очистка старых логов ОТКЛЮЧЕНА для с
 # rm -rf "$LINUX_ASTRA_PATH/Log" 2>/dev/null
 log_message "Старые логи НЕ удалены (сохранены для диагностики)"
 
-# Устанавливаем права
-log_message "Установка прав на выполнение..."
-chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
-chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
-log_message "Права установлены"
+# КРИТИЧНО: Повторная установка прав перед запуском (на случай если они не были установлены ранее)
+log_message "Проверка и установка прав на выполнение перед запуском..."
+if [ ! -x "$LINUX_ASTRA_PATH/astra_install.sh" ]; then
+    log_message "Устанавливаем права на выполнение для astra_install.sh..."
+    chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
+fi
+if [ ! -x "$LINUX_ASTRA_PATH/astra_update.sh" ]; then
+    log_message "Устанавливаем права на выполнение для astra_update.sh..."
+    chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
+fi
+log_message "Права на выполнение проверены и установлены"
+
+# КРИТИЧНО: Финальная синхронизация перед запуском приложения
+# Это гарантирует, что все изменения файлов записаны на диск
+log_message "Синхронизация файловой системы перед запуском приложения..."
+sync
+sleep 0.1  # Уменьшена задержка для ускорения (достаточно для завершения операций записи)
 
 # Запускаем установку
 log_message "Запуск установки..."
