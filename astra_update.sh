@@ -1,8 +1,20 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.119 (2025.11.12)
+# Версия: V2.5.120 (2025.11.12)
 # Компания: ООО "НПА Вира-Реалтайм"
+
+# Пути для Linux
+LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
+
+# Файлы для копирования
+FILES_TO_COPY=(
+    "astra_automation.py"
+    "astra_install.sh"
+    "astra_update.sh"
+    "README.md"
+    "WINE_INSTALL_GUIDE.md"
+)
 
 # ============================================================================
 # НАСТРОЙКА ИСТОЧНИКОВ ФАЙЛОВ (с приоритетами)
@@ -12,7 +24,7 @@
 
 # SMB как основной, Git как резервный
 SOURCES=(
-    # "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"  # ВРЕМЕННО ОТКЛЮЧЕН
+    "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
     "git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
 )
 
@@ -20,13 +32,11 @@ SOURCES=(
 # SOURCES=(
 #     "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
 # )
-
 # Пример: Git как основной, SMB как резервный
 # SOURCES=(
 #     "git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
 #     "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
 # )
-
 # Формат параметров для каждого типа:
 # - smb:  сервер:шара:путь:пользователь
 # - git:  URL_репозитория:ветка:путь_в_репозитории
@@ -36,17 +46,27 @@ SOURCES=(
 # ВРЕМЕННО: Лог-файл для аналитики
 DEBUG_LOG_FILE="$(dirname "$0")/astra_update_debug.log"
 
+# Включить/выключить сохранение логов в файл (true/false)
+# Установите false чтобы отключить логирование в файл
+ENABLE_DEBUG_LOG=false
+
 # Функция логирования
 log_message() {
     local message="[$(date '+%H:%M:%S')] $1"
     # Выводим в stderr, чтобы не попадало в результат команд подстановки
     echo "$message" >&2
-    # ВРЕМЕННО: Дублируем в лог-файл
-    echo "$message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
+    # Дублируем в лог-файл (если включено)
+    if [ "$ENABLE_DEBUG_LOG" = "true" ]; then
+        echo "$message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
+    fi
 }
 
 # Функция логирования только в файл (для отладки)
 debug_log() {
+    # Логируем только если включено
+    if [ "$ENABLE_DEBUG_LOG" != "true" ]; then
+        return 0
+    fi
     local message="[$(date '+%H:%M:%S')] [DEBUG] $1"
     echo "$message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
 }
@@ -164,24 +184,9 @@ get_smb_file_info() {
         fi
     fi
     
-    # Извлекаем дату и время
-    debug_log "get_smb_file_info: извлечение даты"
-    local date_time=$(echo "$ls_output" | grep -oE '[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+[0-9]{1,2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}\s+[0-9]{4}' | head -1)
-    debug_log "get_smb_file_info: дата (формат 1): $date_time"
-    
-    if [ -z "$date_time" ]; then
-        date_time=$(echo "$ls_output" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}\s+[0-9]{2}:[0-9]{2}:[0-9]{2}' | head -1)
-        debug_log "get_smb_file_info: дата (формат 2): $date_time"
-    fi
-    
-    if [ -z "$date_time" ]; then
-        date_time=$(echo "$ls_output" | grep -oE '[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+[0-9]{1,2}\s+[0-9]{4}' | head -1)
-        debug_log "get_smb_file_info: дата (формат 3): $date_time"
-    fi
-    
-    local result="${size}|${date_time}"
-    debug_log "get_smb_file_info: результат: $result"
-    echo "$result"
+    # Возвращаем только размер (дата больше не используется)
+    debug_log "get_smb_file_info: результат: размер=$size"
+    echo "$size"
     return 0
 }
 
@@ -197,11 +202,6 @@ files_are_same() {
     if [ ! -f "$local_file" ]; then
         debug_log "files_are_same: локальный файл не существует"
         return 1
-    fi
-    
-    # Если размер передан в формате "размер|дата", извлекаем только размер
-    if echo "$remote_size" | grep -q "|"; then
-        remote_size=$(echo "$remote_size" | cut -d'|' -f1)
     fi
     
     debug_log "files_are_same: remote_size=$remote_size"
@@ -347,14 +347,9 @@ get_http_file_info() {
     
     if echo "$headers" | grep -qE "HTTP/[0-9.]+ 200"; then
         local size=$(echo "$headers" | grep -i "Content-Length:" | awk '{print $2}' | tr -d '\r')
-        local date=$(echo "$headers" | grep -i "Last-Modified:" | cut -d: -f2- | sed 's/^ *//' | tr -d '\r')
-        
-        if [ -z "$date" ]; then
-            date=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
-        fi
         
         if [ -n "$size" ]; then
-            echo "${size}|${date}"
+            echo "$size"
             return 0
         fi
     fi
@@ -640,28 +635,6 @@ copy_file_from_selected_source() {
     esac
 }
 
-# Пути для Linux
-LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
-
-# Файлы для копирования
-# ВАЖНО: astra_update.sh НЕ копируем во время выполнения, чтобы не перезаписать сам себя старой версией из Git
-FILES_TO_COPY=(
-    "astra_automation.py"
-    "astra_install.sh"
-    # "astra_update.sh"  # ИСКЛЮЧЕН: не копируем сам скрипт обновления во время его выполнения
-    "README.md"
-    "WINE_INSTALL_GUIDE.md"
-)
-
-# ВРЕМЕННО: Инициализация лог-файла для аналитики
-log_message "Запуск обновления FSA-AstraInstall"
-debug_log "=== НАЧАЛО СЕАНСА ОБНОВЛЕНИЯ ==="
-debug_log "Версия скрипта: V2.5.117"
-debug_log "Дата: $(date '+%Y-%m-%d %H:%M:%S')"
-debug_log "Путь скрипта: $(dirname "$0")"
-debug_log "Пользователь: $(whoami)"
-debug_log "PID: $$"
-
 # Определяем PID терминала ДО запуска с sudo
 TERMINAL_PID=""
 
@@ -834,8 +807,8 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         # Детальное логирование результата получения информации
         if [ $SMB_INFO_RESULT -eq 0 ]; then
             if [ -n "$SMB_INFO" ]; then
-                # Извлекаем размер (может быть в формате "размер" или "размер|дата")
-                SMB_SIZE=$(echo "$SMB_INFO" | cut -d'|' -f1)
+                # SMB_INFO содержит только размер
+                SMB_SIZE="$SMB_INFO"
                 log_message "Информация о файле получена: размер $SMB_SIZE байт"
                 debug_log "Информация о файле получена: размер=$SMB_SIZE, полная_инфо=$SMB_INFO"
             else
@@ -857,7 +830,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
                 continue
             else
                 # Файл изменился - копируем
-                SMB_SIZE=$(echo "$SMB_INFO" | cut -d'|' -f1)
+                SMB_SIZE="$SMB_INFO"
                 log_message "Копируем: $file (изменен, размер: $SMB_SIZE байт)"
             fi
         else
@@ -948,8 +921,7 @@ if [ "$SERVER_AVAILABLE" = true ]; then
                 fi
                 
                 if [ $SMB_INFO_RESULT -eq 0 ]; then
-                    # Извлекаем размер (может быть в формате "размер" или "размер|дата")
-                    SMB_SIZE=$(echo "$SMB_INFO" | cut -d'|' -f1)
+                    SMB_SIZE="$SMB_INFO"
                     log_message "Копируем: $file (повторная попытка, изменен или новый, размер: $SMB_SIZE байт)"
                 else
                     log_message "Копируем: $file (повторная попытка, информация недоступна)"
