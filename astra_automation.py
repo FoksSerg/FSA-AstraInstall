@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.122 (2025.11.13)
+Версия: V2.5.123 (2025.11.13)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.122 (2025.11.13)"
+APP_VERSION = "V2.5.123 (2025.11.13)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -81,9 +81,6 @@ COMPONENTS_CONFIG = {
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
         'script_path': 'astra_update.sh',
-        'script_args': '',
-        'working_dir': None,
-        'terminal': True,
         'icon': 'fly-astra-update',
         'comment': 'Ярлык для запуска обновления и установки на рабочем столе',
         'gui_selectable': True,
@@ -164,6 +161,7 @@ COMPONENTS_CONFIG = {
         'check_paths': ['CONT-Designer.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Application',
         'wineprefix_path': '~/.local/share/wineprefixes/cont',
         'executable_path': 'drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe',
         'executable_args': '--Profile="CONT-Designer 3.0.0.0"',
@@ -184,6 +182,7 @@ COMPONENTS_CONFIG = {
         'check_paths': ['Рабочие каталоги.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
         'shortcut_type': 'folder',
         'folder_path': '~/.local/share/wineprefixes',
         'comment': 'Ярлык для открытия папки wineprefix',
@@ -440,6 +439,7 @@ COMPONENTS_CONFIG = {
         'check_paths': ['AstraRegul.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Application',
         'script_path': '~/start-astraide.sh',
         'script_args': '',
         'working_dir': None,
@@ -464,6 +464,89 @@ COMPONENTS_CONFIG = {
         'gui_selectable': True,
         'description': 'Notepad++ - текстовый редактор для Windows',
         'sort_order': 21
+    },
+    
+    # ============================================================================
+    # ТЕСТОВЫЕ КОМПОНЕНТЫ ЯРЛЫКОВ (для тестирования разных типов)
+    # ============================================================================
+    
+    # Тест 1: Ярлык приложения (Type=Application) - запуск astra_install.sh
+    'test_app_shortcut': {
+        'name': 'Тест: Ярлык Приложения',
+        'shortcut_name': 'Запуск Установщика',
+        'path': 'test_astra_install.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': [],
+        'check_paths': ['test_astra_install.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Application',
+        'script_path': 'astra_install.sh',
+        'script_args': '',
+        'working_dir': None,
+        'terminal': True,
+        'icon': 'system-software-install',
+        'comment': 'Тестовый ярлык для запуска astra_install.sh',
+        'gui_selectable': True,
+        'description': 'Тест: Ярлык приложения (Type=Application)',
+        'sort_order': 22
+    },
+    
+    # Тест 2: Ярлык папки (Type=Link) - открытие папки Astra
+    'test_folder_shortcut': {
+        'name': 'Тест: Ярлык Папки',
+        'shortcut_name': 'Папка Astra',
+        'path': 'test_astra_folder.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': [],
+        'check_paths': ['test_astra_folder.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
+        'folder_path': 'AstraPack/Astra',
+        'comment': 'Тестовый ярлык для открытия папки Astra',
+        'icon': 'folder',
+        'gui_selectable': True,
+        'description': 'Тест: Ярлык папки (Type=Link)',
+        'sort_order': 23
+    },
+    
+    # Тест 3: Ярлык ссылки (Type=Link) - веб-ссылка на сайт компании
+    'test_web_shortcut': {
+        'name': 'Тест: Ярлык Ссылки',
+        'shortcut_name': 'Сайт Компании',
+        'path': 'test_company_website.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': [],
+        'check_paths': ['test_company_website.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
+        'url': 'https://rlt.ru/',
+        'comment': 'Тестовый ярлык для открытия сайта компании ООО "НПА Вира-Реалтайм"',
+        'icon': 'web-browser',
+        'gui_selectable': True,
+        'description': 'Тест: Ярлык веб-ссылки (Type=Link)',
+        'sort_order': 24
+    },
+    
+    # Тест 4: Ярлык файла (Type=Link) - открытие README.md
+    'test_file_shortcut': {
+        'name': 'Тест: Ярлык Файла',
+        'shortcut_name': 'README',
+        'path': 'test_readme.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': [],
+        'check_paths': ['test_readme.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
+        'url': 'file://README.md',
+        'comment': 'Тестовый ярлык для открытия README.md',
+        'icon': 'text-x-readme',
+        'gui_selectable': True,
+        'description': 'Тест: Ярлык файла (Type=Link)',
+        'sort_order': 25
     },
 }
 
@@ -3968,8 +4051,10 @@ class WineApplicationHandler(ComponentHandler):
     def _copy_from_archive_fast(self, archive_path: str, source_dir: str, component_id: str,
                                config: dict, install_start_time: float) -> bool:
         """
-        Быстрая распаковка архива через системный tar в отдельном процессе
-        С мониторингом и возможностью прерывания
+        ГИБРИДНАЯ быстрая распаковка архива:
+        - Python tarfile для быстрого чтения метаданных (без таймаутов)
+        - Системный tar для быстрой распаковки
+        - Мониторинг прогресса на основе метаданных
         
         Args:
             archive_path: Путь к архиву
@@ -4002,21 +4087,67 @@ class WineApplicationHandler(ComponentHandler):
             print("Команда tar не найдена, используем Python tarfile (медленнее)", level='WARNING')
             return self._copy_preinstalled_config_old(component_id, config, install_start_time)
         
-        # Сначала проверяем структуру архива (есть ли папка source_dir внутри)
-        has_source_dir_prefix = self._check_archive_structure(archive_path, source_dir)
-        
-        # Подсчитываем количество файлов для прогресса
-        total_files = self._count_files_in_archive(archive_path, source_dir if has_source_dir_prefix else None)
-        print(f"Всего файлов для извлечения: {total_files}")
+        # ШАГ 1: Быстрое чтение метаданных через Python tarfile (как в старой версии)
+        # Это читает только заголовки, не весь архив - БЫСТРО и БЕЗ таймаутов!
+        try:
+            with tarfile.open(archive_path, 'r:gz') as tar:
+                members = tar.getmembers()  # ← БЫСТРО! Читает только заголовки
+                
+                # Определяем структуру архива из метаданных
+                has_source_dir = any(m.name.startswith(f"{source_dir}/") or m.name == source_dir for m in members)
+                
+                if has_source_dir:
+                    # Архив содержит папку source_dir - извлекаем только её содержимое
+                    prefix = f"{source_dir}/"
+                    items_to_extract = [m for m in members if m.name.startswith(prefix) and m.name != source_dir]
+                    total_items = len(items_to_extract)
+                    files_count = sum(1 for m in items_to_extract if m.isfile())
+                    dirs_count = sum(1 for m in items_to_extract if m.isdir())
+                    total_size = sum(m.size for m in items_to_extract if m.isfile())
+                    
+                    print(f"Архив содержит папку {source_dir}, извлекаем содержимое...")
+                    print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
+                else:
+                    # Архив содержит файлы в корне - извлекаем всё
+                    items_to_extract = [m for m in members]
+                    total_items = len([m for m in members if m.isfile()])
+                    files_count = total_items
+                    dirs_count = sum(1 for m in members if m.isdir())
+                    total_size = sum(m.size for m in members if m.isfile())
+                    
+                    print("Архив содержит файлы в корне, извлекаем всё...")
+                    print(f"Всего файлов для извлечения: {total_items}")
+                
+                # Форматируем общий размер
+                if total_size < 1024 * 1024:
+                    size_str = f"{total_size / 1024:.1f} КБ"
+                elif total_size < 1024 * 1024 * 1024:
+                    size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+                else:
+                    size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+                
+                print(f"Общий размер: {size_str}")
+                
+        except Exception as e:
+            print(f"Ошибка чтения метаданных архива: {e}", level='ERROR')
+            print("Пробуем распаковку без предварительной проверки...", level='WARNING')
+            # Fallback: пробуем без метаданных
+            has_source_dir = None
+            total_items = 0
+            total_size = 0
+            items_to_extract = []
+            files_count = 0
+            dirs_count = 0
+            size_str = "неизвестно"
         
         self._update_progress(
             stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
             stage_progress=0,
             global_progress=0,
-            details=f"Найдено файлов: {total_files}"
+            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count}) | Размер: {size_str if total_size > 0 else 'неизвестно'}"
         )
         
-        # Команда tar с оптимизацией для скорости
+        # ШАГ 2: Распаковка через системный tar (быстрее Python tarfile)
         tar_cmd = [
             'tar',
             '-xzf',  # -x (extract), -z (gzip), -f (file)
@@ -4025,7 +4156,7 @@ class WineApplicationHandler(ComponentHandler):
         ]
         
         # Если архив содержит папку source_dir, нужно извлечь только её содержимое
-        if has_source_dir_prefix:
+        if has_source_dir:
             # Используем --strip-components=1 чтобы убрать первый уровень (source_dir/)
             tar_cmd.extend(['--strip-components=1'])
             # И указываем что извлекать только source_dir/
@@ -4051,10 +4182,10 @@ class WineApplicationHandler(ComponentHandler):
                 universal_newlines=True
             )
             
-            # Запускаем поток мониторинга
+            # ШАГ 3: Запускаем мониторинг прогресса на основе метаданных
             monitor_thread = threading.Thread(
-                target=self._monitor_tar_extract_progress,
-                args=(process, wineprefix_path, total_files, install_start_time, cancel_flag, component_id),
+                target=self._monitor_tar_with_metadata,
+                args=(process, wineprefix_path, total_items, total_size, install_start_time, cancel_flag, component_id, items_to_extract),
                 daemon=True
             )
             monitor_thread.start()
@@ -4082,6 +4213,60 @@ class WineApplicationHandler(ComponentHandler):
             
             # Проверяем код возврата
             return_code = process.returncode
+            
+            # Если ошибка и мы пробовали с --strip-components, пробуем без него
+            if return_code != 0 and has_source_dir:
+                stderr_output = ""
+                if process.stderr:
+                    try:
+                        stderr_output = process.stderr.read()
+                    except:
+                        pass
+                
+                # Проверяем, не была ли ошибка из-за отсутствия CountPack/
+                if "Not found in archive" in stderr_output or "Cannot open" in stderr_output:
+                    print(f"Архив не содержит {source_dir}/, пробуем без --strip-components...")
+                    
+                    # Пробуем без --strip-components
+                    tar_cmd_fallback = [
+                        'tar',
+                        '-xzf',
+                        archive_path,
+                        '-C', wineprefix_path,
+                        '.'
+                    ]
+                    
+                    process = subprocess.Popen(
+                        tar_cmd_fallback,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True
+                    )
+                    
+                    # Запускаем мониторинг снова
+                    monitor_thread = threading.Thread(
+                        target=self._monitor_tar_with_metadata,
+                        args=(process, wineprefix_path, total_items, total_size, install_start_time, cancel_flag, component_id, items_to_extract),
+                        daemon=True
+                    )
+                    monitor_thread.start()
+                    
+                    # Ждем завершения
+                    while process.poll() is None:
+                        if CANCEL_OPERATION or cancel_flag.is_set():
+                            process.terminate()
+                            try:
+                                process.wait(timeout=5)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                            if old_umask is not None:
+                                os.umask(old_umask)
+                            self._set_extracted_files_permissions(wineprefix_path)
+                            return False
+                        time.sleep(0.1)
+                    
+                    return_code = process.returncode
+            
             if return_code != 0:
                 stderr_output = ""
                 if process.stderr:
@@ -4092,6 +4277,8 @@ class WineApplicationHandler(ComponentHandler):
                 print(f"tar завершился с ошибкой (код: {return_code})", level='ERROR')
                 if stderr_output:
                     print(f"Ошибка tar: {stderr_output}", level='ERROR')
+                if old_umask is not None:
+                    os.umask(old_umask)
                 return False
             
             # Устанавливаем владельца и права (tar может не сохранить владельца)
@@ -4107,7 +4294,7 @@ class WineApplicationHandler(ComponentHandler):
                 stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
                 stage_progress=0,
                 global_progress=100,
-                details=f"Успешно извлечено {total_files} файлов"
+                details=f"Успешно извлечено {total_items} элементов"
             )
             
             return True
@@ -4516,6 +4703,193 @@ class WineApplicationHandler(ComponentHandler):
                 )
             except:
                 pass
+            
+        except Exception as e:
+            print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
+    
+    def _monitor_tar_with_metadata(self, process, dst_dir: str, total_items: int, total_size: int,
+                                   start_time: float, cancel_flag: threading.Event, component_id: str, items_to_extract: list = None):
+        """
+        Мониторинг прогресса распаковки на основе метаданных архива
+        Использует подсчет файлов в целевой директории и сравнение с total_items из метаданных
+        Выводит статистику каждые 1000 файлов с временем и объемом
+        
+        Args:
+            process: Процесс tar
+            dst_dir: Целевая директория
+            total_items: Общее количество элементов из метаданных
+            total_size: Общий размер файлов из метаданных
+            start_time: Время начала распаковки
+            cancel_flag: Флаг отмены
+            component_id: ID компонента
+            items_to_extract: Список файлов из метаданных (для статистики, опционально)
+        """
+        try:
+            last_update = start_time
+            last_count = 0
+            initial_disk_usage = 0
+            last_stat_count = 0  # Количество файлов на предыдущей статистике
+            last_stat_time = start_time  # Время предыдущей статистики
+            last_stat_disk = 0  # Размер диска на предыдущей статистике
+            
+            # Получаем начальное дисковое пространство
+            try:
+                disk_usage = shutil.disk_usage(dst_dir)
+                initial_disk_usage = disk_usage.used
+                last_stat_disk = initial_disk_usage
+            except:
+                pass
+            
+            while process.poll() is None:
+                if CANCEL_OPERATION:
+                    cancel_flag.set()
+                    break
+                
+                current_time = time.time()
+                # Обновляем раз в секунду (оптимизация: меньше нагрузка на файловую систему)
+                if current_time - last_update >= 1.0:
+                    try:
+                        # Подсчитываем файлы в целевой директории
+                        extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
+                        
+                        # Проверяем, нужно ли вывести статистику (каждые 1000 файлов)
+                        if extracted_files >= last_stat_count + 1000:
+                            # Вычисляем время от предыдущего сообщения
+                            time_since_last = current_time - last_stat_time
+                            time_minutes = int(time_since_last // 60)
+                            time_seconds = int(time_since_last % 60)
+                            
+                            # Вычисляем объем добавленных файлов
+                            try:
+                                disk_usage = shutil.disk_usage(dst_dir)
+                                current_disk_usage = disk_usage.used
+                                added_size = current_disk_usage - last_stat_disk
+                                
+                                # Форматируем размер
+                                if added_size < 1024 * 1024:
+                                    added_size_str = f"{added_size / 1024:.1f} КБ"
+                                elif added_size < 1024 * 1024 * 1024:
+                                    added_size_str = f"{added_size / (1024 * 1024):.1f} МБ"
+                                else:
+                                    added_size_str = f"{added_size / (1024 * 1024 * 1024):.2f} ГБ"
+                            except:
+                                added_size_str = "неизвестно"
+                            
+                            # Выводим статистику
+                            files_in_batch = extracted_files - last_stat_count
+                            print(f"Извлечено {extracted_files} файлов (+{files_in_batch} за {time_minutes}м {time_seconds}с, +{added_size_str})")
+                            
+                            # Обновляем счетчики для следующей статистики
+                            last_stat_count = (extracted_files // 1000) * 1000
+                            last_stat_time = current_time
+                            last_stat_disk = current_disk_usage if 'current_disk_usage' in locals() else last_stat_disk
+                        
+                        # Вычисляем прогресс по количеству файлов (если известно)
+                        if total_items > 0:
+                            progress = min(95, int((extracted_files / total_items) * 100))
+                        else:
+                            # Если total_items неизвестно, используем приблизительный прогресс по времени
+                            elapsed = current_time - start_time
+                            progress = min(95, int((elapsed / 300) * 100))  # Предполагаем 5 минут максимум
+                        
+                        # Вычисляем извлеченный размер по дисковому пространству
+                        try:
+                            disk_usage = shutil.disk_usage(dst_dir)
+                            current_disk_usage = disk_usage.used
+                            extracted_size = current_disk_usage - initial_disk_usage
+                            
+                            # Форматируем размер
+                            if extracted_size < 1024 * 1024:
+                                size_str = f"{extracted_size / 1024:.1f} КБ"
+                            elif extracted_size < 1024 * 1024 * 1024:
+                                size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
+                            else:
+                                size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
+                        except:
+                            size_str = "неизвестно"
+                        
+                        # Обновляем только если прогресс изменился
+                        if extracted_files != last_count:
+                            elapsed_time = current_time - start_time
+                            elapsed_minutes = int(elapsed_time // 60)
+                            elapsed_seconds = int(elapsed_time % 60)
+                            
+                            details = f"{progress}% ({extracted_files}"
+                            if total_items > 0:
+                                details += f"/{total_items})"
+                            else:
+                                details += " файлов)"
+                            details += f" | {size_str} | Время: {elapsed_minutes}м {elapsed_seconds}с"
+                            
+                            self._update_progress(
+                                stage_name=f"Распаковка архива",
+                                stage_progress=0,
+                                global_progress=progress,
+                                details=details
+                            )
+                            
+                            last_count = extracted_files
+                    except:
+                        pass
+                    
+                    last_update = current_time
+                
+                time.sleep(0.1)
+            
+            # Финальное обновление
+            try:
+                extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
+                
+                # Выводим финальную статистику, если не было выведено на последней отметке 1000
+                if extracted_files > last_stat_count:
+                    try:
+                        disk_usage = shutil.disk_usage(dst_dir)
+                        current_disk_usage = disk_usage.used
+                        final_time = time.time()
+                        time_since_last = final_time - last_stat_time
+                        time_minutes = int(time_since_last // 60)
+                        time_seconds = int(time_since_last % 60)
+                        added_size = current_disk_usage - last_stat_disk
+                        
+                        if added_size < 1024 * 1024:
+                            added_size_str = f"{added_size / 1024:.1f} КБ"
+                        elif added_size < 1024 * 1024 * 1024:
+                            added_size_str = f"{added_size / (1024 * 1024):.1f} МБ"
+                        else:
+                            added_size_str = f"{added_size / (1024 * 1024 * 1024):.2f} ГБ"
+                        
+                        files_in_batch = extracted_files - last_stat_count
+                        print(f"Извлечено {extracted_files} файлов (+{files_in_batch} за {time_minutes}м {time_seconds}с, +{added_size_str})")
+                    except:
+                        pass
+                
+                try:
+                    disk_usage = shutil.disk_usage(dst_dir)
+                    current_disk_usage = disk_usage.used
+                    extracted_size = current_disk_usage - initial_disk_usage
+                    
+                    if extracted_size < 1024 * 1024:
+                        size_str = f"{extracted_size / 1024:.1f} КБ"
+                    elif extracted_size < 1024 * 1024 * 1024:
+                        size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
+                    else:
+                        size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
+                except:
+                    size_str = "неизвестно"
+                
+                self._update_progress(
+                    stage_name=f"Распаковка архива",
+                    stage_progress=0,
+                    global_progress=100,
+                    details=f"Завершено ({extracted_files} файлов, {size_str})"
+                )
+            except:
+                self._update_progress(
+                    stage_name=f"Распаковка архива",
+                    stage_progress=0,
+                    global_progress=100,
+                    details="Завершено"
+                )
             
         except Exception as e:
             print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
@@ -5193,34 +5567,100 @@ class DesktopShortcutHandler(ComponentHandler):
             desktop_file = os.path.join(active_desktop_dir, desktop_file_name)
             desktop_name = config.get('shortcut_name', config.get('name', 'Application'))
             
-            # Определяем тип ярлыка
-            shortcut_type = config.get('shortcut_type', 'application')
+            # Определяем тип Desktop Entry (Application или Link)
+            desktop_entry_type = config.get('desktop_entry_type')
             
-            if shortcut_type == 'folder':
-                # Создаем ярлык для открытия папки
+            # Автоопределение типа, если не указан явно
+            if not desktop_entry_type:
+                # Если есть url или folder_path - это Link
+                if config.get('url') or config.get('folder_path'):
+                    desktop_entry_type = 'Link'
+                # Если есть script_path - это Link (как в образце astra_update.sh.desktop)
+                elif config.get('script_path'):
+                    desktop_entry_type = 'Link'
+                # Если есть executable_path или command - это Application
+                elif config.get('executable_path') or config.get('command'):
+                    desktop_entry_type = 'Application'
+                # По умолчанию для обратной совместимости (старый shortcut_type)
+                else:
+                    shortcut_type = config.get('shortcut_type', 'application')
+                    if shortcut_type == 'folder':
+                        desktop_entry_type = 'Link'
+                    else:
+                        desktop_entry_type = 'Application'
+            
+            # Создаем ярлык в зависимости от типа
+            if desktop_entry_type == 'Link':
+                # Type=Link - для ссылок на папки, файлы, веб-ссылки, скрипты
+                url = config.get('url')
                 folder_path = config.get('folder_path')
-                if not folder_path:
-                    print("folder_path не указан в конфигурации для типа 'folder'", level='ERROR')
+                script_path = config.get('script_path')
+                
+                if url:
+                    # URL указан явно (может быть file://, http://, https://)
+                    link_url = url
+                elif script_path:
+                    # КРИТИЧНО: Для скриптов используем Type=Link с URL на абсолютный путь (без file://)
+                    # Как в образце: URL=/home/fsa/Astra/astra_update.sh
+                    if '~' in script_path:
+                        # Путь с ~ - используем expand_user_path
+                        link_url = expand_user_path(script_path)
+                    elif os.path.isabs(script_path):
+                        # Абсолютный путь - используем как есть
+                        link_url = script_path
+                    else:
+                        # Относительный путь - используем путь относительно директории проекта
+                        # КРИТИЧНО: Используем метод класса для определения директории проекта
+                        # Это работает на Linux и Mac, формирует правильный абсолютный путь
+                        script_dir = self._get_script_dir()
+                        potential_path = os.path.join(script_dir, script_path)
+                        if os.path.exists(potential_path):
+                            link_url = potential_path
+                        else:
+                            # Fallback - используем текущую рабочую директорию (как в истории)
+                            link_url = os.path.abspath(script_path)
+                    
+                    # Проверяем существование скрипта
+                    if not os.path.exists(link_url):
+                        print(f"Скрипт не найден: {link_url}", level='ERROR')
+                        self._update_status(component_id, 'error')
+                        return False
+                elif folder_path:
+                    # Используем folder_path (для обратной совместимости)
+                    # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+                    if '~' in folder_path:
+                        link_url = expand_user_path(folder_path)
+                    else:
+                        link_url = folder_path
+                    # Если путь не начинается с file://, добавляем префикс для локальных путей
+                    if not link_url.startswith(('file://', 'http://', 'https://')):
+                        # Преобразуем путь в file:// URL
+                        if os.path.isabs(link_url):
+                            link_url = f"file://{link_url}"
+                        else:
+                            # Относительный путь - делаем абсолютным
+                            abs_path = os.path.abspath(link_url)
+                            link_url = f"file://{abs_path}"
+                else:
+                    print("url, script_path или folder_path не указан в конфигурации для типа 'Link'", level='ERROR')
                     self._update_status(component_id, 'error')
                     return False
                 
-                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-                if '~' in folder_path:
-                    folder_path = expand_user_path(folder_path)
-                
                 comment = config.get('comment', '')
+                icon = config.get('icon', '')
                 
                 desktop_content = textwrap.dedent(f"""
                     [Desktop Entry]
                     Type=Link
                     Name={desktop_name}
-                    Comment={comment}
+                    Comment={comment if comment else ''}
+                    URL={link_url}
+                    Icon={icon if icon else ''}
                     NoDisplay=false
                     Hidden=false
-                    URL={folder_path}
                 """).strip()
             else:
-                # Создаем ярлык для запуска приложения
+                # Type=Application - для запуска приложений/скриптов
                 executable_path = config.get('executable_path')
                 script_path = config.get('script_path')
                 command = config.get('command')
@@ -5237,64 +5677,6 @@ class DesktopShortcutHandler(ComponentHandler):
                     # Произвольная команда
                     exec_cmd = command
                     work_dir = config.get('working_dir', '')
-                elif script_path:
-                    # Linux скрипт
-                    # КРИТИЧНО: Для скриптов используем Type=Link с URL
-                    # КРИТИЧНО: Используем os.path.abspath для получения абсолютного пути
-                    if '~' in script_path:
-                        # Путь с ~ - используем expand_user_path
-                        full_script_path = expand_user_path(script_path)
-                    elif os.path.isabs(script_path):
-                        # Абсолютный путь - используем как есть
-                        full_script_path = script_path
-                    else:
-                        # Относительный путь - используем os.path.abspath
-                        # Это ищет файл относительно текущей рабочей директории
-                        full_script_path = os.path.abspath(script_path)
-                    
-                    # Проверяем существование скрипта
-                    if not os.path.exists(full_script_path):
-                        print(f"Скрипт не найден: {full_script_path}", level='ERROR')
-                        self._update_status(component_id, 'error')
-                        return False
-                    
-                    # Для скриптов создаем Type=Link с URL
-                    icon = config.get('icon', '')
-                    desktop_content = textwrap.dedent(f"""
-                        [Desktop Entry]
-                        Name={desktop_name}
-                        Type=Link
-                        URL={full_script_path}
-                        Icon={icon if icon else ''}
-                    """).strip()
-                    
-                    # Записываем ярлык
-                    with open(desktop_file, 'w', encoding='utf-8') as f:
-                        f.write(desktop_content)
-                        f.write('\n')  # Пустая строка в конце файла
-                    
-                    # Устанавливаем права на выполнение
-                    os.chmod(desktop_file, 0o755)
-                    print(f"Создан ярлык: {desktop_file}")
-                    
-                    # Устанавливаем правильного владельца
-                    real_user = os.environ.get('SUDO_USER')
-                    if os.geteuid() == 0 and real_user and real_user != 'root':
-                        uid = pwd.getpwnam(real_user).pw_uid
-                        gid = pwd.getpwnam(real_user).pw_gid
-                        os.chown(desktop_file, uid, gid)
-                        print(f"Установлен владелец ярлыка: {real_user}")
-                    
-                    # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
-                    actual_status = self.check_status(component_id, config)
-                    if actual_status:
-                        # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
-                        self._update_status(component_id, 'ok')
-                        return True
-                    else:
-                        print(f"Ярлык создан, но проверка статуса не подтвердила установку", level='ERROR')
-                        self._update_status(component_id, 'error')
-                        return False
                 elif executable_path:
                     # Wine приложение или Linux исполняемый файл
                     wineprefix_path = config.get('wineprefix_path', self.wineprefix)
@@ -5329,15 +5711,28 @@ class DesktopShortcutHandler(ComponentHandler):
                         # Аргументы запуска
                         executable_args = config.get('executable_args', '')
                         
+                        # КРИТИЧНО: Убираем 'drive_c/' из начала пути для команды
+                        # В команде должен быть путь вида C:\\Program Files\\..., а не C:\\drive_c\\Program Files\\...
+                        wine_path_in_cmd = executable_path.replace('drive_c/', '', 1)  # Убираем только первое вхождение
+                        wine_executable_path = wine_path_in_cmd.replace('/', '\\')
+                        
                         # Формируем команду запуска (конвертируем путь в формат Wine)
-                        wine_executable_path = executable_path.replace('/', '\\')
                         if executable_args:
                             exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}" {executable_args}'
                         else:
                             exec_cmd = f'env WINEPREFIX="{wineprefix_path}" {wine_path} "C:\\\\{wine_executable_path}"'
                         
-                        # Путь для рабочей директории
-                        work_dir = os.path.dirname(full_executable)
+                        # КРИТИЧНО: Путь для рабочей директории должен быть в формате dosdevices/c:/
+                        # Преобразуем путь из drive_c/ в dosdevices/c:/
+                        # Например: /home/user/.local/share/wineprefixes/cont/drive_c/Program Files/...
+                        # Должен стать: /home/user/.local/share/wineprefixes/cont/dosdevices/c:/Program Files/...
+                        work_dir_linux = os.path.dirname(full_executable)
+                        # Заменяем drive_c на dosdevices/c: в пути
+                        if '/drive_c/' in work_dir_linux:
+                            work_dir = work_dir_linux.replace('/drive_c/', '/dosdevices/c:/')
+                        else:
+                            # Fallback - используем как есть
+                            work_dir = work_dir_linux
                         
                         # Для Wine приложений по умолчанию terminal=False
                         if terminal is None:

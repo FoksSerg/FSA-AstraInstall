@@ -3,15 +3,14 @@
 """
 Скрипт автоматического обновления FSA-AstraInstall для macOS
 Использует AppleScript для обхода ограничений карантина
-Версия: V2.5.122 (2025.11.12)
+Версия: V2.5.123 (2025.11.13)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 import os
 import sys
 import subprocess
-import tkinter as tk
-from datetime import datetime
+import time
 
 # ============================================================================
 # ПАРАМЕТРЫ ПОДКЛЮЧЕНИЯ К СЕРВЕРУ (настройка)
@@ -22,6 +21,101 @@ SMB_PATH = "ISO/Linux/Astra"         # Путь к папке с файлами 
 SMB_MOUNT_POINT = "/Volumes/Install"  # Точка монтирования SMB тома (macOS)
 SOURCE_PATH = "/Volumes/FSA-PRJ/Project/FSA-AstraInstall"  # Путь к исходной папке проекта
 # ============================================================================
+
+def get_volume():
+    """
+    Получает текущую громкость системы (0-100)
+    Возвращает None в случае ошибки
+    """
+    try:
+        applescript = 'output volume of (get volume settings)'
+        result = subprocess.run(
+            ['osascript', '-e', applescript],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+def set_volume(level):
+    """
+    Устанавливает громкость системы (0-100)
+    """
+    try:
+        # Ограничиваем уровень от 0 до 100
+        level = max(0, min(100, int(level)))
+        applescript = f'set volume output volume {level}'
+        subprocess.run(
+            ['osascript', '-e', applescript],
+            capture_output=True,
+            timeout=5
+        )
+        return True
+    except Exception:
+        return False
+
+def play_sound(sound_type):
+    """
+    Воспроизводит системный звук macOS
+    Временно включает громкость если она отключена/минимальная
+    sound_type: 'success' - трель успеха, 'error' - печальный звук ошибки
+    """
+    try:
+        if sound_type == 'success':
+            # Трель успеха - Glass.aiff (приятный стеклянный звук)
+            sound_file = "/System/Library/Sounds/Glass.aiff"
+        elif sound_type == 'error':
+            # Печальный звук ошибки - Blow.aiff (более продолжительный звук)
+            sound_file = "/System/Library/Sounds/Blow.aiff"
+        else:
+            return
+        
+        # Проверяем существование файла
+        if not os.path.exists(sound_file):
+            # Fallback на другие звуки
+            if sound_type == 'success':
+                sound_file = "/System/Library/Sounds/Ping.aiff"
+            else:
+                # Fallback для ошибки - Hero.aiff (продолжительный звук)
+                sound_file = "/System/Library/Sounds/Hero.aiff"
+            
+            if not os.path.exists(sound_file):
+                return
+        
+        # Получаем текущую громкость
+        original_volume = get_volume()
+        volume_was_changed = False
+        
+        # Если громкость слишком низкая (< 10%), временно включаем
+        if original_volume is not None and original_volume < 10:
+            # Устанавливаем комфортную громкость (30%)
+            if set_volume(30):
+                volume_was_changed = True
+        
+        # Воспроизводим звук синхронно (ждем завершения)
+        try:
+            subprocess.run(
+                ['afplay', sound_file],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5
+            )
+        except subprocess.TimeoutExpired:
+            pass
+        
+        # Возвращаем исходную громкость если меняли
+        if volume_was_changed and original_volume is not None:
+            # Небольшая задержка чтобы звук точно закончился
+            time.sleep(0.1)
+            set_volume(original_volume)
+            
+    except Exception:
+        # Игнорируем ошибки воспроизведения звука
+        pass
 
 def connect_smb_volume():
     """Подключает SMB том на macOS"""
@@ -105,7 +199,8 @@ def main():
         # Проверяем папку проекта
         if not os.path.exists(source_path):
             error_msg = f"Папка проекта не найдена: {source_path}"
-            show_message("Ошибка", error_msg)
+            print(f"Ошибка: {error_msg}")
+            play_sound('error')
             return 1
         
         # Проверяем подключенный том и подключаем если нужно
@@ -114,17 +209,18 @@ def main():
             if connect_smb_volume():
                 print("SMB том подключен успешно")
                 # Ждем немного чтобы том успел смонтироваться
-                import time
                 time.sleep(2)
                 
                 # Проверяем еще раз
                 if not os.path.exists(network_path):
                     error_msg = f"Не удалось подключить том {SMB_SHARE}: {network_path}"
-                    show_message("Ошибка", error_msg)
+                    print(f"Ошибка: {error_msg}")
+                    play_sound('error')
                     return 1
             else:
                 error_msg = f"Не удалось подключить SMB том smb://{SMB_SERVER}/{SMB_SHARE}"
-                show_message("Ошибка", error_msg)
+                print(f"Ошибка: {error_msg}")
+                play_sound('error')
                 return 1
         
         # Используем AppleScript для копирования файлов
@@ -134,7 +230,8 @@ def main():
             
             if not os.path.exists(source_file):
                 error_msg = f"Файл не найден: {file_name}"
-                show_message("Ошибка", error_msg)
+                print(f"Ошибка: {error_msg}")
+                play_sound('error')
                 return 1
             
             # Создаем AppleScript для замены файла
@@ -160,77 +257,31 @@ end tell
                 
                 if result.returncode == 0:
                     copied_files.append(file_name)
+                    print(f"Файл {file_name} успешно скопирован")
                 else:
                     error_msg = f"Ошибка копирования {file_name}: {result.stderr}"
-                    show_message("Ошибка", error_msg)
+                    print(f"Ошибка: {error_msg}")
+                    play_sound('error')
                     return 1
                     
             except Exception as e:
                 error_msg = f"Ошибка выполнения AppleScript для {file_name}: {e}"
-                show_message("Ошибка", error_msg)
+                print(f"Ошибка: {error_msg}")
+                play_sound('error')
                 return 1
         
-        # Показываем окно успеха
-        success_msg = f"Обновление завершено!\n\nОбновлено файлов: {len(copied_files)}\n{', '.join(copied_files)}\n\nSMB том подключен автоматически"
-        show_message("Обновление", success_msg)
+        # Успешное завершение
+        success_msg = f"Обновление завершено! Обновлено файлов: {len(copied_files)}\n{', '.join(copied_files)}\nSMB том подключен автоматически"
+        print(success_msg)
+        play_sound('success')
         return 0
         
     except Exception as e:
-        # Показываем окно с ошибкой
+        # Общая ошибка
         error_msg = f"Общая ошибка: {str(e)}"
-        show_message("Ошибка", error_msg)
+        print(f"Ошибка: {error_msg}")
+        play_sound('error')
         return 1
-
-def show_message(title, message):
-    """Показывает простое окно с сообщением"""
-    try:
-        root = tk.Tk()
-        root.withdraw()  # Скрываем главное окно
-        
-        # Создаем диалог
-        dialog = tk.Toplevel(root)
-        dialog.title(title)
-        dialog.geometry("400x200")
-        dialog.resizable(False, False)
-        
-        # Делаем окно поверх всех
-        dialog.attributes('-topmost', True)
-        dialog.lift()
-        dialog.focus_force()
-        
-        # Центрируем окно
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (200 // 2)
-        dialog.geometry(f"400x200+{x}+{y}")
-        
-        # Добавляем содержимое
-        label = tk.Label(dialog, text=message, font=("Arial", 12), wraplength=350)
-        label.pack(expand=True, padx=20, pady=20)
-        
-        # Добавляем кнопку OK
-        button = tk.Button(dialog, text="OK", command=lambda: root.quit(), width=10)
-        button.pack(pady=10)
-        
-        # Автозакрытие через 0,5 секунды
-        dialog.after(500, lambda: root.quit())
-        
-        # Показываем окно
-        root.mainloop()
-        
-        # Принудительно закрываем все tkinter процессы
-        try:
-            root.destroy()
-            dialog.destroy()
-        except:
-            pass
-        
-        # Завершаем процесс
-        os._exit(0)
-        
-    except:
-        # Fallback - просто выводим в консоль
-        print(f"[MESSAGE] {title}: {message}")
 
 if __name__ == "__main__":
     sys.exit(main())
