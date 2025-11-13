@@ -1,4 +1,4 @@
-# FSA-AstraInstall Automation V2.5.123 (2025.11.13)
+# FSA-AstraInstall Automation V2.5.124 (2025.11.13)
 **Компания: ООО "НПА Вира-Реалтайм"**
 
 ## Описание проекта

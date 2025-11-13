@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.123 (2025.11.13)
+# Версия: V2.5.124 (2025.11.14)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # Пути для Linux
@@ -881,50 +881,21 @@ for arg in "$@"; do
     fi
 done
 
-# Сворачиваем окно терминала (ДО sudo, если доступен xdotool)
+# Сворачиваем окно терминала (если доступен xdotool)
 # НЕ сворачиваем в консольном режиме
 if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
     minimize_terminal_window "$TERMINAL_PID"  # Сворачиваем терминал по PID
 fi
 
-# Проверяем права root
-if [ "$EUID" -ne 0 ]; then
-    log_message "Запуск с правами root (передаем PID терминала через аргумент)..."
-    # НЕ разворачиваем окно перед sudo - если пароль не нужен, окно останется свернутым
-    # Если пароль нужен, sudo сам покажет запрос (и пользователь увидит его)
-    sudo "$0" --terminal-pid "$TERMINAL_PID" "$@" 2>/dev/null
-    exit $?
-fi
-
-# КРИТИЧНО: Если мы получили PID через аргумент, используем его (НЕ перезапускаем поиск!)
+# Если передан --terminal-pid извне, используем его
 if [ ! -z "$1" ] && [[ "$1" == "--terminal-pid" ]]; then
     TERMINAL_PID="$2"
     log_message "Используем переданный PID терминала: $TERMINAL_PID"
     shift 2  # Убираем --terminal-pid и значение из аргументов
-    
-    # Проверяем, не в консольном режиме ли мы
-    SKIP_TERMINAL_AFTER_SUDO=false
-    for arg in "$@"; do
-        if [[ "$arg" == "--console" ]]; then
-            SKIP_TERMINAL_AFTER_SUDO=true
-            break
-        fi
-    done
-    
-    # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
-    # НЕ сворачиваем в консольном режиме
-    if [ "$SKIP_TERMINAL_AFTER_SUDO" != "true" ]; then
-        minimize_terminal_window "$TERMINAL_PID"
-    fi
 fi
 
 # Сохраняем оставшиеся аргументы для передачи в astra_install.sh
 INSTALL_ARGS=("$@")
-
-# Определяем правильную переменную для пропуска терминала (после sudo используем SKIP_TERMINAL_AFTER_SUDO)
-if [ ! -z "$SKIP_TERMINAL_AFTER_SUDO" ]; then
-    SKIP_TERMINAL="$SKIP_TERMINAL_AFTER_SUDO"
-fi
 
 # КРИТИЧНО: Финальное сворачивание окна после всех проверок
 # Это гарантирует, что окно будет свернуто даже если оно не было свернуто ранее

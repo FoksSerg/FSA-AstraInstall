@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.123 (2025.11.13)
+Версия: V2.5.124 (2025.11.14)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.123 (2025.11.13)"
+APP_VERSION = "V2.5.124 (2025.11.14)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -142,11 +142,12 @@ COMPONENTS_CONFIG = {
         'check_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0/CONT-Designer/Common/CONT-Designer.exe'],
         'install_method': 'wine_application',
         'uninstall_method': 'wine_application',
+        'uninstall_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0'],
         'wineprefix_path': '~/.local/share/wineprefixes/cont',
         'source_dir': 'CountPack',
         'copy_method': 'replace',
-        'source_priority': 'directory',  # Приоритет источника: 'archive' или 'directory'
-        'source_fallback': True,  # Использоваdirectoryть fallback на другой источник
+        'source_priority': 'archive',  # Приоритет источника: 'archive' или 'directory'
+        'source_fallback': True,  # Использовать fallback на другой источник
         'wine_source': 'system',
         'gui_selectable': True,
         'description': 'CONT-Designer 3.0',
@@ -414,6 +415,11 @@ COMPONENTS_CONFIG = {
         'check_paths': ['drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe'],
         'install_method': 'wine_executable',
         'uninstall_method': 'wine_executable',
+        'uninstall_paths': [
+            'drive_c/Program Files/AstraRegul',
+            'drive_c/Program Files (x86)/AstraRegul',
+            '~/.local/share/applications/wine/Programs/AstraRegul'
+        ],
         'gui_selectable': True,
         'description': 'Astra.IDE приложение',
         'sort_order': 18
@@ -461,6 +467,7 @@ COMPONENTS_CONFIG = {
         'check_paths': ['drive_c/Program Files/Notepad++/notepad++.exe'],
         'install_method': 'wine_executable',
         'uninstall_method': 'wine_executable',
+        'uninstall_paths': ['drive_c/Program Files/Notepad++'],
         'gui_selectable': True,
         'description': 'Notepad++ - текстовый редактор для Windows',
         'sort_order': 21
@@ -2226,7 +2233,8 @@ class WinePackageHandler(ComponentHandler):
             if return_code == 0:
                 # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
                 # apt install может вернуть код 0, но пакет не установится
-                time.sleep(0.5)  # Небольшая задержка для завершения операций файловой системы
+                os.sync()  # Принудительная синхронизация файловой системы
+                time.sleep(0.1)  # Минимальная задержка для обновления метаданных
                 
                 # Проверяем статус компонента
                 actual_status = self.check_status(component_id, config)
@@ -2279,7 +2287,7 @@ class WinePackageHandler(ComponentHandler):
         
         # КРИТИЧНО: Добавляем задержку после установки статуса 'removing' для обновления GUI
         # Это гарантирует, что пользователь увидит статус 'removing' перед началом удаления
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        time.sleep(0.1)  # Минимальная задержка для обновления GUI
         
         print(f"Удаление компонента: {config['name']}")
         
@@ -2350,7 +2358,7 @@ class WinePackageHandler(ComponentHandler):
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
             # Это гарантирует, что статус 'missing' устанавливается только после проверки
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -2409,7 +2417,7 @@ class SystemConfigHandler(ComponentHandler):
             
             if return_code == 0:
                 # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
-                time.sleep(0.3)  # Небольшая задержка для применения настройки
+                time.sleep(0.1)  # Минимальная задержка для применения настройки (sysctl применяется сразу)
                 
                 # Проверяем статус компонента
                 actual_status = self.check_status(component_id, config)
@@ -2691,7 +2699,7 @@ class WineEnvironmentHandler(ComponentHandler):
         # Это гарантирует, что пользователь видит статус 'removing' для текущего компонента
         self._update_status(component_id, 'removing')
         
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        time.sleep(0.1)  # Минимальная задержка для обновления GUI
         
         # НОВОЕ: Определяем путь к префиксу из конфигурации (как в методе install)
         wineprefix_path = config.get('wineprefix_path')
@@ -2742,7 +2750,7 @@ class WineEnvironmentHandler(ComponentHandler):
                 shutil.rmtree(cache_winetricks)
                 print("Кэш winetricks удален")
             
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -2941,7 +2949,8 @@ class WinetricksHandler(ComponentHandler):
                 # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
                 # Winetricks может вернуть код 0, но компонент не установится
                 print(f"WinetricksHandler.install() команда завершилась успешно, проверяем статус компонента", level='DEBUG')
-                time.sleep(1)  # Небольшая задержка для завершения операций файловой системы
+                os.sync()  # Принудительная синхронизация файловой системы
+                time.sleep(0.2)  # Небольшая задержка для завершения операций winetricks
                 
                 # Проверяем статус компонента
                 actual_status = self.check_status(component_id, config)
@@ -2996,7 +3005,7 @@ class WinetricksHandler(ComponentHandler):
         self._update_status(component_id, 'removing')
         print(f"WinetricksHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
         
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        time.sleep(0.1)  # Минимальная задержка для обновления GUI
         
         # Проверяем, существует ли компонент
         # Если компонент уже удален, устанавливаем статус 'missing' и выходим
@@ -3122,7 +3131,7 @@ class WinetricksHandler(ComponentHandler):
                     except Exception as e:
                         print(f"  ОШИБКА удаления {path_to_remove}: {e}", level='WARNING')
             
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -3213,7 +3222,8 @@ class AptPackageHandler(ComponentHandler):
         
         if return_code == 0:
             # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
-            time.sleep(0.5)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
+            time.sleep(0.1)  # Минимальная задержка для обновления метаданных
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -3289,7 +3299,7 @@ class AptPackageHandler(ComponentHandler):
         if return_code == 0:
             print(f"Пакет {component_name} удален успешно")
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -3391,13 +3401,13 @@ class WineApplicationHandler(ComponentHandler):
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         self._update_status(component_id, 'removing')
         
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        time.sleep(0.1)  # Минимальная задержка для обновления GUI
         
         component_name = get_component_field(component_id, 'name', 'Unknown')
         print(f"Удаление Wine приложения: {component_name}")
         
         uninstall_method = get_component_field(component_id, 'uninstall_method')
-        if uninstall_method == 'wine_executable':
+        if uninstall_method == 'wine_executable' or uninstall_method == 'wine_application':
             return self._uninstall_wine_executable(component_id, config)
         else:
             print(f"Неизвестный метод удаления для {component_id}: {uninstall_method}", level='ERROR')
@@ -3463,16 +3473,28 @@ class WineApplicationHandler(ComponentHandler):
         for source_type in check_order:
             if source_type == 'directory':
                 if os.path.exists(directory_path) and os.path.isdir(directory_path):
-                    print(f"Используется источник: папка {directory_path}")
-                    return self._copy_from_directory_fast(directory_path, component_id, config, install_start_time)
+                    print(f"Пробуем источник: папка {directory_path}")
+                    if self._copy_from_directory_fast(directory_path, component_id, config, install_start_time):
+                        return True
+                    elif not source_fallback:
+                        # Если fallback отключен и источник не сработал - выходим
+                        return False
+                    else:
+                        print(f"Источник папка не сработал, пробуем следующий...", level='WARNING')
             
             elif source_type == 'archive':
                 if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
-                    print(f"Используется источник: архив {archive_path}")
-                    return self._copy_from_archive_fast(archive_path, source_dir, component_id, config, install_start_time)
+                    print(f"Пробуем источник: архив {archive_path}")
+                    if self._copy_from_archive_fast(archive_path, source_dir, component_id, config, install_start_time):
+                        return True
+                    elif not source_fallback:
+                        # Если fallback отключен и источник не сработал - выходим
+                        return False
+                    else:
+                        print(f"Источник архив не сработал, пробуем следующий...", level='WARNING')
         
-        # Если ни один источник не найден
-        print(f"Источник не найден: папка {directory_path} и архив {archive_path}", level='ERROR')
+        # Если ни один источник не найден или не сработал
+        print(f"Источник не найден или не сработал: папка {directory_path} и архив {archive_path}", level='ERROR')
         return False
     
     def _copy_preinstalled_config_old(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
@@ -4097,7 +4119,7 @@ class WineApplicationHandler(ComponentHandler):
                 has_source_dir = any(m.name.startswith(f"{source_dir}/") or m.name == source_dir for m in members)
                 
                 if has_source_dir:
-                    # Архив содержит папку source_dir - извлекаем только её содержимое
+                    # Архив содержит папку source_dir - извлекаем только её содержимое (без папки)
                     prefix = f"{source_dir}/"
                     items_to_extract = [m for m in members if m.name.startswith(prefix) and m.name != source_dir]
                     total_items = len(items_to_extract)
@@ -4105,7 +4127,7 @@ class WineApplicationHandler(ComponentHandler):
                     dirs_count = sum(1 for m in items_to_extract if m.isdir())
                     total_size = sum(m.size for m in items_to_extract if m.isfile())
                     
-                    print(f"Архив содержит папку {source_dir}, извлекаем содержимое...")
+                    print(f"Архив содержит папку {source_dir}, извлекаем содержимое (без папки)...")
                     print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
                 else:
                     # Архив содержит файлы в корне - извлекаем всё
@@ -4129,16 +4151,10 @@ class WineApplicationHandler(ComponentHandler):
                 print(f"Общий размер: {size_str}")
                 
         except Exception as e:
+            # Если не удалось прочитать метаданные - архив поврежден
             print(f"Ошибка чтения метаданных архива: {e}", level='ERROR')
-            print("Пробуем распаковку без предварительной проверки...", level='WARNING')
-            # Fallback: пробуем без метаданных
-            has_source_dir = None
-            total_items = 0
-            total_size = 0
-            items_to_extract = []
-            files_count = 0
-            dirs_count = 0
-            size_str = "неизвестно"
+            print("Архив поврежден или недоступен, распаковка невозможна", level='ERROR')
+            return False
         
         self._update_progress(
             stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
@@ -4213,59 +4229,6 @@ class WineApplicationHandler(ComponentHandler):
             
             # Проверяем код возврата
             return_code = process.returncode
-            
-            # Если ошибка и мы пробовали с --strip-components, пробуем без него
-            if return_code != 0 and has_source_dir:
-                stderr_output = ""
-                if process.stderr:
-                    try:
-                        stderr_output = process.stderr.read()
-                    except:
-                        pass
-                
-                # Проверяем, не была ли ошибка из-за отсутствия CountPack/
-                if "Not found in archive" in stderr_output or "Cannot open" in stderr_output:
-                    print(f"Архив не содержит {source_dir}/, пробуем без --strip-components...")
-                    
-                    # Пробуем без --strip-components
-                    tar_cmd_fallback = [
-                        'tar',
-                        '-xzf',
-                        archive_path,
-                        '-C', wineprefix_path,
-                        '.'
-                    ]
-                    
-                    process = subprocess.Popen(
-                        tar_cmd_fallback,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        universal_newlines=True
-                    )
-                    
-                    # Запускаем мониторинг снова
-                    monitor_thread = threading.Thread(
-                        target=self._monitor_tar_with_metadata,
-                        args=(process, wineprefix_path, total_items, total_size, install_start_time, cancel_flag, component_id, items_to_extract),
-                        daemon=True
-                    )
-                    monitor_thread.start()
-                    
-                    # Ждем завершения
-                    while process.poll() is None:
-                        if CANCEL_OPERATION or cancel_flag.is_set():
-                            process.terminate()
-                            try:
-                                process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                            if old_umask is not None:
-                                os.umask(old_umask)
-                            self._set_extracted_files_permissions(wineprefix_path)
-                            return False
-                        time.sleep(0.1)
-                    
-                    return_code = process.returncode
             
             if return_code != 0:
                 stderr_output = ""
@@ -5005,10 +4968,19 @@ class WineApplicationHandler(ComponentHandler):
             return False
     
     def _uninstall_wine_executable(self, component_id: str, config: dict) -> bool:
-        """Удаление исполняемого файла из Wine (для Wine приложений)"""
+        """Удаление исполняемого файла из Wine (для Wine приложений)
+        
+        Удаляет объекты (папки и файлы), указанные в параметре uninstall_paths.
+        """
         print(f"Удаление исполняемого файла из Wine: {component_id}")
         
         try:
+            # КРИТИЧНО: Определяем путь к префиксу из конфигурации (как в install)
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+                print(f"Используется WINEPREFIX из конфигурации: {self.wineprefix}", level='DEBUG')
+            
             # Универсальная логика остановки процессов:
             # Wine приложения - это листовые элементы, поэтому останавливаем только свои процессы
             is_leaf = self._is_leaf_component(component_id)
@@ -5030,42 +5002,77 @@ class WineApplicationHandler(ComponentHandler):
                     if not processes_stopped:
                         print(f"Не все процессы остановлены для {component_id}, продолжаем удаление", level='WARNING')
             
-            # Для Wine приложений удаляем директорию приложения из WINEPREFIX
-            check_paths = get_component_field(component_id, 'check_paths', [])
-            if not check_paths:
-                print(f"Не указаны check_paths для {component_id}", level='ERROR')
+            # Получаем список объектов для удаления
+            uninstall_paths = get_component_field(component_id, 'uninstall_paths', [])
+            
+            # КРИТИЧНО: Требуем явное указание объектов для удаления
+            if not uninstall_paths:
+                print(f"Для компонента {component_id} не указан параметр 'uninstall_paths'", level='ERROR')
+                print("Удаление невозможно без явного указания объектов для удаления (безопасность)", level='ERROR')
                 self._update_status(component_id, 'error')
                 return False
             
-            # Берем первый путь и определяем директорию приложения
-            app_path = check_paths[0]
-            if app_path.startswith('drive_c/'):
-                full_path = os.path.join(self.wineprefix, app_path)
-                # Определяем директорию приложения (родительскую директорию)
-                app_dir = os.path.dirname(full_path)
-                if os.path.exists(app_dir):
-                    shutil.rmtree(app_dir)
-                    print(f"Удалена директория: {app_dir}")
+            # Удаляем каждый объект из списка
+            removed_count = 0
+            errors_count = 0
+            
+            for path in uninstall_paths:
+                if not path or not isinstance(path, str):
+                    print(f"Пропускаем некорректный путь: {path}", level='WARNING')
+                    continue
+                
+                # Определяем полный путь
+                if path.startswith('drive_c/'):
+                    # Путь относительно WINEPREFIX
+                    full_path = os.path.join(self.wineprefix, path)
+                elif path.startswith('/') or path.startswith('~/'):
+                    # Абсолютный путь или путь относительно домашней директории
+                    full_path = os.path.expanduser(path)
                 else:
-                    print(f"Директория не найдена: {app_dir}")
+                    print(f"Неподдерживаемый формат пути: {path}", level='ERROR')
+                    errors_count += 1
+                    continue
                 
-                # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
-                time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
-                
-                # Проверяем статус компонента
-                actual_status = self.check_status(component_id, config)
-                
-                if not actual_status:
-                    # Компонент действительно удален - устанавливаем статус 'missing'
-                    self._update_status(component_id, 'missing')
-                    return True
+                # Удаляем объект (файл или папку)
+                if os.path.exists(full_path):
+                    try:
+                        if os.path.isdir(full_path):
+                            # Удаляем директорию
+                            shutil.rmtree(full_path)
+                            print(f"Удалена директория: {full_path}")
+                            removed_count += 1
+                        elif os.path.isfile(full_path):
+                            # Удаляем файл
+                            os.remove(full_path)
+                            print(f"Удален файл: {full_path}")
+                            removed_count += 1
+                        else:
+                            print(f"Объект не является файлом или директорией: {full_path}", level='WARNING')
+                    except Exception as e:
+                        print(f"Ошибка удаления {full_path}: {e}", level='ERROR')
+                        errors_count += 1
                 else:
-                    # Компонент все еще существует - устанавливаем статус 'error'
-                    print(f"Компонент не удален (проверка статуса не подтвердила удаление)", level='ERROR')
-                    self._update_status(component_id, 'error')
-                    return False
+                    print(f"Объект не найден (пропускаем): {full_path}")
+            
+            if errors_count > 0:
+                print(f"При удалении возникло {errors_count} ошибок", level='WARNING')
+            
+            if removed_count == 0 and errors_count == 0:
+                print(f"Не найдено объектов для удаления для компонента {component_id}", level='WARNING')
+            
+            # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
+            os.sync()  # Принудительная синхронизация файловой системы
+            
+            # Проверяем статус компонента
+            actual_status = self.check_status(component_id, config)
+            
+            if not actual_status:
+                # Компонент действительно удален - устанавливаем статус 'missing'
+                self._update_status(component_id, 'missing')
+                return True
             else:
-                print(f"Неподдерживаемый путь для Wine приложения: {app_path}", level='ERROR')
+                # Компонент все еще существует - устанавливаем статус 'error'
+                print(f"Компонент не удален (проверка статуса не подтвердила удаление)", level='ERROR')
                 self._update_status(component_id, 'error')
                 return False
                 
@@ -5139,7 +5146,7 @@ class ApplicationHandler(ComponentHandler):
         print(f"ApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         self._update_status(component_id, 'removing')
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        time.sleep(0.1)  # Минимальная задержка для обновления GUI
         print(f"Удаление приложения: {config['name']}")
         
         try:
@@ -5388,44 +5395,79 @@ class ApplicationHandler(ComponentHandler):
             return False
     
     def _uninstall_wine_executable(self, component_id: str, config: dict) -> bool:
-        """Удаление исполняемого файла из Wine (Astra.IDE)"""
+        """Удаление исполняемого файла из Wine (для Wine приложений)
+        
+        Удаляет объекты (папки и файлы), указанные в параметре uninstall_paths.
+        """
         print(f"Удаление исполняемого файла из Wine: {component_id}")
         
         try:
-            # Удаляем директорию Astra.IDE из WINEPREFIX
-            astra_ide_dirs = [
-                os.path.join(self.wineprefix, "drive_c", "Program Files", "AstraRegul"),
-                os.path.join(self.wineprefix, "drive_c", "Program Files (x86)", "AstraRegul")
-            ]
+            # КРИТИЧНО: Определяем путь к префиксу из конфигурации (как в install)
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+                print(f"Используется WINEPREFIX из конфигурации: {self.wineprefix}", level='DEBUG')
             
-            removed = False
-            for astra_dir in astra_ide_dirs:
-                if os.path.exists(astra_dir):
-                    print(f"Удаление директории Astra.IDE: {astra_dir}")
-                    shutil.rmtree(astra_dir)
-                    print("Директория Astra.IDE удалена")
-                    removed = True
+            # Получаем список объектов для удаления
+            uninstall_paths = get_component_field(component_id, 'uninstall_paths', [])
             
-            if not removed:
-                print("Директория Astra.IDE не найдена, пропускаем удаление")
+            # КРИТИЧНО: Требуем явное указание объектов для удаления
+            if not uninstall_paths:
+                print(f"Для компонента {component_id} не указан параметр 'uninstall_paths'", level='ERROR')
+                print("Удаление невозможно без явного указания объектов для удаления (безопасность)", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
             
-            # Также удаляем ярлыки из меню пуск и с рабочего стола (если есть)
-            start_menu_dirs = [
-                os.path.join(self.home, ".local", "share", "applications", "wine", "Programs", "AstraRegul"),
-                os.path.join(self.wineprefix, "drive_c", "users", "Public", "Desktop"),
-            ]
+            # Удаляем каждый объект из списка
+            removed_count = 0
+            errors_count = 0
             
-            for start_menu_dir in start_menu_dirs:
-                if os.path.exists(start_menu_dir):
-                    print(f"Удаление из меню: {start_menu_dir}")
+            for path in uninstall_paths:
+                if not path or not isinstance(path, str):
+                    print(f"Пропускаем некорректный путь: {path}", level='WARNING')
+                    continue
+                
+                # Определяем полный путь
+                if path.startswith('drive_c/'):
+                    # Путь относительно WINEPREFIX
+                    full_path = os.path.join(self.wineprefix, path)
+                elif path.startswith('/') or path.startswith('~/'):
+                    # Абсолютный путь или путь относительно домашней директории
+                    full_path = os.path.expanduser(path)
+                else:
+                    print(f"Неподдерживаемый формат пути: {path}", level='ERROR')
+                    errors_count += 1
+                    continue
+                
+                # Удаляем объект (файл или папку)
+                if os.path.exists(full_path):
                     try:
-                        shutil.rmtree(start_menu_dir)
-                        print("Удалено из меню")
+                        if os.path.isdir(full_path):
+                            # Удаляем директорию
+                            shutil.rmtree(full_path)
+                            print(f"Удалена директория: {full_path}")
+                            removed_count += 1
+                        elif os.path.isfile(full_path):
+                            # Удаляем файл
+                            os.remove(full_path)
+                            print(f"Удален файл: {full_path}")
+                            removed_count += 1
+                        else:
+                            print(f"Объект не является файлом или директорией: {full_path}", level='WARNING')
                     except Exception as e:
-                        print(f"Предупреждение: Не удалось удалить из меню: {str(e)}", level='WARNING')
+                        print(f"Ошибка удаления {full_path}: {e}", level='ERROR')
+                        errors_count += 1
+                else:
+                    print(f"Объект не найден (пропускаем): {full_path}")
+            
+            if errors_count > 0:
+                print(f"При удалении возникло {errors_count} ошибок", level='WARNING')
+            
+            if removed_count == 0 and errors_count == 0:
+                print(f"Не найдено объектов для удаления для компонента {component_id}", level='WARNING')
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -5441,7 +5483,7 @@ class ApplicationHandler(ComponentHandler):
                 return False
             
         except Exception as e:
-            print(f"Удаление Astra.IDE: {str(e)}", level='ERROR')
+            print(f"Удаление Wine приложения: {str(e)}", level='ERROR')
             traceback.print_exc()
             self._update_status(component_id, 'error')
             return False
@@ -5461,7 +5503,7 @@ class ApplicationHandler(ComponentHandler):
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
             # Это гарантирует, что статус 'missing' устанавливается только после проверки
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -5884,7 +5926,7 @@ class DesktopShortcutHandler(ComponentHandler):
                 print("Ярлык рабочего стола не найден, пропускаем удаление")
             
             # КРИТИЧНО: Проверяем реальный статус компонента перед установкой 'missing'
-            time.sleep(0.3)  # Небольшая задержка для завершения операций файловой системы
+            os.sync()  # Принудительная синхронизация файловой системы
             
             # Проверяем статус компонента
             actual_status = self.check_status(component_id, config)
@@ -9848,17 +9890,26 @@ class ComponentInstaller(object):
                     print(f"[ComponentInstaller] Ожидание завершения процессов после установки {component_id}...")
                     handler._wait_for_all_processes_terminated(max_wait=30)
                     
-                    # Остановка wineserver как в оригинале (только для winetricks компонентов)
+                    # Остановка wineserver (только для winetricks компонентов)
                     category = get_component_field(component_id, 'category')
                     if category == 'winetricks':
-                        time.sleep(5)  # Пауза как в оригинале (sleep 5)
+                        time.sleep(2)  # Уменьшено с 5 до 2 секунд
                         handler._terminate_wineserver()
                         # Финальная проверка что все процессы завершены
                         handler._wait_for_all_processes_terminated(max_wait=10)
                     
-                    # Пауза между установками компонентов (как в оригинале)
+                    # Умная пауза между установками компонентов (в зависимости от категории)
                     if idx < len(resolved_components) - 1:  # Не делаем паузу после последнего компонента
-                        time.sleep(5)
+                        next_category = get_component_field(resolved_components[idx + 1], 'category', '')
+                        if next_category in ['winetricks', 'wine_application', 'wine_environment']:
+                            # Для компонентов с процессами - небольшая пауза
+                            time.sleep(1)
+                        elif next_category == 'desktop_shortcut':
+                            # Для ярлыков - минимальная пауза
+                            time.sleep(0.1)
+                        else:
+                            # Для остальных - небольшая пауза
+                            time.sleep(0.5)
                 else:
                     print(f"install_components() ОШИБКА установки {component_id}", level='DEBUG')
                     print("Ошибка установки компонента: %s" % component_id)
@@ -9997,14 +10048,23 @@ class ComponentInstaller(object):
                     # Остановка wineserver (только для winetricks компонентов)
                     category = get_component_field(component_id, 'category')
                     if category == 'winetricks':
-                        time.sleep(5)  # Пауза как в оригинале
+                        time.sleep(2)  # Уменьшено с 5 до 2 секунд
                         handler._terminate_wineserver()
                         # Финальная проверка что все процессы завершены
                         handler._wait_for_all_processes_terminated(max_wait=10)
                     
-                    # Пауза между удалениями компонентов
+                    # Умная пауза между удалениями компонентов (в зависимости от категории)
                     if idx < len(resolved_components) - 1:  # Не делаем паузу после последнего компонента
-                        time.sleep(5)
+                        next_category = get_component_field(resolved_components[idx + 1], 'category', '')
+                        if next_category in ['winetricks', 'wine_application', 'wine_environment']:
+                            # Для компонентов с процессами - небольшая пауза
+                            time.sleep(1)
+                        elif next_category == 'desktop_shortcut':
+                            # Для ярлыков - минимальная пауза
+                            time.sleep(0.1)
+                        else:
+                            # Для остальных - небольшая пауза
+                            time.sleep(0.5)
                 else:
                     print("Ошибка удаления компонента: %s" % component_id)
                     success = False
@@ -15530,8 +15590,7 @@ class AutomationGUI(object):
         # Это гарантирует, что все статусы 'pending' отобразятся в GUI до начала удаления
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
-        
-        time.sleep(0.5)  # Задержка 0.5 секунды для обновления GUI
+        # Дополнительная задержка не нужна - update_idletasks() уже обновил GUI
         
         # НОВОЕ: Запускаем таймер обновления времени и дискового пространства
         self.start_progress_timer()
