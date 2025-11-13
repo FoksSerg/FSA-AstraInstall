@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.121 (2025.11.12)
+Версия: V2.5.122 (2025.11.13)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.121 (2025.11.12)"
+APP_VERSION = "V2.5.122 (2025.11.13)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -148,6 +148,8 @@ COMPONENTS_CONFIG = {
         'wineprefix_path': '~/.local/share/wineprefixes/cont',
         'source_dir': 'CountPack',
         'copy_method': 'replace',
+        'source_priority': 'directory',  # Приоритет источника: 'archive' или 'directory'
+        'source_fallback': True,  # Использоваdirectoryть fallback на другой источник
         'wine_source': 'system',
         'gui_selectable': True,
         'description': 'CONT-Designer 3.0',
@@ -3322,6 +3324,8 @@ class WineApplicationHandler(ComponentHandler):
     def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
         """
         Копирование предустановленной конфигурации Wine префикса
+        Поддерживает приоритеты источников: 'directory' (папка) или 'archive' (архив)
+        Использует быстрые методы копирования через отдельные процессы
         
         Args:
             component_id: ID компонента
@@ -3331,7 +3335,69 @@ class WineApplicationHandler(ComponentHandler):
         Returns:
             bool: True если копирование успешно
         """
-        # НОВОЕ: Если время начала не передано, используем текущее время
+        # Если время начала не передано, используем текущее время
+        if install_start_time is None:
+            install_start_time = time.time()
+        
+        source_dir = config.get('source_dir')
+        if not source_dir:
+            print("source_dir не указан в конфигурации", level='ERROR')
+            return False
+        
+        # Получаем приоритет источника из конфигурации
+        source_priority = config.get('source_priority', 'archive')  # По умолчанию архив
+        source_fallback = config.get('source_fallback', True)  # По умолчанию с fallback
+        
+        # Определяем пути к источникам
+        script_dir = self._get_script_dir()
+        
+        # 1. Путь к папке (рядом с AstraPack)
+        directory_path = os.path.join(script_dir, source_dir)
+        
+        # 2. Путь к архиву (в AstraPack/Cont/ или AstraPack/)
+        archive_path = None
+        if self.astrapack_dir:
+            # Определяем группу по component_id (cont -> Cont, astra -> Astra)
+            group_name = None
+            if 'cont' in component_id.lower():
+                group_name = 'Cont'
+            elif 'astra' in component_id.lower():
+                group_name = 'Astra'
+            
+            if group_name:
+                archive_path = os.path.join(self.astrapack_dir, group_name, f"{source_dir}.tar.gz")
+            else:
+                # Если группа не определена, ищем в корне AstraPack
+                archive_path = os.path.join(self.astrapack_dir, f"{source_dir}.tar.gz")
+        
+        # Определяем порядок проверки источников
+        if source_priority == 'directory':
+            check_order = ['directory', 'archive'] if source_fallback else ['directory']
+        else:  # 'archive' или по умолчанию
+            check_order = ['archive', 'directory'] if source_fallback else ['archive']
+        
+        # Пробуем источники в порядке приоритета
+        for source_type in check_order:
+            if source_type == 'directory':
+                if os.path.exists(directory_path) and os.path.isdir(directory_path):
+                    print(f"Используется источник: папка {directory_path}")
+                    return self._copy_from_directory_fast(directory_path, component_id, config, install_start_time)
+            
+            elif source_type == 'archive':
+                if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
+                    print(f"Используется источник: архив {archive_path}")
+                    return self._copy_from_archive_fast(archive_path, source_dir, component_id, config, install_start_time)
+        
+        # Если ни один источник не найден
+        print(f"Источник не найден: папка {directory_path} и архив {archive_path}", level='ERROR')
+        return False
+    
+    def _copy_preinstalled_config_old(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
+        """
+        СТАРАЯ РЕАЛИЗАЦИЯ: Копирование предустановленной конфигурации Wine префикса
+        Оставлена для совместимости (fallback если новые методы не работают)
+        """
+        # Если время начала не передано, используем текущее время
         if install_start_time is None:
             install_start_time = time.time()
         source_dir = config.get('source_dir')
@@ -3339,7 +3405,7 @@ class WineApplicationHandler(ComponentHandler):
             print("source_dir не указан в конфигурации", level='ERROR')
             return False
         
-        # НОВОЕ: Сначала проверяем наличие архива .tar.gz
+        # Сначала проверяем наличие архива .tar.gz
         archive_path = None
         temp_extract_dir = None
         
@@ -3744,6 +3810,804 @@ class WineApplicationHandler(ComponentHandler):
                 print(f"Установлены права доступа на распакованные файлы")
         except Exception as e:
             print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
+    
+    def _check_command_available(self, command: str) -> bool:
+        """
+        Проверка доступности команды в системе
+        
+        Args:
+            command: Имя команды (например, 'rsync', 'tar', 'cp')
+        
+        Returns:
+            bool: True если команда доступна
+        """
+        import shutil
+        return shutil.which(command) is not None
+    
+    def _count_files_recursive(self, directory: str):
+        """
+        Генератор для подсчета файлов рекурсивно
+        
+        Args:
+            directory: Путь к директории
+        
+        Yields:
+            str: Путь к каждому файлу
+        """
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                yield os.path.join(root, file)
+    
+    def _check_archive_structure(self, archive_path: str, source_dir: str) -> bool:
+        """
+        Проверяет структуру архива: содержит ли он папку source_dir
+        
+        Args:
+            archive_path: Путь к архиву
+            source_dir: Имя директории для проверки
+        
+        Returns:
+            bool: True если архив содержит папку source_dir
+        """
+        try:
+            # Используем tar -tzf для просмотра содержимого без распаковки
+            result = subprocess.run(
+                ['tar', '-tzf', archive_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                return False
+            
+            # Проверяем, есть ли папка source_dir в архиве
+            for line in result.stdout.split('\n'):
+                if line.startswith(f'{source_dir}/') or line == source_dir:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Ошибка проверки структуры архива: {e}", level='DEBUG')
+            return False
+    
+    def _count_files_in_archive(self, archive_path: str, prefix: str = None) -> int:
+        """
+        Подсчитывает количество файлов в архиве (для прогресса)
+        
+        Args:
+            archive_path: Путь к архиву
+            prefix: Префикс для фильтрации (например, 'CountPack/')
+        
+        Returns:
+            int: Количество файлов
+        """
+        try:
+            # Используем tar -tzf для просмотра содержимого
+            result = subprocess.run(
+                ['tar', '-tzf', archive_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                return 0
+            
+            count = 0
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Если указан префикс, считаем только файлы с этим префиксом
+                if prefix:
+                    if line.startswith(f'{prefix}/') and line != prefix:
+                        # Проверяем, что это файл (не директория)
+                        if not line.endswith('/'):
+                            count += 1
+                else:
+                    # Считаем все файлы (не директории)
+                    if not line.endswith('/'):
+                        count += 1
+            
+            return count
+            
+        except Exception as e:
+            print(f"Ошибка подсчета файлов в архиве: {e}", level='DEBUG')
+            return 0
+    
+    def _copy_from_directory_fast(self, directory_path: str, component_id: str, 
+                                   config: dict, install_start_time: float) -> bool:
+        """
+        Быстрое копирование из папки через отдельный процесс (rsync/tar/cp)
+        С мониторингом и возможностью прерывания
+        
+        Args:
+            directory_path: Путь к исходной папке
+            component_id: ID компонента
+            config: Конфигурация компонента
+            install_start_time: Время начала установки
+        
+        Returns:
+            bool: True если копирование успешно
+        """
+        wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+        wineprefix_path = expand_user_path(wineprefix_path)
+        
+        print(f"Найдена папка: {directory_path}")
+        print(f"Быстрое копирование из {directory_path} в {wineprefix_path}")
+        
+        # Определяем uid/gid для установки владельца после копирования
+        real_user = os.environ.get('SUDO_USER')
+        if os.geteuid() == 0 and real_user and real_user != 'root':
+            copy_uid = pwd.getpwnam(real_user).pw_uid
+            copy_gid = pwd.getpwnam(real_user).pw_gid
+        else:
+            copy_uid = os.getuid()
+            copy_gid = os.getgid()
+        
+        # Пробуем использовать rsync (самый быстрый)
+        if self._check_command_available('rsync'):
+            return self._copy_with_rsync(directory_path, wineprefix_path, 
+                                        copy_uid, copy_gid, component_id, config, install_start_time)
+        
+        # Fallback: tar (очень быстрый)
+        elif self._check_command_available('tar'):
+            return self._copy_with_tar(directory_path, wineprefix_path, 
+                                      copy_uid, copy_gid, component_id, config, install_start_time)
+        
+        # Fallback: cp (простой, но быстрый)
+        else:
+            return self._copy_with_cp(directory_path, wineprefix_path, 
+                                     copy_uid, copy_gid, component_id, config, install_start_time)
+    
+    def _copy_from_archive_fast(self, archive_path: str, source_dir: str, component_id: str,
+                               config: dict, install_start_time: float) -> bool:
+        """
+        Быстрая распаковка архива через системный tar в отдельном процессе
+        С мониторингом и возможностью прерывания
+        
+        Args:
+            archive_path: Путь к архиву
+            source_dir: Имя директории в архиве (если есть)
+            component_id: ID компонента
+            config: Конфигурация компонента
+            install_start_time: Время начала установки
+        
+        Returns:
+            bool: True если распаковка успешна
+        """
+        wineprefix_path = config.get('wineprefix_path', self.wineprefix)
+        wineprefix_path = expand_user_path(wineprefix_path)
+        
+        print(f"Найден архив: {archive_path}")
+        print(f"Быстрая распаковка архива напрямую в {wineprefix_path}...")
+        print("Файлы из архива заменят существующие, файлы которых нет в архиве останутся нетронутыми")
+        
+        # Определяем uid/gid для установки владельца после распаковки
+        real_user = os.environ.get('SUDO_USER')
+        if os.geteuid() == 0 and real_user and real_user != 'root':
+            unpack_uid = pwd.getpwnam(real_user).pw_uid
+            unpack_gid = pwd.getpwnam(real_user).pw_gid
+        else:
+            unpack_uid = os.getuid()
+            unpack_gid = os.getgid()
+        
+        # Проверяем доступность tar
+        if not self._check_command_available('tar'):
+            print("Команда tar не найдена, используем Python tarfile (медленнее)", level='WARNING')
+            return self._copy_preinstalled_config_old(component_id, config, install_start_time)
+        
+        # Сначала проверяем структуру архива (есть ли папка source_dir внутри)
+        has_source_dir_prefix = self._check_archive_structure(archive_path, source_dir)
+        
+        # Подсчитываем количество файлов для прогресса
+        total_files = self._count_files_in_archive(archive_path, source_dir if has_source_dir_prefix else None)
+        print(f"Всего файлов для извлечения: {total_files}")
+        
+        self._update_progress(
+            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_progress=0,
+            global_progress=0,
+            details=f"Найдено файлов: {total_files}"
+        )
+        
+        # Команда tar с оптимизацией для скорости
+        tar_cmd = [
+            'tar',
+            '-xzf',  # -x (extract), -z (gzip), -f (file)
+            archive_path,
+            '-C', wineprefix_path,  # Изменить директорию перед извлечением
+        ]
+        
+        # Если архив содержит папку source_dir, нужно извлечь только её содержимое
+        if has_source_dir_prefix:
+            # Используем --strip-components=1 чтобы убрать первый уровень (source_dir/)
+            tar_cmd.extend(['--strip-components=1'])
+            # И указываем что извлекать только source_dir/
+            tar_cmd.append(f'{source_dir}/')
+        else:
+            # Извлекаем всё из корня архива
+            tar_cmd.append('.')
+        
+        process = None
+        monitor_thread = None
+        cancel_flag = threading.Event()
+        old_umask = None
+        
+        try:
+            # Устанавливаем umask для правильных прав
+            old_umask = os.umask(0o022)
+            
+            # Запускаем tar в отдельном процессе
+            process = subprocess.Popen(
+                tar_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Запускаем поток мониторинга
+            monitor_thread = threading.Thread(
+                target=self._monitor_tar_extract_progress,
+                args=(process, wineprefix_path, total_files, install_start_time, cancel_flag, component_id),
+                daemon=True
+            )
+            monitor_thread.start()
+            
+            # Ждем завершения процесса с проверкой отмены
+            while process.poll() is None:
+                if CANCEL_OPERATION or cancel_flag.is_set():
+                    print("Распаковка прервана пользователем")
+                    process.terminate()  # Отправляем SIGTERM
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # Принудительно завершаем
+                    if old_umask is not None:
+                        os.umask(old_umask)
+                    # Устанавливаем права на уже распакованные файлы
+                    self._set_extracted_files_permissions(wineprefix_path)
+                    return False
+                
+                time.sleep(0.1)  # Небольшая задержка для проверки
+            
+            # Восстанавливаем umask
+            if old_umask is not None:
+                os.umask(old_umask)
+            
+            # Проверяем код возврата
+            return_code = process.returncode
+            if return_code != 0:
+                stderr_output = ""
+                if process.stderr:
+                    try:
+                        stderr_output = process.stderr.read()
+                    except:
+                        pass
+                print(f"tar завершился с ошибкой (код: {return_code})", level='ERROR')
+                if stderr_output:
+                    print(f"Ошибка tar: {stderr_output}", level='ERROR')
+                return False
+            
+            # Устанавливаем владельца и права (tar может не сохранить владельца)
+            print("Установка владельца и прав доступа...")
+            self._set_extracted_files_permissions(wineprefix_path)
+            
+            elapsed_time = time.time() - install_start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            print(f"Распаковка завершена за {elapsed_minutes}м {elapsed_seconds}с")
+            self._update_progress(
+                stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+                stage_progress=0,
+                global_progress=100,
+                details=f"Успешно извлечено {total_files} файлов"
+            )
+            
+            return True
+            
+        except Exception as e:
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except:
+                    process.kill()
+            
+            if old_umask is not None:
+                try:
+                    os.umask(old_umask)
+                except:
+                    pass
+            
+            print(f"Ошибка распаковки архива: {e}", level='ERROR')
+            traceback.print_exc()
+            # Устанавливаем права на уже распакованные файлы (если есть)
+            try:
+                self._set_extracted_files_permissions(wineprefix_path)
+            except:
+                pass
+            return False
+    
+    def _copy_with_rsync(self, src_dir: str, dst_dir: str, uid: int, gid: int,
+                        component_id: str, config: dict, start_time: float) -> bool:
+        """
+        Копирование через rsync (максимальная скорость)
+        """
+        # Подсчитываем общее количество файлов для прогресса
+        total_files = sum(1 for _ in self._count_files_recursive(src_dir))
+        print(f"Всего файлов для копирования: {total_files}")
+        
+        self._update_progress(
+            stage_name=f"Копирование через rsync",
+            stage_progress=0,
+            global_progress=0,
+            details=f"Найдено файлов: {total_files}"
+        )
+        
+        # Команда rsync с оптимизацией для скорости
+        rsync_cmd = [
+            'rsync',
+            '--archive',           # Сохраняет все атрибуты
+            '--inplace',           # Обновляет файлы на месте (быстрее)
+            '--no-whole-file',     # Дельта-копирование (быстрее для изменений)
+            '--progress',          # Показывает прогресс
+            '--human-readable',     # Читаемый формат
+            '--info=progress2',    # Общий прогресс (не по каждому файлу)
+            f'{src_dir}/',         # Исходная директория (с / в конце)
+            dst_dir                # Целевая директория
+        ]
+        
+        process = None
+        monitor_thread = None
+        cancel_flag = threading.Event()
+        
+        try:
+            # Запускаем rsync в отдельном процессе
+            process = subprocess.Popen(
+                rsync_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Запускаем поток мониторинга
+            monitor_thread = threading.Thread(
+                target=self._monitor_rsync_progress,
+                args=(process, total_files, start_time, cancel_flag, component_id),
+                daemon=True
+            )
+            monitor_thread.start()
+            
+            # Ждем завершения процесса с проверкой отмены
+            while process.poll() is None:
+                if CANCEL_OPERATION or cancel_flag.is_set():
+                    print("Копирование прервано пользователем")
+                    process.terminate()  # Отправляем SIGTERM
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # Принудительно завершаем
+                    return False
+                
+                time.sleep(0.1)  # Небольшая задержка для проверки
+            
+            # Проверяем код возврата
+            return_code = process.returncode
+            if return_code != 0:
+                print(f"rsync завершился с ошибкой (код: {return_code})", level='ERROR')
+                return False
+            
+            # Устанавливаем владельца и права (rsync может не сохранить владельца)
+            print("Установка владельца и прав доступа...")
+            self._set_extracted_files_permissions(dst_dir)
+            
+            elapsed_time = time.time() - start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            print(f"Копирование завершено за {elapsed_minutes}м {elapsed_seconds}с")
+            self._update_progress(
+                stage_name=f"Копирование через rsync",
+                stage_progress=0,
+                global_progress=100,
+                details=f"Успешно скопировано {total_files} файлов"
+            )
+            
+            return True
+            
+        except Exception as e:
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except:
+                    process.kill()
+            
+            print(f"Ошибка копирования через rsync: {e}", level='ERROR')
+            traceback.print_exc()
+            return False
+    
+    def _copy_with_tar(self, src_dir: str, dst_dir: str, uid: int, gid: int,
+                      component_id: str, config: dict, start_time: float) -> bool:
+        """
+        Копирование через tar (очень быстро, через pipe)
+        """
+        total_files = sum(1 for _ in self._count_files_recursive(src_dir))
+        print(f"Всего файлов для копирования: {total_files}")
+        
+        self._update_progress(
+            stage_name=f"Копирование через tar",
+            stage_progress=0,
+            global_progress=0,
+            details=f"Найдено файлов: {total_files}"
+        )
+        
+        # Команда: tar -c (создать) | tar -x (извлечь)
+        tar_cmd = ['tar', '-C', src_dir, '-cf', '-', '.']
+        untar_cmd = ['tar', '-C', dst_dir, '-xf', '-']
+        
+        process1 = None
+        process2 = None
+        cancel_flag = threading.Event()
+        
+        try:
+            # Создаем pipe между двумя процессами tar
+            process1 = subprocess.Popen(
+                tar_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            process2 = subprocess.Popen(
+                untar_cmd,
+                stdin=process1.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Закрываем stdout первого процесса (он теперь подключен к stdin второго)
+            process1.stdout.close()
+            
+            # Запускаем поток мониторинга
+            monitor_thread = threading.Thread(
+                target=self._monitor_tar_copy_progress,
+                args=(process1, process2, dst_dir, total_files, start_time, cancel_flag),
+                daemon=True
+            )
+            monitor_thread.start()
+            
+            # Ждем завершения
+            while process2.poll() is None:
+                if CANCEL_OPERATION or cancel_flag.is_set():
+                    print("Копирование прервано пользователем")
+                    process1.terminate()
+                    process2.terminate()
+                    try:
+                        process1.wait(timeout=2)
+                        process2.wait(timeout=2)
+                    except:
+                        process1.kill()
+                        process2.kill()
+                    return False
+                
+                time.sleep(0.1)
+            
+            # Проверяем коды возврата
+            process1.wait()
+            return_code = process2.returncode
+            
+            if return_code != 0:
+                print(f"tar завершился с ошибкой (код: {return_code})", level='ERROR')
+                return False
+            
+            # Устанавливаем владельца и права
+            self._set_extracted_files_permissions(dst_dir)
+            
+            elapsed_time = time.time() - start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            print(f"Копирование завершено за {elapsed_minutes}м {elapsed_seconds}с")
+            self._update_progress(
+                stage_name=f"Копирование через tar",
+                stage_progress=0,
+                global_progress=100,
+                details=f"Успешно скопировано {total_files} файлов"
+            )
+            
+            return True
+            
+        except Exception as e:
+            if process1 and process1.poll() is None:
+                process1.terminate()
+            if process2 and process2.poll() is None:
+                process2.terminate()
+            
+            print(f"Ошибка копирования через tar: {e}", level='ERROR')
+            traceback.print_exc()
+            return False
+    
+    def _copy_with_cp(self, src_dir: str, dst_dir: str, uid: int, gid: int,
+                     component_id: str, config: dict, start_time: float) -> bool:
+        """
+        Копирование через cp (fallback, простой вариант)
+        """
+        total_files = sum(1 for _ in self._count_files_recursive(src_dir))
+        print(f"Всего файлов для копирования: {total_files}")
+        
+        self._update_progress(
+            stage_name=f"Копирование через cp",
+            stage_progress=0,
+            global_progress=0,
+            details=f"Найдено файлов: {total_files}"
+        )
+        
+        # Команда cp с оптимизацией
+        cp_cmd = ['cp', '-a', '-R', f'{src_dir}/.', dst_dir]
+        
+        process = None
+        monitor_thread = None
+        cancel_flag = threading.Event()
+        
+        try:
+            process = subprocess.Popen(
+                cp_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            # Мониторинг через отдельный поток
+            monitor_thread = threading.Thread(
+                target=self._monitor_cp_progress,
+                args=(process, dst_dir, total_files, start_time, cancel_flag),
+                daemon=True
+            )
+            monitor_thread.start()
+            
+            # Ждем завершения
+            while process.poll() is None:
+                if CANCEL_OPERATION or cancel_flag.is_set():
+                    print("Копирование прервано пользователем")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except:
+                        process.kill()
+                    return False
+                
+                time.sleep(0.1)
+            
+            return_code = process.returncode
+            if return_code != 0:
+                print(f"cp завершился с ошибкой (код: {return_code})", level='ERROR')
+                return False
+            
+            # Устанавливаем владельца и права
+            self._set_extracted_files_permissions(dst_dir)
+            
+            elapsed_time = time.time() - start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            print(f"Копирование завершено за {elapsed_minutes}м {elapsed_seconds}с")
+            self._update_progress(
+                stage_name=f"Копирование через cp",
+                stage_progress=0,
+                global_progress=100,
+                details=f"Успешно скопировано {total_files} файлов"
+            )
+            
+            return True
+            
+        except Exception as e:
+            if process and process.poll() is None:
+                process.terminate()
+            
+            print(f"Ошибка копирования через cp: {e}", level='ERROR')
+            traceback.print_exc()
+            return False
+    
+    def _monitor_rsync_progress(self, process, total_files, start_time, cancel_flag, component_id):
+        """
+        Мониторинг прогресса rsync в отдельном потоке
+        Парсит вывод rsync --progress и обновляет GUI
+        """
+        import re
+        
+        # Регулярное выражение для парсинга прогресса rsync
+        # Формат: "1,234,567  12%  123.45MB/s    0:00:12"
+        progress_pattern = re.compile(r'(\d+(?:,\d+)*)\s+(\d+)%\s+([\d.]+)(\w+)/s')
+        
+        last_progress = 0
+        
+        try:
+            for line in process.stdout:
+                if CANCEL_OPERATION:
+                    cancel_flag.set()
+                    break
+                
+                # Парсим прогресс из строки
+                match = progress_pattern.search(line)
+                if match:
+                    percent = int(match.group(2))
+                    speed_value = float(match.group(3))
+                    speed_unit = match.group(4)
+                    
+                    # Обновляем прогресс
+                    if percent != last_progress:
+                        elapsed_time = time.time() - start_time
+                        elapsed_minutes = int(elapsed_time // 60)
+                        elapsed_seconds = int(elapsed_time % 60)
+                        
+                        speed_str = f"{speed_value:.1f}{speed_unit}/s"
+                        
+                        self._update_progress(
+                            stage_name=f"Копирование через rsync",
+                            stage_progress=0,
+                            global_progress=percent,
+                            details=f"{percent}% | Скорость: {speed_str} | Время: {elapsed_minutes}м {elapsed_seconds}с"
+                        )
+                        
+                        last_progress = percent
+                        
+        except Exception as e:
+            print(f"Ошибка мониторинга rsync: {e}", level='DEBUG')
+    
+    def _monitor_tar_extract_progress(self, process, dst_dir: str, total_files: int,
+                                     start_time: float, cancel_flag: threading.Event, component_id: str):
+        """
+        Мониторинг прогресса распаковки tar в отдельном потоке
+        Подсчитывает файлы в целевой директории
+        """
+        try:
+            last_count = 0
+            last_update = start_time
+            
+            while process.poll() is None:
+                if CANCEL_OPERATION:
+                    cancel_flag.set()
+                    break
+                
+                current_time = time.time()
+                # Обновляем каждые 0.5 секунды
+                if current_time - last_update >= 0.5:
+                    # Подсчитываем файлы в целевой директории
+                    try:
+                        extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
+                        progress = min(95, int((extracted_files / total_files) * 100) if total_files > 0 else 0)
+                        
+                        # Обновляем только если прогресс изменился
+                        if extracted_files != last_count:
+                            elapsed_time = current_time - start_time
+                            elapsed_minutes = int(elapsed_time // 60)
+                            elapsed_seconds = int(elapsed_time % 60)
+                            
+                            self._update_progress(
+                                stage_name=f"Распаковка архива",
+                                stage_progress=0,
+                                global_progress=progress,
+                                details=f"{progress}% ({extracted_files}/{total_files}) | Время: {elapsed_minutes}м {elapsed_seconds}с"
+                            )
+                            
+                            last_count = extracted_files
+                    except:
+                        pass
+                    
+                    last_update = current_time
+                
+                time.sleep(0.1)
+            
+            # Финальное обновление
+            try:
+                extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
+                self._update_progress(
+                    stage_name=f"Распаковка архива",
+                    stage_progress=0,
+                    global_progress=100,
+                    details=f"Завершено ({extracted_files} файлов)"
+                )
+            except:
+                pass
+            
+        except Exception as e:
+            print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
+    
+    def _monitor_tar_copy_progress(self, process1, process2, dst_dir: str, total_files: int,
+                                  start_time: float, cancel_flag: threading.Event):
+        """
+        Мониторинг прогресса копирования через tar (приблизительный, через подсчет времени)
+        """
+        try:
+            start = time.time()
+            last_update = start
+            
+            while process2.poll() is None:
+                if CANCEL_OPERATION:
+                    cancel_flag.set()
+                    break
+                
+                current_time = time.time()
+                # Обновляем каждые 0.5 секунды
+                if current_time - last_update >= 0.5:
+                    elapsed = current_time - start
+                    # Приблизительный прогресс (на основе времени)
+                    # Можно улучшить, если tar поддерживает --checkpoint
+                    progress = min(95, int((elapsed / 60) * 100))  # Примерно
+                    
+                    elapsed_minutes = int(elapsed // 60)
+                    elapsed_seconds = int(elapsed % 60)
+                    
+                    self._update_progress(
+                        stage_name=f"Копирование через tar",
+                        stage_progress=0,
+                        global_progress=progress,
+                        details=f"Копирование... | Время: {elapsed_minutes}м {elapsed_seconds}с"
+                    )
+                    
+                    last_update = current_time
+                
+                time.sleep(0.1)
+            
+            # Финальное обновление
+            self._update_progress(
+                stage_name=f"Копирование через tar",
+                stage_progress=0,
+                global_progress=100,
+                details="Завершено"
+            )
+            
+        except Exception as e:
+            print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
+    
+    def _monitor_cp_progress(self, process, dst_dir: str, total_files: int,
+                            start_time: float, cancel_flag: threading.Event):
+        """
+        Мониторинг прогресса cp (подсчет скопированных файлов)
+        """
+        try:
+            while process.poll() is None:
+                if CANCEL_OPERATION:
+                    cancel_flag.set()
+                    break
+                
+                # Подсчитываем файлы в целевой директории
+                try:
+                    copied_files = sum(1 for _ in self._count_files_recursive(dst_dir))
+                    progress = min(95, int((copied_files / total_files) * 100) if total_files > 0 else 0)
+                    
+                    elapsed_time = time.time() - start_time
+                    elapsed_minutes = int(elapsed_time // 60)
+                    elapsed_seconds = int(elapsed_time % 60)
+                    
+                    self._update_progress(
+                        stage_name=f"Копирование через cp",
+                        stage_progress=0,
+                        global_progress=progress,
+                        details=f"{progress}% ({copied_files}/{total_files}) | Время: {elapsed_minutes}м {elapsed_seconds}с"
+                    )
+                except:
+                    pass
+                
+                time.sleep(0.5)  # Обновляем каждые 0.5 секунды
+            
+            # Финальное обновление
+            self._update_progress(
+                stage_name=f"Копирование через cp",
+                stage_progress=0,
+                global_progress=100,
+                details="Завершено"
+            )
+            
+        except Exception as e:
+            print(f"Ошибка мониторинга cp: {e}", level='DEBUG')
     
     def _install_wine_executable(self, component_id: str, config: dict) -> bool:
         """Установка исполняемого файла в Wine (для Wine приложений)"""
@@ -15615,7 +16479,7 @@ class AutomationGUI(object):
         if self.process_thread and self.process_thread.is_alive():
             print(f"[WARNING] Предыдущий процесс еще выполняется, ожидаем завершения...")
             return
-        
+            
         # Сбрасываем флаг отмены и устанавливаем UI состояние
         global CANCEL_OPERATION
         CANCEL_OPERATION = False

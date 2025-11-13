@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.121 (2025.11.12)
+# Версия: V2.5.122 (2025.11.13)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # Пути для Linux
@@ -396,36 +396,39 @@ copy_smb_file() {
     local error_output=$(smbclient //${server}/${share} -A "$credentials_file" -c "$smb_cmd" 2>&1)
     local copy_result=$?
     
-    # Логируем результат (всегда, даже если успешно)
+    # Логируем результат
     debug_log "smbclient result: code=$copy_result"
     if [ -n "$error_output" ]; then
         debug_log "smbclient output: $error_output"
     fi
+    
+    # КРИТИЧНО: Проверяем вывод на ошибки авторизации ПЕРЕД проверкой кода возврата
+    # smbclient может вернуть код 0 даже при ошибке авторизации
+    if echo "$error_output" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
+        debug_log "smbclient ОШИБКА АВТОРИЗАЦИИ в выводе (даже если код=$copy_result)"
+        return 2  # Ошибка авторизации
+    fi
+    
+    # Проверяем код возврата
     if [ $copy_result -eq 0 ]; then
-        debug_log "smbclient УСПЕХ: файл скопирован"
+        # Дополнительная проверка: файл должен существовать после копирования
+        if [ -f "$dest" ] && [ -s "$dest" ]; then
+            debug_log "smbclient УСПЕХ: файл скопирован и подтвержден"
+            return 0
+        else
+            debug_log "smbclient ПРЕДУПРЕЖДЕНИЕ: код=0, но файл не найден или пуст"
+            return 1  # Файл не скопировался
+        fi
     else
         debug_log "smbclient ОШИБКА: код=$copy_result"
-    fi
-    
-    if [ $copy_result -eq 0 ]; then
-        return 0
-    fi
-    
-    # Логируем ошибку для отладки (только если не авторизация)
-    if ! echo "$error_output" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
-        # Это не ошибка авторизации - логируем детали через log_message (если доступна)
+        # Логируем ошибку для отладки
         if command -v log_message >/dev/null 2>&1; then
             log_message "ОШИБКА копирования $file: $error_output"
         else
             echo "[ERROR] copy_smb_file failed for $file: $error_output" >&2
         fi
+        return 1
     fi
-    
-    if echo "$error_output" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
-        return 2
-    fi
-    
-    return 1
 }
 
 # ============================================================================
@@ -635,6 +638,203 @@ copy_file_from_selected_source() {
     esac
 }
 
+# Функция попытки копирования всех файлов из одного источника
+try_copy_all_files_from_source() {
+    local source="$1"
+    local source_type=$(echo "$source" | cut -d: -f1)
+    
+    log_message "Попытка копирования всех файлов из источника: $source_type"
+    
+    # Проверяем доступность источника
+    if ! check_source_availability "$source"; then
+        log_message "Источник $source_type недоступен"
+        return 1
+    fi
+    
+    # Устанавливаем источник
+    local old_selected_source="$SELECTED_SOURCE"
+    SELECTED_SOURCE="$source"
+    
+    # Для SMB: проверяем/создаем учетные данные
+    local credentials_file=""
+    local smb_user=""
+    if [ "$source_type" = "smb" ]; then
+        source_params=$(echo "$source" | cut -d: -f2-)
+        smb_user=$(echo "$source_params" | cut -d: -f4)
+        credentials_file="$HOME/.smbcredentials"
+        
+        if [ ! -f "$credentials_file" ]; then
+            log_message "Файл учетных данных не найден. Создаем..."
+            echo "username=${smb_user}" > "$credentials_file"
+            echo "password=" >> "$credentials_file"
+            chmod 600 "$credentials_file"
+            
+            # КРИТИЧНО: Разворачиваем окно терминала для запроса пароля
+            # (окно уже должно быть свернуто при запуске скрипта)
+            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
+                restore_terminal_window "$TERMINAL_PID"
+                # Небольшая задержка для гарантии что окно развернулось
+                sleep 0.2
+            fi
+            
+            log_message "Введите пароль для пользователя ${smb_user}:"
+            read -s password
+            echo "password=$password" > "$credentials_file"
+            echo "username=${smb_user}" >> "$credentials_file"
+            chmod 600 "$credentials_file"
+            log_message "Учетные данные сохранены"
+            
+            # КРИТИЧНО: Сворачиваем окно терминала после ввода пароля
+            if [ "$SKIP_TERMINAL" != "true" ]; then
+                minimize_terminal_window "$TERMINAL_PID"
+            fi
+        fi
+    fi
+    
+    # Статистика для этого источника
+    local copied=0
+    local skipped=0
+    local failed=0
+    local auth_error_occurred=false
+    local max_auth_attempts=2  # Максимум 2 попытки с запросом пароля
+    
+    # Цикл копирования файлов (может быть повторен при ошибке авторизации)
+    local auth_attempt=0
+    while [ $auth_attempt -lt $max_auth_attempts ]; do
+        auth_attempt=$((auth_attempt + 1))
+        
+        if [ $auth_attempt -gt 1 ]; then
+            log_message "Повторная попытка копирования после обновления пароля (попытка $auth_attempt из $max_auth_attempts)..."
+            # Сбрасываем счетчики для повторной попытки
+            copied=0
+            skipped=0
+            failed=0
+        fi
+        
+        auth_error_occurred=false
+        
+        # Пробуем скопировать все файлы
+        for file in "${FILES_TO_COPY[@]}"; do
+            local file_path="$LINUX_ASTRA_PATH/$file"
+            
+            log_message "Проверяем: $file"
+            
+            # Проверяем, нужно ли обновлять файл
+            local need_update=true
+            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
+                # Получаем информацию о файле для сравнения
+                local remote_info=$(get_file_info_from_selected_source "$file")
+                local info_result=$?
+                
+                # Если ошибка авторизации при получении информации - запоминаем и прерываем
+                if [ $info_result -eq 2 ]; then
+                    log_message "ОШИБКА: Ошибка авторизации при получении информации о файле $file"
+                    auth_error_occurred=true
+                    failed=$((failed + 1))
+                    break  # Прерываем цикл по файлам
+                fi
+                
+                if [ $info_result -eq 0 ] && [ -n "$remote_info" ]; then
+                    # Сравниваем размеры
+                    local local_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "0")
+                    if [ "$local_size" = "$remote_info" ]; then
+                        log_message "Пропущен: $file (не изменился - размер совпадает: $local_size байт)"
+                        skipped=$((skipped + 1))
+                        need_update=false
+                    fi
+                fi
+            fi
+            
+            # Если файл не нужно обновлять - пропускаем
+            if [ "$need_update" = false ]; then
+                continue
+            fi
+            
+            # Пробуем скопировать файл
+            copy_file_from_selected_source "$file" "$file_path"
+            local copy_result=$?
+            
+            if [ $copy_result -eq 0 ]; then
+                # Проверяем что файл действительно скопировался
+                if [ -f "$file_path" ] && [ -s "$file_path" ]; then
+                    log_message "Скопирован: $file"
+                    copied=$((copied + 1))
+                else
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
+                    failed=$((failed + 1))
+                fi
+            elif [ $copy_result -eq 2 ]; then
+                # Ошибка авторизации
+                log_message "ОШИБКА: Ошибка авторизации при копировании $file"
+                auth_error_occurred=true
+                failed=$((failed + 1))
+                break  # Прерываем цикл по файлам
+            else
+                # Файл не найден на этом источнике
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден на источнике $source_type"
+                failed=$((failed + 1))
+            fi
+        done
+        
+        # Если была ошибка авторизации и это первая попытка - запрашиваем пароль
+        if [ "$auth_error_occurred" = true ] && [ $auth_attempt -eq 1 ] && [ "$source_type" = "smb" ]; then
+            log_message "Ошибка авторизации обнаружена. Запрашиваем пароль заново..."
+            
+            # КРИТИЧНО: Разворачиваем окно терминала для запроса пароля
+            # (окно должно быть свернуто с момента запуска скрипта)
+            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
+                restore_terminal_window "$TERMINAL_PID"
+                # Небольшая задержка для гарантии что окно развернулось
+                sleep 0.2
+            fi
+            
+            log_message "Введите пароль для пользователя ${smb_user}:"
+            read -s password
+            echo "password=$password" > "$credentials_file"
+            echo "username=${smb_user}" >> "$credentials_file"
+            chmod 600 "$credentials_file"
+            log_message "Учетные данные обновлены"
+            
+            # КРИТИЧНО: Сворачиваем окно терминала после ввода пароля
+            if [ "$SKIP_TERMINAL" != "true" ]; then
+                minimize_terminal_window "$TERMINAL_PID"
+            fi
+            
+            # Продолжаем цикл - попробуем еще раз
+            continue
+        elif [ "$auth_error_occurred" = true ]; then
+            # Ошибка авторизации после запроса пароля или не SMB источник
+            log_message "ОШИБКА: Ошибка авторизации сохраняется. Источник $source_type недоступен."
+            break  # Выходим из цикла попыток
+        else
+            # Нет ошибки авторизации - выходим из цикла попыток
+            break
+        fi
+    done
+    
+    # Восстанавливаем старый источник
+    SELECTED_SOURCE="$old_selected_source"
+    
+    # Возвращаем результат
+    local total_processed=$((copied + skipped))
+    log_message "Статистика для источника $source_type: скопировано=$copied, пропущено=$skipped, не найдено=$failed из ${#FILES_TO_COPY[@]} файлов"
+    
+    # Если была ошибка авторизации после всех попыток - источник не подходит
+    if [ "$auth_error_occurred" = true ]; then
+        log_message "Источник $source_type не подходит: ошибка авторизации не устранена"
+        return 1
+    fi
+    
+    # Если все файлы обработаны (скопированы или пропущены) - источник подходит
+    if [ $total_processed -eq ${#FILES_TO_COPY[@]} ] && [ $failed -eq 0 ]; then
+        log_message "УСПЕХ: Все файлы найдены на источнике $source_type"
+        return 0
+    else
+        log_message "Источник $source_type не подходит: не все файлы найдены (найдено: $total_processed из ${#FILES_TO_COPY[@]})"
+        return 1
+    fi
+}
+
 # Определяем PID терминала ДО запуска с sudo
 TERMINAL_PID=""
 
@@ -690,6 +890,8 @@ fi
 # Проверяем права root
 if [ "$EUID" -ne 0 ]; then
     log_message "Запуск с правами root (передаем PID терминала через аргумент)..."
+    # НЕ разворачиваем окно перед sudo - если пароль не нужен, окно останется свернутым
+    # Если пароль нужен, sudo сам покажет запрос (и пользователь увидит его)
     sudo "$0" --terminal-pid "$TERMINAL_PID" "$@" 2>/dev/null
     exit $?
 fi
@@ -724,360 +926,192 @@ if [ ! -z "$SKIP_TERMINAL_AFTER_SUDO" ]; then
     SKIP_TERMINAL="$SKIP_TERMINAL_AFTER_SUDO"
 fi
 
-# ============================================================================
-# ОПРЕДЕЛЕНИЕ ДОСТУПНОГО ИСТОЧНИКА (один раз в начале)
-# ============================================================================
-log_message "Определение доступного источника файлов..."
+# КРИТИЧНО: Финальное сворачивание окна после всех проверок
+# Это гарантирует, что окно будет свернуто даже если оно не было свернуто ранее
+if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
+    minimize_terminal_window "$TERMINAL_PID"
+fi
 
-# Получаем источник (log_message теперь выводит в stderr, так что stdout чистый)
-SELECTED_SOURCE=$(determine_available_source)
-debug_log "SELECTED_SOURCE: $SELECTED_SOURCE"
+# ============================================================================
+# ПОПЫТКА КОПИРОВАНИЯ ВСЕХ ФАЙЛОВ ИЗ ИСТОЧНИКОВ (по очереди, все файлы из одного)
+# ============================================================================
+log_message "Поиск источника со всеми необходимыми файлами..."
 
+SELECTED_SOURCE=""
+BEST_SOURCE=""
+BEST_COUNT=0
+UPDATE_SUCCESSFUL=false
+COPIED_COUNT=0
+SKIPPED_COUNT=0
+
+# Пробуем каждый источник по очереди
+for source in "${SOURCES[@]}"; do
+    local source_type=$(echo "$source" | cut -d: -f1)
+    log_message "Проверка источника: $source_type"
+    
+    # Пробуем скопировать все файлы из этого источника
+    if try_copy_all_files_from_source "$source"; then
+        # Все файлы найдены на этом источнике - используем его
+        SELECTED_SOURCE="$source"
+        log_message "Используется источник: $source_type (все файлы найдены)"
+        UPDATE_SUCCESSFUL=true
+        break
+    else
+        # Не все файлы найдены - запоминаем лучший результат
+        # Подсчитываем сколько файлов было скопировано/пропущено
+        local old_selected_source="$SELECTED_SOURCE"
+        SELECTED_SOURCE="$source"
+        
+        local found_count=0
+        for file in "${FILES_TO_COPY[@]}"; do
+            local file_path="$LINUX_ASTRA_PATH/$file"
+            # Проверяем есть ли файл локально (после попытки копирования)
+            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
+                found_count=$((found_count + 1))
+            fi
+        done
+        
+        SELECTED_SOURCE="$old_selected_source"
+        
+        if [ $found_count -gt $BEST_COUNT ]; then
+            BEST_COUNT=$found_count
+            BEST_SOURCE="$source"
+            log_message "Источник $source_type: найдено $found_count из ${#FILES_TO_COPY[@]} файлов (лучший результат пока)"
+        fi
+    fi
+done
+
+# Если не нашли источник со всеми файлами - используем лучший
+if [ -z "$SELECTED_SOURCE" ] && [ -n "$BEST_SOURCE" ]; then
+    log_message "Не найден источник со всеми файлами. Используем лучший: $(echo "$BEST_SOURCE" | cut -d: -f1) ($BEST_COUNT из ${#FILES_TO_COPY[@]} файлов)"
+    SELECTED_SOURCE="$BEST_SOURCE"
+    # Пробуем еще раз скопировать из лучшего источника
+    try_copy_all_files_from_source "$BEST_SOURCE"
+fi
+
+# Если все источники недоступны или не подходят
 if [ -z "$SELECTED_SOURCE" ]; then
-    log_message "ОШИБКА: Все источники недоступны. Продолжаем без обновления."
-    log_message "Проверьте доступность сети и настройки источников в скрипте"
-    debug_log "ОШИБКА: Все источники недоступны"
+    log_message "ПРЕДУПРЕЖДЕНИЕ: Не удалось найти подходящий источник. Продолжаем с локальными файлами (если есть)"
     SERVER_AVAILABLE=false
 else
-    selected_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
-    log_message "Используется источник: $selected_type"
-    log_message "Выбранный источник: $SELECTED_SOURCE"
-    debug_log "Выбран источник: $selected_type, полный путь: $SELECTED_SOURCE"
     SERVER_AVAILABLE=true
+    selected_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
+    log_message "Выбранный источник: $selected_type"
 fi
+
 # ============================================================================
-
-# Инициализация флага успешности обновления
-UPDATE_SUCCESSFUL=false
-
-# Работа с обновлением только если источник доступен
+# ЭТАП ПРОВЕРКИ СКОПИРОВАННЫХ ФАЙЛОВ
+# ============================================================================
 if [ "$SERVER_AVAILABLE" = true ]; then
-    # Для SMB: создаем файл с учетными данными (если нужно)
-    if echo "$SELECTED_SOURCE" | grep -q "^smb:"; then
-        source_params=$(echo "$SELECTED_SOURCE" | cut -d: -f2-)
-        smb_user=$(echo "$source_params" | cut -d: -f4)
-        
-        log_message "Подключение к SMB с учетными данными ${smb_user}..."
-        
-        mkdir -p "$LINUX_ASTRA_PATH" 2>/dev/null
-        
-        CREDENTIALS_FILE="$HOME/.smbcredentials"
-        
-        if [ ! -f "$CREDENTIALS_FILE" ]; then
-            log_message "Файл учетных данных не найден. Создаем..."
-            echo "username=${smb_user}" > "$CREDENTIALS_FILE"
-            echo "password=" >> "$CREDENTIALS_FILE"
-            chmod 600 "$CREDENTIALS_FILE"
-            
-            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-                restore_terminal_window "$TERMINAL_PID"
-            fi
-            
-            log_message "Введите пароль для пользователя ${smb_user}:"
-            read -s password
-            echo "password=$password" > "$CREDENTIALS_FILE"
-            echo "username=${smb_user}" >> "$CREDENTIALS_FILE"
-            chmod 600 "$CREDENTIALS_FILE"
-            log_message "Учетные данные сохранены"
-            
-            if [ "$SKIP_TERMINAL" != "true" ]; then
-                minimize_terminal_window "$TERMINAL_PID"
-            fi
-        fi
-    fi
+    log_message "Проверка скопированных файлов..."
     
-    # Копируем файлы с обработкой ошибок авторизации и проверкой изменений
-    log_message "Проверка и копирование файлов из сети..."
+    log_message "Синхронизация файловой системы..."
+    sync
+    sleep 0.1
     
-    # Первая попытка копирования
-    COPY_SUCCESS=true
-    AUTH_ERROR=false
-    COPIED_COUNT=0
-    SKIPPED_COUNT=0
+    ALL_FILES_OK=true
+    MISSING_FILES=()
+    EMPTY_FILES=()
     
     for file in "${FILES_TO_COPY[@]}"; do
-        log_message "Проверяем: $file"
+        file_path="$LINUX_ASTRA_PATH/$file"
         
-        # Получаем информацию о файле (только из выбранного источника)
-        debug_log "Попытка получить информацию о файле: $file"
-        SMB_INFO=$(get_file_info_from_selected_source "$file")
-        SMB_INFO_RESULT=$?
-        debug_log "get_file_info_from_selected_source result: code=$SMB_INFO_RESULT, info=$SMB_INFO"
-        
-        # Детальное логирование результата получения информации
-        if [ $SMB_INFO_RESULT -eq 0 ]; then
-            if [ -n "$SMB_INFO" ]; then
-                # SMB_INFO содержит только размер
-                SMB_SIZE="$SMB_INFO"
-                log_message "Информация о файле получена: размер $SMB_SIZE байт"
-                debug_log "Информация о файле получена: размер=$SMB_SIZE, полная_инфо=$SMB_INFO"
-            else
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Информация о файле пустая"
-                debug_log "ПРЕДУПРЕЖДЕНИЕ: Информация о файле пустая"
-            fi
-        else
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Не удалось получить информацию о файле $file из источника"
-            debug_log "ПРЕДУПРЕЖДЕНИЕ: Не удалось получить информацию, код=$SMB_INFO_RESULT"
+        if [ ! -f "$file_path" ]; then
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
+            MISSING_FILES+=("$file")
+            ALL_FILES_OK=false
+            continue
         fi
         
-        # Проверяем нужно ли копировать (только если информация доступна)
-        # Если информация недоступна - просто пытаемся скопировать (как в старой версии)
-        if [ $SMB_INFO_RESULT -eq 0 ] && [ -n "$SMB_INFO" ]; then
-            # Информация доступна - проверяем, нужно ли копировать (оптимизация)
-            if files_are_same "$file" "$SMB_INFO"; then
-                log_message "Пропущен: $file (не изменился - размер совпадает)"
-                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-                continue
-            else
-                # Файл изменился - копируем
-                SMB_SIZE="$SMB_INFO"
-                log_message "Копируем: $file (изменен, размер: $SMB_SIZE байт)"
-            fi
-        else
-            # Информация недоступна - просто пытаемся скопировать (как в старой версии)
-            # Проверка информации - это только оптимизация, не обязательное условие
-            log_message "Копируем: $file (проверка информации недоступна, копируем напрямую)"
+        if [ ! -s "$file_path" ]; then
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file пустой (размер 0 байт)"
+            EMPTY_FILES+=("$file")
+            ALL_FILES_OK=false
+            continue
         fi
         
-        # Копируем файл (только из выбранного источника)
-        log_message "Попытка копирования: $file -> $LINUX_ASTRA_PATH/$file"
-        debug_log "Начало копирования: file=$file, dest=$LINUX_ASTRA_PATH/$file"
-        debug_log "Локальный файл существует: $([ -f "$LINUX_ASTRA_PATH/$file" ] && echo "да" || echo "нет")"
-        copy_file_from_selected_source "$file" "$LINUX_ASTRA_PATH/$file"
-        COPY_RESULT=$?
-        debug_log "copy_file_from_selected_source завершена: код=$COPY_RESULT"
-        
-        if [ $COPY_RESULT -eq 0 ]; then
-            log_message "Скопирован: $file"
-            debug_log "УСПЕХ: Файл $file скопирован успешно"
-            # Проверяем, что файл действительно скопировался
-            if [ -f "$LINUX_ASTRA_PATH/$file" ]; then
-                local file_size=$(stat -f%z "$LINUX_ASTRA_PATH/$file" 2>/dev/null || stat -c%s "$LINUX_ASTRA_PATH/$file" 2>/dev/null || echo "unknown")
-                debug_log "Файл подтвержден: размер=$file_size байт"
-            else
-                debug_log "ОШИБКА: Файл не найден после копирования!"
-            fi
-            COPIED_COUNT=$((COPIED_COUNT + 1))
-        elif [ $COPY_RESULT -eq 2 ]; then
-            # Ошибка авторизации SMB
-            log_message "ОШИБКА: Ошибка авторизации при копировании $file"
-            debug_log "ОШИБКА АВТОРИЗАЦИИ: код=$COPY_RESULT, файл=$file"
-            AUTH_ERROR=true
-            COPY_SUCCESS=false
-            break
-        else
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден или недоступен. Код ошибки: $COPY_RESULT"
-            debug_log "ОШИБКА КОПИРОВАНИЯ: код=$COPY_RESULT, файл=$file"
-            # Пробуем вывести детали ошибки, если доступны
-            if [ -n "$SELECTED_SOURCE" ]; then
-                source_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
-                log_message "Источник: $source_type, путь: $(echo "$SELECTED_SOURCE" | cut -d: -f2- | cut -d: -f3)"
-                debug_log "Источник: $source_type, полный=$SELECTED_SOURCE"
-            fi
+        if [ ! -r "$file_path" ]; then
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file недоступен для чтения"
+            ALL_FILES_OK=false
+            continue
         fi
+        
+        file_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "unknown")
+        log_message "Проверен: $file (размер: $file_size байт)"
     done
     
-    # Логируем статистику первой попытки
-    log_message "Статистика: скопировано $COPIED_COUNT, пропущено $SKIPPED_COUNT из ${#FILES_TO_COPY[@]} файлов"
-    
-    # Если первая попытка неудачна из-за ошибки авторизации - запрашиваем пароль заново
-    if [ "$AUTH_ERROR" = true ]; then
-        log_message "Ошибка авторизации. Запрашиваем пароль заново..."
-        
-        if echo "$SELECTED_SOURCE" | grep -q "^smb:"; then
-            source_params=$(echo "$SELECTED_SOURCE" | cut -d: -f2-)
-            smb_user=$(echo "$source_params" | cut -d: -f4)
-            
-            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-                restore_terminal_window "$TERMINAL_PID"
-            fi
-            
-            log_message "Введите пароль для пользователя ${smb_user}:"
-            read -s password
-            echo "password=$password" > "$CREDENTIALS_FILE"
-            echo "username=${smb_user}" >> "$CREDENTIALS_FILE"
-            chmod 600 "$CREDENTIALS_FILE"
-            log_message "Учетные данные обновлены"
-            
-            if [ "$SKIP_TERMINAL" != "true" ]; then
-                minimize_terminal_window "$TERMINAL_PID"
-            fi
-            
-            # Вторая попытка копирования
-            COPY_SUCCESS=true
-            AUTH_ERROR=false
-            SKIPPED_COUNT=0
-            
-            for file in "${FILES_TO_COPY[@]}"; do
-                log_message "Проверяем: $file (повторная попытка)"
-                
-                SMB_INFO=$(get_file_info_from_selected_source "$file")
-                SMB_INFO_RESULT=$?
-                
-                if [ $SMB_INFO_RESULT -eq 0 ] && files_are_same "$file" "$SMB_INFO"; then
-                    log_message "Пропущен: $file (не изменился - размер совпадает)"
-                    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-                    continue
-                fi
-                
-                if [ $SMB_INFO_RESULT -eq 0 ]; then
-                    SMB_SIZE="$SMB_INFO"
-                    log_message "Копируем: $file (повторная попытка, изменен или новый, размер: $SMB_SIZE байт)"
-                else
-                    log_message "Копируем: $file (повторная попытка, информация недоступна)"
-                fi
-                
-                copy_file_from_selected_source "$file" "$LINUX_ASTRA_PATH/$file"
-                COPY_RESULT=$?
-                
-                if [ $COPY_RESULT -eq 0 ]; then
-                    log_message "Скопирован: $file"
-                    COPIED_COUNT=$((COPIED_COUNT + 1))
-                elif [ $COPY_RESULT -eq 2 ]; then
-                    log_message "ОШИБКА: Ошибка авторизации при копировании $file (повторная попытка)"
-                    AUTH_ERROR=true
-                    COPY_SUCCESS=false
-                else
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден или недоступен. Пропускаем."
-                fi
-            done
-            
-            log_message "Статистика (повторная попытка): скопировано $COPIED_COUNT, пропущено $SKIPPED_COUNT"
-        fi
-    fi
-    
-    # ============================================================================
-    # ЭТАП ПРОВЕРКИ СКОПИРОВАННЫХ ФАЙЛОВ
-    # ============================================================================
-    if [ $COPIED_COUNT -gt 0 ]; then
-        log_message "Проверка скопированных файлов..."
-        
-        log_message "Синхронизация файловой системы..."
+    if [ "$ALL_FILES_OK" = false ]; then
+        log_message "Обнаружены проблемы с файлами. Повторная синхронизация..."
         sync
-        sleep 0.1  # Уменьшена задержка для ускорения
+        sleep 0.2
         
-        ALL_FILES_OK=true
-        MISSING_FILES=()
-        EMPTY_FILES=()
-        
-        for file in "${FILES_TO_COPY[@]}"; do
+        for file in "${MISSING_FILES[@]}"; do
             file_path="$LINUX_ASTRA_PATH/$file"
-            
-            if [ ! -f "$file_path" ]; then
-                log_message "ОШИБКА: Файл $file не найден после копирования"
-                MISSING_FILES+=("$file")
-                ALL_FILES_OK=false
-                continue
-            fi
-            
-            if [ ! -s "$file_path" ]; then
-                log_message "ОШИБКА: Файл $file пустой (размер 0 байт)"
-                EMPTY_FILES+=("$file")
-                ALL_FILES_OK=false
-                continue
-            fi
-            
-            if [ ! -r "$file_path" ]; then
-                log_message "ОШИБКА: Файл $file недоступен для чтения"
-                ALL_FILES_OK=false
-                continue
-            fi
-            
-            file_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "unknown")
-            log_message "Проверен: $file (размер: $file_size байт)"
-        done
-        
-        if [ "$ALL_FILES_OK" = false ]; then
-            log_message "Обнаружены проблемы с файлами. Повторная синхронизация..."
-            sync
-            sleep 0.2  # Уменьшена задержка для ускорения
-            
-            for file in "${MISSING_FILES[@]}"; do
-                file_path="$LINUX_ASTRA_PATH/$file"
-                if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                    log_message "Файл $file теперь доступен"
-                    ALL_FILES_OK=true
-                fi
-            done
-            
-            for file in "${EMPTY_FILES[@]}"; do
-                file_path="$LINUX_ASTRA_PATH/$file"
-                if [ -s "$file_path" ]; then
-                    log_message "Файл $file больше не пустой"
-                    ALL_FILES_OK=true
-                fi
-            done
-        fi
-        
-        CRITICAL_FILES=("astra_install.sh" "astra_automation.py")
-        CRITICAL_OK=true
-        
-        for file in "${CRITICAL_FILES[@]}"; do
-            file_path="$LINUX_ASTRA_PATH/$file"
-            if [ ! -f "$file_path" ] || [ ! -s "$file_path" ]; then
-                log_message "КРИТИЧЕСКАЯ ОШИБКА: Критический файл $file недоступен или пуст"
-                CRITICAL_OK=false
+            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
+                log_message "Файл $file теперь доступен"
+                ALL_FILES_OK=true
             fi
         done
         
-        if [ "$CRITICAL_OK" = false ]; then
-            log_message "ОШИБКА: Критические файлы не готовы. Запуск невозможен."
-        fi
-        
-        if [ "$ALL_FILES_OK" = true ]; then
-            log_message "Все файлы успешно проверены и готовы к использованию"
-        else
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые файлы имеют проблемы, но продолжаем работу"
-        fi
-        
-        log_message "Проверка файлов завершена"
-        
-        # КРИТИЧНО: Устанавливаем права на выполнение сразу после проверки файлов
-        # Это гарантирует, что все скопированные файлы будут исполняемыми
-        log_message "Установка прав на выполнение для скопированных файлов..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
-        chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
-        # Для Python файла права на выполнение не обязательны, но установим для совместимости
-        chmod +x "$LINUX_ASTRA_PATH/astra_automation.py" 2>/dev/null
-        log_message "Права на выполнение установлены"
+        for file in "${EMPTY_FILES[@]}"; do
+            file_path="$LINUX_ASTRA_PATH/$file"
+            if [ -s "$file_path" ]; then
+                log_message "Файл $file больше не пустой"
+                ALL_FILES_OK=true
+            fi
+        done
     fi
-    # ============================================================================
     
-    # Обработка результата обновления
-    if [ $COPIED_COUNT -gt 0 ]; then
-        log_message "Скопировано файлов: $COPIED_COUNT из ${#FILES_TO_COPY[@]}"
-        if [ "$COPY_SUCCESS" = true ] && [ $COPIED_COUNT -eq ${#FILES_TO_COPY[@]} ]; then
-            log_message "Все файлы успешно скопированы!"
-        else
-            log_message "Некоторые файлы не были скопированы, но продолжаем работу."
-        fi
-        UPDATE_SUCCESSFUL=true
-        
-        # КРИТИЧНО: Дополнительная синхронизация после копирования всех файлов
-        # Это гарантирует, что все данные записаны на диск перед запуском
-        log_message "Финальная синхронизация файловой системы перед запуском..."
-        sync
-        sleep 0.2  # Уменьшена задержка для ускорения (достаточно для завершения операций записи)
-        
-        if [ "$SKIP_TERMINAL" != "true" ]; then
-            minimize_terminal_window "$TERMINAL_PID"
-        fi
-    elif [ $SKIPPED_COUNT -gt 0 ]; then
-        # Все файлы пропущены - это нормально, значит они актуальны и не требуют обновления
-        # Не требуется синхронизация, так как файлы не копировались
-        log_message "Все файлы актуальны (не требуют обновления). Пропущено: $SKIPPED_COUNT из ${#FILES_TO_COPY[@]}"
-        UPDATE_SUCCESSFUL=true
+    # КРИТИЧНО: Устанавливаем права на выполнение сразу после проверки файлов
+    log_message "Установка прав на выполнение для скопированных файлов..."
+    chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
+    chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
+    chmod +x "$LINUX_ASTRA_PATH/astra_automation.py" 2>/dev/null
+    log_message "Права на выполнение установлены"
+    
+    if [ "$ALL_FILES_OK" = true ]; then
+        log_message "Все файлы успешно проверены и готовы к использованию"
     else
-        # Ничего не скопировано и ничего не пропущено - значит была ошибка
-        if [ "$AUTH_ERROR" = true ]; then
-            log_message "Не удалось обновить файлы из-за ошибки авторизации. Продолжаем без обновления."
-        else
-            log_message "Не удалось обновить файлы. Продолжаем без обновления."
-        fi
-        UPDATE_SUCCESSFUL=false
+        log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые файлы имеют проблемы, но продолжаем работу"
     fi
+    
+    log_message "Проверка файлов завершена"
+    
+    # Финальная синхронизация после копирования всех файлов
+    log_message "Финальная синхронизация файловой системы перед запуском..."
+    sync
+    sleep 0.2
+    
+    if [ "$SKIP_TERMINAL" != "true" ]; then
+        minimize_terminal_window "$TERMINAL_PID"
+    fi
+fi
+
+# Обработка результата обновления
+if [ "$UPDATE_SUCCESSFUL" = true ]; then
+    log_message "Обновление завершено успешно"
 else
-    log_message "Обновление пропущено (все источники недоступны)"
+    log_message "ПРЕДУПРЕЖДЕНИЕ: Обновление не выполнено, но продолжаем с локальными файлами (если есть)"
+fi
+
+# Проверяем наличие критических файлов (локально или после копирования)
+CRITICAL_FILES=("astra_install.sh" "astra_automation.py")
+CRITICAL_OK=true
+MISSING_CRITICAL=()
+
+for file in "${CRITICAL_FILES[@]}"; do
+    file_path="$LINUX_ASTRA_PATH/$file"
+    if [ ! -f "$file_path" ] || [ ! -s "$file_path" ]; then
+        log_message "КРИТИЧЕСКАЯ ОШИБКА: Критический файл $file недоступен или пуст"
+        CRITICAL_OK=false
+        MISSING_CRITICAL+=("$file")
+    fi
+done
+
+if [ "$CRITICAL_OK" = false ]; then
+    log_message "ОШИБКА: Критические файлы не готовы. Запуск невозможен."
+    echo "Ошибка Обновления"
+    exit 1
 fi
 
 # Очищаем логи (ОТКЛЮЧЕНО для сохранения диагностики)

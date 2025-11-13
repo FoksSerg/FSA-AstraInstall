@@ -3,20 +3,22 @@
 """
 Инструмент управления пакетами для FSA-AstraInstall
 GUI инструмент для формирования архивов и структуры компонентов
-Версия: V2.5.121 (2025.11.11)
+Версия: V2.5.122 (2025.11.13)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.121 (2025.11.11)"
+APP_VERSION = "V2.5.122 (2025.11.13)"
 
 import os
 import sys
 import shutil
 import tarfile
 import threading
+import subprocess
+import time
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+from tkinter import ttk, messagebox, filedialog, scrolledtext, simpledialog
 from pathlib import Path
 import json
 
@@ -107,6 +109,14 @@ class PackageManagerGUI:
         # Пользовательские источники для элементов структуры архива
         # Формат: {group_id: {item_name: path}}
         self.custom_sources = {}
+        
+        # Исключенные элементы из архивации
+        # Формат: {group_id: set(item_names)}
+        self.excluded_items = {}
+        
+        # Дополнительные элементы для архивации (из других мест)
+        # Формат: {group_id: [(item_path, arcname), ...]}
+        self.additional_items = {}
         
         # Текущий выбранный компонент для архивации
         self.current_group_id = None
@@ -318,13 +328,29 @@ class PackageManagerGUI:
         
         self.archive_structure_tree.column('#0', width=200)
         self.archive_structure_tree.column('source', width=300)
-        self.archive_structure_tree.column('status', width=100)
+        self.archive_structure_tree.column('status', width=150)
+        
+        # Кнопки управления элементами структуры
+        structure_buttons = ttk.Frame(right_frame)
+        structure_buttons.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(structure_buttons, text="Исключить выбранные", 
+                  command=self.exclude_selected_items).pack(side=tk.LEFT, padx=2)
+        ttk.Button(structure_buttons, text="Включить выбранные", 
+                  command=self.include_selected_items).pack(side=tk.LEFT, padx=2)
+        ttk.Button(structure_buttons, text="Включить все", 
+                  command=self.include_all_items).pack(side=tk.LEFT, padx=2)
+        ttk.Button(structure_buttons, text="Добавить элемент", 
+                  command=self.add_structure_item).pack(side=tk.LEFT, padx=2)
         
         # Привязка события выбора
         self.archive_listbox.bind('<<ListboxSelect>>', self.on_archive_select)
         
         # Привязка двойного клика для указания источника
         self.archive_structure_tree.bind('<Double-1>', self.on_structure_item_double_click)
+        
+        # Привязка правого клика для контекстного меню
+        self.archive_structure_tree.bind('<Button-3>', self.on_structure_item_right_click)
     
     def create_components_tab(self):
         """Создание вкладки компонентов"""
@@ -400,7 +426,8 @@ class PackageManagerGUI:
                     total += entry.stat().st_size
                 elif entry.is_dir():
                     total += self.get_dir_size(entry.path)
-        except:
+        except (OSError, PermissionError):
+            # Игнорируем ошибки доступа к файлам/папкам
             pass
         return total
     
@@ -649,15 +676,22 @@ class PackageManagerGUI:
         self.update_archive_structure_tree(group_id, group_info)
     
     def update_archive_structure_tree(self, group_id, group_info):
-        """Обновить дерево структуры архива"""
+        """Обновить дерево структуры архива с предпросмотром содержимого"""
         # Очищаем дерево
         for item in self.archive_structure_tree.get_children():
             self.archive_structure_tree.delete(item)
         
-        # Получаем пользовательские источники для этой группы
+        # Получаем пользовательские источники и исключенные элементы для этой группы
         custom_sources = self.custom_sources.get(group_id, {})
+        excluded = self.excluded_items.get(group_id, set())
+        additional = self.additional_items.get(group_id, [])
         
-        # Если есть source_dir - это корневая папка архива
+        total_size = 0
+        total_items = 0
+        excluded_size = 0
+        excluded_count = 0
+        
+        # Если есть source_dir - показываем содержимое папки (без головной папки)
         if 'source_dir' in group_info:
             source_dir_name = group_info['source_dir']
             source_path = os.path.join(self.script_dir, source_dir_name)
@@ -667,17 +701,53 @@ class PackageManagerGUI:
             if custom_source:
                 source_path = custom_source
             
-            if os.path.exists(source_path):
-                status = "✓ Найден"
-                source_display = source_path
+            if os.path.exists(source_path) and os.path.isdir(source_path):
+                # Показываем содержимое папки (как оно будет в архиве - без папки CountPack)
+                for item in sorted(os.listdir(source_path)):
+                    item_path = os.path.join(source_path, item)
+                    
+                    # Определяем тип и размер
+                    if os.path.isdir(item_path):
+                        item_type = "Папка"
+                        item_size = self.get_dir_size(item_path)
+                    else:
+                        item_type = "Файл"
+                        item_size = os.path.getsize(item_path)
+                    
+                    # Имя в архиве - просто item (без папки CountPack)
+                    name_in_archive = item
+                    
+                    # Проверяем, исключен ли элемент
+                    is_excluded = name_in_archive in excluded
+                    
+                    if is_excluded:
+                        excluded_size += item_size
+                        excluded_count += 1
+                        status = f"✗ Исключено ({self.format_size(item_size)})"
+                        tags = (item_type.lower(), 'excluded')
+                    else:
+                        total_size += item_size
+                        total_items += 1
+                        status = f"✓ Найден ({self.format_size(item_size)})"
+                        tags = (item_type.lower(),)
+                    
+                    source_display = item_path
+                    
+                    item_id = self.archive_structure_tree.insert('', 'end',
+                                                                 text=f"[{item_type}] {name_in_archive}",
+                                                                 values=(source_display, status),
+                                                                 tags=tags)
+                    
+                    # Сохраняем имя элемента в данных элемента для последующего использования
+                    self.archive_structure_tree.set(item_id, 'item_name', name_in_archive)
             else:
+                # Папка не найдена
                 status = "⚠ Не найден"
                 source_display = source_path if source_path else "[Не указан]"
-            
-            item_id = self.archive_structure_tree.insert('', 'end', 
-                                                         text=f"[Папка] {source_dir_name}",
-                                                         values=(source_display, status),
-                                                         tags=('source_dir',))
+                self.archive_structure_tree.insert('', 'end',
+                                                     text=f"[Папка] {source_dir_name}",
+                                                     values=(source_display, status),
+                                                     tags=('source_dir',))
         else:
             # Добавляем файлы
             if 'files' in group_info:
@@ -732,11 +802,272 @@ class PackageManagerGUI:
                                                                  text=f"[Папка] {dir_name}",
                                                                  values=(source_display, status),
                                                                  tags=('dir',))
+                    
+                    if os.path.exists(source_path) and os.path.isdir(source_path):
+                        dir_size = self.get_dir_size(source_path)
+                        total_size += dir_size
+                        total_items += 1
+                    elif os.path.exists(source_path) and os.path.isfile(source_path):
+                        file_size = os.path.getsize(source_path)
+                        total_size += file_size
+                        total_items += 1
+        
+        # Добавляем дополнительные элементы
+        for item_path, arcname in additional:
+            if os.path.exists(item_path):
+                if os.path.isdir(item_path):
+                    item_type = "Папка"
+                    item_size = self.get_dir_size(item_path)
+                else:
+                    item_type = "Файл"
+                    item_size = os.path.getsize(item_path)
+                
+                total_size += item_size
+                total_items += 1
+                
+                status = f"✓ Дополнительный ({self.format_size(item_size)})"
+                source_display = item_path
+                
+                item_id = self.archive_structure_tree.insert('', 'end',
+                                                             text=f"[{item_type}] {arcname}",
+                                                             values=(source_display, status),
+                                                             tags=(item_type.lower(), 'additional'))
+                self.archive_structure_tree.set(item_id, 'item_name', arcname)
+        
+        # Добавляем итоговую строку с общей информацией
+        total_display = f"Всего элементов: {total_items}"
+        if excluded_count > 0:
+            total_display += f" (исключено: {excluded_count})"
+        
+        size_display = f"Общий размер: {self.format_size(total_size)}"
+        if excluded_size > 0:
+            size_display += f" (исключено: {self.format_size(excluded_size)})"
+        
+        if total_items > 0 or excluded_count > 0:
+            self.archive_structure_tree.insert('', 'end',
+                                                 text="[ИТОГО]",
+                                                 values=(total_display, size_display),
+                                                 tags=('total',))
         
         # Настраиваем цвета для статусов
         self.archive_structure_tree.tag_configure('source_dir', foreground='blue')
+        self.archive_structure_tree.tag_configure('total', foreground='green', font=('TkDefaultFont', 9, 'bold'))
+        self.archive_structure_tree.tag_configure('папка', foreground='blue')
+        self.archive_structure_tree.tag_configure('файл', foreground='black')
+        self.archive_structure_tree.tag_configure('excluded', foreground='gray', 
+                                                  font=('TkDefaultFont', 9, 'strikethrough'))
+        self.archive_structure_tree.tag_configure('additional', foreground='green')
     
-    def on_structure_item_double_click(self, event):
+    def exclude_selected_items(self):
+        """Исключить выбранные элементы из архивации"""
+        if not self.current_group_id:
+            messagebox.showwarning("Предупреждение", "Выберите компонент для управления элементами")
+            return
+        
+        selection = self.archive_structure_tree.selection()
+        if not selection:
+            messagebox.showinfo("Информация", "Выберите элементы для исключения")
+            return
+        
+        # Инициализируем множество исключенных элементов для этой группы
+        if self.current_group_id not in self.excluded_items:
+            self.excluded_items[self.current_group_id] = set()
+        
+        excluded_count = 0
+        for item_id in selection:
+            item_tags = self.archive_structure_tree.item(item_id, 'tags')
+            # Пропускаем итоговую строку
+            if 'total' in item_tags:
+                continue
+            
+            # Получаем имя элемента
+            item_name = self.archive_structure_tree.set(item_id, 'item_name')
+            if not item_name:
+                # Пытаемся извлечь из текста
+                item_text = self.archive_structure_tree.item(item_id, 'text')
+                if ']' in item_text:
+                    item_name = item_text.split(']')[1].strip()
+                else:
+                    continue
+            
+            # Добавляем в исключенные
+            self.excluded_items[self.current_group_id].add(item_name)
+            excluded_count += 1
+        
+        if excluded_count > 0:
+            # Обновляем дерево
+            group_info = self.package_groups.get(self.current_group_id, {})
+            self.update_archive_structure_tree(self.current_group_id, group_info)
+            messagebox.showinfo("Успех", f"Исключено элементов: {excluded_count}")
+    
+    def include_selected_items(self):
+        """Включить выбранные элементы в архивацию"""
+        if not self.current_group_id:
+            messagebox.showwarning("Предупреждение", "Выберите компонент для управления элементами")
+            return
+        
+        selection = self.archive_structure_tree.selection()
+        if not selection:
+            messagebox.showinfo("Информация", "Выберите элементы для включения")
+            return
+        
+        if self.current_group_id not in self.excluded_items:
+            return
+        
+        included_count = 0
+        for item_id in selection:
+            item_tags = self.archive_structure_tree.item(item_id, 'tags')
+            # Пропускаем итоговую строку
+            if 'total' in item_tags:
+                continue
+            
+            # Получаем имя элемента
+            item_name = self.archive_structure_tree.set(item_id, 'item_name')
+            if not item_name:
+                # Пытаемся извлечь из текста
+                item_text = self.archive_structure_tree.item(item_id, 'text')
+                if ']' in item_text:
+                    item_name = item_text.split(']')[1].strip()
+                else:
+                    continue
+            
+            # Удаляем из исключенных
+            if item_name in self.excluded_items[self.current_group_id]:
+                self.excluded_items[self.current_group_id].remove(item_name)
+                included_count += 1
+        
+        if included_count > 0:
+            # Обновляем дерево
+            group_info = self.package_groups.get(self.current_group_id, {})
+            self.update_archive_structure_tree(self.current_group_id, group_info)
+            messagebox.showinfo("Успех", f"Включено элементов: {included_count}")
+    
+    def include_all_items(self):
+        """Включить все элементы в архивацию"""
+        if not self.current_group_id:
+            messagebox.showwarning("Предупреждение", "Выберите компонент для управления элементами")
+            return
+        
+        if self.current_group_id in self.excluded_items:
+            excluded_count = len(self.excluded_items[self.current_group_id])
+            self.excluded_items[self.current_group_id].clear()
+            
+            # Обновляем дерево
+            group_info = self.package_groups.get(self.current_group_id, {})
+            self.update_archive_structure_tree(self.current_group_id, group_info)
+            messagebox.showinfo("Успех", f"Включено всех элементов: {excluded_count}")
+        else:
+            messagebox.showinfo("Информация", "Нет исключенных элементов")
+    
+    def add_structure_item(self):
+        """Добавить элемент из другого места"""
+        if not self.current_group_id:
+            messagebox.showwarning("Предупреждение", "Выберите компонент для добавления элементов")
+            return
+        
+        # Спрашиваем, что добавляем - файл или папку
+        choice = messagebox.askyesnocancel("Выбор типа", 
+                                          "Добавить файл?\n\nДа - файл\nНет - папка\nОтмена - отменить")
+        if choice is None:
+            return
+        
+        if choice:
+            # Выбираем файл
+            file_path = filedialog.askopenfilename(
+                title="Выберите файл для добавления в архив"
+            )
+            if not file_path:
+                return
+            
+            item_path = file_path
+            item_name = os.path.basename(file_path)
+        else:
+            # Выбираем папку
+            dir_path = filedialog.askdirectory(
+                title="Выберите папку для добавления в архив"
+            )
+            if not dir_path:
+                return
+            
+            item_path = dir_path
+            item_name = os.path.basename(dir_path)
+        
+        # Спрашиваем имя в архиве
+        arcname = simpledialog.askstring(
+            "Имя в архиве",
+            f"Введите имя элемента в архиве (по умолчанию: {item_name}):",
+            initialvalue=item_name
+        )
+        
+        if not arcname:
+            arcname = item_name
+        
+        # Инициализируем список дополнительных элементов для этой группы
+        if self.current_group_id not in self.additional_items:
+            self.additional_items[self.current_group_id] = []
+        
+        # Добавляем элемент
+        self.additional_items[self.current_group_id].append((item_path, arcname))
+        
+        # Обновляем дерево
+        group_info = self.package_groups.get(self.current_group_id, {})
+        self.update_archive_structure_tree(self.current_group_id, group_info)
+        messagebox.showinfo("Успех", f"Добавлен элемент: {arcname}")
+    
+    def on_structure_item_right_click(self, event):
+        """Обработчик правого клика для контекстного меню"""
+        if not self.current_group_id:
+            return
+        
+        item_id = self.archive_structure_tree.identify_row(event.y)
+        if not item_id:
+            return
+        
+        # Выделяем элемент
+        self.archive_structure_tree.selection_set(item_id)
+        
+        # Создаем контекстное меню
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        item_tags = self.archive_structure_tree.item(item_id, 'tags')
+        if 'excluded' in item_tags:
+            menu.add_command(label="Включить в архив", command=self.include_selected_items)
+        elif 'total' not in item_tags:
+            menu.add_command(label="Исключить из архива", command=self.exclude_selected_items)
+        
+        if 'additional' in item_tags:
+            menu.add_command(label="Удалить дополнительный элемент", 
+                           command=lambda: self.remove_additional_item(item_id))
+        
+        menu.add_separator()
+        menu.add_command(label="Изменить источник", command=self.on_structure_item_double_click)
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+    
+    def remove_additional_item(self, item_id):
+        """Удалить дополнительный элемент"""
+        if not self.current_group_id:
+            return
+        
+        item_name = self.archive_structure_tree.set(item_id, 'item_name')
+        if not item_name:
+            return
+        
+        if self.current_group_id in self.additional_items:
+            # Удаляем элемент из списка
+            self.additional_items[self.current_group_id] = [
+                (path, name) for path, name in self.additional_items[self.current_group_id]
+                if name != item_name
+            ]
+            
+            # Обновляем дерево
+            group_info = self.package_groups.get(self.current_group_id, {})
+            self.update_archive_structure_tree(self.current_group_id, group_info)
+    
+    def on_structure_item_double_click(self, event=None):
         """Обработчик двойного клика по элементу структуры для указания источника"""
         if not self.current_group_id:
             return
@@ -851,7 +1182,7 @@ class PackageManagerGUI:
             self.custom_listbox.insert(tk.END, display_name)
     
     def archive_groups(self, group_ids, custom_files=None):
-        """Архивировать указанные группы"""
+        """Архивировать указанные группы (быстро через системный tar с прогрессом)"""
         if custom_files is None:
             custom_files = []
         
@@ -863,104 +1194,109 @@ class PackageManagerGUI:
                 continue
             
             try:
-                # Создаем папку группы если её нет
-                folder_name = self.get_group_folder_name(group_id)
-                group_path = os.path.join(self.astrapack_dir, folder_name)
-                os.makedirs(group_path, exist_ok=True)
-                
                 # Определяем имя архива
                 if 'archive_name' in group_info:
                     archive_name = group_info['archive_name']
                 else:
                     archive_name = f"{group_id}_packages.tar.gz"
                 
-                archive_path = os.path.join(group_path, archive_name)
+                # Определяем расположение архива (с учетом пользовательских настроек)
+                folder_name = self.get_group_folder_name(group_id)
+                group_path = os.path.join(self.astrapack_dir, folder_name)
                 
-                # Создаем архив
-                with tarfile.open(archive_path, 'w:gz') as tar:
-                    # Получаем пользовательские источники для этой группы
-                    custom_sources = self.custom_sources.get(group_id, {})
-                    
-                    # Если есть source_dir - архивируем его
-                    if 'source_dir' in group_info:
-                        source_dir_name = group_info['source_dir']
-                        # Проверяем пользовательский источник
-                        if source_dir_name in custom_sources:
-                            source_path = custom_sources[source_dir_name]
+                # Проверяем пользовательское расположение
+                if hasattr(self, 'custom_archive_locations') and group_id in self.custom_archive_locations:
+                    custom_location = self.custom_archive_locations[group_id]
+                    if custom_location:
+                        if os.path.isdir(custom_location):
+                            archive_path = os.path.join(custom_location, archive_name)
                         else:
-                            source_path = os.path.join(self.script_dir, source_dir_name)
-                        
-                        if os.path.exists(source_path):
-                            # Архивируем всю папку с её содержимым
-                            tar.add(source_path, arcname=os.path.basename(source_path), 
-                                   recursive=True)
-                            archive_size = os.path.getsize(archive_path)
-                            results.append(f"✓ {group_info['name']}: {archive_name} создан "
-                                         f"({self.format_size(archive_size)})")
-                        else:
-                            results.append(f"✗ {group_info['name']}: исходная папка не найдена "
-                                         f"({source_path})")
+                            archive_path = custom_location
                     else:
-                        # Архивируем файлы и папки из списка
-                        added = False
-                        added_items = []
-                        
-                        if 'files' in group_info:
-                            for file_name in group_info['files']:
-                                # Проверяем пользовательский источник
-                                if file_name in custom_sources:
-                                    file_path = custom_sources[file_name]
-                                else:
-                                    file_path = os.path.join(self.astrapack_dir, file_name)
-                                
-                                if os.path.exists(file_path):
-                                    tar.add(file_path, arcname=file_name, recursive=False)
-                                    added = True
-                                    added_items.append(file_name)
-                        
-                        if 'dirs' in group_info:
-                            for dir_name in group_info['dirs']:
-                                # Проверяем пользовательский источник
-                                if dir_name in custom_sources:
-                                    dir_path = custom_sources[dir_name]
-                                else:
-                                    dir_path = os.path.join(self.astrapack_dir, dir_name)
-                                
-                                if os.path.exists(dir_path):
-                                    tar.add(dir_path, arcname=dir_name, recursive=True)
-                                    added = True
-                                    added_items.append(dir_name)
-                        
-                        # Добавляем пользовательские файлы/папки
-                        # Собираем список уже добавленных имен для проверки дубликатов
-                        existing_names = set(added_items)
-                        
-                        for item_type, item_path in custom_files:
-                            if os.path.exists(item_path):
-                                item_name = os.path.basename(item_path)
-                                
-                                # Проверяем, не добавлен ли уже файл с таким именем
-                                if item_name in existing_names:
-                                    added_items.append(f"[Пропущен] {item_name} (уже в архиве)")
-                                    continue
-                                
-                                if item_type == 'dir':
-                                    tar.add(item_path, arcname=item_name, recursive=True)
-                                    added_items.append(f"[Пользователь] {item_name}")
-                                else:
-                                    tar.add(item_path, arcname=item_name, recursive=False)
-                                    added_items.append(f"[Пользователь] {item_name}")
-                                
-                                existing_names.add(item_name)
-                                added = True
-                        
-                        if added:
-                            archive_size = os.path.getsize(archive_path)
-                            results.append(f"✓ {group_info['name']}: {archive_name} создан "
-                                         f"({self.format_size(archive_size)})\n"
-                                         f"  Добавлено: {', '.join(added_items)}")
+                        archive_location = group_info.get('archive_location', 'group')
+                        if archive_location == 'root':
+                            archive_path = os.path.join(self.script_dir, archive_name)
                         else:
-                            results.append(f"✗ {group_info['name']}: файлы/папки не найдены")
+                            os.makedirs(group_path, exist_ok=True)
+                            archive_path = os.path.join(group_path, archive_name)
+                else:
+                    archive_location = group_info.get('archive_location', 'group')
+                    if archive_location == 'root':
+                        archive_path = os.path.join(self.script_dir, archive_name)
+                    else:
+                        os.makedirs(group_path, exist_ok=True)
+                        archive_path = os.path.join(group_path, archive_name)
+                
+                # Создаем директорию для архива если её нет
+                archive_dir = os.path.dirname(archive_path)
+                if archive_dir:
+                    os.makedirs(archive_dir, exist_ok=True)
+                
+                # Собираем список элементов для архивации
+                items_to_archive = []
+                custom_sources = self.custom_sources.get(group_id, {})
+                excluded = self.excluded_items.get(group_id, set())
+                additional = self.additional_items.get(group_id, [])
+                
+                # Если есть source_dir - добавляем содержимое папки
+                if 'source_dir' in group_info:
+                    source_dir_name = group_info['source_dir']
+                    if source_dir_name in custom_sources:
+                        source_path = custom_sources[source_dir_name]
+                    else:
+                        source_path = os.path.join(self.script_dir, source_dir_name)
+                    
+                    if os.path.exists(source_path) and os.path.isdir(source_path):
+                        # Добавляем содержимое папки (не саму папку)
+                        for item in os.listdir(source_path):
+                            # Пропускаем исключенные элементы
+                            if item in excluded:
+                                continue
+                            
+                            item_path = os.path.join(source_path, item)
+                            items_to_archive.append((item_path, item))  # (путь, имя_в_архиве)
+                
+                # Добавляем файлы и папки из списка
+                if 'files' in group_info:
+                    for file_name in group_info['files']:
+                        if file_name in custom_sources:
+                            file_path = custom_sources[file_name]
+                        else:
+                            file_path = os.path.join(self.astrapack_dir, file_name)
+                        
+                        if os.path.exists(file_path):
+                            items_to_archive.append((file_path, file_name))
+                
+                if 'dirs' in group_info:
+                    for dir_name in group_info['dirs']:
+                        if dir_name in custom_sources:
+                            dir_path = custom_sources[dir_name]
+                        else:
+                            dir_path = os.path.join(self.astrapack_dir, dir_name)
+                        
+                        if os.path.exists(dir_path):
+                            items_to_archive.append((dir_path, dir_name))
+                
+                # Добавляем пользовательские файлы/папки
+                existing_names = set()
+                for item_type, item_path in custom_files:
+                    if os.path.exists(item_path):
+                        item_name = os.path.basename(item_path)
+                        if item_name not in existing_names:
+                            items_to_archive.append((item_path, item_name))
+                            existing_names.add(item_name)
+                
+                # Используем быструю архивацию через системный tar
+                if items_to_archive:
+                    success = self._archive_with_tar_fast(archive_path, items_to_archive, group_info['name'])
+                    if success:
+                        archive_size = os.path.getsize(archive_path)
+                        results.append(f"✓ {group_info['name']}: {archive_name} создан "
+                                     f"({self.format_size(archive_size)}, элементов: {len(items_to_archive)})")
+                    else:
+                        results.append(f"✗ {group_info['name']}: ошибка архивации")
+                else:
+                    results.append(f"✗ {group_info['name']}: нет элементов для архивации")
                 
             except Exception as e:
                 results.append(f"✗ {group_info['name']}: ошибка - {e}")
@@ -974,6 +1310,202 @@ class PackageManagerGUI:
         
         # Обновляем дерево
         self.update_structure_tree()
+    
+    def _archive_with_tar_fast(self, archive_path, items_to_archive, group_name):
+        """Быстрая архивация через системный tar с прогрессом"""
+        try:
+            # Проверяем наличие tar
+            if not shutil.which('tar'):
+                # Fallback на Python tarfile
+                return self._archive_with_tarfile(archive_path, items_to_archive)
+            
+            # Создаем окно прогресса
+            progress_window = self._create_progress_window(group_name, len(items_to_archive))
+            
+            # Флаг для отслеживания завершения
+            archive_complete = threading.Event()
+            archive_success = [False]
+            archive_error = [None]
+            
+            # Запускаем архивацию в отдельном потоке
+            def archive_worker():
+                try:
+                    # Создаем временную директорию для сборки архива
+                    temp_dir = os.path.join(os.path.dirname(archive_path), '.temp_archive')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    try:
+                        # Подготавливаем элементы для архивации
+                        for item_path, arcname in items_to_archive:
+                            if os.path.exists(item_path):
+                                target_path = os.path.join(temp_dir, arcname)
+                                # Удаляем существующий элемент если есть
+                                if os.path.exists(target_path):
+                                    if os.path.isdir(target_path):
+                                        shutil.rmtree(target_path)
+                                    else:
+                                        os.remove(target_path)
+                                
+                                # Создаем символическую ссылку (быстро, не копирует данные)
+                                try:
+                                    os.symlink(item_path, target_path)
+                                except (OSError, AttributeError):
+                                    # Если симлинки не поддерживаются, копируем (медленнее)
+                                    if os.path.isdir(item_path):
+                                        shutil.copytree(item_path, target_path)
+                                    else:
+                                        shutil.copy2(item_path, target_path)
+                        
+                        # Строим команду tar из временной директории
+                        tar_cmd = ['tar', '-czf', archive_path, '-C', temp_dir, '.']
+                        
+                        # Запускаем процесс
+                        process = subprocess.Popen(
+                            tar_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        
+                        # Мониторим прогресс
+                        start_time = time.time()
+                        total_items = len(items_to_archive)
+                        
+                        while process.poll() is None:
+                            # Обновляем прогресс через главный поток
+                            elapsed = time.time() - start_time
+                            # Приблизительный прогресс на основе времени (предполагаем 30 секунд максимум)
+                            estimated_progress = min(95, (elapsed / 30) * 100)
+                            
+                            # Обновляем UI через after
+                            self.root.after(0, lambda p=estimated_progress, t=total_items, e=int(elapsed): 
+                                           self._update_progress_window(progress_window, p, t, e))
+                            
+                            time.sleep(0.2)
+                        
+                        # Завершение
+                        return_code = process.wait()
+                        archive_success[0] = (return_code == 0)
+                        
+                        if return_code != 0:
+                            stderr = process.stderr.read().decode('utf-8', errors='ignore')
+                            archive_error[0] = stderr[:100]
+                        
+                    finally:
+                        # Удаляем временную директорию
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                    
+                    # Финальное обновление UI
+                    self.root.after(0, lambda: self._finalize_progress_window(
+                        progress_window, archive_success[0], archive_error[0]))
+                    
+                except Exception as e:
+                    archive_error[0] = str(e)
+                    self.root.after(0, lambda: self._finalize_progress_window(
+                        progress_window, False, str(e)))
+                finally:
+                    archive_complete.set()
+            
+            # Запускаем поток архивации
+            archive_thread = threading.Thread(target=archive_worker, daemon=True)
+            archive_thread.start()
+            
+            # Ждем завершения с обновлением UI
+            while not archive_complete.is_set():
+                self.root.update_idletasks()
+                time.sleep(0.1)
+            
+            # Закрываем окно прогресса
+            if progress_window and progress_window.winfo_exists():
+                time.sleep(0.5)  # Показываем финальное состояние
+                progress_window.destroy()
+            
+            return archive_success[0] and os.path.exists(archive_path) and os.path.getsize(archive_path) > 0
+                    
+        except Exception as e:
+            print(f"Ошибка быстрой архивации: {e}")
+            # Fallback на Python tarfile
+            return self._archive_with_tarfile(archive_path, items_to_archive)
+    
+    def _create_progress_window(self, group_name, total_items):
+        """Создать окно прогресса архивации"""
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title(f"Архивация {group_name}")
+        progress_window.geometry("500x200")
+        progress_window.resizable(False, False)
+        
+        # Центрируем окно
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        
+        # Заголовок
+        title_label = tk.Label(progress_window, text=f"Архивирование {group_name}...", 
+                              font=('TkDefaultFont', 12, 'bold'))
+        title_label.pack(pady=10)
+        
+        # Прогресс-бар
+        progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(progress_window, variable=progress_var, 
+                                       maximum=100, length=450, mode='determinate')
+        progress_bar.pack(pady=10)
+        
+        # Статус
+        status_label = tk.Label(progress_window, text="Подготовка...", 
+                               font=('TkDefaultFont', 10))
+        status_label.pack(pady=5)
+        
+        # Детали
+        details_label = tk.Label(progress_window, text="", 
+                                font=('TkDefaultFont', 9), fg='gray')
+        details_label.pack(pady=5)
+        
+        # Сохраняем ссылки на элементы в окне
+        progress_window.progress_var = progress_var
+        progress_window.status_label = status_label
+        progress_window.details_label = details_label
+        progress_window.current_item = 0
+        progress_window.total_items = total_items
+        
+        # Обновляем окно
+        progress_window.update()
+        
+        return progress_window
+    
+    def _update_progress_window(self, progress_window, progress, total_items, elapsed):
+        """Обновить окно прогресса (вызывается из главного потока)"""
+        if progress_window and progress_window.winfo_exists():
+            progress_window.progress_var.set(progress)
+            # Вычисляем приблизительное количество обработанных элементов
+            processed = int((progress / 100) * total_items) if total_items > 0 else 0
+            progress_window.status_label.config(
+                text=f"Обработано: {processed} из {total_items} элементов"
+            )
+            progress_window.details_label.config(
+                text=f"Время: {elapsed}с"
+            )
+    
+    def _finalize_progress_window(self, progress_window, success, error):
+        """Завершить окно прогресса (вызывается из главного потока)"""
+        if progress_window and progress_window.winfo_exists():
+            if success:
+                progress_window.progress_var.set(100)
+                progress_window.status_label.config(text="Архивация завершена!")
+                progress_window.details_label.config(text="")
+            else:
+                progress_window.status_label.config(text=f"Ошибка: {error[:50] if error else 'Неизвестная ошибка'}")
+                progress_window.details_label.config(text="")
+    
+    def _archive_with_tarfile(self, archive_path, items_to_archive):
+        """Архивация через Python tarfile (fallback)"""
+        try:
+            with tarfile.open(archive_path, 'w:gz') as tar:
+                for item_path, arcname in items_to_archive:
+                    if os.path.exists(item_path):
+                        tar.add(item_path, arcname=arcname, recursive=True)
+            return True
+        except Exception as e:
+            print(f"Ошибка архивации через tarfile: {e}")
+            return False
     
     def update_component_list(self):
         """Обновить список компонентов"""
