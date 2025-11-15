@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.5.124 (2025.11.13)
+# Версия: V2.5.125 (2025.11.16)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,10 +8,48 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.5.124 (2025.11.13)"
+SCRIPT_VERSION="V2.5.125 (2025.11.16)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================================
+# ОПРЕДЕЛЕНИЕ РЕЖИМА РАБОТЫ (БИНАРНЫЙ ИЛИ СКРИПТОВЫЙ)
+# ============================================================================
+
+# Определяем тип запуска: бинарный или скрипт
+SCRIPT_NAME=$(basename "$0")
+if [[ "$SCRIPT_NAME" == *.sh ]]; then
+    IS_BINARY=false
+else
+    IS_BINARY=true
+fi
+
+# ============================================================================
+# ФУНКЦИЯ ПОИСКА PYTHON ФАЙЛА
+# ============================================================================
+
+# Функция поиска Python скрипта или бинарного файла
+find_python_executable() {
+    local name="$1"
+    local dir="${2:-$SCRIPT_DIR}"
+    
+    if [ "$IS_BINARY" = true ]; then
+        # В бинарном режиме ищем только бинарный файл
+        if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
+            echo "$dir/$name"
+            return 0
+        fi
+    else
+        # В скриптовом режиме ищем Python скрипт
+        if [ -f "$dir/${name}.py" ] && command -v python3 >/dev/null 2>&1; then
+            echo "python3 $dir/${name}.py"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
 
 # Универсальная функция сворачивания окна терминала (работает до и после sudo)
 minimize_terminal_window() {
@@ -73,11 +111,20 @@ cd "$SCRIPT_DIR" || {
 echo "Текущий каталог: $(pwd)"
 
 # Проверяем наличие основных файлов
-if [ ! -f "astra_automation.py" ]; then
-    echo "ОШИБКА: Файл astra_automation.py не найден в каталоге: $(pwd)"
-    echo "Список файлов в каталоге:"
-    ls -la
-    exit 1
+if [ "$IS_BINARY" = true ]; then
+    if [ ! -f "$SCRIPT_DIR/astra_automation" ] || [ ! -x "$SCRIPT_DIR/astra_automation" ]; then
+        echo "ОШИБКА: Файл astra_automation не найден в каталоге: $SCRIPT_DIR"
+        echo "Список файлов в каталоге:"
+        ls -la
+        exit 1
+    fi
+else
+    if [ ! -f "$SCRIPT_DIR/astra_automation.py" ]; then
+        echo "ОШИБКА: Файл astra_automation.py не найден в каталоге: $SCRIPT_DIR"
+        echo "Список файлов в каталоге:"
+        ls -la
+        exit 1
+    fi
 fi
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -425,7 +472,13 @@ if [ "$CONSOLE_MODE" = false ]; then
         echo "   [#] Настраиваем репозитории через Python..."
         log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
         
-        python3 astra_automation.py --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
+        ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
+        if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
+            log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
+            exit 1
+        fi
+        
+        $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
         REPOS_EXIT_CODE=${PIPESTATUS[0]}
         
         if [ $REPOS_EXIT_CODE -eq 0 ]; then
@@ -683,13 +736,24 @@ log_message "FSA-AstraInstall Automation $SCRIPT_VERSION"
 log_message "Передаем управление Python скрипту: astra_automation.py"
 log_message "Лог файл: $LOG_FILE"
 
-    if python3 --version >/dev/null 2>&1; then
-        echo "   [i] Используем Python 3: $(python3 --version)"
-        log_message "Используем Python 3: $(python3 --version)"
+    # В бинарном режиме не нужен Python - бинарник уже содержит интерпретатор
+    if [ "$IS_BINARY" = true ] || python3 --version >/dev/null 2>&1; then
+        if [ "$IS_BINARY" = false ]; then
+            echo "   [i] Используем Python 3: $(python3 --version)"
+            log_message "Используем Python 3: $(python3 --version)"
+        else
+            echo "   [i] Бинарный режим - Python интерпретатор встроен"
+            log_message "Бинарный режим - Python интерпретатор встроен"
+        fi
         
         if [ "$CONSOLE_MODE" = true ]; then
             # Консольный режим - запускаем в текущем терминале
-            python3 astra_automation.py --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
+            ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
+            if [ -z "$ASTRA_AUTOMATION" ]; then
+                log_message "ОШИБКА: astra_automation не найден"
+                exit 1
+            fi
+            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
             PYTHON_EXIT_CODE=$?
         else
             # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
@@ -748,7 +812,20 @@ log_message "Лог файл: $LOG_FILE"
             log_message "PID окна терминала: $TERMINAL_PID"
             
             # Запускаем GUI с передачей PID терминала для автозакрытия
-            nohup python3 astra_automation.py --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+            ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
+            if [ -z "$ASTRA_AUTOMATION" ]; then
+                log_message "ОШИБКА: astra_automation не найден"
+                exit 1
+            fi
+            
+            # Запускаем команду (может быть "python3 file.py" или "./file")
+            if [ "$IS_BINARY" = true ]; then
+                # Бинарный режим - просто путь к файлу
+                nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+            else
+                # Скриптовый режим - команда с python3
+                nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+            fi
             PYTHON_PID=$!
             
             log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
@@ -757,9 +834,15 @@ log_message "Лог файл: $LOG_FILE"
             PYTHON_EXIT_CODE=0
         fi
     else
-        echo "   [ERR] Python 3 не найден!"
-        log_message "ОШИБКА: Python 3 не найден"
-        exit 1
+        if [ "$IS_BINARY" = false ]; then
+            echo "   [ERR] Python 3 не найден!"
+            log_message "ОШИБКА: Python 3 не найден"
+            exit 1
+        else
+            # В бинарном режиме Python не нужен
+            echo "   [i] Бинарный режим - Python не требуется"
+            log_message "Бинарный режим - Python не требуется"
+        fi
     fi
 
 log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"

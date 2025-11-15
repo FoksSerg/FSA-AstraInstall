@@ -139,3 +139,7 @@ History/
 # Log directories
 Log/
 LogLinux/
+
+# shc intermediate files (temporary compilation files)
+*.x.c
+*.x
