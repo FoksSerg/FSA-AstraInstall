@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.5.125 (2025.11.16)
+# Версия: V2.5.126 (2025.11.16)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,7 +8,7 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.5.125 (2025.11.16)"
+SCRIPT_VERSION="V2.5.126 (2025.11.16)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -127,25 +127,150 @@ else
     fi
 fi
 
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="$SCRIPT_DIR/Log"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
+# ============================================================================
+# БЛОК 0: ИНИЦИАЛИЗАЦИЯ ЛОГ-ФАЙЛА (ПЕРЕД ВСЕМ!)
+# ============================================================================
 
-# Исправляем права доступа для обычного пользователя
-if [ -d "$LOG_DIR" ]; then
-    # Получаем имя реального пользователя (не root)
-    REAL_USER=$(who am i | awk '{print $1}')
-    if [ -z "$REAL_USER" ]; then
-        REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
+# КРИТИЧНО: Проверяем передан ли --log-file ПЕРЕД созданием нового
+LOG_FILE_PASSED=""
+LOG_TIMESTAMP_PASSED=""
+TERMINAL_PID_ARG=""
+
+# КРИТИЧНО: Проверяем переменные окружения (если перезапустились через sudo)
+if [ -n "$FSA_LOG_FILE" ]; then
+    LOG_FILE_PASSED="$FSA_LOG_FILE"
+fi
+if [ -n "$FSA_LOG_TIMESTAMP" ]; then
+    LOG_TIMESTAMP_PASSED="$FSA_LOG_TIMESTAMP"
+fi
+if [ -n "$FSA_TERMINAL_PID" ]; then
+    TERMINAL_PID_ARG="$FSA_TERMINAL_PID"
+fi
+
+# Обрабатываем аргументы (--log-file, --log-timestamp, --terminal-pid)
+# КРИТИЧНО: Если уже восстановлены из переменных окружения, пропускаем обработку
+if [ -z "$LOG_FILE_PASSED" ] && [ -z "$LOG_TIMESTAMP_PASSED" ] && [ -z "$TERMINAL_PID_ARG" ]; then
+    i=1
+    while [ $i -le $# ]; do
+        # КРИТИЧНО: Используем eval для косвенной подстановки аргументов
+        eval "arg=\${$i}"
+        if [[ "$arg" == "--log-file" ]] && [ $((i+1)) -le $# ]; then
+            next_idx=$((i+1))
+            eval "LOG_FILE_PASSED=\${$next_idx}"
+            i=$((i+2))
+            continue
+        elif [[ "$arg" == "--log-timestamp" ]] && [ $((i+1)) -le $# ]; then
+            next_idx=$((i+1))
+            eval "LOG_TIMESTAMP_PASSED=\${$next_idx}"
+            i=$((i+2))
+            continue
+        elif [[ "$arg" == "--terminal-pid" ]] && [ $((i+1)) -le $# ]; then
+            next_idx=$((i+1))
+            eval "TERMINAL_PID_ARG=\${$next_idx}"
+            i=$((i+2))
+            continue
+        elif [[ "$arg" == --terminal-pid=* ]]; then
+            TERMINAL_PID_ARG="${arg#*=}"
+            i=$((i+1))
+            continue
+        fi
+        i=$((i+1))
+    done
+fi
+
+# Если передан --log-file - используем его
+if [ -n "$LOG_FILE_PASSED" ]; then
+    # КРИТИЧНО: Преобразуем относительный путь в абсолютный
+    if [[ "$LOG_FILE_PASSED" != /* ]]; then
+        # Относительный путь - делаем абсолютным относительно SCRIPT_DIR
+        LOG_FILE_PASSED="$SCRIPT_DIR/$LOG_FILE_PASSED"
+        # Убираем двойные слеши и ./ в начале
+        LOG_FILE_PASSED=$(echo "$LOG_FILE_PASSED" | sed 's|/\./|/|g' | sed 's|^\./||' | sed 's|//|/|g')
     fi
     
-    if [ ! -z "$REAL_USER" ]; then
-        chown -R "$REAL_USER:$REAL_USER" "$LOG_DIR" 2>/dev/null
-        chmod -R 755 "$LOG_DIR" 2>/dev/null
-        echo "[i] Установлены права доступа для пользователя: $REAL_USER"
+    if [ -f "$LOG_FILE_PASSED" ]; then
+        LOG_FILE="$LOG_FILE_PASSED"
+        LOG_DIR="$(dirname "$LOG_FILE")"
+        
+        # Извлекаем timestamp из имени файла, если не передан
+        if [ -z "$LOG_TIMESTAMP_PASSED" ]; then
+            TIMESTAMP=$(echo "$LOG_FILE" | grep -oE '[0-9]{8}_[0-9]{6}' | head -1)
+        else
+            TIMESTAMP="$LOG_TIMESTAMP_PASSED"
+        fi
+        
+        # КРИТИЧНО: Проверяем, не был ли уже добавлен разделитель (при перезапуске через sudo)
+        # Проверяем переменную окружения или последние строки файла
+        if [ -z "$FSA_LOG_INITIALIZED" ]; then
+            # Проверяем последние строки файла на наличие разделителя
+            if ! tail -n 10 "$LOG_FILE" | grep -q "ASTRA INSTALL - НАЧАЛО УСТАНОВКИ"; then
+                # Добавляем разделитель (НЕ пересоздаем файл!)
+                {
+                    echo ""
+                    echo "============================================================"
+                    echo "ASTRA INSTALL - НАЧАЛО УСТАНОВКИ"
+                    echo "Время запуска: $(date)"
+                    echo "Директория скрипта: $SCRIPT_DIR"
+                    echo "Аргументы командной строки: $*"
+                    echo "Timestamp: $TIMESTAMP"
+                    echo "============================================================"
+                } >> "$LOG_FILE"
+                
+                # Устанавливаем флаг в переменной окружения для предотвращения повторного добавления
+                export FSA_LOG_INITIALIZED="1"
+            fi
+        fi
+        
+        # Исправляем права доступа
+        REAL_USER=$(who am i | awk '{print $1}' 2>/dev/null || echo "")
+        if [ -z "$REAL_USER" ]; then
+            REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
+        fi
+        if [ ! -z "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
+            chown "$REAL_USER:$REAL_USER" "$LOG_FILE" 2>/dev/null || true
+            chmod 644 "$LOG_FILE" 2>/dev/null || true
+        fi
+    else
+        # Файл не найден - создаем новый (fallback)
+        echo "[WARNING] Переданный лог-файл не найден: $LOG_FILE_PASSED, создаем новый" >&2
+        LOG_FILE_PASSED=""
     fi
 fi
+
+# Если LOG_FILE_PASSED пуст или файл не найден - создаем новый
+if [ -z "$LOG_FILE_PASSED" ] || [ ! -f "$LOG_FILE" ]; then
+    # СТАРОЕ ПОВЕДЕНИЕ: создаем новый лог-файл (как было раньше)
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    LOG_DIR="$SCRIPT_DIR/Log"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
+    
+    # Инициализируем лог-файл (как было раньше)
+    echo "============================================================" > "$LOG_FILE"
+    echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
+    echo "Время запуска: $(date)" >> "$LOG_FILE"
+    echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
+    echo "Аргументы командной строки: $*" >> "$LOG_FILE"
+    echo "============================================================" >> "$LOG_FILE"
+    
+    # Исправляем права доступа (как было раньше)
+    if [ -d "$LOG_DIR" ]; then
+        REAL_USER=$(who am i | awk '{print $1}')
+        if [ -z "$REAL_USER" ]; then
+            REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
+        fi
+        
+        if [ ! -z "$REAL_USER" ]; then
+            chown -R "$REAL_USER:$REAL_USER" "$LOG_DIR" 2>/dev/null
+            chmod -R 755 "$LOG_DIR" 2>/dev/null
+            echo "[i] Установлены права доступа для пользователя: $REAL_USER"
+        fi
+    fi
+fi
+
+# Экспортируем для использования в функциях
+export LOG_FILE
+export TIMESTAMP
 
 # Функция логирования
 log_message() {
@@ -282,18 +407,19 @@ install_tkinter_with_verification() {
     fi
 }
 
-# Инициализируем лог файл
-echo "============================================================" > "$LOG_FILE"
-echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
-echo "Время запуска: $(date)" >> "$LOG_FILE"
-echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
-echo "Аргументы командной строки: $*" >> "$LOG_FILE"
-echo "============================================================" >> "$LOG_FILE"
+# Инициализируем лог файл (если еще не инициализирован)
+if [ -z "$LOG_FILE" ] || [ ! -f "$LOG_FILE" ]; then
+    echo "============================================================" > "$LOG_FILE"
+    echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
+    echo "Время запуска: $(date)" >> "$LOG_FILE"
+    echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
+    echo "Аргументы командной строки: $*" >> "$LOG_FILE"
+    echo "============================================================" >> "$LOG_FILE"
+fi
 
 echo "============================================================"
 echo "ASTRA AUTOMATION - АВТОМАТИЧЕСКАЯ УСТАНОВКА И ЗАПУСК"
 echo "============================================================"
-log_message "Начинаем выполнение astra_install.sh"
 
 # ============================================================
 # БЛОК 2: ОБРАБОТКА АРГУМЕНТОВ И ПРОВЕРКИ
@@ -302,46 +428,46 @@ log_message "Начинаем выполнение astra_install.sh"
 # Обрабатываем аргументы командной строки
 CONSOLE_MODE=false
 DRY_RUN=false
-TERMINAL_PID_ARG=""
+# КРИТИЧНО: НЕ сбрасываем TERMINAL_PID_ARG, если он уже установлен выше!
+# TERMINAL_PID_ARG уже может быть установлен из переменной окружения или из аргументов
 START_MODE_ARG=""
+SKIP_NEXT_ARG=false  # Флаг для пропуска следующего аргумента (значение --log-file, --log-timestamp или --terminal-pid)
 
 for arg in "$@"; do
+    # КРИТИЧНО: Пропускаем значение --log-file, --log-timestamp или --terminal-pid
+    if [ "$SKIP_NEXT_ARG" = true ]; then
+        SKIP_NEXT_ARG=false
+        continue
+    fi
+    
     case $arg in
+        --log-file|--log-timestamp|--terminal-pid)
+            # КРИТИЧНО: Пропускаем эти аргументы - они уже обработаны выше
+            # Следующий аргумент - значение, пропускаем его тоже
+            SKIP_NEXT_ARG=true
+            ;;
         --windows-minimized)
             # Окна уже свернуты, пропускаем сворачивание
             ;;
         --console)
             CONSOLE_MODE=true
             echo "[i] Режим: КОНСОЛЬНЫЙ (без GUI)"
-            log_message "Включен консольный режим (--console)"
             ;;
         --dry-run)
             DRY_RUN=true
             echo "[i] Режим: ТЕСТИРОВАНИЕ (dry-run)"
-            log_message "Включен режим тестирования (--dry-run)"
             ;;
         --mode)
             # Следующий аргумент - режим запуска
             shift
             START_MODE_ARG="$1"
-            log_message "Получен режим запуска через аргумент: $START_MODE_ARG"
             ;;
         --terminal-pid=*)
+            # Обрабатываем --terminal-pid=value
             TERMINAL_PID_ARG="${arg#*=}"
-            log_message "Получен PID терминала через аргумент: $TERMINAL_PID_ARG"
-            ;;
-        --terminal-pid)
-            # Обрабатываем следующий аргумент как PID терминала
-            shift
-            TERMINAL_PID_ARG="$1"
-            log_message "Получен PID терминала через аргумент: $TERMINAL_PID_ARG"
-            ;;
-        [0-9]*)
-            # Пропускаем числовые аргументы (это PID терминала после --terminal-pid)
-            log_message "Пропускаем числовой аргумент: $arg"
             ;;
         *)
-            log_message "Неизвестный аргумент: $arg"
+            # Игнорируем неизвестные аргументы (уже обработаны выше)
             ;;
     esac
 done
@@ -349,7 +475,6 @@ done
 # КРИТИЧНО: Если получен PID терминала через аргумент, используем его
 if [ ! -z "$TERMINAL_PID_ARG" ]; then
     TERMINAL_PID="$TERMINAL_PID_ARG"
-    log_message "Используем PID терминала из аргумента: $TERMINAL_PID"
     
     # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
     if [ "$EUID" -eq 0 ] && command -v xdotool >/dev/null 2>&1; then
@@ -371,11 +496,28 @@ fi
 if [ "$EUID" -ne 0 ]; then
     echo "[i] Требуются права root. Перезапуск через sudo..."
     log_message "Перезапуск скрипта с правами root через sudo"
+    
+    # КРИТИЧНО: Сохраняем --log-file, --log-timestamp и --terminal-pid в переменных окружения
+    # чтобы они не потерялись при перезапуске через sudo
+    if [ -n "$LOG_FILE_PASSED" ]; then
+        export FSA_LOG_FILE="$LOG_FILE_PASSED"
+    fi
+    if [ -n "$LOG_TIMESTAMP_PASSED" ]; then
+        export FSA_LOG_TIMESTAMP="$LOG_TIMESTAMP_PASSED"
+    fi
+    if [ -n "$TERMINAL_PID_ARG" ]; then
+        export FSA_TERMINAL_PID="$TERMINAL_PID_ARG"
+    fi
+    # КРИТИЧНО: Передаем флаг инициализации лог-файла
+    if [ -n "$FSA_LOG_INITIALIZED" ]; then
+        export FSA_LOG_INITIALIZED="$FSA_LOG_INITIALIZED"
+    fi
+    
     # Перезапускаем себя с sudo, передавая все аргументы и переменные окружения
     if [ ! -z "$DISPLAY" ]; then
-        exec sudo -E env DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" bash "$0" "$@"
+        exec sudo -E env DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" FSA_LOG_FILE="${FSA_LOG_FILE:-}" FSA_LOG_TIMESTAMP="${FSA_LOG_TIMESTAMP:-}" FSA_TERMINAL_PID="${FSA_TERMINAL_PID:-}" FSA_LOG_INITIALIZED="${FSA_LOG_INITIALIZED:-}" bash "$0" "$@"
     else
-        exec sudo -E env FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" bash "$0" "$@"
+        exec sudo -E env FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" FSA_LOG_FILE="${FSA_LOG_FILE:-}" FSA_LOG_TIMESTAMP="${FSA_LOG_TIMESTAMP:-}" FSA_TERMINAL_PID="${FSA_TERMINAL_PID:-}" FSA_LOG_INITIALIZED="${FSA_LOG_INITIALIZED:-}" bash "$0" "$@"
     fi
     exit $?
 fi
@@ -387,7 +529,6 @@ TIME_SYNC_FLAG="/tmp/fsa-time-synced"
 
 if [ -f "$TIME_SYNC_FLAG" ]; then
     echo "[i] Время уже синхронизировано в этом сеансе"
-    log_message "Синхронизация времени пропущена (уже выполнена в текущем сеансе)"
 else
     echo "[~] Синхронизация системного времени..."
     log_message "Выполняется синхронизация времени (первый запуск после загрузки)"
@@ -431,10 +572,8 @@ export APT_LISTCHANGES_FRONTEND=none
 # Опции dpkg для автоматического обновления конфигураций
 DPKG_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-confmiss"
 
-log_message "Настроены переменные окружения для автоматических ответов"
 
 echo "[?] Проверяем систему..."
-log_message "Начинаем проверку системы"
 
 # Проверяем версию Astra Linux
 if [ -f /etc/astra_version ]; then
@@ -458,7 +597,6 @@ log_message "Python 3: $PYTHON3_VERSION"
 if [ "$CONSOLE_MODE" = false ]; then
     echo ""
     echo "[*] Определяем оптимальный режим запуска..."
-    log_message "Начинаем определение режима запуска"
     
     # Переменная для выбора режима
     START_MODE=""
@@ -492,15 +630,15 @@ if [ "$CONSOLE_MODE" = false ]; then
             yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
             UPDATE_EXIT_CODE=${PIPESTATUS[0]}
             
-        if [ $UPDATE_EXIT_CODE -eq 0 ]; then
-            echo "   [OK] Список пакетов обновлен после настройки репозиториев"
-            log_message "Список пакетов обновлен успешно после настройки репозиториев"
-        else
-            echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-            echo "   [i] Продолжаем работу - возможно список уже актуален"
-            log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
-        fi
+            if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+                echo "   [OK] Список пакетов обновлен после настройки репозиториев"
+                log_message "Список пакетов обновлен успешно после настройки репозиториев"
+            else
+                echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                echo "   [i] Продолжаем работу - возможно список уже актуален"
+                log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
+            fi
         else
             echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
             log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
@@ -511,7 +649,6 @@ if [ "$CONSOLE_MODE" = false ]; then
         fi
     else
         echo "   [OK] Рабочие репозитории уже настроены"
-        log_message "Рабочие репозитории доступны"
     fi
     
     # Теперь определяем режим на основе доступности tkinter
@@ -519,7 +656,6 @@ if [ "$CONSOLE_MODE" = false ]; then
         echo "   [?] Проверяем доступность tkinter..."
         if check_tkinter_available; then
             echo "   [OK] tkinter найден и работает"
-            log_message "tkinter доступен - можно запускать GUI"
             START_MODE="gui_ready"
         else
             echo "   [!] tkinter не найден"
@@ -602,55 +738,54 @@ if [ "$CONSOLE_MODE" = false ]; then
         
         # Устанавливаем tkinter с проверкой
         if install_tkinter_with_verification; then
-                echo "   [OK] tkinter установлен и работает"
-                log_message "tkinter установлен и проверен"
-                
-                # Устанавливаем дополнительные компоненты для GUI
-                echo ""
-                echo "[#] Установка дополнительных компонентов для GUI..."
-                yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
-                COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
-                
-                if [ $COMPONENTS_EXIT_CODE -eq 0 ] || [ $COMPONENTS_EXIT_CODE -eq 141 ]; then
-                    echo "   [OK] Дополнительные компоненты установлены (код: $COMPONENTS_EXIT_CODE)"
-                    log_message "psutil, wmctrl, xdotool, expect установлены успешно"
-                else
-                    echo "   [WARNING] Некоторые компоненты не установлены (код: $COMPONENTS_EXIT_CODE)"
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые компоненты не установлены, функциональность может быть ограничена"
-                fi
-                
-                # КРИТИЧНО: Меняем режим на gui_ready и СБРАСЫВАЕМ CONSOLE_MODE
-                START_MODE="gui_ready"
-                CONSOLE_MODE=false
-                echo "   [i] Режим изменен на: gui_ready"
-                echo "   [i] CONSOLE_MODE сброшен в: false"
-                log_message "Режим изменен на gui_ready после установки tkinter, CONSOLE_MODE сброшен"
-            else
-                echo "   [ERROR] Не удалось установить рабочий tkinter"
-                echo "   [i] Переключение на консольный режим"
-                log_message "Переключение на консольный режим - tkinter не установлен"
-                START_MODE="console_forced"
-                CONSOLE_MODE=true
-            fi
+            echo "   [OK] tkinter установлен и работает"
+            log_message "tkinter установлен и проверен"
             
-            # Пропускаем установку pip3 для экономии места и времени
-            # pip3 не критичен для работы GUI
-            echo "     [SKIP] Пропускаем установку pip3 (не критично для GUI)"
-            log_message "Пропускаем установку pip3 (не критично для GUI)"
-            
-            # Исправляем зависимости
+            # Устанавливаем дополнительные компоненты для GUI
             echo ""
-            echo "   [*] Исправляем зависимости..."
-            log_message "Исправляем зависимости (apt-get install -f)"
-            apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
-            FIX_EXIT_CODE=${PIPESTATUS[0]}
-            if [ $FIX_EXIT_CODE -eq 0 ]; then
-                echo "   [OK] Зависимости исправлены (код: 0)"
-                log_message "Зависимости исправлены успешно (код: 0)"
+            echo "[#] Установка дополнительных компонентов для GUI..."
+            yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
+            COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ $COMPONENTS_EXIT_CODE -eq 0 ] || [ $COMPONENTS_EXIT_CODE -eq 141 ]; then
+                echo "   [OK] Дополнительные компоненты установлены (код: $COMPONENTS_EXIT_CODE)"
+                log_message "psutil, wmctrl, xdotool, expect установлены успешно"
             else
-                echo "   [WARNING] Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
+                echo "   [WARNING] Некоторые компоненты не установлены (код: $COMPONENTS_EXIT_CODE)"
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые компоненты не установлены, функциональность может быть ограничена"
             fi
+            
+            # КРИТИЧНО: Меняем режим на gui_ready и СБРАСЫВАЕМ CONSOLE_MODE
+            START_MODE="gui_ready"
+            CONSOLE_MODE=false
+            echo "   [i] Режим изменен на: gui_ready"
+            echo "   [i] CONSOLE_MODE сброшен в: false"
+            log_message "Режим изменен на gui_ready после установки tkinter, CONSOLE_MODE сброшен"
+        else
+            echo "   [ERROR] Не удалось установить рабочий tkinter"
+            echo "   [i] Переключение на консольный режим"
+            log_message "Переключение на консольный режим - tkinter не установлен"
+            START_MODE="console_forced"
+            CONSOLE_MODE=true
+        fi
+        
+        # Пропускаем установку pip3 для экономии места и времени
+        # pip3 не критичен для работы GUI
+        echo "     [SKIP] Пропускаем установку pip3 (не критично для GUI)"
+        log_message "Пропускаем установку pip3 (не критично для GUI)"
+        
+        # Исправляем зависимости
+        echo ""
+        echo "   [*] Исправляем зависимости..."
+        log_message "Исправляем зависимости (apt-get install -f)"
+        apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
+        FIX_EXIT_CODE=${PIPESTATUS[0]}
+        if [ $FIX_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Зависимости исправлены (код: 0)"
+            log_message "Зависимости исправлены успешно (код: 0)"
+        else
+            echo "   [WARNING] Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
         fi
     fi
     
@@ -658,7 +793,6 @@ if [ "$CONSOLE_MODE" = false ]; then
     if [ "$START_MODE" = "gui_ready" ] || [ "$START_MODE" = "gui_install_first" ]; then
         echo ""
         echo "[?] Финальная проверка перед запуском GUI..."
-        log_message "Финальная проверка компонентов перед запуском GUI"
         
         if ! check_tkinter_available; then
             echo "   [ERROR] tkinter все еще недоступен!"
@@ -669,8 +803,8 @@ if [ "$CONSOLE_MODE" = false ]; then
         else
             echo "   [OK] tkinter работает - готовы к запуску GUI"
             echo "   [i] CONSOLE_MODE установлен в: false"
-            log_message "Финальная проверка: tkinter работает, GUI готов, CONSOLE_MODE=false"
             CONSOLE_MODE=false
+        fi
     fi
 fi
 
@@ -683,7 +817,6 @@ log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A')
 
 echo ""
 echo "[+] Подготовка завершена!"
-log_message "Подготовка компонентов завершена. Режим: $START_MODE"
 
 # ============================================================
 # БЛОК 4: ЗАПУСК PYTHON СКРИПТА
@@ -693,7 +826,6 @@ echo ""
 echo "[INFO] Финальные параметры запуска:"
 echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
 echo "   [i] START_MODE: $START_MODE"
-log_message "Финальные параметры: CONSOLE_MODE=$CONSOLE_MODE, START_MODE=$START_MODE"
 
 # Устанавливаем START_MODE для консольного режима
 # Если режим передан через аргумент --mode, используем его
@@ -729,121 +861,139 @@ if [ "$CONSOLE_MODE" = true ]; then
     log_message "Запускаем Python с флагом --console"
 else
     echo "[>] Запускаем графический интерфейс..."
-    log_message "Запускаем графический интерфейс"
 fi
 
 log_message "FSA-AstraInstall Automation $SCRIPT_VERSION"
-log_message "Передаем управление Python скрипту: astra_automation.py"
-log_message "Лог файл: $LOG_FILE"
 
-    # В бинарном режиме не нужен Python - бинарник уже содержит интерпретатор
-    if [ "$IS_BINARY" = true ] || python3 --version >/dev/null 2>&1; then
-        if [ "$IS_BINARY" = false ]; then
-            echo "   [i] Используем Python 3: $(python3 --version)"
-            log_message "Используем Python 3: $(python3 --version)"
-        else
-            echo "   [i] Бинарный режим - Python интерпретатор встроен"
-            log_message "Бинарный режим - Python интерпретатор встроен"
+# В бинарном режиме не нужен Python - бинарник уже содержит интерпретатор
+if [ "$IS_BINARY" = true ] || python3 --version >/dev/null 2>&1; then
+    if [ "$IS_BINARY" = false ]; then
+        echo "   [i] Используем Python 3: $(python3 --version)"
+    else
+        echo "   [i] Бинарный режим - Python интерпретатор встроен"
+        log_message "Бинарный режим - Python интерпретатор встроен"
+    fi
+    
+    if [ "$CONSOLE_MODE" = true ]; then
+        # Консольный режим - запускаем в текущем терминале
+        ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
+        if [ -z "$ASTRA_AUTOMATION" ]; then
+            log_message "ОШИБКА: astra_automation не найден"
+            exit 1
         fi
         
-        if [ "$CONSOLE_MODE" = true ]; then
-            # Консольный режим - запускаем в текущем терминале
-            ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
-            if [ -z "$ASTRA_AUTOMATION" ]; then
-                log_message "ОШИБКА: astra_automation не найден"
-                exit 1
-            fi
-            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
-            PYTHON_EXIT_CODE=$?
+        # КРИТИЧНО: Передаем лог-файл и timestamp в astra_automation.py
+        if [ -n "$TIMESTAMP" ]; then
+            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --console --mode "$START_MODE" "$@"
         else
-            # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
-            echo "   [i] GUI запускается в фоновом режиме"
-            echo "   [i] Окно терминала закроется автоматически после запуска GUI"
-            log_message "GUI запускается в фоновом режиме (детачится от терминала)"
+            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
+        fi
+        PYTHON_EXIT_CODE=$?
+    else
+        # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
+        echo "   [i] GUI запускается в фоновом режиме"
+        echo "   [i] Окно терминала закроется автоматически после запуска GUI"
+        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
+        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
+        # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
+        
+        # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
+        if [ -z "$TERMINAL_PID" ]; then
+            log_message "Переданный PID терминала не найден, используем алгоритм поиска"
             
-            # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
-            # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-            # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
-            log_message "Начинаем поиск PID терминала с проверкой процессов"
+            # Список методов определения PID (по приоритету)
+            methods=(
+                "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
+                "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
+                "\$PPID"                                                             # Метод 3 - простой fallback
+                "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
+                "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
+                "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
+            )
             
-            # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
-            if [ ! -z "$TERMINAL_PID" ]; then
-                log_message "Используем переданный PID терминала: $TERMINAL_PID"
-                # TERMINAL_PID уже установлен, не нужно переприсваивать
-            else
-                log_message "Переданный PID терминала не найден, используем алгоритм поиска"
+            # Проверяем каждый метод по очереди
+            for i in "${!methods[@]}"; do
+                method="${methods[$i]}"
+                # Проверяем каждый метод
+                candidate_pid=$(eval "$method" 2>/dev/null)
                 
-                # Список методов определения PID (по приоритету)
-                methods=(
-                    "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
-                    "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
-                    "\$PPID"                                                             # Метод 3 - простой fallback
-                    "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
-                    "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
-                    "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
-                )
-                
-                # Проверяем каждый метод по очереди
-                for i in "${!methods[@]}"; do
-                    method="${methods[$i]}"
-                    # Проверяем каждый метод
-                    candidate_pid=$(eval "$method" 2>/dev/null)
+                # Проверяем существование и тип процесса
+                if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
+                    process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
                     
-                    # Проверяем существование и тип процесса
-                    if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
-                        process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
-                        
-                        # Проверяем что это терминал
-                        if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
-                            TERMINAL_PID="$candidate_pid"
-                            log_message "Найден терминал: PID=$candidate_pid, имя=$process_name"
-                            break  # ВЫХОДИМ ИЗ ЦИКЛА!
-                        fi
+                    # Проверяем что это терминал
+                    if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
+                        TERMINAL_PID="$candidate_pid"
+                        break  # ВЫХОДИМ ИЗ ЦИКЛА!
                     fi
-                done
-                
-                # Fallback если ничего не найдено
-                if [ -z "$TERMINAL_PID" ]; then
-                    log_message "Терминал не найден, используем первый метод как fallback"
-                    TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
                 fi
-            fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
+            done
             
-            log_message "PID окна терминала: $TERMINAL_PID"
-            
-            # Запускаем GUI с передачей PID терминала для автозакрытия
-            ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
-            if [ -z "$ASTRA_AUTOMATION" ]; then
-                log_message "ОШИБКА: astra_automation не найден"
-                exit 1
+            # Fallback если ничего не найдено
+            if [ -z "$TERMINAL_PID" ]; then
+                TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
             fi
-            
+        fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
+        
+        # Запускаем GUI с передачей PID терминала для автозакрытия
+        ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
+        if [ -z "$ASTRA_AUTOMATION" ]; then
+            log_message "ОШИБКА: astra_automation не найден"
+            exit 1
+        fi
+        
+        # КРИТИЧНО: Передаем лог-файл и timestamp в astra_automation.py (GUI режим)
+        # Проверяем что TERMINAL_PID валидный перед передачей
+        if [ -n "$TIMESTAMP" ]; then
             # Запускаем команду (может быть "python3 file.py" или "./file")
             if [ "$IS_BINARY" = true ]; then
                 # Бинарный режим - просто путь к файлу
-                nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
+                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+                else
+                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+                fi
             else
                 # Скриптовый режим - команда с python3
-                nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
+                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --log-timestamp \"$TIMESTAMP\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+                else
+                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --log-timestamp \"$TIMESTAMP\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+                fi
             fi
-            PYTHON_PID=$!
-            
-            log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
-            log_message "GUI закроет терминал (PID: $TERMINAL_PID) после полного запуска"
-            
-            PYTHON_EXIT_CODE=0
-        fi
-    else
-        if [ "$IS_BINARY" = false ]; then
-            echo "   [ERR] Python 3 не найден!"
-            log_message "ОШИБКА: Python 3 не найден"
-            exit 1
         else
-            # В бинарном режиме Python не нужен
-            echo "   [i] Бинарный режим - Python не требуется"
-            log_message "Бинарный режим - Python не требуется"
+            # Fallback: без timestamp (старое поведение)
+            if [ "$IS_BINARY" = true ]; then
+                # Бинарный режим - просто путь к файлу
+                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
+                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+                else
+                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
+                fi
+            else
+                # Скриптовый режим - команда с python3
+                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
+                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+                else
+                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
+                fi
+            fi
         fi
+        PYTHON_PID=$!
+        log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
+        PYTHON_EXIT_CODE=0
     fi
+else
+    if [ "$IS_BINARY" = false ]; then
+        echo "   [ERR] Python 3 не найден!"
+        log_message "ОШИБКА: Python 3 не найден"
+        exit 1
+    else
+        # В бинарном режиме Python не нужен
+        echo "   [i] Бинарный режим - Python не требуется"
+        log_message "Бинарный режим - Python не требуется"
+    fi
+fi
 
 log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"
 exit $PYTHON_EXIT_CODE

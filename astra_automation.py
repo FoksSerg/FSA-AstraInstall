@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.125 (2025.11.14)
+Версия: V2.5.126 (2025.11.16)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.125 (2025.11.14)"
+APP_VERSION = "V2.5.126 (2025.11.16)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -5986,6 +5986,13 @@ class DualStreamLogger:
         self._raw_file = None
         self._analysis_file = None
         
+        # КРИТИЧНО: Размер файла на момент начала текущей сессии (для загрузки данных, записанных до запуска)
+        self._analysis_log_size_before_start = 0
+        
+        # Флаги загрузки файлов в буфер (предотвращают повторную загрузку)
+        self._raw_file_loaded = False
+        self._analysis_file_loaded = False
+        
         # Счетчики для мониторинга
         self._messages_received_raw = 0  # Количество полученных RAW сообщений
         self._messages_received_analysis = 0  # Количество полученных ANALYSIS сообщений
@@ -6252,6 +6259,61 @@ class DualStreamLogger:
             return False
         
         try:
+            # КРИТИЧНО: Загружаем существующий файл в буфер ПЕРЕД открытием в режиме 'a'
+            # Это обеспечивает синхронизацию: буфер = точная копия файла
+            # НО ТОЛЬКО ОДИН РАЗ! (используем флаг _analysis_file_loaded)
+            if not self._analysis_file_loaded and self._analysis_log_path and os.path.exists(self._analysis_log_path):
+                try:
+                    with open(self._analysis_log_path, 'r', encoding='utf-8') as f:
+                        existing_lines = f.readlines()
+                    
+                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
+                    # чтобы все строки поместились в буфер
+                    file_line_count = len([line for line in existing_lines if line.strip()])
+                    if file_line_count > self._max_buffer_size:
+                        # Временно создаем новый deque с увеличенным размером
+                        old_buffer = list(self._analysis_buffer)
+                        new_max_size = file_line_count + 10000  # Запас 10k строк для новых сообщений
+                        self._analysis_buffer = deque(old_buffer, maxlen=new_max_size)
+                        self._max_buffer_size = new_max_size
+                        print(f"[LOG_LOAD] Размер буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
+                    
+                    # Загружаем в буфер (убираем переносы строк, они уже есть в файле)
+                    with self._analysis_lock:
+                        for line in existing_lines:
+                            line = line.rstrip('\n\r')  # Убираем переносы
+                            if line:  # Пропускаем пустые строки
+                                self._analysis_buffer.append(line)
+                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего файла в буфер")
+                    self._analysis_file_loaded = True  # Устанавливаем флаг после успешной загрузки
+                except Exception as e:
+                    print(f"[WARNING] Не удалось загрузить существующий файл в буфер: {e}")
+            
+            # Аналогично для raw файла (используем флаг _raw_file_loaded)
+            if not self._raw_file_loaded and self._raw_log_path and os.path.exists(self._raw_log_path):
+                try:
+                    with open(self._raw_log_path, 'r', encoding='utf-8') as f:
+                        existing_lines = f.readlines()
+                    
+                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
+                    file_line_count = len([line for line in existing_lines if line.strip()])
+                    if file_line_count > self._max_buffer_size:
+                        # Временно создаем новый deque с увеличенным размером
+                        old_buffer = list(self._raw_buffer)
+                        new_max_size = file_line_count + 10000  # Запас 10k строк для новых сообщений
+                        self._raw_buffer = deque(old_buffer, maxlen=new_max_size)
+                        print(f"[LOG_LOAD] Размер raw буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
+                    
+                    with self._raw_lock:
+                        for line in existing_lines:
+                            line = line.rstrip('\n\r')
+                            if line:
+                                self._raw_buffer.append(line)
+                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего raw файла в буфер")
+                    self._raw_file_loaded = True  # Устанавливаем флаг после успешной загрузки
+                except Exception as e:
+                    print(f"[WARNING] Не удалось загрузить существующий raw файл в буфер: {e}")
+            
             if self._raw_log_path:
                 self._raw_file = open(self._raw_log_path, 'a', encoding='utf-8')
             
@@ -6316,10 +6378,26 @@ class DualStreamLogger:
         self._file_writer_thread = None
     
     @staticmethod
-    def create_default_logger(analysis_log_path, max_buffer_size=50000):
-        """Создать DualStreamLogger с дефолтными путями"""
+    def create_default_logger(analysis_log_path, max_buffer_size=50000, timestamp=None):
+        """Создать DualStreamLogger с дефолтными путями
+        
+        Args:
+            analysis_log_path: Путь к ANALYSIS лог-файлу
+            max_buffer_size: Максимальный размер буфера
+            timestamp: Timestamp для RAW лог-файла (если None - извлекается из analysis_log_path или создается новый)
+        """
         log_dir = os.path.dirname(analysis_log_path)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # КРИТИЧНО: Извлекаем timestamp из имени analysis_log_path, если не передан
+        if timestamp is None:
+            import re
+            match = re.search(r'(\d{8}_\d{6})', analysis_log_path)
+            if match:
+                timestamp = match.group(1)
+            else:
+                # Fallback: создаем новый timestamp
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
         
         if log_dir and not os.path.exists(log_dir):
@@ -6516,6 +6594,7 @@ def universal_print(*args, **kwargs):
         dual_logger = _global_dual_logger
     
     # ВСЁ через DualStreamLogger (буферы с метками времени)
+    # Буфер всегда = точная копия файла (загружается при старте + дописывается при записи)
     if dual_logger:
         formatted_message = f"[{level}] {message}"
         if stream_type == 'raw':
@@ -11914,32 +11993,10 @@ class AutomationGUI(object):
         second_row = self.tk.Frame(control_frame)
         second_row.pack(fill=self.tk.X, pady=2)
         
-        # Кнопка загрузки лога
-        def load_log_cmd():
-            """Команда для загрузки лога"""
-            try:
-                sys.stdout.flush()  # Принудительный flush
-                # Получаем путь к лог-файлу из DualStreamLogger
-                log_file = self._get_log_file_path()
-                if log_file:
-                    self.load_log_to_terminal(log_file)
-                else:
-                    print("[ERROR] Путь к лог-файлу не найден", gui_log=True)
-                    
-            except Exception as e:
-                print(f"[ERROR] Ошибка загрузки лога: {e}", gui_log=True)
-                traceback.print_exc()
-                sys.stdout.flush()
-                sys.stderr.flush()
+        # Кнопка загрузки лога больше не нужна - буфер всегда синхронизирован с файлом
+        # (файл загружается в буфер при старте в start_file_logging())
         
         # Кнопки справа на второй строке
-        load_log_button = self.tk.Button(
-            second_row, 
-            text="Загрузить лог", 
-            command=load_log_cmd
-        )
-        load_log_button.pack(side=self.tk.RIGHT, padx=5)
-        ToolTip(load_log_button, "Загрузить лог-файл текущей сессии в терминал")
         
         # Кнопка Replay логов
         replay_log_button = self.tk.Button(
@@ -16444,6 +16501,8 @@ class AutomationGUI(object):
             else:
                 messages = []
             
+            # Буфер уже содержит все данные из файла (загружены при старте в start_file_logging())
+            # Терминал = точная копия буфера
             if not messages:
                 self._updating_terminal = False
                 return
@@ -16473,79 +16532,6 @@ class AutomationGUI(object):
             print(f"Ошибка обновления терминала: {e}", level='ERROR', gui_log=True)
             if hasattr(self, '_updating_terminal'):
                 self._updating_terminal = False
-    
-    def load_log_to_terminal(self, log_file_path):
-        """Загрузка существующего лога в терминал (с оптимизацией для больших файлов)"""
-        try:
-            # Проверяем входные параметры
-            if not log_file_path:
-                print("Путь к лог-файлу пустой или None", level='ERROR', gui_log=True)
-                return
-            
-            if not isinstance(log_file_path, str):
-                print(f"Путь к лог-файлу должен быть строкой: {type(log_file_path)}", level='ERROR', gui_log=True)
-                return
-            
-            # Получаем размер файла
-            if not os.path.exists(log_file_path):
-                print(f"Файл не существует: {log_file_path}", level='ERROR', gui_log=True)
-                return
-            
-            file_size = os.path.getsize(log_file_path)
-            file_size_mb = file_size / (1024 * 1024)
-            
-            # Читаем файл лога
-            with open(log_file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            
-            # Очищаем буферы DualStreamLogger (если доступен)
-            # ВАЖНО: Перед очисткой принудительно записываем все данные в файл
-            dual_logger = None
-            if hasattr(self, 'universal_runner') and self.universal_runner:
-                dual_logger = getattr(self.universal_runner, 'dual_logger', None)
-            
-            # Fallback: используем глобальный dual_logger
-            if not dual_logger:
-                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
-                    dual_logger = globals()['_global_dual_logger']
-            
-            if dual_logger:
-                # Принудительно дожидаемся опустошения очереди перед очисткой
-                if dual_logger._file_writer_running:
-                    # Ждем пока очередь не опустеет (максимум 5 секунд)
-                    max_wait_time = 5.0
-                    start_time = time.time()
-                    while not dual_logger._file_queue.empty() and (time.time() - start_time) < max_wait_time:
-                        time.sleep(0.1)
-                
-                # Принудительный flush перед очисткой (flush_before_clear=True)
-                dual_logger.clear_raw_buffer(flush_before_clear=True)
-                dual_logger.clear_analysis_buffer(flush_before_clear=True)
-            
-            # Для больших файлов (>10MB) загружаем только последние строки
-            if file_size_mb > 10:
-                print(f"Большой файл - загружаем только последние 20,000 строк", level='INFO', gui_log=True)
-                lines = lines[-20000:]  # Последние 20,000 строк
-            
-            # Добавляем строки из лога в DualStreamLogger (analysis buffer)
-            loaded_count = 0
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if line:  # Пропускаем пустые строки
-                    # Добавляем в analysis buffer DualStreamLogger
-                    if dual_logger:
-                        # Сообщения из старого лога считаем analysis (они уже обработаны)
-                        dual_logger.write_analysis(line)
-                    loaded_count += 1
-            
-            # Обновляем отображение терминала (принудительно, так как загрузили данные)
-            self._force_terminal_update = True
-            self._update_terminal_display()
-            print(f"Загружено строк из лога: {loaded_count}", level='INFO', gui_log=True)
-            
-        except Exception as e:
-            print(f"Ошибка загрузки лога: {e}", level='ERROR', gui_log=True)
-            traceback.print_exc()
     
     def add_gui_log_output(self, message):
         """Добавление сообщения в GUI лог (потокобезопасно)"""
@@ -16763,10 +16749,9 @@ class AutomationGUI(object):
                 except Exception as e:
                     break  # Выходим из цикла при ошибке
             
-            # Обновляем терминал из буферов (только если автопрокрутка включена)
-            # Автопрокрутка контролирует обновление терминала - если выключена, не обновляем
-            if self.terminal_autoscroll_enabled.get():
-                self._update_terminal_display()
+            # КРИТИЧНО: Обновляем терминал из буферов ВСЕГДА
+            # Автопрокрутка контролирует только прокрутку в конец, но НЕ блокирует обновление терминала
+            self._update_terminal_display()
                 
         except Exception as e:
             # Используем стандартный print() - автоматически работает через universal_print
@@ -20326,6 +20311,16 @@ def run_system_updater(temp_dir, dry_run=False):
 
 def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
     """Запуск GUI мониторинга через класс AutomationGUI"""
+    # ОТЛАДКА: Отслеживаем вызовы run_gui_monitor
+    caller_info = ''.join(traceback.format_stack()[-3:-1]) if len(traceback.format_stack()) > 2 else "unknown"
+    print(f"[DEBUG_RUN_GUI] Вызов run_gui_monitor() из: {caller_info[:200]}", level='DEBUG', gui_log=False)
+    
+    # Защита от повторного вызова
+    if hasattr(run_gui_monitor, '_running'):
+        print(f"[DEBUG_RUN_GUI] run_gui_monitor() уже выполняется, пропускаем повторный вызов", level='DEBUG', gui_log=False)
+        return False
+    
+    run_gui_monitor._running = True
     print("\n[GUI] Запуск GUI мониторинга...")
     
     try:
@@ -20361,14 +20356,34 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         universal_runner = gui.universal_runner
         
         print("   [OK] UniversalProcessRunner настроен, запускаем GUI...")
+        # Буфер уже содержит все данные из файла (загружены при старте в start_file_logging())
+        # Терминал = точная копия буфера, поэтому дополнительная загрузка не требуется
+        
+        # КРИТИЧНО: Принудительно обновляем терминал после установки dual_logger
+        # чтобы отобразить все сообщения, загруженные из файла в буфер
+        def force_terminal_update():
+            """Принудительное обновление терминала для отображения загруженных данных"""
+            try:
+                gui._force_terminal_update = True
+                gui._update_terminal_display()
+            except Exception as e:
+                print(f"[WARNING] Ошибка принудительного обновления терминала: {e}")
+        
+        # Обновляем терминал после небольшой задержки, чтобы GUI полностью инициализировался
+        gui.root.after(100, force_terminal_update)
         
         # Запускаем GUI
         gui.run()
+        
+        # Сбрасываем флаг после завершения
+        run_gui_monitor._running = False
         
         print("[OK] GUI мониторинг завершен успешно!")
         return True
         
     except Exception as e:
+        # Сбрасываем флаг при ошибке
+        run_gui_monitor._running = False
         print("[ERROR] Ошибка запуска GUI: %s" % str(e))
         print("[ERROR] Детали ошибки:")
         traceback.print_exc()
@@ -20788,22 +20803,37 @@ def main():
     """Основная функция"""
     # КРИТИЧНО: Устанавливаем GLOBAL_LOG_FILE СРАЗУ в начале main()
     log_file = None
+    log_timestamp = None  # КРИТИЧНО: timestamp для единого лог-файла
+    
+    # Обрабатываем --log-file и --log-timestamp
     if len(sys.argv) > 1:
         for i, arg in enumerate(sys.argv):
             if arg == '--log-file' and i + 1 < len(sys.argv):
                 log_file = sys.argv[i + 1]
-                break
+            elif arg == '--log-timestamp' and i + 1 < len(sys.argv):
+                log_timestamp = sys.argv[i + 1]
     
     # Если не передан, создаем автоматически
     if log_file is None:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        if log_timestamp is None:
+            log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % timestamp)
+        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % log_timestamp)
+    else:
+        # Если передан log_file, но не передан timestamp - извлекаем из имени файла
+        if log_timestamp is None:
+            import re
+            match = re.search(r'(\d{8}_\d{6})', log_file)
+            if match:
+                log_timestamp = match.group(1)
+                print(f"[GLOBAL_LOG] Извлечен timestamp из имени файла: {log_timestamp}")
     
     # Создаем глобальную переменную для лог-файла СРАЗУ
     global GLOBAL_LOG_FILE
     GLOBAL_LOG_FILE = log_file
     print(f"[GLOBAL_LOG] Установлен глобальный лог-файл: {GLOBAL_LOG_FILE}")
+    if log_timestamp:
+        print(f"[GLOBAL_LOG] Используется timestamp: {log_timestamp}")
     
     # Создаем директорию Log если нужно
     log_dir = os.path.dirname(log_file)
@@ -20815,9 +20845,11 @@ def main():
     dual_logger = None
     try:
         # Создаём DualStreamLogger с интеграцией в существующую систему
+        # КРИТИЧНО: Передаем timestamp для единого RAW лог-файла
         dual_logger = DualStreamLogger.create_default_logger(
             analysis_log_path=GLOBAL_LOG_FILE,
-            max_buffer_size=50000
+            max_buffer_size=50000,
+            timestamp=log_timestamp  # Передаем timestamp для RAW файла
         )
         
         # Запускаем файловое логирование
@@ -20847,9 +20879,6 @@ def main():
     logger.process_queue()
     
     # Диагностическая информация
-    print(f"[INFO] Аргументы командной строки: {sys.argv}", gui_log=True)
-    print(f"[INFO] Количество аргументов: {len(sys.argv)}", gui_log=True)
-    print(f"[INFO] Текущая рабочая директория: {os.getcwd()}", gui_log=True)
     print(f"[INFO] {APP_NAME} версия: {APP_VERSION}", gui_log=True)
     print(f"[INFO] Python версия: {sys.version}", gui_log=True)
     
@@ -20873,6 +20902,9 @@ def main():
         elif arg == '--log-file':
             # Уже обработан выше
             i += 1  # Пропускаем следующий аргумент
+        elif arg == '--log-timestamp':
+            # Уже обработан выше
+            i += 1  # Пропускаем следующий аргумент
         elif arg == '--setup-repos':
             setup_repos = True
             print("[INFO] Режим: только настройка репозиториев", gui_log=True)
@@ -20880,39 +20912,41 @@ def main():
             # Следующий аргумент - PID терминала
             if i + 1 < len(sys.argv):
                 close_terminal_pid = sys.argv[i + 1]
-                print(f"[INFO] Терминал будет закрыт после запуска GUI (PID: {close_terminal_pid})", gui_log=True)
-                print("[INFO] Получен PID терминала для закрытия: %s" % close_terminal_pid)
                 
-                # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
-                try:
-                    pid = int(close_terminal_pid)
-                    
-                    # Проверяем что процесс существует
+                # КРИТИЧНО: Проверяем что это действительно число, а не другой аргумент
+                if close_terminal_pid and close_terminal_pid.isdigit():
+                    # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
                     try:
-                        os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                        pid = int(close_terminal_pid)
                         
-                        # Сначала мягкое завершение
-                        os.kill(pid, signal.SIGTERM)
-                        
-                        # Даем время на завершение
-                        time.sleep(0.5)
-                        
-                        # Проверяем что процесс завершился
+                        # Проверяем что процесс существует
                         try:
-                            os.kill(pid, 0)
-                            # Процесс еще жив - отправляем SIGKILL
-                            os.kill(pid, signal.SIGKILL)
-                        except OSError:
-                            # Процесс уже завершился
+                            os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                            
+                            # Сначала мягкое завершение
+                            os.kill(pid, signal.SIGTERM)
+                            
+                            # Даем время на завершение
+                            time.sleep(0.5)
+                            
+                            # Проверяем что процесс завершился
+                            try:
+                                os.kill(pid, 0)
+                                # Процесс еще жив - отправляем SIGKILL
+                                os.kill(pid, signal.SIGKILL)
+                            except OSError:
+                                # Процесс уже завершился
+                                pass
+                                
+                        except OSError as e:
+                            # Процесс уже не существует
                             pass
                             
-                    except OSError as e:
-                        # Процесс уже не существует
-                        pass
-                        
-                except Exception as e:
-                    print(f"[ERROR] Ошибка закрытия терминала: {e}")
-                
+                    except (ValueError, TypeError) as e:
+                        print(f"[WARNING] Некорректный PID терминала: {close_terminal_pid}", gui_log=True)
+                else:
+                    # Это не число - возможно это следующий аргумент (например --log-timestamp)
+                    print(f"[WARNING] PID терминала не указан или некорректен: {close_terminal_pid}", gui_log=True)
                 i += 1  # Пропускаем следующий аргумент
             else:
                 print("[WARNING] Флаг --close-terminal указан без PID", gui_log=True)
@@ -20920,7 +20954,6 @@ def main():
             # Следующий аргумент - режим запуска
             if i + 1 < len(sys.argv):
                 start_mode = sys.argv[i + 1]
-                print(f"[INFO] Режим запуска: {start_mode}", gui_log=True)
                 i += 1  # Пропускаем следующий аргумент
         i += 1
     
@@ -20931,18 +20964,7 @@ def main():
         sys.exit(0)
     
     try:
-        # Логируем системную информацию
-        print("[INFO] Системная информация:", gui_log=True)
-        print(f"[INFO] OS: {os.name}", gui_log=True)
-        print(f"[INFO] Platform: {sys.platform}", gui_log=True)
-        print(f"[INFO] User ID: {os.getuid()}", gui_log=True)
-        print(f"[INFO] Effective User ID: {os.geteuid()}", gui_log=True)
-        
-        # Проверяем права root
-        if os.geteuid() == 0:
-            print("[INFO] Запущено с правами root", gui_log=True)
-        else:
-            print("[INFO] Запущено БЕЗ прав root", gui_log=True)
+        # Проверяем права root (без логирования)
         
         # Режим настройки репозиториев - выполнить и выйти
         if setup_repos:
@@ -20995,7 +21017,6 @@ def main():
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
-            print("[INFO] Запускаем GUI режим", gui_log=True)
             # Проверяем системные требования
             if not check_system_requirements():
                 print("[ERROR] Системные требования не выполнены", gui_log=True)
@@ -21006,6 +21027,7 @@ def main():
                 # GUI готов - запускаем сразу
                 print("[GUI] GUI готов - запускаем интерфейс...")
                 print("[INFO] Режим: gui_ready - запускаем GUI", gui_log=True)
+                print(f"[DEBUG_MAIN] Вызов run_gui_monitor() из блока gui_ready", level='DEBUG', gui_log=False)
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
@@ -21045,6 +21067,7 @@ def main():
                 # Неизвестный режим - пытаемся запустить GUI
                 print("[WARNING] Неизвестный режим: %s" % start_mode)
                 print(f"[WARNING] Неизвестный режим: {start_mode} - пытаемся запустить GUI", gui_log=True)
+                print(f"[DEBUG_MAIN] Вызов run_gui_monitor() из блока else (неизвестный режим)", level='DEBUG', gui_log=False)
                 
                 try:
                     gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)

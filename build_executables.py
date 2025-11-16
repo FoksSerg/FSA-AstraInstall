@@ -383,6 +383,34 @@ def build_in_docker():
     """Собирает бинарники для Linux в Docker"""
     print_step("Сборка для Linux через Docker...")
     
+    # КРИТИЧНО: Сначала создаем объединенный файл через build_unified.py
+    print_step("Создание объединенного файла через build_unified.py...")
+    build_unified_script = SCRIPT_DIR / "build_unified.py"
+    if not build_unified_script.exists():
+        print_error(f"Файл не найден: {build_unified_script}")
+        return False
+    
+    try:
+        result = subprocess.run([
+            sys.executable, str(build_unified_script)
+        ], capture_output=True, text=True, check=True)
+        print_success("Объединенный файл создан")
+        if result.stdout:
+            print(result.stdout)
+    except subprocess.CalledProcessError as e:
+        print_error(f"Ошибка создания объединенного файла: {e}")
+        if e.stderr:
+            print(e.stderr)
+        return False
+    
+    # Проверяем что объединенный файл создан
+    unified_file = BUILD_DIR / "FSA-AstraInstall_unified.py"
+    if not unified_file.exists():
+        print_error(f"Объединенный файл не создан: {unified_file}")
+        return False
+    
+    print_success(f"Объединенный файл готов: {unified_file}")
+    
     # Dockerfile для сборки
     dockerfile_content = '''FROM python:3.9-slim
 
@@ -528,7 +556,7 @@ Log/
 import sys
 from pathlib import Path
 
-f = Path('build/astra_automation_unified_temp.py')
+f = Path('build/FSA-AstraInstall_unified.py')
 if f.exists():
     with open(f, 'r', encoding='utf-8') as file:
         lines = [l.rstrip('\\n\\r') for l in file.readlines()]
@@ -577,35 +605,21 @@ mkdir -p bin build
 echo "[#] Исправление __future__ импортов (ПЕРВЫМ ДЕЛОМ)..." >&2
 python3 /build/build/fix_future_imports.py
 
-# Проверяем shc
-SHC_PATH=$(which shc || echo "/usr/local/bin/shc")
-if [ ! -f "$SHC_PATH" ]; then
-    echo "[ERROR] shc не найден: $SHC_PATH"
-    exit 1
-fi
-
-# 1. Компилируем astra_update.sh через shc
-echo "[#] Компиляция astra_update.sh..."
-$SHC_PATH -r -f astra_update.sh -o bin/astra_update
-
-# 2. Компилируем astra_install.sh через shc
-echo "[#] Компиляция astra_install.sh..."
-$SHC_PATH -r -f astra_install.sh -o bin/astra_install
-
-# 3. Компилируем объединенный Python файл
-echo "[#] Компиляция объединенного Python файла..."
+# Компилируем объединенный файл FSA-AstraInstall_unified.py в FSA-AstraInstall
+echo "[#] Компиляция FSA-AstraInstall_unified.py в FSA-AstraInstall..."
 pyinstaller --onefile --console \\
-    --name astra_automation \\
+    --name FSA-AstraInstall \\
     --distpath bin \\
     --workpath build \\
     --specpath build \\
     --clean \\
-    build/astra_automation_unified_temp.py
+    build/FSA-AstraInstall_unified.py
 
 # Устанавливаем права на выполнение
-chmod +x bin/astra_update bin/astra_install bin/astra_automation 2>/dev/null || true
+chmod +x bin/FSA-AstraInstall 2>/dev/null || true
 
 echo "[OK] Сборка завершена"
+echo "[OK] Создан файл: bin/FSA-AstraInstall"
 '''
         
         with open(build_script_path, 'w') as f:

@@ -1,11 +1,50 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.5.125 (2025.11.16)
+# Версия: V2.5.126 (2025.11.16)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # Пути для Linux
 LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
+
+# ============================================================================
+# БЛОК 0: ИНИЦИАЛИЗАЦИЯ ЛОГ-ФАЙЛА (САМОЕ НАЧАЛО!) 
+# ============================================================================
+
+# Создаем единый timestamp для всей сессии
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_DIR="$LINUX_ASTRA_PATH/Log"
+mkdir -p "$LOG_DIR"
+
+# Создаем ANALYSIS лог-файл (основной)
+ANALYSIS_LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
+
+# Инициализируем лог-файл (только если не существует - защита от повторного создания)
+if [ ! -f "$ANALYSIS_LOG_FILE" ]; then
+    {
+        echo "============================================================"
+        echo "FSA-AstraInstall - НАЧАЛО СЕССИИ ОБНОВЛЕНИЯ"
+        echo "Время запуска: $(date)"
+        echo "Директория скрипта: $LINUX_ASTRA_PATH"
+        echo "Аргументы командной строки: $*"
+        echo "Timestamp: $TIMESTAMP"
+        echo "============================================================"
+    } > "$ANALYSIS_LOG_FILE"
+    
+    # Исправляем права доступа для реального пользователя
+    REAL_USER=$(who am i | awk '{print $1}' 2>/dev/null || echo "")
+    if [ -z "$REAL_USER" ]; then
+        REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
+    fi
+    if [ ! -z "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
+        chown "$REAL_USER:$REAL_USER" "$ANALYSIS_LOG_FILE" 2>/dev/null || true
+        chmod 644 "$ANALYSIS_LOG_FILE" 2>/dev/null || true
+    fi
+fi
+
+# Экспортируем для использования в функциях
+export ANALYSIS_LOG_FILE
+export TIMESTAMP
 
 # ============================================================================
 # ОПРЕДЕЛЕНИЕ РЕЖИМА РАБОТЫ (БИНАРНЫЙ ИЛИ СКРИПТОВЫЙ)
@@ -78,7 +117,7 @@ find_executable() {
 # SMB как основной, Git как резервный
 SOURCES=(
     "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
-    "git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
+    #"git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
 )
 
 # Пример: Только SMB
@@ -103,14 +142,23 @@ DEBUG_LOG_FILE="$(dirname "$0")/astra_update_debug.log"
 # Установите false чтобы отключить логирование в файл
 ENABLE_DEBUG_LOG=false
 
-# Функция логирования
+# Функция логирования (обновленная - записывает в единый лог-файл)
 log_message() {
-    local message="[$(date '+%H:%M:%S')] $1"
-    # Выводим в stderr, чтобы не попадало в результат команд подстановки
+    local message="$1"
+    local timestamp=$(date +"%H:%M:%S.%3N")
+    local log_entry="[$timestamp] [UPDATE] $message"
+    
+    # Записываем в единый ANALYSIS лог-файл (если создан)
+    if [ -f "$ANALYSIS_LOG_FILE" ]; then
+        echo "$log_entry" >> "$ANALYSIS_LOG_FILE" 2>/dev/null || true
+    fi
+    
+    # Старое поведение: выводим в stderr (сохраняем для обратной совместимости)
     echo "$message" >&2
-    # Дублируем в лог-файл (если включено)
+    
+    # Дублируем в старый DEBUG лог-файл (если включено)
     if [ "$ENABLE_DEBUG_LOG" = "true" ]; then
-        echo "$message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
+        echo "[$(date '+%H:%M:%S')] $message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
     fi
 }
 
@@ -696,7 +744,6 @@ try_copy_all_files_from_source() {
     local source="$1"
     local source_type=$(echo "$source" | cut -d: -f1)
     
-    log_message "Попытка копирования всех файлов из источника: $source_type"
     
     # Проверяем доступность источника
     if ! check_source_availability "$source"; then
@@ -767,10 +814,10 @@ try_copy_all_files_from_source() {
         auth_error_occurred=false
         
         # Пробуем скопировать все файлы
+        MISSING_DOCS=()
         for file in "${FILES_TO_COPY[@]}"; do
             local file_path="$LINUX_ASTRA_PATH/$file"
             
-            log_message "Проверяем: $file"
             
             # Проверяем, нужно ли обновлять файл
             local need_update=true
@@ -791,7 +838,7 @@ try_copy_all_files_from_source() {
                     # Сравниваем размеры
                     local local_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "0")
                     if [ "$local_size" = "$remote_info" ]; then
-                        log_message "Пропущен: $file (не изменился - размер совпадает: $local_size байт)"
+                        log_message "Пропущен: $file (не изменился)"
                         skipped=$((skipped + 1))
                         need_update=false
                     fi
@@ -813,7 +860,11 @@ try_copy_all_files_from_source() {
                     log_message "Скопирован: $file"
                     copied=$((copied + 1))
                 else
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
+                    if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
+                        MISSING_DOCS+=("$file")
+                    else
+                        log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
+                    fi
                     failed=$((failed + 1))
                 fi
             elif [ $copy_result -eq 2 ]; then
@@ -824,10 +875,19 @@ try_copy_all_files_from_source() {
                 break  # Прерываем цикл по файлам
             else
                 # Файл не найден на этом источнике
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден на источнике $source_type"
+                if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
+                    MISSING_DOCS+=("$file")
+                else
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден на источнике $source_type"
+                fi
                 failed=$((failed + 1))
             fi
         done
+        
+        # Объединяем предупреждения о документации
+        if [ ${#MISSING_DOCS[@]} -gt 0 ]; then
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Файлы ${MISSING_DOCS[*]} не найдены на источнике $source_type"
+        fi
         
         # Если была ошибка авторизации и это первая попытка - запрашиваем пароль
         if [ "$auth_error_occurred" = true ] && [ $auth_attempt -eq 1 ] && [ "$source_type" = "smb" ]; then
@@ -1027,9 +1087,6 @@ fi
 # ЭТАП ПРОВЕРКИ СКОПИРОВАННЫХ ФАЙЛОВ
 # ============================================================================
 if [ "$SERVER_AVAILABLE" = true ]; then
-    log_message "Проверка скопированных файлов..."
-    
-    log_message "Синхронизация файловой системы..."
     sync
     sleep 0.1
     
@@ -1060,19 +1117,15 @@ if [ "$SERVER_AVAILABLE" = true ]; then
             continue
         fi
         
-        file_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "unknown")
-        log_message "Проверен: $file (размер: $file_size байт)"
     done
     
     if [ "$ALL_FILES_OK" = false ]; then
-        log_message "Обнаружены проблемы с файлами. Повторная синхронизация..."
         sync
         sleep 0.2
         
         for file in "${MISSING_FILES[@]}"; do
             file_path="$LINUX_ASTRA_PATH/$file"
             if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                log_message "Файл $file теперь доступен"
                 ALL_FILES_OK=true
             fi
         done
@@ -1080,14 +1133,12 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         for file in "${EMPTY_FILES[@]}"; do
             file_path="$LINUX_ASTRA_PATH/$file"
             if [ -s "$file_path" ]; then
-                log_message "Файл $file больше не пустой"
                 ALL_FILES_OK=true
             fi
         done
     fi
     
     # КРИТИЧНО: Устанавливаем права на выполнение сразу после проверки файлов
-    log_message "Установка прав на выполнение для скопированных файлов..."
     if [ "$IS_BINARY" = true ]; then
         chmod +x "$LINUX_ASTRA_PATH/astra_install" 2>/dev/null
         chmod +x "$LINUX_ASTRA_PATH/astra_update" 2>/dev/null
@@ -1097,18 +1148,25 @@ if [ "$SERVER_AVAILABLE" = true ]; then
         chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
         chmod +x "$LINUX_ASTRA_PATH/astra_automation.py" 2>/dev/null
     fi
-    log_message "Права на выполнение установлены"
     
-    if [ "$ALL_FILES_OK" = true ]; then
-        log_message "Все файлы успешно проверены и готовы к использованию"
-    else
+    # Объединяем предупреждения о недостающих файлах
+    MISSING_DOCS=()
+    for file in "${MISSING_FILES[@]}"; do
+        if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
+            MISSING_DOCS+=("$file")
+        else
+            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
+        fi
+    done
+    
+    if [ ${#MISSING_DOCS[@]} -gt 0 ]; then
+        log_message "ПРЕДУПРЕЖДЕНИЕ: Файлы ${MISSING_DOCS[*]} не найдены"
+    fi
+    
+    if [ "$ALL_FILES_OK" = false ] && [ ${#MISSING_DOCS[@]} -lt ${#MISSING_FILES[@]} ]; then
         log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые файлы имеют проблемы, но продолжаем работу"
     fi
     
-    log_message "Проверка файлов завершена"
-    
-    # Финальная синхронизация после копирования всех файлов
-    log_message "Финальная синхронизация файловой системы перед запуском..."
     sync
     sleep 0.2
     
@@ -1154,44 +1212,21 @@ log_message "Очистка старых логов ОТКЛЮЧЕНА для с
 log_message "Старые логи НЕ удалены (сохранены для диагностики)"
 
 # КРИТИЧНО: Повторная установка прав перед запуском (на случай если они не были установлены ранее)
-log_message "Проверка и установка прав на выполнение перед запуском..."
 if [ "$IS_BINARY" = true ]; then
-    if [ ! -x "$LINUX_ASTRA_PATH/astra_install" ]; then
-        log_message "Устанавливаем права на выполнение для astra_install..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_install" 2>/dev/null
-    fi
-    if [ ! -x "$LINUX_ASTRA_PATH/astra_update" ]; then
-        log_message "Устанавливаем права на выполнение для astra_update..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_update" 2>/dev/null
-    fi
-    if [ ! -x "$LINUX_ASTRA_PATH/astra_automation" ]; then
-        log_message "Устанавливаем права на выполнение для astra_automation..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_automation" 2>/dev/null
-    fi
+    chmod +x "$LINUX_ASTRA_PATH/astra_install" 2>/dev/null
+    chmod +x "$LINUX_ASTRA_PATH/astra_update" 2>/dev/null
+    chmod +x "$LINUX_ASTRA_PATH/astra_automation" 2>/dev/null
 else
-    if [ ! -x "$LINUX_ASTRA_PATH/astra_install.sh" ]; then
-        log_message "Устанавливаем права на выполнение для astra_install.sh..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
-    fi
-    if [ ! -x "$LINUX_ASTRA_PATH/astra_update.sh" ]; then
-        log_message "Устанавливаем права на выполнение для astra_update.sh..."
-        chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
-    fi
+    chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
+    chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
 fi
-log_message "Права на выполнение проверены и установлены"
 
 # КРИТИЧНО: Финальная синхронизация перед запуском приложения
-# Это гарантирует, что все изменения файлов записаны на диск
-log_message "Синхронизация файловой системы перед запуском приложения..."
 sync
-sleep 0.1  # Уменьшена задержка для ускорения (достаточно для завершения операций записи)
+sleep 0.1
 
 # Запускаем установку
-log_message "Запуск установки..."
 cd "$LINUX_ASTRA_PATH" 2>/dev/null
-
-# Финальная проверка перед запуском
-log_message "Финальная проверка перед запуском..."
 
 ASTRA_INSTALL=$(find_executable "astra_install")
 if [ -z "$ASTRA_INSTALL" ]; then
@@ -1229,27 +1264,50 @@ fi
 sync
 
 log_message "Файл astra_install готов к запуску"
+
+# КРИТИЧНО: Передаем лог-файл и timestamp в astra_install.sh
+# Это обеспечивает единый лог-файл для всей сессии
+if [ -f "$ANALYSIS_LOG_FILE" ] && [ -n "$TIMESTAMP" ]; then
+    log_message "Передаем лог-файл в astra_install: $ANALYSIS_LOG_FILE"
+    log_message "Передаем timestamp: $TIMESTAMP"
+    
+    # Формируем аргументы с лог-файлом в начале
+    INSTALL_CMD_ARGS=(
+        "--log-file" "$ANALYSIS_LOG_FILE"
+        "--log-timestamp" "$TIMESTAMP"
+        "--terminal-pid" "$TERMINAL_PID"
+        "--windows-minimized"
+    )
+else
+    # Fallback: работаем как раньше (без передачи лог-файла)
+    log_message "Лог-файл не создан, работаем в старом режиме"
+    INSTALL_CMD_ARGS=(
+        "--terminal-pid" "$TERMINAL_PID"
+        "--windows-minimized"
+    )
+fi
+
+# Добавляем остальные аргументы
+if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
+    INSTALL_CMD_ARGS+=("${INSTALL_ARGS[@]}")
+fi
+
 # Проверяем, передан ли --console, и добавляем --mode console_forced
-ADD_MODE_ARG=""
+ADD_MODE=false
 for arg in "${INSTALL_ARGS[@]}"; do
     if [[ "$arg" == "--console" ]]; then
-        ADD_MODE_ARG="--mode console_forced"
+        ADD_MODE=true
         break
     fi
 done
 
-if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
-    if [ -n "$ADD_MODE_ARG" ]; then
-        log_message "Запускаем: $ASTRA_INSTALL --terminal-pid $TERMINAL_PID --windows-minimized ${INSTALL_ARGS[*]} $ADD_MODE_ARG"
-        "$ASTRA_INSTALL" --terminal-pid "$TERMINAL_PID" --windows-minimized "${INSTALL_ARGS[@]}" "$ADD_MODE_ARG"
-    else
-        log_message "Запускаем: $ASTRA_INSTALL --terminal-pid $TERMINAL_PID --windows-minimized ${INSTALL_ARGS[*]}"
-        "$ASTRA_INSTALL" --terminal-pid "$TERMINAL_PID" --windows-minimized "${INSTALL_ARGS[@]}"
-    fi
-else
-    log_message "Запускаем: $ASTRA_INSTALL --terminal-pid $TERMINAL_PID --windows-minimized"
-    "$ASTRA_INSTALL" --terminal-pid "$TERMINAL_PID" --windows-minimized
+if [ "$ADD_MODE" = true ]; then
+    INSTALL_CMD_ARGS+=("--mode" "console_forced")
 fi
+
+# Запускаем с правильными аргументами
+log_message "Запускаем: $ASTRA_INSTALL ${INSTALL_CMD_ARGS[*]}"
+"$ASTRA_INSTALL" "${INSTALL_CMD_ARGS[@]}"
 
 # ВРЕМЕННО: Завершение логирования
 debug_log "=== КОНЕЦ СЕАНСА ОБНОВЛЕНИЯ ==="
