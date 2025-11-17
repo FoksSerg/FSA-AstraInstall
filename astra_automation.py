@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.5.126 (2025.11.16)
+Версия: V2.5.127 (2025.11.17)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.5.126 (2025.11.16)"
+APP_VERSION = "V2.5.127 (2025.11.17)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -457,105 +457,61 @@ COMPONENTS_CONFIG = {
         'sort_order': 20
     },
     
-    # Wine приложения (Windows через Wine)
-    'notepad_plus_plus': {
+    # Шаблоны Wine приложений (для динамического создания экземпляров)
+    'wine_app_notepad_plus_plus': {
         'name': 'Notepad++',
+        'template': True,
+        'category': 'wine_application_template',
         'command_name': 'notepad++.exe',
-        'path': 'drive_c/Program Files/Notepad++/notepad++.exe',
-        'category': 'wine_application',
-        'dependencies': ['wineprefix'],
-        'check_paths': ['drive_c/Program Files/Notepad++/notepad++.exe'],
+        'default_path': 'drive_c/Program Files/Notepad++/notepad++.exe',
         'install_method': 'wine_executable',
         'uninstall_method': 'wine_executable',
-        'uninstall_paths': ['drive_c/Program Files/Notepad++'],
-        'gui_selectable': True,
+        'default_uninstall_paths': ['drive_c/Program Files/Notepad++'],
+        'download_url': 'https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.6.6/npp.8.6.6.Installer.exe',
+        'download_sha256': None,  # Нужно вычислить после загрузки
+        'download_filename': 'npp.8.6.6.Installer.exe',
+        'install_args': ['/S'],  # Тихая установка
         'description': 'Notepad++ - текстовый редактор для Windows',
-        'sort_order': 21
+        'sort_order': 21,
+        'gui_selectable': True  # Можно выбирать для установки в wineprefix
+    },
+    'wine_app_7zip': {
+        'name': '7-Zip',
+        'template': True,
+        'category': 'wine_application_template',
+        'command_name': '7zFM.exe',
+        'default_path': 'drive_c/Program Files/7-Zip/7zFM.exe',
+        'install_method': 'wine_executable',
+        'uninstall_method': 'wine_executable',
+        'default_uninstall_paths': ['drive_c/Program Files/7-Zip'],
+        'download_url': 'https://www.7-zip.org/a/7z2409.exe',  # Обновите версию при необходимости
+        'download_sha256': None,  # Нужно вычислить после загрузки
+        'download_filename': '7z2409.exe',
+        'install_args': ['/S'],
+        'description': '7-Zip - архиватор файлов',
+        'sort_order': 22,
+        'gui_selectable': True  # Можно выбирать для установки в wineprefix
+    },
+    'wine_app_filezilla': {
+        'name': 'FileZilla',
+        'template': True,
+        'category': 'wine_application_template',
+        'command_name': 'filezilla.exe',
+        'default_path': 'drive_c/Program Files/FileZilla FTP Client/filezilla.exe',
+        'install_method': 'wine_executable',
+        'uninstall_method': 'wine_executable',
+        'default_uninstall_paths': ['drive_c/Program Files/FileZilla FTP Client'],
+        'download_url': 'https://download.filezilla-project.org/client/FileZilla_3.67.1_win64-setup.exe',  # Обновите версию
+        'download_sha256': None,  # Нужно вычислить после загрузки
+        'download_filename': 'FileZilla_3.67.1_win64-setup.exe',
+        'install_args': ['/S'],
+        'description': 'FileZilla - FTP клиент',
+        'sort_order': 23,
+        'gui_selectable': True  # Можно выбирать для установки в wineprefix
     },
     
-    # ============================================================================
-    # ТЕСТОВЫЕ КОМПОНЕНТЫ ЯРЛЫКОВ (для тестирования разных типов)
-    # ============================================================================
-    
-    # Тест 1: Ярлык приложения (Type=Application) - запуск astra_install.sh
-    'test_app_shortcut': {
-        'name': 'Тест: Ярлык Приложения',
-        'shortcut_name': 'Запуск Установщика',
-        'path': 'test_astra_install.desktop',
-        'category': 'desktop_shortcut',
-        'dependencies': [],
-        'check_paths': ['test_astra_install.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'desktop_entry_type': 'Application',
-        'script_path': 'astra_install.sh',
-        'script_args': '',
-        'working_dir': None,
-        'terminal': True,
-        'icon': 'system-software-install',
-        'comment': 'Тестовый ярлык для запуска astra_install.sh',
-        'gui_selectable': True,
-        'description': 'Тест: Ярлык приложения (Type=Application)',
-        'sort_order': 22
-    },
-    
-    # Тест 2: Ярлык папки (Type=Link) - открытие папки Astra
-    'test_folder_shortcut': {
-        'name': 'Тест: Ярлык Папки',
-        'shortcut_name': 'Папка Astra',
-        'path': 'test_astra_folder.desktop',
-        'category': 'desktop_shortcut',
-        'dependencies': [],
-        'check_paths': ['test_astra_folder.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'desktop_entry_type': 'Link',
-        'folder_path': 'AstraPack/Astra',
-        'comment': 'Тестовый ярлык для открытия папки Astra',
-        'icon': 'folder',
-        'gui_selectable': True,
-        'description': 'Тест: Ярлык папки (Type=Link)',
-        'sort_order': 23
-    },
-    
-    # Тест 3: Ярлык ссылки (Type=Link) - веб-ссылка на сайт компании
-    'test_web_shortcut': {
-        'name': 'Тест: Ярлык Ссылки',
-        'shortcut_name': 'Сайт Компании',
-        'path': 'test_company_website.desktop',
-        'category': 'desktop_shortcut',
-        'dependencies': [],
-        'check_paths': ['test_company_website.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'desktop_entry_type': 'Link',
-        'url': 'https://rlt.ru/',
-        'comment': 'Тестовый ярлык для открытия сайта компании ООО "НПА Вира-Реалтайм"',
-        'icon': 'web-browser',
-        'gui_selectable': True,
-        'description': 'Тест: Ярлык веб-ссылки (Type=Link)',
-        'sort_order': 24
-    },
-    
-    # Тест 4: Ярлык файла (Type=Link) - открытие README.md
-    'test_file_shortcut': {
-        'name': 'Тест: Ярлык Файла',
-        'shortcut_name': 'README',
-        'path': 'test_readme.desktop',
-        'category': 'desktop_shortcut',
-        'dependencies': [],
-        'check_paths': ['test_readme.desktop'],
-        'install_method': 'desktop_shortcut',
-        'uninstall_method': 'desktop_shortcut',
-        'desktop_entry_type': 'Link',
-        'url': 'file://README.md',
-        'comment': 'Тестовый ярлык для открытия README.md',
-        'icon': 'text-x-readme',
-        'gui_selectable': True,
-        'description': 'Тест: Ярлык файла (Type=Link)',
-        'sort_order': 25
-    },
 }
+
 
 # ============================================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
@@ -753,12 +709,17 @@ def check_component_status(component_id, wineprefix_path=None):
     
     return False
 
-def resolve_dependencies(component_id):
+def resolve_dependencies(component_id, wine_app_manager=None):
     """
     Рекурсивно разрешает все зависимости компонента с учетом порядка зависимостей
     
+    Поддерживает:
+    - Существующие компоненты из COMPONENTS_CONFIG
+    - Динамические экземпляры из wine_app_manager
+    
     Args:
         component_id: Строковый ID компонента
+        wine_app_manager: Менеджер экземпляров (опционально, для поддержки экземпляров)
     
     Returns:
         list: Список ID всех зависимостей (включая транзитивные),
@@ -771,17 +732,49 @@ def resolve_dependencies(component_id):
     visited = set()
     path = set()  # Для обнаружения циклов
     
+    def _get_component_config(cid):
+        """Получить конфигурацию компонента (из COMPONENTS_CONFIG или экземпляра)"""
+        # ПРОВЕРКА 1: Существующий компонент из COMPONENTS_CONFIG
+        if cid in COMPONENTS_CONFIG:
+            return COMPONENTS_CONFIG[cid]
+        
+        # ПРОВЕРКА 2: Динамический экземпляр из менеджера
+        if wine_app_manager:
+            instance_config = wine_app_manager.get_instance_config(cid)
+            if instance_config:
+                return instance_config
+        
+        return None
+    
+    def _get_dependencies(cid):
+        """Получить зависимости компонента"""
+        config = _get_component_config(cid)
+        if config:
+            return config.get('dependencies', [])
+        return []
+    
+    def _get_sort_order(cid):
+        """Получить sort_order компонента"""
+        config = _get_component_config(cid)
+        if config:
+            return config.get('sort_order', 999)
+        return 999
+    
     def _resolve_recursive(cid):
         # Проверка циклов
         if cid in path:
             raise ValueError(f"Обнаружен цикл зависимостей: {cid} уже в пути {path}")
-        if cid in visited or cid not in COMPONENTS_CONFIG:
+        
+        # Проверяем существование компонента
+        config = _get_component_config(cid)
+        if cid in visited or not config:
             return
+        
         visited.add(cid)
         path.add(cid)
         
         # Разрешаем зависимости в порядке их указания
-        deps = get_component_field(cid, 'dependencies', [])
+        deps = _get_dependencies(cid)
         for dep_id in deps:
             _resolve_recursive(dep_id)
             if dep_id not in resolved:
@@ -797,16 +790,19 @@ def resolve_dependencies(component_id):
     
     # Сортируем компоненты одного уровня по sort_order
     # Но порядок зависимостей сохраняется (родители всегда перед детьми)
-    resolved.sort(key=lambda cid: get_component_field(cid, 'sort_order', 999))
+    resolved.sort(key=lambda cid: _get_sort_order(cid))
     
     return resolved
 
-def resolve_dependencies_for_install(component_ids):
+def resolve_dependencies_for_install(component_ids, wine_app_manager=None):
     """
     Разрешает зависимости для списка компонентов в порядке установки
     
+    Поддерживает динамические экземпляры через wine_app_manager
+    
     Args:
         component_ids: Список строковых ID компонентов
+        wine_app_manager: Менеджер экземпляров (опционально)
     
     Returns:
         list: Отсортированный список ID для установки
@@ -816,7 +812,7 @@ def resolve_dependencies_for_install(component_ids):
     
     for component_id in component_ids:
         if component_id not in visited:
-            resolved = resolve_dependencies(component_id)
+            resolved = resolve_dependencies(component_id, wine_app_manager=wine_app_manager)
             for cid in resolved:
                 if cid not in all_resolved:
                     all_resolved.append(cid)
@@ -1002,6 +998,131 @@ def track_class_activity(class_name):
                 raise
         return wrapper
     return decorator
+
+# ============================================================================
+# МЕНЕДЖЕР ЭКЗЕМПЛЯРОВ WINE ПРИЛОЖЕНИЙ
+# ============================================================================
+class WineApplicationInstanceManager:
+    """Управление экземплярами Wine приложений для разных wineprefix"""
+    
+    def __init__(self):
+        self.instances = {}  # instance_id -> instance_data
+    
+    def create_instance_id(self, wineprefix_id, template_id):
+        """Создает ID экземпляра"""
+        return f"{wineprefix_id}__{template_id}"
+    
+    def get_or_create_instance(self, wineprefix_id, template_id):
+        """Получает или создает экземпляр приложения для wineprefix
+        
+        Args:
+            wineprefix_id: ID wineprefix (например, 'wineprefix', 'cont_wineprefix')
+            template_id: ID шаблона приложения (например, 'wine_app_notepad_plus_plus')
+        
+        Returns:
+            tuple: (instance_id, instance_data)
+        """
+        instance_id = self.create_instance_id(wineprefix_id, template_id)
+        
+        # Если экземпляр уже существует - возвращаем его
+        if instance_id in self.instances:
+            return instance_id, self.instances[instance_id]
+        
+        # Получаем конфигурацию wineprefix
+        wineprefix_config = COMPONENTS_CONFIG.get(wineprefix_id, {})
+        if not wineprefix_config:
+            raise ValueError(f"Wineprefix {wineprefix_id} не найден в COMPONENTS_CONFIG")
+        
+        # Получаем конфигурацию шаблона из COMPONENTS_CONFIG
+        template_config = COMPONENTS_CONFIG.get(template_id, {})
+        if not template_config or template_config.get('template') != True:
+            raise ValueError(f"Шаблон {template_id} не найден в COMPONENTS_CONFIG или не является шаблоном")
+        
+        # Создаем конфигурацию экземпляра
+        instance_config = {
+            'name': template_config['name'],
+            'wineprefix_id': wineprefix_id,
+            'template_id': template_id,
+            'wineprefix_path': wineprefix_config.get('wineprefix_path', '~/.wine-astraregul'),
+            'wine_source': wineprefix_config.get('wine_source', 'astrapack'),
+            'path': template_config['default_path'],
+            'check_paths': [template_config['default_path']],
+            'install_method': template_config['install_method'],
+            'uninstall_method': template_config['uninstall_method'],
+            'uninstall_paths': template_config['default_uninstall_paths'],
+            'dependencies': [wineprefix_id],  # Зависит от wineprefix
+            'category': 'wine_application',
+            'download_url': template_config.get('download_url'),
+            'download_filename': template_config.get('download_filename'),
+            'download_sha256': template_config.get('download_sha256'),
+            'install_args': template_config.get('install_args', ['/S']),
+            'description': template_config.get('description', ''),
+            'sort_order': template_config.get('sort_order', 999),
+            'gui_selectable': True
+        }
+        
+        self.instances[instance_id] = {
+            'config': instance_config,
+            'status': 'missing'
+        }
+        
+        return instance_id, self.instances[instance_id]
+    
+    def get_instances_for_wineprefix(self, wineprefix_id):
+        """Получает все экземпляры для указанного wineprefix
+        
+        Args:
+            wineprefix_id: ID wineprefix
+        
+        Returns:
+            dict: {instance_id: instance_data, ...}
+        """
+        return {
+            inst_id: inst_data
+            for inst_id, inst_data in self.instances.items()
+            if inst_data['config']['wineprefix_id'] == wineprefix_id
+        }
+    
+    def remove_instances_for_wineprefix(self, wineprefix_id):
+        """Удаляет все экземпляры при удалении wineprefix
+        
+        Args:
+            wineprefix_id: ID wineprefix
+        
+        Returns:
+            list: Список ID удаленных экземпляров
+        """
+        to_remove = [
+            inst_id for inst_id, inst_data in self.instances.items()
+            if inst_data['config']['wineprefix_id'] == wineprefix_id
+        ]
+        for inst_id in to_remove:
+            del self.instances[inst_id]
+        return to_remove
+    
+    def get_instance_config(self, instance_id):
+        """Получает конфигурацию экземпляра
+        
+        Args:
+            instance_id: ID экземпляра
+        
+        Returns:
+            dict: Конфигурация экземпляра или None
+        """
+        instance_data = self.instances.get(instance_id)
+        if instance_data:
+            return instance_data['config']
+        return None
+    
+    def update_instance_status(self, instance_id, status):
+        """Обновляет статус экземпляра
+        
+        Args:
+            instance_id: ID экземпляра
+            status: Новый статус ('missing', 'ok', 'installing', 'removing', 'error')
+        """
+        if instance_id in self.instances:
+            self.instances[instance_id]['status'] = status
 
 # ============================================================================
 # БАЗОВЫЙ КЛАСС ДЛЯ ОБРАБОТЧИКОВ КОМПОНЕНТОВ
@@ -1591,7 +1712,6 @@ class ComponentHandler(ABC):
         while time.time() - start_time < max_wait:
             running = self._check_wine_processes_running()
             if not running:
-                print("[ComponentHandler] Все процессы wine завершены")
                 return True
             
             # Логируем оставшиеся процессы
@@ -2015,7 +2135,6 @@ class WinePackageHandler(ComponentHandler):
         
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -2399,7 +2518,6 @@ class SystemConfigHandler(ComponentHandler):
         """Установка системной настройки"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -2491,7 +2609,6 @@ class WineEnvironmentHandler(ComponentHandler):
         """Инициализация Wine окружения"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -3178,7 +3295,6 @@ class AptPackageHandler(ComponentHandler):
         """Установка APT пакета"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -3340,7 +3456,6 @@ class WineApplicationHandler(ComponentHandler):
         """Установка Wine приложения"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing' только если компонент не установлен
@@ -4947,17 +5062,177 @@ class WineApplicationHandler(ComponentHandler):
             print(f"Ошибка мониторинга cp: {e}", level='DEBUG')
     
     def _install_wine_executable(self, component_id: str, config: dict) -> bool:
-        """Установка исполняемого файла в Wine (для Wine приложений)"""
-        print(f"Установка исполняемого файла в Wine: {component_id}")
+        """Универсальная установка исполняемого файла в Wine (для Wine приложений)
+        
+        Поддерживает установку через download_url с автоматическим скачиванием,
+        проверкой SHA256 и запуском через Wine с настраиваемыми параметрами.
+        """
+        component_name = config.get('name', component_id)
+        print(f"Установка Wine приложения: {component_name}")
         
         try:
-            # Для Wine приложений используем упрощенную логику
-            # Устанавливаем через Wine установщик если он есть
-            # Или просто копируем файлы если они есть в astrapack_dir
+            # Проверяем наличие download_url
+            download_url = config.get('download_url')
+            if not download_url:
+                print(f"Для компонента {component_id} не указан download_url", level='ERROR')
+                print("Установка через download_url невозможна без указания URL", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
             
-            # Пока что возвращаем ошибку - нужно реализовать установку конкретных приложений
-            # TODO: Реализовать установку Wine приложений (notepad++, winrar, firefox_wine)
-            print(f"Установка Wine приложения {component_id} пока не реализована", level='WARNING')
+            # Получаем параметры загрузки
+            download_filename = config.get('download_filename')
+            if not download_filename:
+                # Пытаемся извлечь имя файла из URL
+                download_filename = os.path.basename(download_url.split('?')[0])
+                if not download_filename or '.' not in download_filename:
+                    print(f"Не удалось определить имя файла для {component_id}", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+            
+            download_sha256 = config.get('download_sha256')
+            
+            # Обновляем прогресс
+            self._update_progress(
+                stage_name=f"Установка {component_name}",
+                stage_progress=10,
+                global_progress=10,
+                details=f"Подготовка к скачиванию {download_filename}",
+                elapsed_time=0
+            )
+            
+            # Создаем MinimalWinetricks для скачивания
+            minimal_winetricks = MinimalWinetricks(astrapack_dir=self.astrapack_dir)
+            
+            # Определяем путь для сохранения установщика
+            cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
+            os.makedirs(cache_dir, exist_ok=True)
+            installer_path = os.path.join(cache_dir, download_filename)
+            
+            # Скачиваем установщик
+            self._update_progress(
+                stage_name=f"Установка {component_name}",
+                stage_progress=20,
+                global_progress=20,
+                details=f"Скачивание {download_filename}...",
+                elapsed_time=0
+            )
+            
+            try:
+                minimal_winetricks._download(
+                    download_url,
+                    installer_path,
+                    expected_sha256=download_sha256,
+                    component_id=component_id,
+                    filename=download_filename
+                )
+            except Exception as e:
+                print(f"Ошибка скачивания установщика: {e}", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+            # Проверяем что файл скачан
+            if not os.path.exists(installer_path):
+                print(f"Установщик не найден после скачивания: {installer_path}", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+            # Определяем параметры установки
+            install_args = config.get('install_args', ['/S'])
+            if not isinstance(install_args, list):
+                install_args = [install_args] if install_args else ['/S']
+            
+            # Обновляем прогресс
+            self._update_progress(
+                stage_name=f"Установка {component_name}",
+                stage_progress=50,
+                global_progress=50,
+                details=f"Запуск установщика...",
+                elapsed_time=0
+            )
+            
+            # Определяем путь к префиксу из конфигурации
+            wineprefix_path = config.get('wineprefix_path')
+            if wineprefix_path:
+                self.wineprefix = expand_user_path(wineprefix_path)
+            
+            # Подготавливаем окружение Wine
+            env = os.environ.copy()
+            env['WINEPREFIX'] = self.wineprefix
+            env['WINEDEBUG'] = '-all'
+            
+            # Определяем путь к Wine на основе wine_source
+            wine_source = config.get('wine_source', 'astrapack')
+            if wine_source == 'system':
+                wine_path = 'wine'  # Системный Wine
+            else:
+                wine_path = '/opt/wine-astraregul/bin/wine'
+                if not os.path.exists(wine_path):
+                    # Fallback на системный wine
+                    wine_path = 'wine'
+            
+            # Запускаем установщик через Wine
+            print(f"Запуск установщика: {wine_path} {installer_path} {' '.join(install_args)}")
+            
+            try:
+                result = subprocess.run(
+                    [wine_path, installer_path] + install_args,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True,
+                    errors='replace',
+                    timeout=600  # 10 минут максимум
+                )
+                
+                if result.returncode != 0:
+                    print(f"Установщик завершился с кодом: {result.returncode}", level='ERROR')
+                    if result.stderr:
+                        for line in result.stderr.split('\n')[:20]:
+                            if line.strip():
+                                print(f"  {line}")
+                    self._update_status(component_id, 'error')
+                    return False
+                
+            except subprocess.TimeoutExpired:
+                print(f"Превышено время ожидания установки {component_name}", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            except Exception as e:
+                print(f"Ошибка запуска установщика: {e}", level='ERROR')
+                traceback.print_exc()
+                self._update_status(component_id, 'error')
+                return False
+            
+            # Даем время на завершение установки
+            time.sleep(3)
+            
+            # Обновляем прогресс
+            self._update_progress(
+                stage_name=f"Установка {component_name}",
+                stage_progress=90,
+                global_progress=90,
+                details=f"Проверка установки...",
+                elapsed_time=0
+            )
+            
+            # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
+            actual_status = self.check_status(component_id, config)
+            
+            if actual_status:
+                print(f"Установка {component_name} завершена успешно")
+                self._update_progress(
+                    stage_name=f"Установка {component_name}",
+                    stage_progress=100,
+                    global_progress=100,
+                    details=f"{component_name} установлен успешно",
+                    elapsed_time=0
+                )
+                # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
+                self._update_status(component_id, 'ok')
+                return True
+            else:
+                print(f"Установщик завершился успешно, но {component_name} не установлен", level='ERROR')
+                print("Проверка статуса компонента не подтвердила установку", level='ERROR')
             self._update_status(component_id, 'error')
             return False
             
@@ -5002,8 +5277,8 @@ class WineApplicationHandler(ComponentHandler):
                     if not processes_stopped:
                         print(f"Не все процессы остановлены для {component_id}, продолжаем удаление", level='WARNING')
             
-            # Получаем список объектов для удаления
-            uninstall_paths = get_component_field(component_id, 'uninstall_paths', [])
+            # Получаем список объектов для удаления из конфигурации
+            uninstall_paths = config.get('uninstall_paths', [])
             
             # КРИТИЧНО: Требуем явное указание объектов для удаления
             if not uninstall_paths:
@@ -5103,7 +5378,6 @@ class ApplicationHandler(ComponentHandler):
         """Установка приложения"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -5538,7 +5812,6 @@ class DesktopShortcutHandler(ComponentHandler):
         """Установка ярлыка рабочего стола"""
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку")
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
@@ -5964,7 +6237,7 @@ class DualStreamLogger:
     ANALYSIS-поток: аналитика, парсинг, мониторинг системы
     """
     
-    def __init__(self, max_buffer_size=50000, raw_log_path=None, analysis_log_path=None):
+    def __init__(self, max_buffer_size=50000, raw_log_path=None, analysis_log_path=None, terminal_update_callback=None):
         """Инициализация DualStreamLogger"""
         # Буферы в памяти
         self._raw_buffer = deque(maxlen=max_buffer_size)
@@ -5985,6 +6258,9 @@ class DualStreamLogger:
         self._file_writer_running = False
         self._raw_file = None
         self._analysis_file = None
+        
+        # Callback для немедленного обновления терминала при новых данных
+        self.terminal_update_callback = terminal_update_callback
         
         # КРИТИЧНО: Размер файла на момент начала текущей сессии (для загрузки данных, записанных до запуска)
         self._analysis_log_size_before_start = 0
@@ -6015,6 +6291,13 @@ class DualStreamLogger:
         # Асинхронная запись в файл (если включено)
         if self._file_writer_running and self._raw_log_path:
             self._file_queue.put(('raw', formatted_message))
+        
+        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
+        if self.terminal_update_callback:
+            try:
+                self.terminal_update_callback()
+            except Exception:
+                pass  # Игнорируем ошибки callback
     
     def write_analysis(self, message):
         """Записать сообщение в ANALYSIS-поток (всегда с меткой времени)"""
@@ -6031,6 +6314,13 @@ class DualStreamLogger:
         # Асинхронная запись в файл (если включено)
         if self._file_writer_running and self._analysis_log_path:
             self._file_queue.put(('analysis', formatted_message))
+        
+        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
+        if self.terminal_update_callback:
+            try:
+                self.terminal_update_callback()
+            except Exception:
+                pass  # Игнорируем ошибки callback
     
     def get_raw_buffer(self):
         """Получить все содержимое RAW-буфера"""
@@ -6378,13 +6668,14 @@ class DualStreamLogger:
         self._file_writer_thread = None
     
     @staticmethod
-    def create_default_logger(analysis_log_path, max_buffer_size=50000, timestamp=None):
+    def create_default_logger(analysis_log_path, max_buffer_size=50000, timestamp=None, terminal_update_callback=None):
         """Создать DualStreamLogger с дефолтными путями
         
         Args:
             analysis_log_path: Путь к ANALYSIS лог-файлу
             max_buffer_size: Максимальный размер буфера
             timestamp: Timestamp для RAW лог-файла (если None - извлекается из analysis_log_path или создается новый)
+            terminal_update_callback: Callback для немедленного обновления терминала при новых данных
         """
         log_dir = os.path.dirname(analysis_log_path)
         
@@ -6396,7 +6687,7 @@ class DualStreamLogger:
                 timestamp = match.group(1)
             else:
                 # Fallback: создаем новый timestamp
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
         
@@ -6406,7 +6697,8 @@ class DualStreamLogger:
         logger = DualStreamLogger(
             max_buffer_size=max_buffer_size,
             raw_log_path=raw_log_path,
-            analysis_log_path=analysis_log_path
+            analysis_log_path=analysis_log_path,
+            terminal_update_callback=terminal_update_callback
         )
         
         return logger
@@ -6580,6 +6872,10 @@ def universal_print(*args, **kwargs):
     stream_type = kwargs.pop('stream', 'analysis')  # 'analysis' или 'raw'
     gui_log = kwargs.pop('gui_log', False)
     level = kwargs.pop('level', 'INFO')
+    
+    # НОВОЕ: Пропускаем все DEBUG сообщения
+    if level == 'DEBUG':
+        return
     
     # Получаем dual_logger из universal_runner или глобального
     dual_logger = None
@@ -7598,18 +7894,40 @@ class RepoChecker(object):
             temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
             
             for line in lines:
-                line = line.strip()
+                original_line = line  # Сохраняем исходную строку для сохранения формата
+                line_stripped = line.strip()
                 
                 # Пропускаем только пустые строки
-                if not line:
-                    temp_file.write(line + '\n')
+                if not line_stripped:
+                    temp_file.write(line)  # Сохраняем исходный формат (с переносом строки)
                     continue
                 
                 # Проверяем строки с deb (активные и закомментированные)
-                if line.startswith('deb ') or line.startswith('#deb '):
-                    # Убираем комментарий для проверки
-                    clean_line = line.lstrip('#').strip()
-                    print("Обрабатываем строку: '%s' -> clean: '%s'" % (line, clean_line))
+                # Поддерживаем форматы: "deb ", "#deb ", "# deb "
+                is_repo_line = False
+                comment_format = None  # Формат комментария: None (нет), '#deb ' или '# deb '
+                
+                if line_stripped.startswith('deb '):
+                    # Активный репозиторий
+                    is_repo_line = True
+                    comment_format = None
+                elif line_stripped.startswith('#deb '):
+                    # Закомментированный без пробела
+                    is_repo_line = True
+                    comment_format = '#deb '
+                elif line_stripped.startswith('# deb '):
+                    # Закомментированный с пробелом
+                    is_repo_line = True
+                    comment_format = '# deb '
+                
+                if is_repo_line:
+                    # Убираем комментарий для проверки (учитываем оба формата)
+                    clean_line = line_stripped.lstrip('#').strip()
+                    # Если после lstrip('#') остался пробел в начале, убираем его
+                    if clean_line.startswith(' '):
+                        clean_line = clean_line.lstrip()
+                    
+                    print("Обрабатываем строку: '%s' -> clean: '%s'" % (line_stripped, clean_line))
                     
                     # Проверяем доступность репозитория
                     if self.check_repo_availability(clean_line):
@@ -7622,11 +7940,16 @@ class RepoChecker(object):
                         self.deactivated_count += 1
                         self.broken_repos.append(clean_line)
                         print("Репозиторий ДЕАКТИВИРОВАН: %s" % clean_line)
-                        # Деактивируем репозиторий (добавляем #)
-                        temp_file.write('# ' + clean_line + '\n')
+                        # Деактивируем репозиторий (сохраняем исходный формат комментария)
+                        if comment_format:
+                            # Сохраняем в исходном формате
+                            temp_file.write(comment_format + clean_line + '\n')
                 else:
-                    # Копируем остальные строки как есть
-                    temp_file.write(line + '\n')
+                            # Если был активным, используем формат без пробела по умолчанию
+                            temp_file.write('#deb ' + clean_line + '\n')
+                else:
+                    # Копируем остальные строки как есть (с исходным форматированием)
+                    temp_file.write(line)  # Сохраняем исходный формат (с переносом строки)
             
             temp_file.close()
             
@@ -8310,8 +8633,6 @@ class WineComponentsChecker(object):
             print("[!] Требуется установка Astra.IDE", gui_log=True)
             return False
         elif not self.is_wine_installed():
-            print("[ERR] Wine не установлен или настроен неправильно", gui_log=True)
-            print("[ERR] Требуется установка Wine пакетов", gui_log=True)
             return False
         else:
             print("[!] Некоторые компоненты отсутствуют", gui_log=True)
@@ -9370,18 +9691,27 @@ class ComponentStatusManager(object):
         else:
             print(f"ComponentStatusManager._callback() callback функция отсутствует", level='WARNING')
     
-    def check_component_status(self, component_id):
+    def check_component_status(self, component_id, component_installer=None):
         """
         Проверка статуса компонента
         
         КРИТИЧНО: Использует единую функцию проверки статуса из глобального модуля
+        Поддерживает экземпляры через component_installer
         
         Args:
             component_id: ID компонента
+            component_installer: Экземпляр ComponentInstaller для проверки экземпляров (опционально)
             
         Returns:
             bool: True если компонент установлен, False если нет
         """
+        # ПРОВЕРКА 1: Если компонент не найден в COMPONENTS_CONFIG, проверяем как экземпляр
+        if component_id not in COMPONENTS_CONFIG:
+            if component_installer and hasattr(component_installer, 'check_component_status'):
+                return component_installer.check_component_status(component_id)
+            return False
+        
+        # ПРОВЕРКА 2: Стандартный компонент из COMPONENTS_CONFIG
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
         # НЕ передаем wineprefix_path - глобальная функция сама определит его из конфигурации компонента
         return check_component_status(component_id, wineprefix_path=None)
@@ -9680,6 +10010,9 @@ class ComponentInstaller(object):
         self.dual_logger = dual_logger
         self.use_minimal_winetricks = use_minimal_winetricks
         
+        # НОВОЕ: Менеджер экземпляров Wine приложений
+        self.wine_app_manager = WineApplicationInstanceManager()
+        
         # НОВОЕ: Мониторинг времени и дискового пространства (как в SystemUpdater)
         self.start_time = None
         self.initial_disk_space = None
@@ -9742,22 +10075,39 @@ class ComponentInstaller(object):
         """
         Получить handler для компонента
         
+        Поддерживает:
+        - Существующие компоненты из COMPONENTS_CONFIG
+        - Динамические экземпляры из wine_app_manager
+        - Шаблоны приложений (не должны попадать сюда при установке)
+        
         Args:
             component_id: ID компонента
             
         Returns:
             ComponentHandler: Handler для компонента или None если не найден
         """
-        if component_id not in COMPONENTS_CONFIG:
-            return None
-        
+        # ПРОВЕРКА 1: Существующий компонент из COMPONENTS_CONFIG
+        if component_id in COMPONENTS_CONFIG:
         config = COMPONENTS_CONFIG[component_id]
         category = config.get('category')
+            if category:
+                return self.component_handlers.get(category)
         
-        if not category:
+        # ПРОВЕРКА 2: Динамический экземпляр из менеджера
+        if hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+            instance_config = self.wine_app_manager.get_instance_config(component_id)
+            if instance_config:
+                # Экземпляр использует категорию 'wine_application'
+                return self.component_handlers.get('wine_application')
+        
+        # ПРОВЕРКА 3: Шаблон (не должен попадать сюда при установке)
+        config = COMPONENTS_CONFIG.get(component_id, {})
+        if config and config.get('template') == True:
+            # Шаблоны не устанавливаются напрямую - это ошибка
+            print(f"Предупреждение: попытка установить шаблон {component_id} напрямую", level='WARNING')
             return None
         
-        return self.component_handlers.get(category)
+        return None
     
     def _get_any_handler(self):
         """
@@ -9776,6 +10126,10 @@ class ComponentInstaller(object):
         """
         Проверка статуса компонента
         
+        Поддерживает:
+        - Существующие компоненты из COMPONENTS_CONFIG
+        - Динамические экземпляры из wine_app_manager
+        
         КРИТИЧНО: Использует wineprefix_path=None, чтобы путь определялся автоматически
         из конфигурации компонента, а не из стандартного префикса.
         
@@ -9785,6 +10139,17 @@ class ComponentInstaller(object):
         Returns:
             bool: True если компонент установлен, False если нет
         """
+        # ПРОВЕРКА 1: Динамический экземпляр из менеджера
+        if hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+            instance_config = self.wine_app_manager.get_instance_config(component_id)
+            if instance_config:
+                # Используем конфигурацию экземпляра для проверки
+                wineprefix_path = instance_config.get('wineprefix_path')
+                if wineprefix_path:
+                    wineprefix_path = expand_user_path(wineprefix_path)
+                return check_component_status(component_id, wineprefix_path=wineprefix_path)
+        
+        # ПРОВЕРКА 2: Существующий компонент из COMPONENTS_CONFIG
         # КРИТИЧНО: Используем wineprefix_path=None, чтобы путь определялся автоматически
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
@@ -9807,6 +10172,10 @@ class ComponentInstaller(object):
         """
         Установка одного компонента
         
+        Поддерживает:
+        - Существующие компоненты из COMPONENTS_CONFIG
+        - Динамические экземпляры из wine_app_manager
+        
         Args:
             component_id: ID компонента
             
@@ -9815,11 +10184,22 @@ class ComponentInstaller(object):
         """
         print(f"install_component() вызван с component_id={component_id}", level='DEBUG')
         
+        # Получаем конфигурацию компонента
+        config = None
+        
+        # ПРОВЕРКА 1: Динамический экземпляр из менеджера
+        if hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+            instance_config = self.wine_app_manager.get_instance_config(component_id)
+            if instance_config:
+                config = instance_config
+                print(f"install_component() найден динамический экземпляр: name={config.get('name')}, category={config.get('category')}", level='DEBUG')
+        
+        # ПРОВЕРКА 2: Существующий компонент из COMPONENTS_CONFIG
+        if not config:
         if component_id not in COMPONENTS_CONFIG:
             print(f"install_component() компонент {component_id} не найден в конфигурации", level='DEBUG')
             print("Ошибка: компонент '%s' не найден в конфигурации" % component_id, level='ERROR')
             return False
-        
         config = COMPONENTS_CONFIG[component_id]
         print(f"install_component() конфигурация получена: name={config.get('name')}, category={config.get('category')}", level='DEBUG')
         
@@ -9832,16 +10212,16 @@ class ComponentInstaller(object):
             return False
         
         print(f"install_component() категория компонента: {category}", level='DEBUG')
-        if category in self.component_handlers:
-            handler = self.component_handlers[category]
+        handler = self._get_handler_for_component(component_id)
+        if handler:
             print(f"install_component() найден handler для категории {category}: {type(handler).__name__}", level='DEBUG')
             print(f"install_component() ВЫЗЫВАЕМ handler.install({component_id}, config) - компонент должен получить статус 'installing'", level='DEBUG')
             result = handler.install(component_id, config)
             print(f"install_component() handler.install() вернул: {result}", level='DEBUG')
             return result
         else:
-            print(f"install_component() неизвестная категория {category} для {component_id}", level='DEBUG')
-            print("Ошибка: неизвестная категория '%s' для компонента '%s'" % (category, component_id), level='ERROR')
+            print(f"install_component() handler не найден для категории {category} компонента {component_id}", level='DEBUG')
+            print("Ошибка: handler не найден для категории '%s' компонента '%s'" % (category, component_id), level='ERROR')
             if self.status_manager:
                 self.status_manager.update_component_status(component_id, 'error')
             return False
@@ -9920,8 +10300,9 @@ class ComponentInstaller(object):
         print(f"install_components() начало установки: {component_ids}", level='DEBUG')
         print("Начало установки компонентов: %s" % ', '.join(component_ids))
         
-        # Разрешаем зависимости
-        resolved_components = resolve_dependencies_for_install(component_ids)
+        # Разрешаем зависимости (с поддержкой экземпляров)
+        wine_app_manager = self.wine_app_manager if hasattr(self, 'wine_app_manager') else None
+        resolved_components = resolve_dependencies_for_install(component_ids, wine_app_manager=wine_app_manager)
         print(f"install_components() разрешены зависимости: {resolved_components}", level='DEBUG')
         print("Компоненты с учетом зависимостей: %s" % ', '.join(resolved_components))
         
@@ -9956,7 +10337,6 @@ class ComponentInstaller(object):
             if not is_installed:
                 # КРИТИЧНО: Перед установкой компонента проверяем отсутствие конфликтующих процессов
                 if idx > 0 and handler:  # Не проверяем перед первым компонентом
-                    print(f"[ComponentInstaller] Проверка отсутствия конфликтующих процессов перед установкой {component_id}...")
                     handler._ensure_no_conflicting_processes(max_wait=30)
                 
                 print(f"install_components() НАЧИНАЕМ установку компонента {component_id} - компонент должен получить статус 'installing'", level='DEBUG')
@@ -9966,7 +10346,6 @@ class ComponentInstaller(object):
                 # КРИТИЧНО: После установки компонента проверяем завершение всех процессов
                 if result and handler:
                     print(f"install_components() {component_id} установлен успешно", level='DEBUG')
-                    print(f"[ComponentInstaller] Ожидание завершения процессов после установки {component_id}...")
                     handler._wait_for_all_processes_terminated(max_wait=30)
                     
                     # Остановка wineserver (только для winetricks компонентов)
@@ -9995,7 +10374,6 @@ class ComponentInstaller(object):
                     success = False
             else:
                 print(f"install_components() {component_id} уже установлен, пропускаем", level='DEBUG')
-                print("Компонент %s уже установлен, пропускаем" % component_id)
                 # КРИТИЧНО: Обновляем статус пропущенного компонента на 'ok' если он установлен
                 # Это гарантирует, что статус в GUI будет правильным
                 if self.status_manager:
@@ -10084,7 +10462,6 @@ class ComponentInstaller(object):
             
             # КРИТИЧНО: Перед удалением компонента проверяем отсутствие конфликтующих процессов
             if idx > 0 and handler:  # Не проверяем перед первым компонентом
-                print(f"[ComponentInstaller] Проверка отсутствия конфликтующих процессов перед удалением {component_id}...")
                 handler._ensure_no_conflicting_processes(max_wait=30)
             
             # КРИТИЧНО: Для wineprefix и других компонентов с папками проверяем существование папки
@@ -10121,7 +10498,6 @@ class ComponentInstaller(object):
                 # КРИТИЧНО: После удаления компонента проверяем завершение всех процессов
                 if result and handler:
                     print("Компонент %s успешно удален" % component_id)
-                    print(f"[ComponentInstaller] Ожидание завершения процессов после удаления {component_id}...")
                     handler._wait_for_all_processes_terminated(max_wait=30)
                     
                     # Остановка wineserver (только для winetricks компонентов)
@@ -10149,7 +10525,6 @@ class ComponentInstaller(object):
                     success = False
             else:
                 print(f"uninstall_components() {component_id} не установлен и папка не существует, пропускаем", level='DEBUG')
-                print("Компонент %s не установлен, пропускаем" % component_id)
         
         # Финальная проверка: убеждаемся что все процессы wine завершены после всех удалений
         if handler:
@@ -10537,11 +10912,8 @@ class AutomationGUI(object):
     
     def _install_gui_dependencies(self):
         """Установка зависимостей для GUI"""
-        print("[PACKAGE] Проверка зависимостей для GUI...")
-        
         try:
             # Проверяем наличие tkinter
-            print("[OK] tkinter уже установлен")
             return True
         except ImportError as e:
             print(f"[WARNING] tkinter не найден: {e}")
@@ -11370,8 +11742,6 @@ class AutomationGUI(object):
         sys.stderr = TerminalRedirector("stderr")
         
         # Логируем перенаправление (используем прямой вызов universal_print с параметрами)
-        universal_print("[SYSTEM] Вывод перенаправлен на встроенный терминал GUI", stream='analysis')
-        universal_print("[SYSTEM] Родительский терминал можно безопасно закрыть", stream='analysis')
     
     def start_system_monitoring(self):
         """Запуск постоянного фонового мониторинга CPU и сети"""
@@ -11417,6 +11787,35 @@ class AutomationGUI(object):
         context_menu = self.tk.Menu(text_widget, tearoff=0)
         context_menu.add_command(label="Копировать", command=lambda: self._copy_text(text_widget))
         context_menu.add_command(label="Выделить всё", command=lambda: self._select_all(text_widget))
+        
+        # НОВОЕ: Опция "Найти все" - заполняет поле фильтра значением из выделенного фрагмента
+        def find_all_from_selection():
+            """Извлечь значение из выделенного фрагмента и заполнить поле фильтра"""
+            try:
+                # Проверяем, есть ли выделение
+                if not text_widget.tag_ranges(self.tk.SEL):
+                    # Нет выделения - ничего не делаем
+                    return
+                
+                # Получаем выделенный текст
+                selected_text = text_widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                
+                if not selected_text:
+                    return
+                
+                # Если выделение на несколько строк - берем только первую строку
+                search_value = selected_text.split('\n')[0].strip()
+                
+                if search_value:
+                    # Заполняем поле фильтра
+                    if hasattr(self, 'terminal_search_var'):
+                        self.terminal_search_var.set(search_value)
+                        print(f"[SEARCH] Заполнено поле фильтра: {search_value[:50]}...")
+            except Exception as e:
+                print(f"[SEARCH] Ошибка извлечения значения: {e}")
+        
+        context_menu.add_separator()
+        context_menu.add_command(label="Найти все", command=find_all_from_selection)
         
         # Привязываем правую кнопку мыши
         def show_menu(event):
@@ -11975,6 +12374,34 @@ class AutomationGUI(object):
         search_entry.bind("<Control-v>", paste_from_clipboard)  # Ctrl+V для Linux/Windows
         search_entry.bind("<Command-v>", paste_from_clipboard)  # Cmd+V для macOS
         
+        # Добавляем контекстное меню для поля поиска
+        def show_search_context_menu(event):
+            """Показать контекстное меню для поля поиска"""
+            context_menu = self.tk.Menu(self.root, tearoff=0)
+            
+            # Опция "Вставить"
+            def paste_menu():
+                paste_from_clipboard()
+            
+            context_menu.add_command(label="Вставить", command=paste_menu)
+            context_menu.add_separator()
+            
+            # Опция "Очистить"
+            def clear_menu():
+                self.clear_terminal_search()
+            
+            context_menu.add_command(label="Очистить", command=clear_menu)
+            
+            # Показываем меню в позиции курсора
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+        
+        # Привязываем контекстное меню (правая кнопка мыши)
+        search_entry.bind("<Button-3>", show_search_context_menu)  # Linux/Windows
+        search_entry.bind("<Control-Button-1>", show_search_context_menu)  # macOS (Ctrl+Click)
+        
         # Добавляем всплывающую подсказку
         ToolTip(search_entry, "Поиск по терминалу (Ctrl+V / Cmd+V для вставки из буфера)")
         
@@ -12112,16 +12539,9 @@ class AutomationGUI(object):
     
     def toggle_terminal_timestamps(self):
         """Переключение отображения временных меток"""
-        # Получаем все содержимое терминала
-        content = self.terminal_text.get("1.0", self.tk.END)
-        
-        if self.terminal_timestamp_enabled.get():
-            # Показываем временные метки - ничего не делаем
-            pass
-        else:
-            # Скрываем временные метки - удаляем их из отображения
-            # Это сложная операция, пока оставим заглушку
-            pass
+        # Устанавливаем флаг принудительного обновления и обновляем терминал
+        self._force_terminal_update = True
+        self._update_terminal_display()
     
     def clear_terminal(self):
         """Очистка терминала"""
@@ -12636,7 +13056,6 @@ class AutomationGUI(object):
             self.root.geometry('+%d+%d' % (center_x, center_y))
             
             # Логирование для отладки
-            print(f"[GUI] Окно центрировано: {window_width}x{window_height} на позиции ({center_x}, {center_y})")
         except Exception as e:
             # Игнорируем ошибки центрирования
             print(f"[GUI] Ошибка центрирования окна: {e}")
@@ -12654,7 +13073,6 @@ class AutomationGUI(object):
             self.root.lift()
             self.root.focus_force()
             
-            print("Окно GUI готово и отображено", gui_log=True)
         except Exception as e:
             print(f"Ошибка при показе окна: {e}", level='ERROR')
             # В случае ошибки все равно показываем окно
@@ -14368,7 +14786,9 @@ class AutomationGUI(object):
                     
                     if component_id:
                         # Проверяем реальный статус компонента
-                        is_installed = self.component_status_manager.check_component_status(component_id)
+                        # Передаем component_installer для поддержки экземпляров
+                        component_installer = getattr(self, 'component_installer', None)
+                        is_installed = self.component_status_manager.check_component_status(component_id, component_installer=component_installer)
                         if is_installed:
                             # Компонент установлен - сбрасываем ошибку и устанавливаем 'ok'
                             print(f"[INFO] Сбрасываем статус ошибки для установленного компонента: {component_name}", level='INFO')
@@ -14449,7 +14869,9 @@ class AutomationGUI(object):
         # ТОЛЬКО если компонент не в процессе установки/удаления - проверяем реальное состояние
         # КРИТИЧНО: Используем единую функцию проверки статуса через ComponentStatusManager
         if hasattr(self, 'component_status_manager'):
-            if self.component_status_manager.check_component_status(check_key):
+            # Передаем component_installer для поддержки экземпляров
+            component_installer = getattr(self, 'component_installer', None)
+            if self.component_status_manager.check_component_status(check_key, component_installer=component_installer):
                 return '[OK]', 'ok'
             else:
                 return '[---]', 'missing'
@@ -14584,12 +15006,24 @@ class AutomationGUI(object):
         dependency_tree = build_dependency_tree()
         
         # НОВОЕ: Функция для отображения компонента с учетом дерева
-        def render_component(component_id, indent=0, is_last=False, prefix=""):
-            """Отображает компонент с учетом дерева зависимостей"""
+        def render_component(component_id, indent=0, is_last=False, prefix="", skip_templates=False):
+            """Отображает компонент с учетом дерева зависимостей
+            
+            Args:
+                component_id: ID компонента
+                indent: Уровень отступа
+                is_last: Является ли последним в списке
+                prefix: Префикс для отображения дерева
+                skip_templates: Пропускать ли шаблоны (для обычных компонентов)
+            """
             if component_id not in COMPONENTS_CONFIG:
                 return
             
             config = get_component_data(component_id)
+            # Пропускаем шаблоны в основном дереве (они отображаются отдельно)
+            if skip_templates and config and config.get('template') == True:
+                return
+            
             status_text, status_tag = all_status.get(component_id, ('[---]', 'missing'))
             
             # Определяем путь для отображения
@@ -14632,9 +15066,64 @@ class AutomationGUI(object):
             # Сортируем дочерние компоненты по приоритету
             children.sort(key=lambda x: get_component_field(x, 'sort_order', 999))
             new_prefix = prefix + ('   ' if is_last else '│  ')
+            
+            # Определяем, является ли это wineprefix (для отображения экземпляров)
+            is_wineprefix = config and config.get('category') == 'wine_environment'
+            
+            # Отображаем дочерние компоненты
             for i, child_id in enumerate(children):
                 is_last_child = (i == len(children) - 1)
-                render_component(child_id, indent + 1, is_last_child, new_prefix)
+                render_component(child_id, indent + 1, is_last_child, new_prefix, skip_templates=True)
+            
+            # НОВОЕ: Отображаем экземпляры приложений под wineprefix
+            if is_wineprefix and hasattr(self, 'component_installer') and self.component_installer:
+                wine_app_manager = getattr(self.component_installer, 'wine_app_manager', None)
+                if wine_app_manager:
+                    instances = wine_app_manager.get_instances_for_wineprefix(component_id)
+                    if instances:
+                        # Сортируем экземпляры по sort_order
+                        sorted_instances = sorted(
+                            instances.items(),
+                            key=lambda x: x[1]['config'].get('sort_order', 999)
+                        )
+                        
+                        # Определяем, был ли последний дочерний компонент
+                        has_children = len(children) > 0
+                        instance_prefix = new_prefix if has_children else prefix
+                        
+                        for idx, (instance_id, instance_data) in enumerate(sorted_instances):
+                            instance_config = instance_data['config']
+                            instance_name = instance_config.get('name', 'Unknown')
+                            
+                            # Получаем статус экземпляра
+                            instance_status = self.component_status_manager.get_component_status(instance_id, instance_name)
+                            instance_status_text = instance_status[0] if isinstance(instance_status, tuple) else '[---]'
+                            instance_status_tag = instance_status[1] if isinstance(instance_status, tuple) else 'missing'
+                            
+                            # Путь для отображения
+                            instance_paths = instance_config.get('check_paths', [])
+                            instance_display_path = instance_paths[0] if instance_paths else 'N/A'
+                            
+                            # Определяем символ для дерева
+                            is_last_instance = (idx == len(sorted_instances) - 1) and not has_children
+                            instance_symbol = '└─' if is_last_instance else '├─'
+                            instance_display_name = f"{instance_prefix}{instance_symbol} {instance_name}"
+                            
+                            # Добавляем экземпляр в таблицу
+                            instance_item_id = self.wine_tree.insert('', self.tk.END, values=(
+                                '☐',  # Экземпляры всегда выбираемы
+                                instance_display_name,
+                                instance_status_text,
+                                instance_display_path
+                            ))
+                            
+                            # Сохраняем соответствия
+                            self.wine_tree_item_to_component_id[instance_id] = instance_item_id
+                            self.wine_tree_item_id_to_component_id[instance_item_id] = instance_id
+                            self.wine_checkboxes[instance_item_id] = False
+                            
+                            # Цветовое выделение
+                            self.wine_tree.item(instance_item_id, tags=(instance_status_tag))
         
         # Отображаем компоненты (корневые узлы - без родителя)
         root_components = []
@@ -14645,10 +15134,46 @@ class AutomationGUI(object):
         # Сортируем по приоритету
         root_components.sort(key=lambda x: x[1])
         
-        # Отображаем корневые компоненты и их дочерние
+        # Отображаем корневые компоненты и их дочерние (пропускаем шаблоны)
         for i, (component_id, _) in enumerate(root_components):
             is_last = (i == len(root_components) - 1)
-            render_component(component_id, indent=0, is_last=is_last, prefix="")
+            render_component(component_id, indent=0, is_last=is_last, prefix="", skip_templates=True)
+        
+        # НОВОЕ: Добавляем разделитель
+        separator_item = self.wine_tree.insert('', self.tk.END, values=(
+            '  ',
+            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+            ))
+        
+        # НОВОЕ: Отображаем шаблоны приложений
+        templates = []
+        for component_id, config in COMPONENTS_CONFIG.items():
+            if config.get('template') == True:
+                templates.append((component_id, config.get('sort_order', 999)))
+        
+        # Сортируем шаблоны по sort_order
+        templates.sort(key=lambda x: x[1])
+        
+        for template_id, _ in templates:
+            template_config = COMPONENTS_CONFIG[template_id]
+            template_name = template_config.get('name', 'Unknown')
+            template_description = template_config.get('description', '')
+            
+            # Шаблоны всегда имеют статус [---] и выбираемы
+            template_item = self.wine_tree.insert('', self.tk.END, values=(
+                '☐',
+                template_name,
+                '[---]',
+                template_description
+            ))
+            
+            # Сохраняем соответствия
+            self.wine_tree_item_to_component_id[template_id] = template_item
+            self.wine_tree_item_id_to_component_id[template_item] = template_id
+            self.wine_checkboxes[template_item] = False
+            
+            # Цветовое выделение (серый для шаблонов)
+            self.wine_tree.item(template_item, tags=('missing'))
         
         # Настраиваем цвета тегов
         self.wine_tree.tag_configure('ok', foreground='green')
@@ -14713,6 +15238,68 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Ничего не выбрано для установки", fg='orange')
             return
         
+        # НОВОЕ: Создаем экземпляры приложений для комбинаций wineprefix × шаблоны
+        if hasattr(self, 'component_installer') and self.component_installer and hasattr(self.component_installer, 'wine_app_manager'):
+            wine_app_manager = self.component_installer.wine_app_manager
+            
+            # Разделяем выбранные компоненты на категории
+            wineprefixes = []
+            app_templates = []
+            existing_instances = []
+            other_components = []
+            
+            for comp_id in selected:
+                config = get_component_data(comp_id)
+                if config and config.get('template') == True:
+                    # Это шаблон приложения
+                    app_templates.append(comp_id)
+                elif '__wine_app_' in comp_id:
+                    # Это уже существующий экземпляр
+                    existing_instances.append(comp_id)
+                elif comp_id in ['wineprefix', 'cont_wineprefix']:
+                    # Это wineprefix
+                    wineprefixes.append(comp_id)
+                else:
+                    # Обычный компонент
+                    other_components.append(comp_id)
+            
+            # КРИТИЧНО: Создаем экземпляры для всех комбинаций wineprefix × app_templates
+            new_instances = []
+            if wineprefixes and app_templates:
+                total_combinations = len(wineprefixes) * len(app_templates)
+                if total_combinations > 10:
+                    # Предупреждение при большом количестве экземпляров
+                    print(f"Будет создано {total_combinations} экземпляров приложений", level='INFO')
+                
+                for wineprefix_id in wineprefixes:
+                    for template_id in app_templates:
+                        try:
+                            instance_id, instance_data = wine_app_manager.get_or_create_instance(
+                                wineprefix_id, template_id
+                            )
+                            if instance_id not in selected:
+                                new_instances.append(instance_id)
+                        except Exception as e:
+                            print(f"Ошибка создания экземпляра {wineprefix_id}__{template_id}: {e}", level='ERROR')
+            
+            # Формируем финальный список для установки
+            final_selected = []
+            
+            # 1. Добавляем обычные компоненты
+            final_selected.extend(other_components)
+            
+            # 2. Добавляем wineprefix (они будут установлены первыми)
+            final_selected.extend(wineprefixes)
+            
+            # 3. Добавляем существующие экземпляры
+            final_selected.extend(existing_instances)
+            
+            # 4. Добавляем новые экземпляры
+            final_selected.extend(new_instances)
+            
+            # Заменяем selected на final_selected
+            selected = final_selected
+        
         # Блокируем кнопки во время установки
         self.install_wine_button.config(state=self.tk.DISABLED)
         self.uninstall_wine_button.config(state=self.tk.DISABLED)
@@ -14729,16 +15316,24 @@ class AutomationGUI(object):
         # Это гарантирует, что GUI обновится сразу после нажатия кнопки
         # Все участники получают статус 'pending', а текущий компонент получит 'installing' в handler
         if hasattr(self, 'component_status_manager') and self.component_status_manager and hasattr(self, 'component_installer') and self.component_installer:
-            # Разрешаем зависимости для выбранных компонентов
-            resolved_components = resolve_dependencies_for_install(selected)
+            # Разрешаем зависимости для выбранных компонентов (с поддержкой экземпляров)
+            wine_app_manager = self.component_installer.wine_app_manager if hasattr(self.component_installer, 'wine_app_manager') else None
+            resolved_components = resolve_dependencies_for_install(selected, wine_app_manager=wine_app_manager)
 
             # Устанавливаем статус 'pending' для всех компонентов, которые будут установлены
             for component_id in resolved_components:
-                if component_id in COMPONENTS_CONFIG:
                     # Проверяем, установлен ли компонент перед установкой статуса pending
+                is_installed = False
+                
+                # ПРОВЕРКА 1: Динамический экземпляр
+                if hasattr(self, 'component_installer') and self.component_installer:
+                    is_installed = self.component_installer.check_component_status(component_id)
+                # ПРОВЕРКА 2: Существующий компонент из COMPONENTS_CONFIG
+                elif component_id in COMPONENTS_CONFIG:
                     # КРИТИЧНО: Используем wineprefix_path=None, чтобы путь определялся автоматически
                     # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
                     is_installed = check_component_status(component_id, wineprefix_path=None)
+                
                     if not is_installed:
                         self.component_status_manager.update_component_status(component_id, 'pending')
                         # КРИТИЧНО: Принудительно обновляем GUI после каждого обновления статуса
@@ -15593,12 +16188,57 @@ class AutomationGUI(object):
             self.wine_status_label.config(text="Выберите компоненты для удаления", fg='orange')
             return
         
+        # НОВОЕ: Если удаляется wineprefix - автоматически добавляем все его экземпляры
+        if hasattr(self, 'component_installer') and self.component_installer and hasattr(self.component_installer, 'wine_app_manager'):
+            wine_app_manager = self.component_installer.wine_app_manager
+            
+            wineprefixes_to_remove = []
+            instances_to_remove = []
+            other_to_remove = []
+            
+            for comp_id in selected:
+                if comp_id in ['wineprefix', 'cont_wineprefix']:
+                    wineprefixes_to_remove.append(comp_id)
+                elif '__wine_app_' in comp_id:
+                    instances_to_remove.append(comp_id)
+                else:
+                    other_to_remove.append(comp_id)
+            
+            # КРИТИЧНО: Если удаляется wineprefix - автоматически добавляем все его экземпляры
+            for wineprefix_id in wineprefixes_to_remove:
+                instances = wine_app_manager.get_instances_for_wineprefix(wineprefix_id)
+                for instance_id in instances.keys():
+                    if instance_id not in instances_to_remove:
+                        instances_to_remove.append(instance_id)
+                        print(f"Автоматически добавлен для удаления: {instance_id} (при удалении {wineprefix_id})", gui_log=True)
+            
+            # Формируем финальный список для удаления
+            final_selected = []
+            
+            # 1. Сначала удаляем приложения (дочерние компоненты)
+            final_selected.extend(instances_to_remove)
+            
+            # 2. Затем удаляем wineprefix (родительские компоненты)
+            final_selected.extend(wineprefixes_to_remove)
+            
+            # 3. Остальные компоненты
+            final_selected.extend(other_to_remove)
+            
+            # Заменяем selected на final_selected
+            selected = final_selected
+        
         # Подтверждение удаления (показываем понятные названия компонентов)
         import tkinter.messagebox as messagebox
         component_names = []
         for component_id in selected:
             if component_id in COMPONENTS_CONFIG:
                 component_names.append(get_component_field(component_id, 'name', 'Unknown'))
+            elif hasattr(self, 'component_installer') and self.component_installer and hasattr(self.component_installer, 'wine_app_manager'):
+                instance_config = self.component_installer.wine_app_manager.get_instance_config(component_id)
+                if instance_config:
+                    component_names.append(instance_config.get('name', component_id))
+                else:
+                    component_names.append(component_id)
             else:
                 component_names.append(component_id)
         message = "Вы уверены что хотите удалить следующие компоненты?\n\n" + "\n".join(component_names)
@@ -15816,6 +16456,26 @@ class AutomationGUI(object):
         """Обработка завершения удаления (вызывается из главного потока)"""
         # НОВОЕ: Останавливаем таймер обновления времени и диска
         self.stop_progress_timer()
+        
+        # НОВОЕ: Удаляем экземпляры из менеджера после успешного удаления wineprefix
+        if success and hasattr(self, 'component_installer') and self.component_installer and hasattr(self.component_installer, 'wine_app_manager'):
+            wine_app_manager = self.component_installer.wine_app_manager
+            
+            # Проверяем какие wineprefix были удалены
+            for wineprefix_id in ['wineprefix', 'cont_wineprefix']:
+                # Проверяем статус wineprefix
+                if hasattr(self, 'component_status_manager') and self.component_status_manager:
+                    # Получаем название компонента из конфигурации
+                    if wineprefix_id in COMPONENTS_CONFIG:
+                        component_name = COMPONENTS_CONFIG[wineprefix_id].get('name', wineprefix_id)
+                        status_tuple = self.component_status_manager.get_component_status(wineprefix_id, component_name)
+                        # Метод возвращает кортеж (статус_текст, статус_тег)
+                        status_tag = status_tuple[1] if isinstance(status_tuple, tuple) and len(status_tuple) >= 2 else 'missing'
+                        if status_tag == 'missing':
+                            # Wineprefix удален - удаляем все его экземпляры из менеджера
+                            removed_instances = wine_app_manager.remove_instances_for_wineprefix(wineprefix_id)
+                            if removed_instances:
+                                print(f"Удалены экземпляры из менеджера после удаления {wineprefix_id}: {', '.join(removed_instances)}", gui_log=True)
         
         # Разблокируем кнопки
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
@@ -16344,7 +17004,9 @@ class AutomationGUI(object):
             # Добавляем сообщение в терминал
             self.terminal_text.config(state=self.tk.NORMAL)
             self.terminal_text.insert(self.tk.END, "[INFO] Мониторинг системного вывода запущен\n")
+            if self.terminal_autoscroll_enabled.get():  # Проверка автоперемотки
             self.terminal_text.see(self.tk.END)
+                self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
             self.terminal_text.config(state=self.tk.DISABLED)
             
         except Exception as e:
@@ -16407,9 +17069,11 @@ class AutomationGUI(object):
         """Ручное обновление терминала с прокруткой в конец"""
         self._force_terminal_update = True
         self._update_terminal_display()
-        # После обновления прокручиваем в конец
-        if hasattr(self, 'terminal_text'):
+        # После обновления прокручиваем в конец (если автоперемотка включена)
+        if hasattr(self, 'terminal_text') and hasattr(self, 'terminal_autoscroll_enabled'):
+            if self.terminal_autoscroll_enabled.get():
             self.terminal_text.see(self.tk.END)
+                self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
     
     def _extract_timestamp(self, message):
         """
@@ -16501,27 +17165,33 @@ class AutomationGUI(object):
             else:
                 messages = []
             
-            # Буфер уже содержит все данные из файла (загружены при старте в start_file_logging())
-            # Терминал = точная копия буфера
-            if not messages:
-                self._updating_terminal = False
-                return
-            
             # Применяем поисковый фильтр
             if search_text:
                 messages = [msg for msg in messages if search_text in msg.lower()]
             
-            # Обновляем терминал
+            # Обновляем терминал (ВСЕГДА, даже если буфер пустой)
+            # Это гарантирует очистку терминала при переключении режимов и при пустом буфере
             self.terminal_text.config(state=self.tk.NORMAL)
             self.terminal_text.delete(1.0, self.tk.END)
             
             # Добавляем все сообщения (метки времени уже есть в каждом сообщении)
+            # Если буфер пустой - терминал останется пустым (это правильно)
             for message in messages:
-                self.terminal_text.insert(self.tk.END, message + "\n")
+                # Проверяем, нужно ли удалять метки времени
+                display_message = message
+                if not self.terminal_timestamp_enabled.get():
+                    # Удаляем метку времени из начала сообщения
+                    # Формат: "[2024-01-01 12:00:00.123] сообщение"
+                    import re
+                    # Удаляем метку времени в формате [YYYY-MM-DD HH:MM:SS.mmm]
+                    display_message = re.sub(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s*', '', display_message)
+                
+                self.terminal_text.insert(self.tk.END, display_message + "\n")
             
             # Прокрутка в конец (если автопрокрутка включена)
             if self.terminal_autoscroll_enabled.get():
                 self.terminal_text.see(self.tk.END)
+                self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
             
             self.terminal_text.config(state=self.tk.DISABLED)
             
@@ -16751,7 +17421,7 @@ class AutomationGUI(object):
             
             # КРИТИЧНО: Обновляем терминал из буферов ВСЕГДА
             # Автопрокрутка контролирует только прокрутку в конец, но НЕ блокирует обновление терминала
-            self._update_terminal_display()
+                self._update_terminal_display()
                 
         except Exception as e:
             # Используем стандартный print() - автоматически работает через universal_print
@@ -17385,7 +18055,6 @@ class AutomationGUI(object):
     def _test_progress_bars_animation(self):
         """Простая анимация прогресс-баров: 0→100→0"""
         try:
-            print("[GUI] Запуск простой анимации прогресс-баров...", gui_log=True)
             
             # Устанавливаем начальные значения
             self._set_progress_values(0, 0, 0)
@@ -17524,7 +18193,6 @@ class AutomationGUI(object):
         try:
             if hasattr(self, 'detail_label'):
                 self.detail_label.config(text="Тест прогресс-баров завершен! Готов к работе.")
-            print("[ANIMATION] Все анимации завершены!", gui_log=True)
         except Exception as e:
             print(f"[ERROR] Ошибка финального сообщения: {e}")
     
@@ -17753,7 +18421,6 @@ class UniversalProgressManager:
         self.stage_name = "Ожидание"
         self.details = ""
         
-        print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
     
     def update_progress(self, process_type, stage_name, stage_progress, global_progress, details="", **kwargs):
         """
@@ -18878,7 +19545,6 @@ class SystemUpdater(object):
         # Связываем парсер с менеджером прогресса
         self.universal_progress_manager.system_update_parser = self.system_update_parser
         
-        print("[SYSTEM_UPDATER] Новые парсеры успешно инициализированы")
         
         # Счетчики для расширенной статистики
         self.downloaded_packages = 0
@@ -20333,7 +20999,6 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         log_file = GLOBAL_LOG_FILE
         gui.main_log_file = log_file
         
-        print("   [OK] GUI создан успешно, настраиваем universal_runner...")
         
         # Передаем единый logger в GUI
         gui.universal_runner = get_global_universal_runner()
@@ -20341,11 +21006,38 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         # КРИТИЧНО: Устанавливаем dual_logger в universal_runner для доступа из GUI
         if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
             gui.universal_runner.dual_logger = globals()['_global_dual_logger']
-            print(f"[DUAL_STREAM] dual_logger установлен в universal_runner")
+        
+        # НОВОЕ: Создаем callback для немедленного обновления терминала при новых данных
+        def terminal_update_callback():
+            """Callback для немедленного обновления терминала при новых данных"""
+            # Защита: проверяем наличие GUI и его инициализацию
+            if not hasattr(gui, 'root') or not gui.root:
+                return  # GUI еще не инициализирован
+            
+            if not hasattr(gui, 'terminal_autoscroll_enabled'):
+                return  # Компоненты терминала еще не созданы
+            
+            if not hasattr(gui, '_update_terminal_display'):
+                return  # Метод обновления еще не доступен
+            
+            # Проверяем, включена ли автопрокрутка
+            if gui.terminal_autoscroll_enabled.get():
+                # Вызываем обновление через root.after для безопасности потока
+                try:
+                    gui.root.after(0, gui._update_terminal_display)
+                except Exception:
+                    pass  # Игнорируем ошибки (GUI может быть закрыт)
+        
+        # Устанавливаем callback в dual_logger через universal_runner
+        if gui.universal_runner and hasattr(gui.universal_runner, 'dual_logger') and gui.universal_runner.dual_logger:
+            gui.universal_runner.dual_logger.terminal_update_callback = terminal_update_callback
+        
+        # Также устанавливаем в глобальный dual_logger, если он есть
+        if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+            globals()['_global_dual_logger'].terminal_update_callback = terminal_update_callback
         
         # DualStreamLogger уже инициализирован с GLOBAL_LOG_FILE в main()
         # Не нужно дополнительно устанавливать путь через set_log_file()
-        print(f"[LOG_FILE] DualStreamLogger использует путь: {log_file}")
         # gui_callback больше не используется - GUI читает из буферов DualStreamLogger
         gui.universal_runner.gui_log_callback = gui.add_gui_log_output  # УСТАНАВЛИВАЕМ GUI LOG CALLBACK!
         gui.universal_runner.setup_subprocess_redirect()  # Подмена subprocess.run()
@@ -20355,7 +21047,6 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         # Сохраняем ссылку на universal_runner для использования в функции
         universal_runner = gui.universal_runner
         
-        print("   [OK] UniversalProcessRunner настроен, запускаем GUI...")
         # Буфер уже содержит все данные из файла (загружены при старте в start_file_logging())
         # Терминал = точная копия буфера, поэтому дополнительная загрузка не требуется
         
@@ -20915,33 +21606,33 @@ def main():
                 
                 # КРИТИЧНО: Проверяем что это действительно число, а не другой аргумент
                 if close_terminal_pid and close_terminal_pid.isdigit():
-                    # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
+                # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
+                try:
+                    pid = int(close_terminal_pid)
+                    
+                    # Проверяем что процесс существует
                     try:
-                        pid = int(close_terminal_pid)
+                        os.kill(pid, 0)  # Сигнал 0 - только проверка существования
                         
-                        # Проверяем что процесс существует
+                        # Сначала мягкое завершение
+                        os.kill(pid, signal.SIGTERM)
+                        
+                        # Даем время на завершение
+                        time.sleep(0.5)
+                        
+                        # Проверяем что процесс завершился
                         try:
-                            os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-                            
-                            # Сначала мягкое завершение
-                            os.kill(pid, signal.SIGTERM)
-                            
-                            # Даем время на завершение
-                            time.sleep(0.5)
-                            
-                            # Проверяем что процесс завершился
-                            try:
-                                os.kill(pid, 0)
-                                # Процесс еще жив - отправляем SIGKILL
-                                os.kill(pid, signal.SIGKILL)
-                            except OSError:
-                                # Процесс уже завершился
-                                pass
-                                
-                        except OSError as e:
-                            # Процесс уже не существует
+                            os.kill(pid, 0)
+                            # Процесс еще жив - отправляем SIGKILL
+                            os.kill(pid, signal.SIGKILL)
+                        except OSError:
+                            # Процесс уже завершился
                             pass
                             
+                    except OSError as e:
+                        # Процесс уже не существует
+                        pass
+                        
                     except (ValueError, TypeError) as e:
                         print(f"[WARNING] Некорректный PID терминала: {close_terminal_pid}", gui_log=True)
                 else:
