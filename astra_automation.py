@@ -48,14 +48,18 @@ except Exception:
 import signal
 import glob
 import platform
+import shlex
 import tarfile
 import types
 import ast
 import builtins
 import textwrap
+import ssl
 from collections import deque
 import urllib.request
 import urllib.parse
+import pickle
+import json
 
 # GUI components (tkinter) - опционально для консольного режима
 try:
@@ -226,6 +230,21 @@ COMPONENTS_CONFIG = {
         'source_fallback': True  # Использовать fallback на другие источники
     },
     
+    # Winetricks инструмент
+    'winetricks': {
+        'name': 'Winetricks',
+        'path': '~/.cache/winetricks/winetricks',
+        'category': 'system_config',
+        'dependencies': ['wineprefix'],
+        'check_paths': ['~/.cache/winetricks/winetricks'],
+        'install_method': 'winetricks_tool',
+        'uninstall_method': 'winetricks_tool',
+        'gui_selectable': True,
+        'description': 'Инструмент Winetricks для установки Wine компонентов',
+        'sort_order': 10.5,
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
+    },
+    
     # Wine окружение
     'wineprefix': {
         'name': 'WINEPREFIX',
@@ -239,7 +258,44 @@ COMPONENTS_CONFIG = {
         'gui_selectable': True,
         'description': 'Wine префикс для Astra.IDE',
         'sort_order': 10,
-        'processes_to_stop': ['wine', 'wineserver', 'wineboot']
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива winetricks в папке Winetricks
+    },
+    
+    # Ярлыки на папки кэша Wine
+    'wine_cache_shortcut': {
+        'name': 'Wine Кэш',
+        'shortcut_name': 'Wine Кэш',
+        'path': 'Wine Кэш.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': ['wine_astraregul'],
+        'check_paths': ['Wine Кэш.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
+        'shortcut_type': 'folder',
+        'folder_path': '~/.cache/wine',
+        'comment': 'Ярлык для открытия папки кэша Wine',
+        'gui_selectable': True,
+        'description': 'Ярлык для открытия папки кэша Wine',
+        'sort_order': 11
+    },
+    'winetricks_cache_shortcut': {
+        'name': 'Winetricks Кэш',
+        'shortcut_name': 'Winetricks Кэш',
+        'path': 'Winetricks Кэш.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': ['wine_astraregul'],
+        'check_paths': ['Winetricks Кэш.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Link',
+        'shortcut_type': 'folder',
+        'folder_path': '~/.cache/winetricks',
+        'comment': 'Ярлык для открытия папки кэша Winetricks',
+        'gui_selectable': True,
+        'description': 'Ярлык для открытия папки кэша Winetricks',
+        'sort_order': 12
     },
     
     # Winetricks компоненты
@@ -248,7 +304,7 @@ COMPONENTS_CONFIG = {
         'command_name': 'wine_mono',  # Имя для winetricks команды (используется MinimalWinetricks)
         'path': 'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
             'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
@@ -257,20 +313,21 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Mono runtime для Wine',
-        'sort_order': 11,
+        'sort_order': 13,
         # Параметры загрузки wine-mono из интернета (для удобства обновления версии)
         'download_url': 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi',
         'download_sha256': '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810',
         'download_filename': 'wine-mono-8.1.0-x86.msi',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'dotnet48': {
         'name': '.NET Framework 4.8',
         'command_name': 'dotnet48',  # Имя для winetricks команды
         'path': 'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
             'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll'
@@ -279,47 +336,50 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': '.NET Framework 4.8',
-        'sort_order': 12,
+        'sort_order': 14,
         # Параметры загрузки .NET Framework 4.8 из интернета (для удобства обновления версии)
         'download_url': 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe',
         'download_sha256': '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53',
         'download_filename': 'ndp48-x86-x64-allos-enu.exe',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'vcrun2013': {
         'name': 'Visual C++ 2013',
         'command_name': 'vcrun2013',  # Имя для winetricks команды
         'path': 'drive_c/windows/system32/msvcp120.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
-            'drive_c/windows/system32/msvcp120.dll',
-            'drive_c/windows/system32/msvcr120.dll',
-            'drive_c/windows/syswow64/msvcp120.dll',
-            'drive_c/windows/syswow64/msvcr120.dll'
+            'drive_c/windows/system32/mfc120.dll',  # Основной файл, который проверяет winetricks
+            'drive_c/windows/system32/msvcp120.dll',  # C++ runtime
+            'drive_c/windows/system32/msvcr120.dll',  # C runtime
+            'drive_c/windows/syswow64/msvcp120.dll',  # C++ runtime (64-bit)
+            'drive_c/windows/syswow64/msvcr120.dll'  # C runtime (64-bit)
         ],
         'install_method': 'winetricks',
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2013 Redistributable',
-        'sort_order': 13,
+        'sort_order': 15,
         # Параметры загрузки Visual C++ 2013 из интернета (для удобства обновления версии)
         'download_url_x86': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe',
         'download_sha256_x86': '89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17',
-        'download_filename_x86': 'vcredist_2013_x86.exe',
+        'download_filename_x86': 'vcredist_x86.exe',
         'download_url_x64': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x64.exe',
         'download_sha256_x64': '20e2645b7cd5873b1fa3462b99a665ac8d6e14aae83ded9d875fea35ffdd7d7e',
-        'download_filename_x64': 'vcredist_2013_x64.exe',
+        'download_filename_x64': 'vcredist_x64.exe',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'vcrun2022': {
         'name': 'Visual C++ 2022',
         'command_name': 'vcrun2022',  # Имя для winetricks команды
         'path': 'drive_c/windows/system32/msvcp140.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/system32/msvcp140.dll',
             'drive_c/windows/system32/vcruntime140.dll',
@@ -330,24 +390,25 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2022 Redistributable',
-        'sort_order': 14,
+        'sort_order': 16,
         # Параметры загрузки Visual C++ 2022 из интернета (для удобства обновления версии)
         # ВНИМАНИЕ: SHA256 хеши временные, нужно обновить при получении актуальных
         'download_url_x86': 'https://aka.ms/vs/17/release/vc_redist.x86.exe',
         'download_sha256_x86': None,  # Временный хеш не установлен, проверка отключена
-        'download_filename_x86': 'vc_redist_2022_x86.exe',
+        'download_filename_x86': 'vc_redist.x86.exe',
         'download_url_x64': 'https://aka.ms/vs/17/release/vc_redist.x64.exe',
         'download_sha256_x64': None,  # Временный хеш не установлен, проверка отключена
-        'download_filename_x64': 'vc_redist_2022_x64.exe',
+        'download_filename_x64': 'vc_redist.x64.exe',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'd3dcompiler_43': {
         'name': 'DirectX d3dcompiler_43',
         'command_name': 'd3dcompiler_43',  # Имя для winetricks команды
         'path': 'drive_c/windows/system32/d3dcompiler_43.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/system32/d3dcompiler_43.dll',
             'drive_c/windows/syswow64/d3dcompiler_43.dll'
@@ -356,14 +417,15 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_43',
-        'sort_order': 15
+        'sort_order': 17,
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'd3dcompiler_47': {
         'name': 'DirectX d3dcompiler_47',
         'command_name': 'd3dcompiler_47',  # Имя для winetricks команды
         'path': 'drive_c/windows/system32/d3dcompiler_47.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/system32/d3dcompiler_47.dll',
             'drive_c/windows/syswow64/d3dcompiler_47.dll'
@@ -372,23 +434,24 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_47',
-        'sort_order': 16,
+        'sort_order': 18,
         # Параметры загрузки d3dcompiler_47 из интернета (для удобства обновления версии)
         'download_url_32': 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47_32.dll',
         'download_sha256_32': '2ad0d4987fc4624566b190e747c9d95038443956ed816abfd1e2d389b5ec0851',
         'download_filename_32': 'd3dcompiler_47_32.dll',
         'download_url_64': 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47.dll',
         'download_sha256_64': '4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3',
-        'download_filename_64': 'd3dcompiler_47_64.dll',
+        'download_filename_64': 'd3dcompiler_47.dll',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'dxvk': {
         'name': 'DXVK',
         'command_name': 'dxvk',  # Имя для winetricks команды
         'path': 'drive_c/windows/system32/dxgi.dll',
         'category': 'winetricks',
-        'dependencies': ['wineprefix'],
+        'dependencies': ['winetricks'],
         'check_paths': [
             'drive_c/windows/system32/dxgi.dll',
             'drive_c/windows/system32/d3d11.dll'
@@ -397,13 +460,14 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DXVK - Vulkan-based D3D11 implementation',
-        'sort_order': 17,
+        'sort_order': 19,
         # Параметры загрузки DXVK из интернета (для удобства обновления версии)
         'download_url': 'https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz',
         'download_sha256': 'd8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8',
         'download_filename': 'dxvk-2.5.3.tar.gz',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
-        'source_fallback': True  # Использовать fallback на другие источники
+        'source_fallback': True,  # Использовать fallback на другие источники
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     
     # Astra.IDE и связанные компоненты
@@ -422,7 +486,7 @@ COMPONENTS_CONFIG = {
         ],
         'gui_selectable': True,
         'description': 'Astra.IDE приложение',
-        'sort_order': 18
+        'sort_order': 20
     },
     'start_script': {
         'name': 'Скрипт запуска',
@@ -434,7 +498,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'script_removal',
         'gui_selectable': True,
         'description': 'Скрипт для запуска Astra.IDE',
-        'sort_order': 19
+        'sort_order': 21
     },
     'desktop_shortcut': {
         'name': 'Ярлык рабочего стола',
@@ -454,7 +518,7 @@ COMPONENTS_CONFIG = {
         'comment': 'Ярлык Astra.IDE на рабочем столе',
         'gui_selectable': True,
         'description': 'Ярлык Astra.IDE на рабочем столе',
-        'sort_order': 20
+        'sort_order': 22
     },
     
     # Шаблоны Wine приложений (для динамического создания экземпляров)
@@ -472,7 +536,7 @@ COMPONENTS_CONFIG = {
         'download_filename': 'npp.8.6.6.Installer.exe',
         'install_args': ['/S'],  # Тихая установка
         'description': 'Notepad++ - текстовый редактор для Windows',
-        'sort_order': 21,
+        'sort_order': 23,
         'gui_selectable': True  # Можно выбирать для установки в wineprefix
     },
     'wine_app_7zip': {
@@ -489,7 +553,7 @@ COMPONENTS_CONFIG = {
         'download_filename': '7z2409.exe',
         'install_args': ['/S'],
         'description': '7-Zip - архиватор файлов',
-        'sort_order': 22,
+        'sort_order': 24,
         'gui_selectable': True  # Можно выбирать для установки в wineprefix
     },
     'wine_app_filezilla': {
@@ -506,7 +570,7 @@ COMPONENTS_CONFIG = {
         'download_filename': 'FileZilla_3.67.1_win64-setup.exe',
         'install_args': ['/S'],
         'description': 'FileZilla - FTP клиент',
-        'sort_order': 23,
+        'sort_order': 25,
         'gui_selectable': True  # Можно выбирать для установки в wineprefix
     },
     
@@ -552,6 +616,45 @@ def expand_user_path(path):
     
     # Заменяем ~ на реальную домашнюю директорию
     return path.replace('~', home)
+
+def fix_dir_permissions(dir_path):
+    """
+    Устанавливает права доступа для папки (владелец - текущий пользователь)
+    Универсальная функция для установки прав пользователя к любой папке в Linux
+    
+    Args:
+        dir_path: Путь к папке
+    """
+    if not os.path.exists(dir_path):
+        return
+    
+    try:
+        current_uid = os.getuid()
+        
+        # Если запущено от root, определяем реального пользователя
+        if current_uid == 0:
+            real_user = os.environ.get('SUDO_USER')
+            if real_user and real_user != 'root':
+                try:
+                    import pwd
+                    user_info = pwd.getpwnam(real_user)
+                    os.chown(dir_path, user_info.pw_uid, user_info.pw_gid)
+                    os.chmod(dir_path, 0o755)
+                    return
+                except (KeyError, ImportError):
+                    pass  # Пользователь не найден или pwd недоступен (macOS)
+        
+        # Если не root, устанавливаем права для текущего пользователя
+        if current_uid != 0:
+            try:
+                import pwd
+                user_info = pwd.getpwuid(current_uid)
+                os.chown(dir_path, current_uid, user_info.pw_gid)
+                os.chmod(dir_path, 0o755)
+            except (ImportError, OSError):
+                pass  # Игнорируем ошибки на macOS или если нет прав
+    except Exception:
+        pass  # Игнорируем все ошибки прав доступа
 
 def get_component_field(component_id, field_name, default=None):
     """
@@ -1179,12 +1282,14 @@ class ComponentHandler(ABC):
         Метод _log() - удобная обертка, но handlers могут использовать и прямой print()
         """
         # Логирование через UniversalProcessRunner
-        # (UniversalProcessRunner.log_info/log_error внутри используют DualStreamLogger)
+        # (UniversalProcessRunner.log_info/log_error/log_debug внутри используют DualStreamLogger)
         if self.universal_runner:
             if level == "ERROR":
                 self.universal_runner.log_error(message)
             elif level == "WARNING":
                 self.universal_runner.log_warning(message)
+            elif level == "DEBUG":
+                self.universal_runner.log_debug(message)
             else:
                 self.universal_runner.log_info(message)
         
@@ -1195,6 +1300,8 @@ class ComponentHandler(ABC):
                 self.dual_logger.write_analysis(f"[ERROR] {message}")
             elif level == "WARNING":
                 self.dual_logger.write_analysis(f"[WARNING] {message}")
+            elif level == "DEBUG":
+                self.dual_logger.write_analysis(f"[DEBUG] {message}")
             else:
                 self.dual_logger.write_analysis(f"[INFO] {message}")
         
@@ -1347,7 +1454,6 @@ class ComponentHandler(ABC):
                         print(f"[INFO] Загрузка файла из интернета: {path}", level='INFO')
                         # Обработка SSL ошибок (для macOS и других систем без сертификатов)
                         try:
-                            import ssl
                             ssl_context = ssl.create_default_context()
                             ssl_context.check_hostname = False
                             ssl_context.verify_mode = ssl.CERT_NONE
@@ -2211,7 +2317,6 @@ class WinePackageHandler(ComponentHandler):
             
             # Проверяем состояние dpkg по выводу команды (не только по коду возврата)
             # dpkg --audit может вернуть 0, но вывести предупреждения о проблемах
-            import subprocess
             try:
                 dpkg_audit_result = subprocess.run(
                     ['dpkg', '--audit'],
@@ -2286,7 +2391,6 @@ class WinePackageHandler(ComponentHandler):
                 print("[INFO] Проверяем причину ошибки установки...", level='INFO')
                 
                 # Проверяем состояние dpkg по выводу команды
-                import subprocess
                 try:
                     dpkg_audit_result = subprocess.run(
                         ['dpkg', '--audit'],
@@ -2552,6 +2656,9 @@ class SystemConfigHandler(ComponentHandler):
                 print(f"Настройка ptrace_scope (код: {return_code})", level='ERROR')
                 self._update_status(component_id, 'error')
                 return False
+        elif component_id == 'winetricks':
+            # Установка winetricks инструмента из архива
+            return self._install_winetricks_tool(component_id, config)
         else:
             print(f"Неизвестная системная настройка: {component_id}", level='ERROR')
             self._update_status(component_id, 'error')
@@ -2581,6 +2688,23 @@ class SystemConfigHandler(ComponentHandler):
                 print(f"Восстановление ptrace_scope (код: {return_code})", level='ERROR')
                 self._update_status(component_id, 'error')
                 return False
+        elif component_id == 'winetricks':
+            # Удаление winetricks инструмента (удаление всей папки кэша)
+            winetricks_cache_dir = os.path.expanduser('~/.cache/winetricks')
+            if os.path.exists(winetricks_cache_dir):
+                try:
+                    shutil.rmtree(winetricks_cache_dir)
+                    print("Winetricks инструмент удален из кэша (удалена папка)")
+                    self._update_status(component_id, 'missing')
+                    return True
+                except Exception as e:
+                    print(f"Ошибка удаления winetricks: {e}", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+            else:
+                print("Winetricks инструмент не найден в кэше")
+                self._update_status(component_id, 'missing')
+                return True
         else:
             print(f"Неизвестная системная настройка для удаления: {component_id}", level='ERROR')
             self._update_status(component_id, 'error')
@@ -2594,6 +2718,103 @@ class SystemConfigHandler(ComponentHandler):
         # Используем wineprefix_path=None, чтобы путь определялся автоматически
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
+    
+    def _install_winetricks_tool(self, component_id, config):
+        """
+        Установка winetricks инструмента из архива в кэш пользователя
+        
+        Args:
+            component_id: ID компонента ('winetricks')
+            config: Конфигурация компонента
+        
+        Returns:
+            bool: True если установка успешна
+        """
+        try:
+            winetricks_path = os.path.expanduser('~/.cache/winetricks/winetricks')
+            
+            # Проверяем, не установлен ли уже
+            if os.path.exists(winetricks_path) and os.access(winetricks_path, os.X_OK):
+                print("Winetricks инструмент уже установлен в кэше")
+                self._update_status(component_id, 'ok')
+                return True
+            
+            # Получаем путь к AstraPack
+            astrapack_dir = getattr(self, 'astrapack_dir', None)
+            if not astrapack_dir:
+                # Пытаемся найти AstraPack относительно текущего скрипта
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                astrapack_dir = os.path.join(script_dir, 'AstraPack')
+            
+            # Получаем имя архива из конфигурации
+            archive_name = config.get('winetricks_archive_name', 'winetricks_packages.tar.gz')
+            
+            # Ищем архив в папке Winetricks
+            winetricks_dir = os.path.join(astrapack_dir, "Winetricks")
+            archive_path = os.path.join(winetricks_dir, archive_name)
+            
+            if not os.path.exists(archive_path):
+                print(f"Архив winetricks не найден: {archive_path}", level='ERROR')
+                self._update_status(component_id, 'error')
+                return False
+            
+            print(f"Извлечение winetricks из архива: {archive_path}")
+            
+            # Создаем папку кэша если нужно
+            cache_dir = os.path.dirname(winetricks_path)
+            os.makedirs(cache_dir, exist_ok=True)
+            fix_dir_permissions(cache_dir)
+            
+            # Извлекаем winetricks из архива
+            with tarfile.open(archive_path, 'r:gz') as tar:
+                # Ищем файл winetricks в корне архива
+                winetricks_member = None
+                for member in tar.getmembers():
+                    if member.name == 'winetricks' and member.isfile():
+                        winetricks_member = member
+                        break
+                
+                if not winetricks_member:
+                    print("Файл winetricks не найден в архиве", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                
+                # Извлекаем файл
+                fileobj = tar.extractfile(winetricks_member)
+                if fileobj:
+                    file_data = fileobj.read()
+                    with open(winetricks_path, 'wb') as f:
+                        f.write(file_data)
+                    
+                    # Устанавливаем права на выполнение
+                    os.chmod(winetricks_path, 0o755)
+                    
+                    # Исправляем владельца файла
+                    try:
+                        current_uid = os.getuid()
+                        if current_uid != 0:  # Не root
+                            import pwd
+                            user_info = pwd.getpwuid(current_uid)
+                            os.chown(winetricks_path, current_uid, user_info.pw_gid)
+                    except Exception:
+                        pass  # Игнорируем ошибки прав доступа
+                    
+                    print(f"Winetricks инструмент успешно установлен: {winetricks_path}")
+                    self._update_status(component_id, 'ok')
+                    return True
+                else:
+                    print("Не удалось извлечь winetricks из архива", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                    
+        except Exception as e:
+            print(f"Ошибка установки winetricks инструмента: {e}", level='ERROR')
+            import traceback
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    print(f"[DEBUG] {line}", level='DEBUG')
+            self._update_status(component_id, 'error')
+            return False
 
 # ============================================================================
 # ОБРАБОТЧИК WINE ОКРУЖЕНИЯ
@@ -2603,6 +2824,44 @@ class WineEnvironmentHandler(ComponentHandler):
     
     def get_category(self) -> str:
         return 'wine_environment'
+    
+    def _find_winetricks_archive(self, astrapack_dir, archive_name=None):
+        """
+        Поиск архива winetricks в папке Winetricks
+        
+        Args:
+            astrapack_dir: Путь к директории AstraPack
+            archive_name: Имя архива (если указано, используется оно, иначе поиск по расширению)
+        
+        Returns:
+            str или None: Путь к найденному архиву или None
+        """
+        if not astrapack_dir:
+            return None
+        
+        winetricks_dir = os.path.join(astrapack_dir, "Winetricks")
+        if not os.path.exists(winetricks_dir):
+            return None
+        
+        # Если указано имя архива - используем его
+        if archive_name:
+            archive_path = os.path.join(winetricks_dir, archive_name)
+            if os.path.exists(archive_path) and os.path.isfile(archive_path):
+                print(f"[DEBUG] Найден указанный архив winetricks: {archive_name}")
+                return archive_path
+            else:
+                print(f"[DEBUG] Указанный архив не найден: {archive_name}")
+                return None
+        
+        # Иначе ищем первый .tar.gz файл в папке Winetricks (fallback)
+        for item in os.listdir(winetricks_dir):
+            if item.endswith('.tar.gz'):
+                archive_path = os.path.join(winetricks_dir, item)
+                if os.path.isfile(archive_path):
+                    print(f"[DEBUG] Найден архив winetricks (автопоиск): {item}")
+                    return archive_path
+        
+        return None
     
     @track_class_activity('WineEnvironmentHandler')
     def install(self, component_id: str, config: dict) -> bool:
@@ -2634,6 +2893,8 @@ class WineEnvironmentHandler(ComponentHandler):
             
             os.makedirs(cache_wine, exist_ok=True)
             os.makedirs(cache_winetricks, exist_ok=True)
+            fix_dir_permissions(cache_wine)
+            fix_dir_permissions(cache_winetricks)
             print(f"Созданы директории кэша: {cache_wine}, {cache_winetricks}")
             
             # Определяем uid/gid для установки владельца (если запущено от root)
@@ -2643,9 +2904,6 @@ class WineEnvironmentHandler(ComponentHandler):
             if os.geteuid() == 0 and real_user and real_user != 'root':
                 uid = pwd.getpwnam(real_user).pw_uid
                 gid = pwd.getpwnam(real_user).pw_gid
-                os.chown(cache_wine, uid, gid)
-                os.chown(cache_winetricks, uid, gid)
-                print(f"Установлен владелец директорий кэша: {real_user}")
             
             # Копируем wine-gecko компоненты (только если используется AstraPack Wine)
             if wine_source != 'system' and self.astrapack_dir:
@@ -2661,31 +2919,6 @@ class WineEnvironmentHandler(ComponentHandler):
                                 os.chown(dst, uid, gid)
                             print(f"  Скопирован: {item}")
                     print("wine-gecko компоненты скопированы")
-            
-            # Копируем winetricks кэш (только если используется AstraPack Wine)
-            if wine_source != 'system' and self.astrapack_dir:
-                winetricks_cache_dir = os.path.join(self.astrapack_dir, "winetricks-cache")
-                if os.path.exists(winetricks_cache_dir):
-                    print("Копирование winetricks кэша...")
-                    for item in os.listdir(winetricks_cache_dir):
-                        src = os.path.join(winetricks_cache_dir, item)
-                        dst = os.path.join(cache_winetricks, item)
-                        if os.path.isdir(src):
-                            if os.path.exists(dst):
-                                shutil.rmtree(dst)
-                            shutil.copytree(src, dst)
-                            if uid is not None and gid is not None:
-                                for root_dir, dirs, files in os.walk(dst):
-                                    os.chown(root_dir, uid, gid)
-                                    for fname in files:
-                                        os.chown(os.path.join(root_dir, fname), uid, gid)
-                            print(f"  Скопирована папка: {item}")
-                        else:
-                            shutil.copy2(src, dst)
-                            if uid is not None and gid is not None:
-                                os.chown(dst, uid, gid)
-                            print(f"  Скопирован файл: {item}")
-                    print("winetricks кэш скопирован")
             
             # Инициализируем WINEPREFIX если его еще нет
             if not os.path.exists(os.path.join(self.wineprefix, 'system.reg')):
@@ -2900,18 +3133,307 @@ class WineEnvironmentHandler(ComponentHandler):
 class WinetricksHandler(ComponentHandler):
     """Обработчик winetricks компонентов (wine_mono, dotnet48, vcrun2013, и т.д.)"""
     
-    def __init__(self, use_minimal=True, **kwargs):
+    def __init__(self, use_minimal=False, **kwargs):
         """
         Инициализация обработчика winetricks
         
         Args:
-            use_minimal: Использовать минимальный winetricks (по умолчанию True)
+            use_minimal: Использовать минимальный winetricks (по умолчанию False)
             **kwargs: Остальные параметры для ComponentHandler
         """
         super().__init__(**kwargs)
         self.use_minimal = use_minimal
-        # Инициализируем WinetricksManager
-        self.winetricks_manager = WinetricksManager(self.astrapack_dir, use_minimal=self.use_minimal)
+        self.astrapack_dir_for_winetricks = self.astrapack_dir  # Сохраняем для ленивой инициализации
+        self.winetricks_manager = None  # Создадим при первом использовании (ленивая инициализация)
+    
+    def _find_winetricks_archive(self, astrapack_dir, archive_name=None):
+        """
+        Поиск архива winetricks в папке Winetricks
+        
+        Args:
+            astrapack_dir: Путь к директории AstraPack
+            archive_name: Имя архива (если указано, используется оно, иначе поиск по расширению)
+        
+        Returns:
+            str или None: Путь к найденному архиву или None
+        """
+        if not astrapack_dir:
+            return None
+        
+        winetricks_dir = os.path.join(astrapack_dir, "Winetricks")
+        if not os.path.exists(winetricks_dir):
+            return None
+        
+        # Если указано имя архива - используем его
+        if archive_name:
+            archive_path = os.path.join(winetricks_dir, archive_name)
+            if os.path.exists(archive_path) and os.path.isfile(archive_path):
+                print(f"[DEBUG] Найден указанный архив winetricks: {archive_name}")
+                return archive_path
+            else:
+                print(f"[DEBUG] Указанный архив не найден: {archive_name}")
+                return None
+        
+        # Иначе ищем первый .tar.gz файл в папке Winetricks (fallback)
+        for item in os.listdir(winetricks_dir):
+            if item.endswith('.tar.gz'):
+                archive_path = os.path.join(winetricks_dir, item)
+                if os.path.isfile(archive_path):
+                    print(f"[DEBUG] Найден архив winetricks (автопоиск): {item}")
+                    return archive_path
+        
+        return None
+    
+    def _get_winetricks_manager(self):
+        """Ленивая инициализация WinetricksManager - создается только при реальном использовании"""
+        if self.winetricks_manager is None:
+            self.winetricks_manager = WinetricksManager(
+                self.astrapack_dir_for_winetricks, 
+                use_minimal=self.use_minimal
+            )
+        return self.winetricks_manager
+    
+    def _get_component_extract_info(self, config, component_id):
+        """
+        Определяет что нужно извлечь из конфигурации компонента
+        
+        Поддерживает:
+        - Один файл: download_filename
+        - Два файла: download_filename_x86/x64 или download_filename_32/64
+        - Множественные файлы: download_filenames (список)
+        - Целую папку: download_folder или download_path
+        
+        Args:
+            config: Конфигурация компонента
+            component_id: ID компонента
+        
+        Returns:
+            dict: {
+                'files': [список файлов],
+                'folders': [список папок],
+                'extract_mode': 'files' | 'folder'
+            }
+        """
+        result = {
+            'files': [],
+            'folders': [],
+            'extract_mode': None
+        }
+        
+        # ПРИОРИТЕТ 1: Проверяем папку (если указана)
+        if config.get('download_folder'):
+            folder_name = config.get('download_folder')
+            result['folders'].append(folder_name)
+            result['extract_mode'] = 'folder'
+            return result
+        
+        if config.get('download_path'):
+            folder_path = config.get('download_path')
+            result['folders'].append(folder_path)
+            result['extract_mode'] = 'folder'
+            return result
+        
+        # ПРИОРИТЕТ 2: Проверяем список файлов (любое количество)
+        if config.get('download_filenames'):
+            files_list = config.get('download_filenames')
+            if isinstance(files_list, list) and len(files_list) > 0:
+                result['files'].extend(files_list)
+                result['extract_mode'] = 'files'
+                return result
+        
+        # ПРИОРИТЕТ 3: Проверяем множественные файлы (x86/x64, 32/64)
+        if config.get('download_filename_x86') and config.get('download_filename_x64'):
+            result['files'].extend([
+                config.get('download_filename_x86'),
+                config.get('download_filename_x64')
+            ])
+            result['extract_mode'] = 'files'
+            return result
+        
+        if config.get('download_filename_32') and config.get('download_filename_64'):
+            result['files'].extend([
+                config.get('download_filename_32'),
+                config.get('download_filename_64')
+            ])
+            result['extract_mode'] = 'files'
+            return result
+        
+        # ПРИОРИТЕТ 4: Один файл
+        if config.get('download_filename'):
+            result['files'].append(config.get('download_filename'))
+            result['extract_mode'] = 'files'
+            return result
+        
+        # ПРИОРИТЕТ 5: Нет параметров - используем component_id как папку
+        result['folders'].append(component_id)
+        result['extract_mode'] = 'folder'
+        return result
+    
+    def _extract_from_archive(self, archive_path, extract_info, component_id, user_cache_dir):
+        """
+        Извлечение файлов/папок из архива сразу в кэш пользователя
+        
+        Args:
+            archive_path: Путь к архиву
+            extract_info: Информация о том, что извлекать (из _get_component_extract_info)
+            component_id: ID компонента
+            user_cache_dir: Путь к кэшу пользователя (~/.cache/winetricks)
+        
+        Returns:
+            int: Количество извлеченных файлов
+        """
+        os.makedirs(user_cache_dir, exist_ok=True)
+        fix_dir_permissions(user_cache_dir)
+        
+        try:
+            archive_size = os.path.getsize(archive_path)
+            print(f"[DEBUG] Размер архива: {archive_size} байт ({archive_size / (1024*1024):.2f} МБ)")
+            
+            extracted_count = 0
+            
+            with tarfile.open(archive_path, 'r:gz') as tar:
+                members = tar.getmembers()
+                total_members = len(members)
+                print(f"[DEBUG] Всего элементов в архиве: {total_members}")
+                
+                # Проверяем структуру архива
+                has_winetricks_cache_dir = any(
+                    m.name.startswith('winetricks-cache/') or m.name == 'winetricks-cache' 
+                    for m in members
+                )
+                
+                items_to_extract = []
+                
+                if extract_info['extract_mode'] == 'folder':
+                    # ИЗВЛЕЧЕНИЕ ПАПКИ
+                    folder_name = extract_info['folders'][0]
+                    
+                    # Определяем путь к папке
+                    # Если в конфигурации указан download_path - используем его
+                    try:
+                        full_config = get_component_data(component_id)
+                        if full_config and full_config.get('download_path'):
+                            expected_path = full_config.get('download_path')
+                        else:
+                            expected_path = f'winetricks-cache/{component_id}/{folder_name}'
+                    except Exception:
+                        expected_path = f'winetricks-cache/{component_id}/{folder_name}'
+                    
+                    print(f"[DEBUG] Ищем папку: {expected_path}")
+                    
+                    # Собираем ВСЕ файлы из папки
+                    for member in members:
+                        if member.isfile() and member.name.startswith(expected_path + '/'):
+                            items_to_extract.append(member)
+                    
+                    # Если не найдено - ищем по имени папки во всем архиве
+                    if not items_to_extract:
+                        folder_basename = os.path.basename(expected_path)
+                        print(f"[DEBUG] Папка не найдена по пути, ищем по имени: {folder_basename}")
+                        
+                        for member in members:
+                            if member.isfile() and f'/{folder_basename}/' in member.name:
+                                items_to_extract.append(member)
+                    
+                    print(f"[DEBUG] Найдено файлов в папке: {len(items_to_extract)}")
+                
+                elif extract_info['extract_mode'] == 'files':
+                    # ИЗВЛЕЧЕНИЕ ФАЙЛОВ
+                    component_files = extract_info['files']
+                    found_by_path = []
+                    
+                    print(f"[DEBUG] Ищем {len(component_files)} файлов в архиве...")
+                    
+                    # ШАГ 1: Ищем каждый файл по указанному пути
+                    for filename in component_files:
+                        expected_path = f'winetricks-cache/{component_id}/{filename}'
+                        
+                        for member in members:
+                            if member.isfile() and member.name == expected_path:
+                                items_to_extract.append(member)
+                                found_by_path.append(filename)
+                                print(f"[DEBUG] Найден файл {filename} по пути: {member.name}")
+                                break
+                    
+                    # ШАГ 2: Если не все файлы найдены - ищем по имени во всем архиве
+                    missing_files = [f for f in component_files if f not in found_by_path]
+                    
+                    if missing_files:
+                        print(f"[DEBUG] Не найдены по пути {len(missing_files)} файлов, ищем по имени в архиве...")
+                        
+                        # Читаем список всех файлов в архиве
+                        all_archive_files = {
+                            os.path.basename(m.name): m 
+                            for m in members if m.isfile()
+                        }
+                        print(f"[DEBUG] Всего файлов в архиве: {len(all_archive_files)}")
+                        
+                        for filename in missing_files:
+                            if filename in all_archive_files:
+                                member = all_archive_files[filename]
+                                items_to_extract.append(member)
+                                print(f"[DEBUG] Найден файл {filename} в архиве по пути: {member.name}")
+                            else:
+                                print(f"[DEBUG] Файл {filename} не найден в архиве")
+                
+                # Извлекаем все найденные файлы в папку компонента с сохранением структуры
+                component_cache_dir = os.path.join(user_cache_dir, component_id)
+                os.makedirs(component_cache_dir, exist_ok=True)
+                fix_dir_permissions(component_cache_dir)
+                
+                for member in items_to_extract:
+                    # Определяем относительный путь внутри папки компонента
+                    archive_prefix = f'winetricks-cache/{component_id}/'
+                    if member.name.startswith(archive_prefix):
+                        # Убираем префикс "winetricks-cache/component_id/" для получения относительного пути
+                        relative_path = member.name[len(archive_prefix):]
+                    else:
+                        # Если файл не в папке компонента (найден по имени), используем только имя
+                        relative_path = os.path.basename(member.name)
+                    
+                    # Создаем полный путь в кэше пользователя с сохранением структуры
+                    target_path = os.path.join(component_cache_dir, relative_path)
+                    
+                    # Создаем родительские папки если нужно
+                    parent_dir = os.path.dirname(target_path)
+                    if parent_dir and parent_dir != component_cache_dir:
+                        os.makedirs(parent_dir, exist_ok=True)
+                        fix_dir_permissions(parent_dir)
+                    
+                    # Извлекаем файл из архива
+                    fileobj = tar.extractfile(member)
+                    if fileobj:
+                        file_data = fileobj.read()
+                        with open(target_path, 'wb') as f:
+                            f.write(file_data)
+                        
+                        # КРИТИЧНО: Устанавливаем права доступа на файл
+                        os.chmod(target_path, 0o644)
+                        
+                        # Если запущено от root - устанавливаем владельца файла на пользователя
+                        if os.geteuid() == 0:
+                            real_user = os.environ.get('SUDO_USER')
+                            if real_user and real_user != 'root':
+                                try:
+                                    import pwd
+                                    user_info = pwd.getpwnam(real_user)
+                                    os.chown(target_path, user_info.pw_uid, user_info.pw_gid)
+                                except (KeyError, ImportError):
+                                    pass  # Игнорируем ошибки
+                        
+                        extracted_count += 1
+                        print(f"[DEBUG] Извлечен файл: {relative_path} -> {target_path}")
+                
+                print(f"[INFO] Извлечено файлов: {extracted_count}")
+                return extracted_count
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка при извлечении из архива: {e}", level='ERROR')
+            import traceback
+            for line in traceback.format_exc().split('\n'):
+                if line.strip():
+                    print(f"[DEBUG] {line}", level='DEBUG')
+            return 0
     
     def get_category(self) -> str:
         return 'winetricks'
@@ -2943,6 +3465,53 @@ class WinetricksHandler(ComponentHandler):
         self._update_status(component_id, 'installing')
         
         print(f"Установка winetricks компонента: {config['name']}")
+        
+        # ПРИОРИТЕТ: Извлекаем файлы из архива если нужно
+        if self.astrapack_dir:
+            # Определяем что нужно извлечь из конфигурации
+            extract_info = self._get_component_extract_info(config, component_id)
+            
+            # Проверяем кэш пользователя - все файлы уже там?
+            user_cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
+            all_files_in_cache = True
+            
+            if extract_info['extract_mode'] == 'files':
+                # Проверяем наличие всех файлов в кэше пользователя
+                for filename in extract_info['files']:
+                    cache_path = os.path.join(user_cache_dir, filename)
+                    if not os.path.exists(cache_path):
+                        all_files_in_cache = False
+                        break
+            elif extract_info['extract_mode'] == 'folder':
+                # Для папки проверяем наличие хотя бы одного файла
+                # (полную проверку делаем при извлечении)
+                all_files_in_cache = False
+            
+            if not all_files_in_cache:
+                # Нужно извлечь из архива
+                archive_name = config.get('winetricks_archive_name')
+                winetricks_archive = self._find_winetricks_archive(self.astrapack_dir, archive_name=archive_name)
+                
+                if winetricks_archive and os.path.exists(winetricks_archive):
+                    print(f"[INFO] Извлечение файлов компонента {component_id} из архива...")
+                    extracted_count = self._extract_from_archive(
+                        winetricks_archive, 
+                        extract_info, 
+                        component_id,
+                        user_cache_dir
+                    )
+                    
+                    if extracted_count == 0:
+                        if config.get('source_fallback', True):
+                            print(f"[INFO] Файлы не найдены в архиве, будет использован fallback на скачивание", level='INFO')
+                        else:
+                            print(f"[WARNING] Файлы не найдены в архиве и fallback отключен!", level='WARNING')
+                else:
+                    print(f"[DEBUG] Архив winetricks не найден")
+                    if config.get('source_fallback', True):
+                        print(f"[INFO] Будет использован fallback на скачивание из интернета", level='INFO')
+            else:
+                print(f"[DEBUG] Все файлы компонента {component_id} уже в кэше пользователя")
         
         # Обновляем прогресс
         self._update_progress(
@@ -3022,9 +3591,17 @@ class WinetricksHandler(ComponentHandler):
                     """).strip()
                     print(f"WinetricksHandler.install() команда для MinimalWinetricks: {cmd_string[:200]}...", level='DEBUG')
                     
-                    print(f"WinetricksHandler.install() запускаем процесс через su", level='DEBUG')
+                    # КРИТИЧНО: Обертываем команду в bash -c с правильным экранированием
+                    # Это гарантирует корректное выполнение многострочной команды и мониторинг вывода
+                    bash_cmd = f"bash -c {shlex.quote(cmd_string)}"
+                    
+                    print(f"[DEBUG] WinetricksHandler.install() MinimalWinetricks - команда для выполнения:", level='DEBUG')
+                    print(f"[DEBUG]   cmd_string: {cmd_string}", level='DEBUG')
+                    print(f"[DEBUG]   bash_cmd: {bash_cmd}", level='DEBUG')
+                    print(f"[DEBUG]   Полная команда: su - {real_user} -c {shlex.quote(bash_cmd)}", level='DEBUG')
+                    print(f"WinetricksHandler.install() запускаем процесс через su - (login shell)", level='DEBUG')
                     return_code = self._run_process(
-                        ['su', real_user, '-c', cmd_string],
+                        ['su', '-', real_user, '-c', bash_cmd],
                         process_type="install",
                         channels=["file", "terminal"],
                         timeout=600  # 10 минут максимум для установки
@@ -3033,29 +3610,136 @@ class WinetricksHandler(ComponentHandler):
                     print(f"WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
                 else:
                     # Для оригинального winetricks используем bash-скрипт
+                    # КРИТИЧНО: Получаем правильную домашнюю директорию пользователя
+                    # При запуске от root os.path.expanduser('~') вернет /root, а не /home/fsa
+                    if os.geteuid() == 0 and real_user and real_user != 'root':
+                        try:
+                            user_home = pwd.getpwnam(real_user).pw_dir
+                        except (KeyError, ImportError):
+                            user_home = os.path.expanduser('~')  # Fallback
+                    else:
+                        user_home = os.path.expanduser('~')
+                    
+                    winetricks_path = os.path.join(user_home, '.cache', 'winetricks', 'winetricks')
+                    winetricks_dir = os.path.dirname(winetricks_path)
+                    print(f"[DEBUG] WinetricksHandler.install() путь к winetricks: {winetricks_path}", level='DEBUG')
+                    print(f"[DEBUG] WinetricksHandler.install() директория winetricks: {winetricks_dir}", level='DEBUG')
+                    print(f"[DEBUG] WinetricksHandler.install() проверка существования: {os.path.exists(winetricks_path)}", level='DEBUG')
+                    
+                    # КРИТИЧНО: Как в оригинальном скрипте - переходим в директорию winetricks и запускаем ./winetricks
+                    # Это важно, так как winetricks может искать файлы относительно своей директории
+                    # КРИТИЧНО: Добавляем явный перехват stderr (2>&1) для диагностики ошибок
                     cmd_string = textwrap.dedent(f"""
-                        cd {self.astrapack_dir} &&
                         export WINEPREFIX="$HOME"/.wine-astraregul &&
                         export WINEDEBUG="-all" &&
                         export WINE=/opt/wine-9.0/bin/wine &&
                         export PATH="/opt/wine-9.0/bin:$PATH" &&
-                        ./winetricks -q -f {winetricks_component}
+                        export W_OPT_UNATTENDED=1 &&
+                        cd {shlex.quote(winetricks_dir)} &&
+                        ./winetricks -q -f {winetricks_component} 2>&1
                     """).strip()
                     
-                    # КРИТИЧНО: Используем UniversalProcessRunner для правильного управления процессами
-                    # Это гарантирует завершение всех дочерних процессов
-                    # Устанавливаем таймаут для winetricks (10 минут максимум для установки)
-                    return_code = self._run_process(
-                        ['su', real_user, '-c', cmd_string],
-                        process_type="install",
-                        channels=["file", "terminal"],
-                        timeout=600  # 10 минут максимум для установки
-                    )
-                    success = (return_code == 0)
+                    # КРИТИЧНО: Пробуем два варианта запуска
+                    # Вариант 1: Через временный bash скрипт (более надежный для сложных команд)
+                    temp_script = None
+                    try:
+                        import tempfile
+                        # Создаем временный скрипт
+                        temp_script = tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False)
+                        temp_script.write('#!/bin/bash\n')
+                        # НЕ используем set -e, так как winetricks может возвращать ненулевые коды, которые обрабатываются внутри
+                        temp_script.write('set -x\n')  # Включить отладочный вывод
+                        temp_script.write(cmd_string + '\n')
+                        temp_script.close()
+                        
+                        # Устанавливаем права на выполнение
+                        os.chmod(temp_script.name, 0o755)
+                        
+                        # Если запущено от root - устанавливаем владельца скрипта на пользователя
+                        if os.geteuid() == 0 and real_user and real_user != 'root':
+                            try:
+                                user_info = pwd.getpwnam(real_user)
+                                os.chown(temp_script.name, user_info.pw_uid, user_info.pw_gid)
+                            except (KeyError, ImportError):
+                                pass
+                        
+                        print(f"[DEBUG] WinetricksHandler.install() создан временный скрипт: {temp_script.name}", level='DEBUG')
+                        print(f"[DEBUG] WinetricksHandler.install() содержимое скрипта:", level='DEBUG')
+                        with open(temp_script.name, 'r') as f:
+                            script_content = f.read()
+                            print(f"[DEBUG] {script_content}", level='DEBUG')
+                        
+                        # КРИТИЧНО: Диагностический запуск winetricks напрямую (без su -) для проверки реальной ошибки
+                        # Это поможет увидеть ошибки, которые могут теряться при запуске через su
+                        diagnostic_success = False
+                        if os.geteuid() == 0 and real_user and real_user != 'root':
+                            print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: пробуем запустить winetricks напрямую от пользователя {real_user}", level='DEBUG')
+                            try:
+                                # Запускаем winetricks напрямую через runuser (если доступен) или su без login shell
+                                test_cmd = f"export W_OPT_UNATTENDED=1 && cd {shlex.quote(winetricks_dir)} && ./winetricks -q -f {winetricks_component} 2>&1"
+                                test_result = self._run_process(
+                                    ['runuser', '-u', real_user, '--', 'bash', '-c', test_cmd],
+                                    process_type="install",
+                                    channels=["file", "terminal"],
+                                    timeout=30  # Короткий таймаут для диагностики
+                                )
+                                print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: прямой запуск завершился с кодом: {test_result}", level='DEBUG')
+                                if test_result == 0:
+                                    print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: прямой запуск успешен!", level='DEBUG')
+                                    diagnostic_success = True
+                                    return_code = 0
+                                    success = True
+                            except Exception as diag_e:
+                                print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: ошибка прямого запуска: {diag_e}", level='DEBUG')
+                                # Продолжаем с обычным запуском через su -
+                        
+                        # Если диагностический запуск не удался, используем обычный способ
+                        if not diagnostic_success:
+                            # Запускаем скрипт через su
+                            script_cmd = f"bash {temp_script.name}"
+                            print(f"[DEBUG] WinetricksHandler.install() запускаем через временный скрипт: su - {real_user} -c {shlex.quote(script_cmd)}", level='DEBUG')
+                            
+                            return_code = self._run_process(
+                                ['su', '-', real_user, '-c', script_cmd],
+                                process_type="install",
+                                channels=["file", "terminal"],
+                                timeout=600  # 10 минут максимум для установки
+                            )
+                            success = (return_code == 0)
+                            print(f"[DEBUG] WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
+                        
+                    except Exception as e:
+                        print(f"[DEBUG] WinetricksHandler.install() ошибка при создании временного скрипта: {e}", level='DEBUG')
+                        print(f"[DEBUG] WinetricksHandler.install() пробуем альтернативный вариант через bash -c", level='DEBUG')
+                        
+                        # Вариант 2: Через bash -c (fallback)
+                        bash_cmd = f"bash -c {shlex.quote(cmd_string)}"
+                        print(f"[DEBUG] WinetricksHandler.install() Оригинальный winetricks - команда для выполнения:", level='DEBUG')
+                        print(f"[DEBUG]   cmd_string: {cmd_string}", level='DEBUG')
+                        print(f"[DEBUG]   bash_cmd: {bash_cmd}", level='DEBUG')
+                        print(f"[DEBUG]   Полная команда: su - {real_user} -c {shlex.quote(bash_cmd)}", level='DEBUG')
+                        print(f"WinetricksHandler.install() запускаем процесс через su - (login shell)", level='DEBUG')
+                        
+                        return_code = self._run_process(
+                            ['su', '-', real_user, '-c', bash_cmd],
+                            process_type="install",
+                            channels=["file", "terminal"],
+                            timeout=600  # 10 минут максимум для установки
+                        )
+                        success = (return_code == 0)
+                        print(f"[DEBUG] WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
+                    finally:
+                        # Удаляем временный скрипт
+                        if temp_script and os.path.exists(temp_script.name):
+                            try:
+                                os.unlink(temp_script.name)
+                                print(f"[DEBUG] WinetricksHandler.install() временный скрипт удален: {temp_script.name}", level='DEBUG')
+                            except Exception as e:
+                                print(f"[DEBUG] WinetricksHandler.install() ошибка удаления временного скрипта: {e}", level='DEBUG')
             else:
                 # Уже не root - используем WinetricksManager напрямую
                 # WinetricksManager сам решает использовать минимальный или оригинальный winetricks
-                success = self.winetricks_manager.install_wine_packages(
+                success = self._get_winetricks_manager().install_wine_packages(
                     components=[winetricks_component],
                     wineprefix=self.wineprefix,
                     callback=status_callback
@@ -3069,9 +3753,31 @@ class WinetricksHandler(ComponentHandler):
                 os.sync()  # Принудительная синхронизация файловой системы
                 time.sleep(0.2)  # Небольшая задержка для завершения операций winetricks
                 
-                # Проверяем статус компонента
+                # КРИТИЧНО: Сразу после установки проверяем winetricks.log (как это делает сам winetricks)
+                # Это более надежно, чем проверка файлов, так как файлы могут появиться с задержкой
+                winetricks_log = os.path.join(self.wineprefix, 'winetricks.log')
+                log_check_passed = False
+                if os.path.exists(winetricks_log):
+                    try:
+                        with open(winetricks_log, 'r', encoding='utf-8', errors='ignore') as f:
+                            log_content = f.read()
+                            command_name = config.get('command_name', component_id)
+                            import re
+                            pattern = r'\b' + re.escape(command_name) + r'\b'
+                            if re.search(pattern, log_content):
+                                print(f"[DEBUG] WinetricksHandler.install() компонент {component_id} ({command_name}) найден в winetricks.log", level='DEBUG')
+                                log_check_passed = True
+                    except Exception as e:
+                        print(f"[DEBUG] WinetricksHandler.install() ошибка чтения winetricks.log: {e}", level='DEBUG')
+                
+                # Проверяем статус компонента через файлы (стандартная проверка)
                 actual_status = self.check_status(component_id, config)
                 print(f"WinetricksHandler.install() проверка статуса вернула: {actual_status}", level='DEBUG')
+                
+                # Если проверка лога прошла успешно, считаем установку успешной даже если файлы еще не появились
+                if log_check_passed:
+                    actual_status = True
+                    print(f"[DEBUG] WinetricksHandler.install() установка подтверждена через winetricks.log", level='DEBUG')
                 
                 if actual_status:
                     print(f"WinetricksHandler.install() компонент {component_id} установлен успешно", level='DEBUG')
@@ -4041,7 +4747,6 @@ class WineApplicationHandler(ComponentHandler):
         Returns:
             bool: True если команда доступна
         """
-        import shutil
         return shutil.which(command) is not None
     
     def _count_files_recursive(self, directory: str):
@@ -4685,8 +5390,6 @@ class WineApplicationHandler(ComponentHandler):
         Мониторинг прогресса rsync в отдельном потоке
         Парсит вывод rsync --progress и обновляет GUI
         """
-        import re
-        
         # Регулярное выражение для парсинга прогресса rsync
         # Формат: "1,234,567  12%  123.45MB/s    0:00:12"
         progress_pattern = re.compile(r'(\d+(?:,\d+)*)\s+(\d+)%\s+([\d.]+)(\w+)/s')
@@ -5106,6 +5809,7 @@ class WineApplicationHandler(ComponentHandler):
             # Определяем путь для сохранения установщика
             cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
             os.makedirs(cache_dir, exist_ok=True)
+            fix_dir_permissions(cache_dir)
             installer_path = os.path.join(cache_dir, download_filename)
             
             # Скачиваем установщик
@@ -6681,13 +7385,12 @@ class DualStreamLogger:
         
         # КРИТИЧНО: Извлекаем timestamp из имени analysis_log_path, если не передан
         if timestamp is None:
-            import re
             match = re.search(r'(\d{8}_\d{6})', analysis_log_path)
             if match:
                 timestamp = match.group(1)
             else:
                 # Fallback: создаем новый timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
         
@@ -6873,9 +7576,8 @@ def universal_print(*args, **kwargs):
     gui_log = kwargs.pop('gui_log', False)
     level = kwargs.pop('level', 'INFO')
     
-    # НОВОЕ: Пропускаем все DEBUG сообщения
-    if level == 'DEBUG':
-        return
+    # КРИТИЧНО: ВСЕ сообщения (включая DEBUG) должны попадать в лог через DualStreamLogger
+    # Ни одно сообщение не может пройти мимо!
     
     # Получаем dual_logger из universal_runner или глобального
     dual_logger = None
@@ -7185,6 +7887,9 @@ class UniversalProcessRunner(object):
             full_message = f"{description}: {str(message)}"
         else:
             full_message = str(message)
+        
+        # Используем прямой вызов universal_print с параметрами (исключительный случай)
+        universal_print(full_message, stream='analysis', level='DEBUG')
     
     def get_running_processes(self):
         """Получение списка запущенных процессов с метриками CPU и памяти"""
@@ -7571,7 +8276,8 @@ class UniversalProcessRunner(object):
                     last_activity_time = current_time
                     last_output_time = current_time
                     
-                    # RAW поток (необработанный вывод процесса, метка времени добавляется автоматически)
+                    # КРИТИЧНО: Явное логирование через DualStreamLogger
+                    # Логируем в RAW поток (необработанный вывод процесса, метка времени добавляется автоматически)
                     if _global_dual_logger:
                         try:
                             _global_dual_logger.write_raw(line_clean)  # Метка времени добавляется автоматически
@@ -7579,6 +8285,14 @@ class UniversalProcessRunner(object):
                         except Exception as e:
                             # Используем стандартный print() с gui_log=True (поддерживается universal_print)
                             print(f"[DUAL_LOGGER_ERROR] Ошибка записи в RAW-поток: {e}", gui_log=True)
+                    
+                    # КРИТИЧНО: Явное логирование в ANALYSIS поток для отладки
+                    # Логируем все сообщения процесса для диагностики
+                    if _global_dual_logger:
+                        try:
+                            _global_dual_logger.write_analysis(f"[PROCESS_OUTPUT] {line_clean}")
+                        except Exception:
+                            pass  # Игнорируем ошибки логирования
                     
                     # Наш лог получает ОБРАБОТАННУЮ строку (custom_print продолжает работать как раньше)
                     print("  %s" % line_clean, "INFO", channels)
@@ -7944,7 +8658,7 @@ class RepoChecker(object):
                         if comment_format:
                             # Сохраняем в исходном формате
                             temp_file.write(comment_format + clean_line + '\n')
-                else:
+                        else:
                             # Если был активным, используем формат без пробела по умолчанию
                             temp_file.write('#deb ' + clean_line + '\n')
                 else:
@@ -9011,20 +9725,20 @@ class WinetricksManager(object):
 # ============================================================================
     """Класс для управления установкой Wine компонентов через winetricks"""
     
-    def __init__(self, astrapack_dir, use_minimal=True):
+    def __init__(self, astrapack_dir, use_minimal=False):
         """
         Инициализация менеджера winetricks
         
         Args:
             astrapack_dir: Путь к директории AstraPack
-            use_minimal: Использовать минимальный winetricks (по умолчанию True)
+            use_minimal: Использовать минимальный winetricks (по умолчанию False)
         """
         
         self.astrapack_dir = astrapack_dir
         self.use_minimal = use_minimal
         
-        # Путь к оригинальному winetricks скрипту
-        self.original_winetricks = os.path.join(astrapack_dir, "winetricks")
+        # Путь к winetricks скрипту в кэше пользователя
+        self.original_winetricks = os.path.expanduser('~/.cache/winetricks/winetricks')
         
         # Проверяем доступность скриптов (только оригинальный winetricks)
         self._check_winetricks_availability()
@@ -9036,8 +9750,11 @@ class WinetricksManager(object):
         """Проверка доступности winetricks скриптов"""
         if not self.use_minimal:
             if not os.path.exists(self.original_winetricks):
-                raise FileNotFoundError(f"Оригинальный winetricks не найден: {self.original_winetricks}")
-            if not os.access(self.original_winetricks, os.X_OK):
+                # Файл не найден - автоматически переключаемся на минимальный режим
+                print(f"Оригинальный winetricks не найден: {self.original_winetricks}", level='WARNING')
+                print("Автоматически переключаемся на минимальный winetricks")
+                self.use_minimal = True
+            elif not os.access(self.original_winetricks, os.X_OK):
                 os.chmod(self.original_winetricks, 0o755)
     
     def install_wine_packages(self, components, wineprefix=None, callback=None):
@@ -9057,7 +9774,16 @@ class WinetricksManager(object):
         
         if self.use_minimal:
             # Используем встроенную Python-реализацию
-            return self._minimal.install_components(components, wineprefix=wineprefix, callback=callback)
+            result = self._minimal.install_components(components, wineprefix=wineprefix, callback=callback)
+            # Если MinimalWinetricks вернул False (компонент требует оригинальный winetricks)
+            # переключаемся на оригинальный winetricks для этого компонента
+            if result is False:
+                print(f"[WinetricksManager] MinimalWinetricks не может установить компоненты, переключаемся на оригинальный winetricks")
+                # Используем оригинальный winetricks напрямую, без рекурсии
+                # Пропускаем проверку use_minimal и идем к оригинальному winetricks
+                pass  # Продолжаем выполнение ниже для использования оригинального winetricks
+            else:
+                return result
         
         # Иначе используем оригинальный bash winetricks
         winetricks_script = self.original_winetricks
@@ -9150,10 +9876,11 @@ class MinimalWinetricks(object):
         self.cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
+            fix_dir_permissions(self.cache_dir)
         except Exception:
             pass
         
-        # Определяем путь к AstraPack/winetricks-cache для поиска локальных файлов
+        # Определяем путь к AstraPack (для поиска архивов)
         if astrapack_dir:
             self.astrapack_dir = astrapack_dir
         else:
@@ -9170,141 +9897,129 @@ class MinimalWinetricks(object):
                 self.astrapack_dir = os.path.join(script_dir, 'AstraPack')
             else:
                 self.astrapack_dir = None
-        
-        # Путь к winetricks-cache в AstraPack
-        if self.astrapack_dir:
-            self.local_cache_dir = os.path.join(self.astrapack_dir, 'winetricks-cache')
-        else:
-            self.local_cache_dir = None
 
     # ------------------------- Вспомогательные методы ----------------------
-    def _find_local_file(self, filename, component_id=None):
-        """
-        Поиск файла в локальном кэше AstraPack/winetricks-cache
-        
-        Args:
-            filename: Имя файла для поиска
-            component_id: ID компонента (для поиска в подпапке компонента)
-        
-        Returns:
-            str или None: Путь к найденному файлу или None
-        """
-        if not self.local_cache_dir or not os.path.exists(self.local_cache_dir):
-            return None
-        
-        # Сначала проверяем файл с точным именем в корне кэша
-        exact_path = os.path.join(self.local_cache_dir, filename)
-        if os.path.exists(exact_path):
-            return exact_path
-        
-        # Если указан component_id, проверяем в подпапке компонента
-        if component_id:
-            comp_dir = os.path.join(self.local_cache_dir, component_id)
-            if os.path.exists(comp_dir):
-                exact_path = os.path.join(comp_dir, filename)
-                if os.path.exists(exact_path):
-                    return exact_path
-                
-                # Ищем файл с похожим именем (по расширению)
-                ext = os.path.splitext(filename)[1]
-                if ext:
-                    pattern = os.path.join(comp_dir, '*' + ext)
-                    matches = glob.glob(pattern)
-                    if matches:
-                        return matches[0]  # Берем первый найденный
-        
-        # Ищем файл с похожим именем в корне кэша (по расширению)
-        ext = os.path.splitext(filename)[1]
-        if ext:
-            pattern = os.path.join(self.local_cache_dir, '*' + ext)
-            matches = glob.glob(pattern)
-            if matches:
-                return matches[0]  # Берем первый найденный
-        
-        return None
     
     def _download(self, url, dest_path, expected_sha256=None, component_id=None, filename=None):
         """
-        Скачивание файла с проверкой локального кэша
+        Скачивание файла с проверкой всех доступных источников
+        
+        Проверяет источники в следующем порядке:
+        1. Кэш пользователя (~/.cache/winetricks) - всегда первый
+        2. Скачивание через requests (если доступен)
+        3. Скачивание через urllib.request (fallback)
         
         Args:
             url: URL для скачивания (если файл не найден локально)
             dest_path: Путь для сохранения файла
             expected_sha256: Ожидаемый SHA256 хеш (опционально)
-            component_id: ID компонента (для поиска в локальном кэше)
-            filename: Имя файла (для поиска в локальном кэше, если не указано, берется из dest_path)
+            component_id: ID компонента (не используется, оставлен для совместимости)
+            filename: Имя файла (не используется, оставлен для совместимости)
         
         Returns:
             str: Путь к файлу
+        
+        Raises:
+            RuntimeError: Если все источники исчерпаны и файл не получен
         """
-        # Если файл уже есть в кэше пользователя, проверяем его
+        # ИСТОЧНИК 1: Проверяем кэш пользователя
         if os.path.exists(dest_path):
             if expected_sha256 and self._sha256(dest_path) == expected_sha256:
-                print(f"[MinimalWinetricks] Файл уже в кэше: {os.path.basename(dest_path)}")
+                print(f"[MinimalWinetricks] Файл уже в кэше пользователя: {os.path.basename(dest_path)}")
                 return dest_path
             # Перекачаем если хеш не совпал
             try:
                 os.remove(dest_path)
             except Exception:
                 pass
-
-        # КРИТИЧНО: Проверяем локальный кэш в AstraPack/winetricks-cache перед скачиванием из интернета
-        if not filename:
-            filename = os.path.basename(dest_path)
         
-        local_path = self._find_local_file(filename, component_id)
-        if local_path and os.path.exists(local_path):
-            print(f"[MinimalWinetricks] Найден локальный файл в кэше: {local_path}")
-            local_sha = self._sha256(local_path)
-            
-            # Проверяем хеш если указан
-            if expected_sha256:
-                if local_sha == expected_sha256:
-                    print(f"[MinimalWinetricks] Локальный файл валиден (SHA256 совпадает), копируем в кэш пользователя")
-                    # Копируем локальный файл в кэш пользователя
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(local_path, dest_path)
-                    return dest_path
-                else:
-                    print(f"[MinimalWinetricks] Локальный файл найден, но хеш не совпадает (локальный: {local_sha[:16]}..., ожидаемый: {expected_sha256[:16]}...)")
-                    print(f"[MinimalWinetricks] Используем локальный файл (версия может отличаться)")
-                    # Используем локальный файл даже если хеш не совпадает (может быть другая версия)
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(local_path, dest_path)
-                    return dest_path
-            else:
-                # Хеш не указан - используем локальный файл
-                print(f"[MinimalWinetricks] Локальный файл найден (без проверки хеша), копируем в кэш пользователя")
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                shutil.copy2(local_path, dest_path)
-                return dest_path
+        # ИСТОЧНИК 2: Пробуем скачать через requests (если доступен)
+        if REQUESTS_AVAILABLE:
+            print(f"[MinimalWinetricks] Файл не найден в кэше, пробуем скачать через requests: {os.path.basename(dest_path)}...")
+            try:
+                with requests.get(url, stream=True, timeout=90) as r:
+                    r.raise_for_status()
+                    tmp_path = dest_path + '.part'
+                    # Создаем папку с правильными правами
+                    cache_parent = os.path.dirname(dest_path)
+                    os.makedirs(cache_parent, exist_ok=True)
+                    fix_dir_permissions(cache_parent)
+                    with open(tmp_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 256):
+                            if chunk:
+                                f.write(chunk)
+                    os.replace(tmp_path, dest_path)
+                    
+                    # Проверяем хеш после скачивания
+                    if expected_sha256 and self._sha256(dest_path) != expected_sha256:
+                        print(f"[MinimalWinetricks] [WARNING] SHA256 не совпадает после скачивания через requests, пробуем другие источники...", level='WARNING')
+                        try:
+                            os.remove(dest_path)
+                        except Exception:
+                            pass
+                    else:
+                        if expected_sha256 is None:
+                            # Логируем актуальный хеш для обновления
+                            actual_hash = self._sha256(dest_path)
+                            print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}", gui_log=True)
+                        print(f"[MinimalWinetricks] [OK] Скачан через requests: {os.path.basename(dest_path)}", gui_log=True)
+                        return dest_path
+            except Exception as e:
+                print(f"[MinimalWinetricks] [WARNING] Ошибка скачивания через requests: {e}, пробуем другие источники...", level='WARNING')
         
-        # Локальный файл не найден - скачиваем из интернета
-        if not REQUESTS_AVAILABLE:
-            raise RuntimeError(f'requests не установлен для скачивания: {url}. Локальный файл не найден в {self.local_cache_dir}')
-
-        print(f"[MinimalWinetricks] Локальный файл не найден, скачиваем из интернета: {os.path.basename(dest_path)}...")
+        # ИСТОЧНИК 4: Fallback на urllib.request
+        print(f"[MinimalWinetricks] Пробуем скачать через urllib.request: {os.path.basename(dest_path)}...")
         try:
-            with requests.get(url, stream=True, timeout=90) as r:
-                r.raise_for_status()
-                tmp_path = dest_path + '.part'
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                with open(tmp_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=1024 * 256):
-                        if chunk:
-                            f.write(chunk)
-                os.replace(tmp_path, dest_path)
+            tmp_path = dest_path + '.part'
+            # Создаем папку с правильными правами
+            cache_parent = os.path.dirname(dest_path)
+            os.makedirs(cache_parent, exist_ok=True)
+            fix_dir_permissions(cache_parent)
+            
+            # Обработка SSL ошибок
+            try:
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
+                urllib.request.install_opener(opener)
+                urllib.request.urlretrieve(url, tmp_path)
+            except Exception as ssl_error:
+                # Если не удалось с SSL контекстом, пробуем без него
+                print(f"[MinimalWinetricks] [DEBUG] SSL контекст не сработал, пробуем без него...")
+                urllib.request.urlretrieve(url, tmp_path)
+            
+            os.replace(tmp_path, dest_path)
+            
+            # Проверяем хеш после скачивания
+            if expected_sha256 and self._sha256(dest_path) != expected_sha256:
+                print(f"[MinimalWinetricks] [ERROR] SHA256 не совпадает после скачивания через urllib.request", level='ERROR')
+                try:
+                    os.remove(dest_path)
+                except Exception:
+                    pass
+                raise RuntimeError(f'Checksum mismatch после скачивания через urllib.request: {os.path.basename(dest_path)}')
+            
+            if expected_sha256 is None:
+                # Логируем актуальный хеш для обновления
+                actual_hash = self._sha256(dest_path)
+                print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}", gui_log=True)
+            print(f"[MinimalWinetricks] [OK] Скачан через urllib.request: {os.path.basename(dest_path)}", gui_log=True)
+            return dest_path
+            
         except Exception as e:
-            raise RuntimeError(f'Ошибка скачивания {url}: {e}. Локальный файл не найден в {self.local_cache_dir}')
-
-        if expected_sha256 and self._sha256(dest_path) != expected_sha256:
-            raise RuntimeError('Checksum mismatch: %s' % os.path.basename(dest_path))
-        elif expected_sha256 is None:
-            # Логируем актуальный хеш для обновления
-            actual_hash = self._sha256(dest_path)
-            print(f"[MinimalWinetricks] Актуальный SHA256 для {os.path.basename(dest_path)}: {actual_hash}", gui_log=True)
-        print(f"[MinimalWinetricks] [OK] Скачан {os.path.basename(dest_path)}", gui_log=True)
-        return dest_path
+            # Все источники исчерпаны
+            error_msg = (
+                f'Не удалось получить файл {os.path.basename(dest_path)} из всех доступных источников:\n'
+                f'  1. Кэш пользователя (~/.cache/winetricks): не найден\n'
+            )
+            if REQUESTS_AVAILABLE:
+                error_msg += f'  2. Скачивание через requests: ошибка\n'
+            else:
+                error_msg += f'  2. Скачивание через requests: недоступен\n'
+            error_msg += f'  3. Скачивание через urllib.request: {e}\n'
+            error_msg += f'URL: {url}'
+            raise RuntimeError(error_msg)
 
     def _sha256(self, path):
         h = hashlib.sha256()
@@ -9312,6 +10027,71 @@ class MinimalWinetricks(object):
             for chunk in iter(lambda: f.read(1024 * 512), b''):
                 h.update(chunk)
         return h.hexdigest()
+
+    def _run_wine_process_with_raw_logging(self, cmd, env=None, timeout=None):
+        """
+        Запуск wine процесса с записью вывода в RAW-поток в реальном времени
+        
+        Args:
+            cmd: Команда для запуска (список)
+            env: Переменные окружения
+            timeout: Таймаут в секундах
+        
+        Returns:
+            int: Код возврата процесса
+        """
+        
+        # Получаем доступ к глобальному логгеру
+        global _global_dual_logger
+        dual_logger = globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None
+        
+        try:
+            # Запускаем процесс
+            process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Объединяем stderr с stdout
+                text=True,
+                bufsize=1,  # Построчная буферизация
+                universal_newlines=True
+            )
+            
+            # Функция для чтения вывода
+            def read_output():
+                for line in iter(process.stdout.readline, ''):
+                    if line:
+                        line_clean = line.rstrip()
+                        if line_clean and dual_logger:
+                            try:
+                                dual_logger.write_raw(line_clean)
+                            except Exception as e:
+                                print(f"[MinimalWinetricks] Ошибка записи в RAW-поток: {e}", level='WARNING')
+            
+            # Запускаем чтение в отдельном потоке
+            output_thread = threading.Thread(target=read_output, daemon=True)
+            output_thread.start()
+            
+            # Ждем завершения процесса с таймаутом
+            try:
+                return_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                if dual_logger:
+                    dual_logger.write_raw(f"[TIMEOUT] Процесс превысил таймаут {timeout} секунд")
+                return -1
+            
+            # Ждем завершения потока чтения
+            output_thread.join(timeout=5)
+            
+            return return_code
+            
+        except Exception as e:
+            if dual_logger:
+                dual_logger.write_raw(f"[ERROR] Ошибка запуска процесса: {e}")
+            print(f"[MinimalWinetricks] Ошибка в _run_wine_process_with_raw_logging: {e}", level='ERROR')
+            return -1
 
     def _ensure_prefix(self, wineprefix):
         if not wineprefix:
@@ -9408,10 +10188,16 @@ class MinimalWinetricks(object):
                                                              url_64, sha_64, filename_64)
             
             # Для остальных типов получаем параметры из справочника (БЕЗ fallback)
-            url = get_component_field(component_id, 'download_url')
-            sha = get_component_field(component_id, 'download_sha256')
-            filename = get_component_field(component_id, 'download_filename')
+            url = get_component_field(component_id, 'download_url', default=None)
+            sha = get_component_field(component_id, 'download_sha256', default=None)
+            filename = get_component_field(component_id, 'download_filename', default=None)
             
+            # Если нет параметров download - используем оригинальный winetricks
+            if not url and not filename:
+                # Компонент без параметров download - используем оригинальный winetricks
+                print(f"[MinimalWinetricks] Компонент {component_id} не имеет параметров download, требуется оригинальный winetricks")
+                return False
+                
             if not url or not filename:
                 raise ValueError(f"Не найдены параметры download_url или download_filename для компонента {component_id}")
             
@@ -9447,40 +10233,58 @@ class MinimalWinetricks(object):
         """Установка MSI компонента (wine_mono)"""
         try:
             print(f"[MinimalWinetricks] Установка MSI компонента {component_id}: {filename}")
-            path = os.path.join(self.cache_dir, filename)
+            # Сохраняем в папку компонента для соответствия структуре из архива
+            component_cache_dir = os.path.join(self.cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
+            path = os.path.join(component_cache_dir, filename)
             # _download() автоматически проверит локальный кэш перед скачиванием из интернета
             self._download(url, path, sha, component_id=component_id, filename=filename)
             
-            # Устанавливаем через wine msiexec
+            # Устанавливаем через wine msiexec с записью в RAW-поток
             env = self._env(wineprefix)
-            result = subprocess.run(['wine', 'msiexec', '/i', path, '/qn', '/norestart'], 
-                                  env=env, capture_output=True, text=True, timeout=300)
+            return_code = self._run_wine_process_with_raw_logging(
+                ['wine', 'msiexec', '/i', path, '/qn', '/norestart'],
+                env=env,
+                timeout=300
+            )
             
-            if result.returncode == 0:
+            if return_code == 0:
                 return True
             else:
-                print(f"[MinimalWinetricks] {component_id} установка завершилась с кодом {result.returncode}")
+                print(f"[MinimalWinetricks] {component_id} установка завершилась с кодом {return_code}", level='WARNING')
                 return False
         except Exception as e:
-            print(f"[MinimalWinetricks] Ошибка в _install_msi_component для {component_id}: {e}")
+            print(f"[MinimalWinetricks] Ошибка в _install_msi_component для {component_id}: {e}", level='ERROR')
             return False
 
     def _install_exe_single_component(self, component_id, wineprefix, url, sha, filename):
         """Установка EXE компонента (один файл, dotnet48)"""
         try:
             print(f"[MinimalWinetricks] Установка EXE компонента {component_id}: {filename}")
-            path = os.path.join(self.cache_dir, filename)
+            # Сохраняем в папку компонента для соответствия структуре из архива
+            component_cache_dir = os.path.join(self.cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
+            path = os.path.join(component_cache_dir, filename)
             # _download() автоматически проверит локальный кэш перед скачиванием из интернета
             self._download(url, path, sha, component_id=component_id, filename=filename)
             
-            # Устанавливаем через wine
+            # Устанавливаем через wine с записью в RAW-поток
             env = self._env(wineprefix)
-            result = subprocess.run(['wine', path, '/quiet', '/norestart'], 
-                                  env=env, capture_output=True, text=True, timeout=600)
+            return_code = self._run_wine_process_with_raw_logging(
+                ['wine', path, '/quiet', '/norestart'],
+                env=env,
+                timeout=600
+            )
             
-            return result.returncode == 0
+            if return_code == 0:
+                return True
+            else:
+                print(f"[MinimalWinetricks] {component_id} установка завершилась с кодом {return_code}", level='WARNING')
+                return False
         except Exception as e:
-            print(f"[MinimalWinetricks] Ошибка в _install_exe_single_component для {component_id}: {e}")
+            print(f"[MinimalWinetricks] Ошибка в _install_exe_single_component для {component_id}: {e}", level='ERROR')
             return False
     
     def _install_exe_dual_x86x64_component(self, component_id, wineprefix, 
@@ -9489,8 +10293,12 @@ class MinimalWinetricks(object):
         """Установка EXE компонента (два файла x86/x64, vcrun2013, vcrun2022)"""
         try:
             print(f"[MinimalWinetricks] Установка EXE компонента {component_id} (x86/x64)")
-            path_x86 = os.path.join(self.cache_dir, filename_x86)
-            path_x64 = os.path.join(self.cache_dir, filename_x64)
+            # Сохраняем в папку компонента для соответствия структуре из архива
+            component_cache_dir = os.path.join(self.cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
+            path_x86 = os.path.join(component_cache_dir, filename_x86)
+            path_x64 = os.path.join(component_cache_dir, filename_x64)
             
             # _download() автоматически проверит локальный кэш перед скачиванием из интернета
             self._download(url_x86, path_x86, sha_x86, component_id=component_id, filename=filename_x86)
@@ -9507,16 +10315,29 @@ class MinimalWinetricks(object):
                 args_x86 = ['/quiet', '/norestart']
                 args_x64 = ['/quiet', '/norestart']
             
-            r1 = subprocess.run(['wine', path_x86] + args_x86, env=env, 
-                              capture_output=True, text=True, timeout=300)
-            if r1.returncode != 0:
+            # Устанавливаем x86 с записью в RAW-поток
+            return_code_x86 = self._run_wine_process_with_raw_logging(
+                ['wine', path_x86] + args_x86,
+                env=env,
+                timeout=300
+            )
+            if return_code_x86 != 0:
+                print(f"[MinimalWinetricks] {component_id} x86 установка завершилась с кодом {return_code_x86}", level='WARNING')
                 return False
-                
-            r2 = subprocess.run(['wine', path_x64] + args_x64, env=env, 
-                              capture_output=True, text=True, timeout=300)
-            return r2.returncode == 0
+            
+            # Устанавливаем x64 с записью в RAW-поток
+            return_code_x64 = self._run_wine_process_with_raw_logging(
+                ['wine', path_x64] + args_x64,
+                env=env,
+                timeout=300
+            )
+            if return_code_x64 != 0:
+                print(f"[MinimalWinetricks] {component_id} x64 установка завершилась с кодом {return_code_x64}", level='WARNING')
+                return False
+            
+            return True
         except Exception as e:
-            print(f"[MinimalWinetricks] Ошибка в _install_exe_dual_x86x64_component для {component_id}: {e}")
+            print(f"[MinimalWinetricks] Ошибка в _install_exe_dual_x86x64_component для {component_id}: {e}", level='ERROR')
             return False
 
     def _install_dll_dual_3264_component(self, component_id, wineprefix,
@@ -9525,8 +10346,12 @@ class MinimalWinetricks(object):
         """Установка DLL компонента (два файла 32/64, d3dcompiler_47)"""
         try:
             print(f"[MinimalWinetricks] Установка DLL компонента {component_id} (32/64 бит)")
-            p32 = os.path.join(self.cache_dir, filename_32)
-            p64 = os.path.join(self.cache_dir, filename_64)
+            # Сохраняем в папку компонента для соответствия структуре из архива
+            component_cache_dir = os.path.join(self.cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
+            p32 = os.path.join(component_cache_dir, filename_32)
+            p64 = os.path.join(component_cache_dir, filename_64)
             
             # _download() автоматически проверит локальный кэш перед скачиванием из интернета
             self._download(url_32, p32, sha_32, component_id=component_id, filename=filename_32)
@@ -9548,7 +10373,11 @@ class MinimalWinetricks(object):
         """Установка TAR.GZ компонента (dxvk)"""
         try:
             print(f"[MinimalWinetricks] Установка TAR.GZ компонента {component_id}: {filename}")
-            tar_path = os.path.join(self.cache_dir, filename)
+            # Сохраняем в папку компонента для соответствия структуре из архива
+            component_cache_dir = os.path.join(self.cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
+            tar_path = os.path.join(component_cache_dir, filename)
             # _download() автоматически проверит локальный кэш перед скачиванием из интернета
             self._download(url, tar_path, sha, component_id=component_id, filename=filename)
             
@@ -9604,6 +10433,13 @@ class MinimalWinetricks(object):
                 try:
                     print(f"MinimalWinetricks.install_components() вызываем универсальный метод _install_component({comp})", level='DEBUG')
                     ok = self._install_component(comp, wineprefix)
+                    
+                    # Если _install_component вернул False для компонента без параметров download
+                    # это означает, что нужно использовать оригинальный winetricks
+                    if ok is False:
+                        print(f"[MinimalWinetricks] Компонент {comp} требует оригинальный winetricks, пропускаем")
+                        # Возвращаем False, чтобы WinetricksManager использовал оригинальный winetricks
+                        return False
                     
                     print(f"MinimalWinetricks.install_components() установка {comp} вернула: {ok}", level='DEBUG')
                     if ok:
@@ -10088,8 +10924,8 @@ class ComponentInstaller(object):
         """
         # ПРОВЕРКА 1: Существующий компонент из COMPONENTS_CONFIG
         if component_id in COMPONENTS_CONFIG:
-        config = COMPONENTS_CONFIG[component_id]
-        category = config.get('category')
+            config = COMPONENTS_CONFIG[component_id]
+            category = config.get('category')
             if category:
                 return self.component_handlers.get(category)
         
@@ -10196,11 +11032,11 @@ class ComponentInstaller(object):
         
         # ПРОВЕРКА 2: Существующий компонент из COMPONENTS_CONFIG
         if not config:
-        if component_id not in COMPONENTS_CONFIG:
-            print(f"install_component() компонент {component_id} не найден в конфигурации", level='DEBUG')
-            print("Ошибка: компонент '%s' не найден в конфигурации" % component_id, level='ERROR')
-            return False
-        config = COMPONENTS_CONFIG[component_id]
+            if component_id not in COMPONENTS_CONFIG:
+                print(f"install_component() компонент {component_id} не найден в конфигурации", level='DEBUG')
+                print("Ошибка: компонент '%s' не найден в конфигурации" % component_id, level='ERROR')
+                return False
+            config = COMPONENTS_CONFIG[component_id]
         print(f"install_component() конфигурация получена: name={config.get('name')}, category={config.get('category')}", level='DEBUG')
         
         category = config.get('category')
@@ -10730,7 +11566,7 @@ class AutomationGUI(object):
         # Переменные состояния
         self.is_running = False
         self.dry_run = tk.BooleanVar()
-        self.use_minimal_winetricks = tk.BooleanVar(value=True)  # По умолчанию используем минимальный
+        self.use_minimal_winetricks = tk.BooleanVar(value=False)  # По умолчанию используем оригинальный winetricks
         self.process_thread = None
         
         # PID терминала для автозакрытия
@@ -10807,6 +11643,8 @@ class AutomationGUI(object):
         # Автоматически запускаем проверку компонентов при инициализации GUI (только один раз при запуске)
         if not console_mode:
             self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI (только при запуске)
+            # Автоматически запускаем мониторинг файловой системы через 5 секунд после запуска GUI
+            self.root.after(5000, self._start_filesystem_monitoring)  # Задержка 5 сек для полной инициализации GUI
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -11718,6 +12556,24 @@ class AutomationGUI(object):
             except Exception as e:
                 print(f"Ошибка остановки системного мониторинга: {e}", level='DEBUG')
         
+        # Останавливаем таймер обновления времени файловой системы
+        if hasattr(self, 'filesystem_time_update_timer'):
+            self._stop_filesystem_time_update_timer()
+        
+        # Очищаем переменные мониторинга файловой системы (работаем только в памяти!)
+        if hasattr(self, 'filesystem_monitoring_active') and self.filesystem_monitoring_active:
+            try:
+                self.filesystem_monitoring_active = False
+                self.filesystem_changes_history = []
+                self.filesystem_time_groups = {}
+                self.filesystem_accordion_sections = {}
+                self.filesystem_baseline_snapshot = None
+                if hasattr(self, 'filesystem_monitor') and self.filesystem_monitor:
+                    self.filesystem_monitor = None
+                print("Мониторинг файловой системы остановлен и очищен", level='DEBUG')
+            except Exception as e:
+                print(f"Ошибка очистки мониторинга файловой системы: {e}", level='DEBUG')
+        
         # ВСЕГДА показываем форму подтверждения при закрытии GUI
         self._close_parent_terminal()
         
@@ -11896,6 +12752,11 @@ class AutomationGUI(object):
         self.notebook.add(self.system_info_frame, text=" О системе ")
         self.system_info_tab_index = 6  # Сохраняем индекс вкладки
         
+        # Вкладка Отслеживание файловой системы
+        self.filesystem_monitor_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.filesystem_monitor_frame, text=" Файловая система ")
+        self.filesystem_monitor_tab_index = 7  # Сохраняем индекс вкладки
+        
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
         self.system_info_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
@@ -11920,6 +12781,9 @@ class AutomationGUI(object):
         
         # Создаем элементы вкладки Информация о Системе
         self.create_system_info_tab()
+        
+        # Создаем вкладку отслеживания файловой системы
+        self.create_filesystem_monitor_tab()
         
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
@@ -13373,6 +14237,1650 @@ class AutomationGUI(object):
         # ===============================================
         
         # Инициализация уже выполнена в AutomationGUI.__init__
+    
+    def create_filesystem_monitor_tab(self):
+        """Создание вкладки отслеживания файловой системы"""
+        # Инициализация переменных мониторинга
+        self.filesystem_monitor = None
+        self.filesystem_monitoring_active = False
+        self.filesystem_monitoring_paused = False
+        self.filesystem_changes_history = []
+        self.filesystem_time_groups = {}
+        self.filesystem_start_time = None
+        self.filesystem_accordion_sections = {}
+        self.filesystem_performance_metrics = {}
+        self.filesystem_filter = FilesystemFilter()
+        self.filesystem_baseline_snapshot = None
+        self.filesystem_scan_thread = None
+        self.filesystem_baseline_just_created = False  # Флаг первой проверки после создания baseline
+        self.filesystem_check_thread_running = False  # Флаг работы потока проверки (предотвращает множественные потоки)
+        self.filesystem_time_update_timer = None  # Таймер для обновления счетчика времени
+        
+        # Панель управления (2 строки, 2 колонки)
+        control_frame = self.tk.Frame(self.filesystem_monitor_frame)
+        control_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Строка 1: Кнопки управления
+        row1_control = self.tk.Frame(control_frame)
+        row1_control.pack(fill=self.tk.X, pady=2)
+        
+        self.fs_start_button = self.tk.Button(row1_control, text="> Начать мониторинг", 
+                                               command=self._start_filesystem_monitoring, width=20)
+        self.fs_start_button.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_pause_button = self.tk.Button(row1_control, text="|| Пауза", 
+                                               command=self._pause_filesystem_monitoring,
+                                               state=self.tk.DISABLED, width=15)
+        self.fs_pause_button.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_restart_button = self.tk.Button(row1_control, text="R Перезапуск", 
+                                                 command=self._restart_filesystem_monitoring, 
+                                                 state=self.tk.DISABLED, width=15)  # Неактивна до запуска мониторинга
+        self.fs_restart_button.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_reset_button = self.tk.Button(row1_control, text="R Сбросить", 
+                                               command=self._reset_filesystem_monitoring, width=15)
+        self.fs_reset_button.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_clear_button = self.tk.Button(row1_control, text="X Очистить", 
+                                               command=self._clear_filesystem_history, width=15)
+        self.fs_clear_button.pack(side=self.tk.LEFT, padx=2)
+        
+        # Строка 2: Статистика (2 колонки)
+        row2_control = self.tk.Frame(control_frame)
+        row2_control.pack(fill=self.tk.X, pady=2)
+        
+        # Колонка 1: Статистика файлов и папок
+        col1_stats = self.tk.Frame(row2_control)
+        col1_stats.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.fs_stats_label = self.tk.Label(col1_stats, text="Стат: Мониторинг не активен", 
+                                             font=('Arial', 9))
+        self.fs_stats_label.pack(side=self.tk.LEFT)
+        
+        # Колонка 2: Время и активные директории
+        col2_stats = self.tk.Frame(row2_control)
+        col2_stats.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+        self.fs_time_label = self.tk.Label(col2_stats, text="Время: -", font=('Arial', 9))
+        self.fs_time_label.pack(side=self.tk.LEFT)
+        self.tk.Label(col2_stats, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        self.fs_dirs_label = self.tk.Label(col2_stats, text="Дир: -", font=('Arial', 9))
+        self.fs_dirs_label.pack(side=self.tk.LEFT)
+        
+        # Строка 3: Информация о базовом снимке и нагрузке
+        row3_control = self.tk.Frame(control_frame)
+        row3_control.pack(fill=self.tk.X, pady=2)
+        self.fs_baseline_label = self.tk.Label(row3_control, text="Базовый снимок не создан", 
+                                                 font=('Arial', 8), fg='gray')
+        self.fs_baseline_label.pack(side=self.tk.LEFT)
+        self.tk.Label(row3_control, text="|", font=('Arial', 8), fg='gray').pack(side=self.tk.LEFT, padx=5)
+        self.fs_performance_label = self.tk.Label(row3_control, text="Нагрузка: -", 
+                                                   font=('Arial', 8), fg='gray')
+        self.fs_performance_label.pack(side=self.tk.LEFT)
+        
+        # Вкладки представлений
+        view_tabs_frame = self.tk.Frame(self.filesystem_monitor_frame)
+        view_tabs_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        self.fs_view_var = self.tk.StringVar(value="structure")
+        self.fs_structure_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Структура снимка", 
+                                                          variable=self.fs_view_var, value="structure",
+                                                          command=self._switch_filesystem_view)
+        self.fs_structure_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_all_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Все изменения", 
+                                                    variable=self.fs_view_var, value="all",
+                                                    command=self._switch_filesystem_view)
+        self.fs_all_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_dirs_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По директориям", 
+                                                     variable=self.fs_view_var, value="directories",
+                                                     command=self._switch_filesystem_view)
+        self.fs_dirs_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_types_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По типам", 
+                                                      variable=self.fs_view_var, value="types",
+                                                      command=self._switch_filesystem_view)
+        self.fs_types_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_time_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По времени", 
+                                                      variable=self.fs_view_var, value="time",
+                                                      command=self._switch_filesystem_view)
+        self.fs_time_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Прокручиваемая область для аккордеона
+        canvas_frame = self.tk.Frame(self.filesystem_monitor_frame)
+        canvas_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.fs_canvas = self.tk.Canvas(canvas_frame, bg='white')
+        self.fs_scrollbar = self.ttk.Scrollbar(canvas_frame, orient=self.tk.VERTICAL, 
+                                                command=self.fs_canvas.yview)
+        self.fs_canvas.configure(yscrollcommand=self.fs_scrollbar.set)
+        
+        self.fs_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+        self.fs_canvas.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+        
+        # Фрейм для аккордеона
+        self.fs_accordion_frame = self.tk.Frame(self.fs_canvas)
+        self.fs_canvas_window = self.fs_canvas.create_window(0, 0, anchor='nw', window=self.fs_accordion_frame)
+        
+        # Привязка прокрутки колесиком мыши
+        def _on_mousewheel(event):
+            # Поддержка Windows и macOS
+            if hasattr(event, 'delta'):
+                self.fs_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Поддержка Linux (Button-4 и Button-5)
+            elif event.num == 4:
+                self.fs_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.fs_canvas.yview_scroll(1, "units")
+        self.fs_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.fs_canvas.bind_all("<Button-4>", _on_mousewheel)  # Linux
+        self.fs_canvas.bind_all("<Button-5>", _on_mousewheel)  # Linux
+        
+        # Обновление размера canvas при изменении размера окна
+        def _configure_canvas(event):
+            canvas_width = event.width
+            self.fs_canvas.itemconfig(self.fs_canvas_window, width=canvas_width)
+        self.fs_canvas.bind('<Configure>', _configure_canvas)
+        
+        def _configure_frame(event):
+            self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+        self.fs_accordion_frame.bind('<Configure>', _configure_frame)
+    
+    def _get_monitored_directories(self):
+        """Возвращает список директорий для мониторинга (все директории компонентов)"""
+        monitored_dirs = [
+            # Кэш Wine и Winetricks
+            os.path.expanduser('~/.cache/wine'),
+            os.path.expanduser('~/.cache/winetricks'),
+            
+            # Wine установки
+            '/opt/wine-9.0',
+            '/opt/wine-astraregul',
+            
+            # Системные директории
+            '/var/cache/apt',
+            '/usr/local',
+            '/opt',
+            '/etc',
+            '/usr/bin',  # wine, winetricks
+        ]
+        
+        # Добавляем весь drive_c для основного WINEPREFIX
+        wineprefix_main = os.path.expanduser('~/.wine-astraregul')
+        drive_c_main = os.path.join(wineprefix_main, 'drive_c')
+        if os.path.exists(drive_c_main):
+            monitored_dirs.append(drive_c_main)
+        
+        # Добавляем весь drive_c для CONT wineprefix (CountPack)
+        cont_wineprefix = os.path.expanduser('~/.local/share/wineprefixes/cont')
+        drive_c_cont = os.path.join(cont_wineprefix, 'drive_c')
+        if os.path.exists(drive_c_cont):
+            monitored_dirs.append(drive_c_cont)
+        
+        # Добавляем drive_c для всех остальных wineprefix'ов в ~/.local/share/wineprefixes
+        wineprefixes_dir = os.path.expanduser('~/.local/share/wineprefixes')
+        if os.path.exists(wineprefixes_dir):
+            try:
+                for item in os.listdir(wineprefixes_dir):
+                    wineprefix_path = os.path.join(wineprefixes_dir, item)
+                    if os.path.isdir(wineprefix_path):
+                        drive_c_path = os.path.join(wineprefix_path, 'drive_c')
+                        if os.path.exists(drive_c_path) and drive_c_path not in monitored_dirs:
+                            monitored_dirs.append(drive_c_path)
+            except (OSError, IOError):
+                pass  # Пропускаем недоступные директории
+        
+        return monitored_dirs
+    
+    def _start_filesystem_monitoring(self):
+        """Запуск мониторинга файловой системы"""
+        if self.filesystem_monitoring_active:
+            return
+        
+        # ОЧИЩАЕМ историю изменений при запуске нового мониторинга (работаем только в памяти!)
+        self.filesystem_changes_history = []
+        self.filesystem_time_groups = {}
+        self.filesystem_accordion_sections = {}
+        # Очищаем аккордеон от старых данных
+        if hasattr(self, 'fs_accordion_frame'):
+            for widget in self.fs_accordion_frame.winfo_children():
+                widget.destroy()
+        
+        # Запускаем создание базового снимка в фоновом потоке (только в памяти)
+        self.fs_start_button.config(state=self.tk.DISABLED, text="... Сканирование...")
+        self.fs_baseline_label.config(text="Создание базового снимка...", fg='orange')
+        
+        def _scan_in_background():
+            try:
+                # ВСЕГДА создаем новый снимок в памяти (без кеша на диск)
+                # Получаем список директорий для мониторинга
+                monitored_dirs = self._get_monitored_directories()
+                
+                # Создаем объединенный снимок только для этих директорий
+                all_files = {}
+                all_directories = set()
+                total_files = 0
+                
+                for dir_path in monitored_dirs:
+                    if os.path.exists(dir_path):
+                        try:
+                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                            dir_snapshot = DirectorySnapshot(
+                                dir_path, 
+                                max_depth=None,  # Без ограничения глубины для baseline
+                                max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
+                                calculate_hashes=False  # Не вычисляем хеши для производительности
+                            )
+                            # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
+                            for rel_path, file_info in dir_snapshot.files.items():
+                                if rel_path == '.':
+                                    prefixed_path = dir_path
+                                else:
+                                    prefixed_path = os.path.join(dir_path, rel_path)
+                                all_files[prefixed_path] = file_info
+                            for rel_dir in dir_snapshot.directories:
+                                if rel_dir == '.':
+                                    prefixed_dir = dir_path
+                                else:
+                                    prefixed_dir = os.path.join(dir_path, rel_dir)
+                                all_directories.add(prefixed_dir)
+                            total_files += dir_snapshot.files_scanned
+                        except Exception as e:
+                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                
+                # Создаем виртуальный снимок для корня
+                snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
+                snapshot.directory_path = '/'
+                snapshot.timestamp = datetime.datetime.now()
+                snapshot.files = all_files
+                snapshot.directories = all_directories
+                snapshot.files_scanned = total_files
+                snapshot.directories_scanned = len(all_directories)
+                snapshot.scan_duration = 0.0
+                snapshot.hash_calculation_time = 0.0
+                snapshot.memory_usage = 0
+                snapshot.scan_start_time = None
+                
+                # НЕ сохраняем на диск - работаем только в памяти
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | В памяти", 
+                    fg='green'))
+                
+                # Устанавливаем базовый снимок в памяти
+                self.filesystem_baseline_snapshot = snapshot
+                
+                # Создаем монитор
+                self.filesystem_monitor = DirectoryMonitor()
+                self.filesystem_monitor.baseline = snapshot
+                self.filesystem_monitor.last_snapshot = snapshot
+                self.filesystem_monitor.monitoring = True
+                
+                # Запускаем мониторинг
+                self.filesystem_monitoring_active = True
+                self.filesystem_start_time = datetime.datetime.now()
+                self.filesystem_baseline_just_created = True  # Флаг первой проверки после создания baseline
+                
+                # Обновляем GUI
+                self.root.after(0, self._update_filesystem_controls_after_start)
+                # Обновляем структуру, если выбрано представление "structure"
+                self.root.after(0, self._update_filesystem_display)
+                
+                # Запускаем отдельный таймер для обновления счетчика времени (независимо от проверки)
+                self._start_filesystem_time_update_timer()
+                
+                # Запускаем автоматическое обновление (первая проверка пропустит поиск новых файлов)
+                self.root.after(2000, self._auto_refresh_filesystem_monitor)
+                
+            except Exception as e:
+                print(f"[FilesystemMonitor] Ошибка при создании базового снимка: {e}")
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text=f"Ошибка создания снимка: {str(e)}", fg='red'))
+                self.root.after(0, lambda: self.fs_start_button.config(
+                    state=self.tk.NORMAL, text="> Начать мониторинг"))
+        
+        # Запускаем в отдельном потоке
+        self.filesystem_scan_thread = threading.Thread(target=_scan_in_background, daemon=True)
+        self.filesystem_scan_thread.start()
+    
+    def _update_filesystem_controls_after_start(self):
+        """Обновление элементов управления после старта мониторинга"""
+        self.fs_start_button.config(state=self.tk.DISABLED, text="> Мониторинг активен")
+        self.fs_pause_button.config(state=self.tk.NORMAL)
+        self.fs_restart_button.config(state=self.tk.NORMAL)  # Кнопка перезапуска активна при активном мониторинге
+        self._update_filesystem_statistics()
+    
+    def _pause_filesystem_monitoring(self):
+        """Приостановка/возобновление мониторинга"""
+        if not self.filesystem_monitoring_active:
+            return
+        
+        if self.filesystem_monitoring_paused:
+            # Возобновляем
+            self._resume_filesystem_monitoring()
+        else:
+            # Приостанавливаем
+            self.filesystem_monitoring_paused = True
+            self.fs_pause_button.config(text="> Продолжить", state=self.tk.NORMAL)
+            self.fs_start_button.config(state=self.tk.DISABLED)
+            self._update_filesystem_statistics()
+            # Таймер времени продолжает работать, чтобы показывать время с паузой
+    
+    def _resume_filesystem_monitoring(self):
+        """Возобновление мониторинга"""
+        if not self.filesystem_monitoring_paused:
+            return
+        
+        self.filesystem_monitoring_paused = False
+        self.fs_pause_button.config(text="|| Пауза", state=self.tk.NORMAL)
+        self._update_filesystem_statistics()
+        # Запускаем обновление
+        self.root.after(2000, self._auto_refresh_filesystem_monitor)
+    
+    def _reset_filesystem_monitoring(self):
+        """Сброс базового снимка"""
+        if not self.filesystem_monitor:
+            return
+        
+        # Создаем новый базовый снимок в памяти
+        def _reset_in_background():
+            try:
+                # Получаем список директорий для мониторинга
+                monitored_dirs = self._get_monitored_directories()
+                
+                all_files = {}
+                all_directories = set()
+                total_files = 0
+                
+                for dir_path in monitored_dirs:
+                    if os.path.exists(dir_path):
+                        try:
+                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                            dir_snapshot = DirectorySnapshot(
+                                dir_path,
+                                max_depth=None,  # Без ограничения глубины для baseline
+                                max_files=1000000,  # Очень большой лимит для baseline
+                                calculate_hashes=False
+                            )
+                            for rel_path, file_info in dir_snapshot.files.items():
+                                if rel_path == '.':
+                                    prefixed_path = dir_path
+                                else:
+                                    prefixed_path = os.path.join(dir_path, rel_path)
+                                all_files[prefixed_path] = file_info
+                            for rel_dir in dir_snapshot.directories:
+                                if rel_dir == '.':
+                                    prefixed_dir = dir_path
+                                else:
+                                    prefixed_dir = os.path.join(dir_path, rel_dir)
+                                all_directories.add(prefixed_dir)
+                            total_files += dir_snapshot.files_scanned
+                        except Exception as e:
+                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                
+                snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
+                snapshot.directory_path = '/'
+                snapshot.timestamp = datetime.datetime.now()
+                snapshot.files = all_files
+                snapshot.directories = all_directories
+                snapshot.files_scanned = total_files
+                snapshot.directories_scanned = len(all_directories)
+                snapshot.scan_duration = 0.0
+                snapshot.hash_calculation_time = 0.0
+                snapshot.memory_usage = 0
+                snapshot.scan_start_time = None
+                
+                # НЕ сохраняем на диск - работаем только в памяти
+                self.filesystem_baseline_snapshot = snapshot
+                if self.filesystem_monitor:
+                    self.filesystem_monitor.baseline = snapshot
+                    self.filesystem_monitor.last_snapshot = snapshot
+                
+                # Очищаем историю изменений
+                self.filesystem_changes_history = []
+                self.filesystem_baseline_just_created = True  # Флаг первой проверки после сброса
+                
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | Обновлен в памяти", 
+                    fg='green'))
+                self.root.after(0, self._update_filesystem_display)
+            except Exception as e:
+                print(f"[FilesystemMonitor] Ошибка при сбросе: {e}")
+        
+        threading.Thread(target=_reset_in_background, daemon=True).start()
+    
+    def _restart_filesystem_monitoring(self):
+        """Полный перезапуск мониторинга: остановка, очистка, новый снимок, запуск"""
+        if not self.filesystem_monitoring_active:
+            # Если мониторинг не активен, просто запускаем его
+            self._start_filesystem_monitoring()
+            return
+        
+        # Останавливаем текущий мониторинг
+        self.filesystem_monitoring_active = False
+        self.filesystem_monitoring_paused = False
+        
+        # Очищаем историю изменений
+        self.filesystem_changes_history = []
+        self.filesystem_time_groups = {}
+        self.filesystem_accordion_sections = {}
+        # Очищаем аккордеон
+        if hasattr(self, 'fs_accordion_frame'):
+            for widget in self.fs_accordion_frame.winfo_children():
+                widget.destroy()
+        
+        # Сбрасываем счетчик времени
+        self.filesystem_start_time = None
+        
+        # Обновляем GUI
+        self.fs_start_button.config(state=self.tk.DISABLED, text="... Перезапуск...")
+        self.fs_pause_button.config(state=self.tk.DISABLED)
+        self.fs_restart_button.config(state=self.tk.DISABLED)  # Отключаем кнопку перезапуска во время перезапуска
+        self.fs_baseline_label.config(text="Создание нового базового снимка...", fg='orange')
+        
+        # Создаем новый базовый снимок в фоновом потоке
+        def _restart_in_background():
+            try:
+                # Получаем список директорий для мониторинга
+                monitored_dirs = self._get_monitored_directories()
+                
+                all_files = {}
+                all_directories = set()
+                total_files = 0
+                
+                for dir_path in monitored_dirs:
+                    if os.path.exists(dir_path):
+                        try:
+                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                            dir_snapshot = DirectorySnapshot(
+                                dir_path,
+                                max_depth=None,  # Без ограничения глубины для baseline
+                                max_files=1000000,  # Очень большой лимит для baseline
+                                calculate_hashes=False
+                            )
+                            for rel_path, file_info in dir_snapshot.files.items():
+                                if rel_path == '.':
+                                    prefixed_path = dir_path
+                                else:
+                                    prefixed_path = os.path.join(dir_path, rel_path)
+                                all_files[prefixed_path] = file_info
+                            for rel_dir in dir_snapshot.directories:
+                                if rel_dir == '.':
+                                    prefixed_dir = dir_path
+                                else:
+                                    prefixed_dir = os.path.join(dir_path, rel_dir)
+                                all_directories.add(prefixed_dir)
+                            total_files += dir_snapshot.files_scanned
+                        except Exception as e:
+                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                
+                snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
+                snapshot.directory_path = '/'
+                snapshot.timestamp = datetime.datetime.now()
+                snapshot.files = all_files
+                snapshot.directories = all_directories
+                snapshot.files_scanned = total_files
+                snapshot.directories_scanned = len(all_directories)
+                snapshot.scan_duration = 0.0
+                snapshot.hash_calculation_time = 0.0
+                snapshot.memory_usage = 0
+                snapshot.scan_start_time = None
+                
+                # Устанавливаем базовый снимок в памяти
+                self.filesystem_baseline_snapshot = snapshot
+                
+                # Создаем новый монитор
+                self.filesystem_monitor = DirectoryMonitor()
+                self.filesystem_monitor.baseline = snapshot
+                self.filesystem_monitor.last_snapshot = snapshot
+                self.filesystem_monitor.monitoring = True
+                
+                # Запускаем мониторинг заново
+                self.filesystem_monitoring_active = True
+                self.filesystem_start_time = datetime.datetime.now()  # НОВОЕ время начала
+                self.filesystem_baseline_just_created = True  # Флаг первой проверки после перезапуска
+                
+                # Обновляем GUI
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | В памяти", 
+                    fg='green'))
+                self.root.after(0, self._update_filesystem_controls_after_start)
+                # Обновляем структуру, если выбрано представление "structure"
+                self.root.after(0, self._update_filesystem_display)
+                
+                # Запускаем отдельный таймер для обновления счетчика времени (независимо от проверки)
+                self._start_filesystem_time_update_timer()
+                
+                # Запускаем автоматическое обновление (первая проверка пропустит поиск новых файлов)
+                self.root.after(2000, self._auto_refresh_filesystem_monitor)
+            except Exception as e:
+                print(f"[FilesystemMonitor] Ошибка при перезапуске: {e}")
+                self.root.after(0, lambda: self.fs_start_button.config(
+                    state=self.tk.NORMAL, text="> Начать мониторинг"))
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text="Ошибка при перезапуске", fg='red'))
+        
+        threading.Thread(target=_restart_in_background, daemon=True).start()
+    
+    def _clear_filesystem_history(self):
+        """Очистка истории изменений"""
+        self.filesystem_changes_history = []
+        self.filesystem_time_groups = {}
+        self.filesystem_accordion_sections = {}
+        # Очищаем аккордеон
+        for widget in self.fs_accordion_frame.winfo_children():
+            widget.destroy()
+        self._update_filesystem_statistics()
+        self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+    
+    def _start_filesystem_time_update_timer(self):
+        """Запуск таймера для обновления счетчика времени (независимо от проверки файлов)"""
+        def _update_time():
+            if self.filesystem_monitoring_active and hasattr(self, 'fs_time_label'):
+                # Обновляем только время, не всю статистику (быстрее)
+                if self.filesystem_start_time:
+                    elapsed = datetime.datetime.now() - self.filesystem_start_time
+                    hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    
+                    if self.filesystem_monitoring_paused:
+                        time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} (пауза)"
+                    else:
+                        if hours > 0:
+                            time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({hours} ч {minutes} мин {seconds} сек)"
+                        elif minutes > 0:
+                            time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({minutes} мин {seconds} сек)"
+                        else:
+                            time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({seconds} сек)"
+                    self.fs_time_label.config(text=time_text)
+                
+                # Планируем следующее обновление (каждую секунду)
+                if self.filesystem_monitoring_active:
+                    self.filesystem_time_update_timer = self.root.after(1000, _update_time)
+        
+        # Запускаем обновление
+        _update_time()
+    
+    def _stop_filesystem_time_update_timer(self):
+        """Остановка таймера обновления времени"""
+        if self.filesystem_time_update_timer:
+            self.root.after_cancel(self.filesystem_time_update_timer)
+            self.filesystem_time_update_timer = None
+    
+    def _update_filesystem_statistics(self):
+        """Обновление статистики мониторинга"""
+        if not self.filesystem_monitoring_active:
+            self.fs_stats_label.config(text="Стат: Мониторинг не активен")
+            self.fs_time_label.config(text="Время: -")
+            self.fs_dirs_label.config(text="Дир: -")
+            self._stop_filesystem_time_update_timer()
+            return
+        
+        # Подсчитываем статистику
+        total_new = 0
+        total_modified = 0
+        total_deleted = 0
+        total_new_dirs = 0
+        total_deleted_dirs = 0
+        
+        for changes in self.filesystem_changes_history:
+            filtered = self.filesystem_filter.filter_changes(changes)
+            total_new += len(filtered.get('new_files', []))
+            total_modified += len(filtered.get('modified_files', []))
+            total_deleted += len(filtered.get('deleted_files', []))
+            total_new_dirs += len(filtered.get('new_directories', []))
+            total_deleted_dirs += len(filtered.get('deleted_directories', []))
+        
+        # Формируем строку статистики
+        stats_parts = []
+        if total_new > 0:
+            stats_parts.append(f"+{total_new} файлов")
+        if total_modified > 0:
+            stats_parts.append(f"~{total_modified}")
+        if total_deleted > 0:
+            stats_parts.append(f"-{total_deleted}")
+        
+        dirs_parts = []
+        if total_new_dirs > 0:
+            dirs_parts.append(f"+{total_new_dirs}")
+        if total_deleted_dirs > 0:
+            dirs_parts.append(f"-{total_deleted_dirs}")
+        
+        stats_text = "Стат: " + " ".join(stats_parts) if stats_parts else "Стат: Изменений нет"
+        if dirs_parts:
+            stats_text += f" | Папок: {' '.join(dirs_parts)}"
+        
+        self.fs_stats_label.config(text=stats_text)
+        
+        # Время мониторинга (обновляется отдельным таймером, здесь только если таймер не запущен)
+        # Если таймер не запущен, обновляем вручную
+        if self.filesystem_start_time and not self.filesystem_time_update_timer:
+            elapsed = datetime.datetime.now() - self.filesystem_start_time
+            hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            if self.filesystem_monitoring_paused:
+                time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} (пауза)"
+            else:
+                if hours > 0:
+                    time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({hours} ч {minutes} мин {seconds} сек)"
+                elif minutes > 0:
+                    time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({minutes} мин {seconds} сек)"
+                else:
+                    time_text = f"Время: {self.filesystem_start_time.strftime('%H:%M:%S')} ({seconds} сек)"
+            self.fs_time_label.config(text=time_text)
+        
+        # Активные директории
+        active_dirs = len(set([ch.get('directory', '/') for ch in self.filesystem_changes_history if ch]))
+        self.fs_dirs_label.config(text=f"Дир: {active_dirs}")
+        
+        # Обновляем метрики производительности
+        if self.filesystem_monitor:
+            metrics = self.filesystem_monitor.get_performance_metrics()
+            cpu_scan = metrics.get('last_scan_metrics', {}).get('scan_duration', 0) * 10  # Примерная нагрузка
+            cpu_compare = metrics.get('compare_duration', 0) * 5
+            self.fs_performance_label.config(
+                text=f"Нагрузка: Сканирование {cpu_scan:.1f}% CPU | Сравнение {cpu_compare:.1f}% CPU")
+    
+    def _switch_filesystem_view(self):
+        """Переключение представления изменений"""
+        self._update_filesystem_display()
+    
+    def _incremental_check_changes(self, last_snapshot):
+        """
+        Инкрементальная проверка изменений без создания полного снимка.
+        Проверяет только существующие файлы через os.stat и ищет новые файлы в корневых директориях.
+        """
+        if not last_snapshot:
+            return None
+        
+        changes = {
+            'new_files': [],
+            'modified_files': [],
+            'deleted_files': [],
+            'new_directories': [],
+            'deleted_directories': [],
+            'timestamp': datetime.datetime.now()
+        }
+        
+        # Проверяем, это первая проверка после создания baseline?
+        is_first_check = getattr(self, 'filesystem_baseline_just_created', False)
+        
+        # Создаем новый снимок, обновляя только измененные данные
+        new_files_dict = {}
+        new_directories_set = set()
+        
+        if is_first_check:
+            # ПРИ ПЕРВОЙ ПРОВЕРКЕ: делаем ПОЛНУЮ синхронизацию с реальным состоянием
+            # Это позволяет "дополнить" baseline всеми файлами, которые не попали в него
+            # при создании (из-за ошибок доступа, прерывания сканирования и т.д.)
+            # НЕ проверяем изменения, чтобы избежать ложных "измененных" файлов
+            # из-за различий в mtime при создании baseline
+            
+            # Обновляем информацию о существующих файлах без сравнения
+            for file_path, old_info in last_snapshot.files.items():
+                try:
+                    if os.path.exists(file_path):
+                        stat = os.stat(file_path)
+                        new_info = (stat.st_size, stat.st_mtime, 0)
+                        new_files_dict[file_path] = new_info
+                        # НЕ добавляем в modified_files - это первая синхронизация!
+                    # НЕ добавляем в deleted_files при первой проверке - файл мог не попасть в baseline
+                except (OSError, IOError):
+                    # Файл недоступен - пропускаем (не считаем удаленным при первой проверке)
+                    pass
+            
+            # Обновляем директории
+            for dir_path in last_snapshot.directories:
+                if os.path.exists(dir_path):
+                    new_directories_set.add(dir_path)
+                # НЕ добавляем в deleted_directories при первой проверке
+            
+            # КРИТИЧНО: При первой проверке ищем ВСЕ файлы рекурсивно и добавляем их в снимок
+            # но НЕ добавляем в changes, чтобы они не попали в историю как "новые"
+            # Это позволяет "дополнить" baseline всеми файлами, которые не попали в него
+            monitored_dirs = self._get_monitored_directories()
+            for root_dir in monitored_dirs:
+                if not os.path.exists(root_dir):
+                    continue
+                
+                try:
+                    # РЕКУРСИВНАЯ проверка всех файлов для полной синхронизации
+                    files_synced = [0]  # Используем список для изменения в замыкании
+                    def _sync_all_files(current_dir, depth=0, max_depth=200):
+                        """Рекурсивная синхронизация всех файлов при первой проверке (до 200 уровней)"""
+                        if depth > max_depth:
+                            return
+                        
+                        try:
+                            for item in os.listdir(current_dir):
+                                item_path = os.path.join(current_dir, item)
+                                
+                                # Пропускаем, если уже есть в снимке
+                                if item_path in new_files_dict or item_path in new_directories_set:
+                                    # Если это директория, рекурсивно проверяем её содержимое
+                                    if os.path.isdir(item_path):
+                                        _sync_all_files(item_path, depth + 1, max_depth)
+                                    continue
+                                
+                                try:
+                                    if os.path.isfile(item_path):
+                                        # Файл не был в baseline - добавляем в снимок, но НЕ в changes
+                                        stat = os.stat(item_path)
+                                        new_files_dict[item_path] = (stat.st_size, stat.st_mtime, 0)
+                                        # НЕ добавляем в changes['new_files'] - это синхронизация, не новое изменение!
+                                        files_synced[0] += 1
+                                        
+                                        # Делаем паузу каждые 200 файлов для неблокирующей работы
+                                        if files_synced[0] % 200 == 0:
+                                            time.sleep(0.01)  # 10ms пауза для освобождения GIL
+                                    elif os.path.isdir(item_path):
+                                        # Директория не была в baseline - добавляем в снимок
+                                        new_directories_set.add(item_path)
+                                        # НЕ добавляем в changes['new_directories'] - это синхронизация!
+                                        # Рекурсивно проверяем поддиректорию
+                                        _sync_all_files(item_path, depth + 1, max_depth)
+                                except (OSError, IOError):
+                                    continue  # Пропускаем недоступные элементы
+                        except (OSError, IOError):
+                            return  # Пропускаем недоступные директории
+                    
+                    _sync_all_files(root_dir)
+                except (OSError, IOError):
+                    continue  # Пропускаем недоступные директории
+        else:
+            # ОБЫЧНАЯ ПРОВЕРКА: проверяем изменения
+            # 1. Проверяем существующие файлы из last_snapshot через os.stat (быстро)
+            files_checked = 0
+            chunk_size = 500  # Проверяем по 500 файлов, затем делаем паузу
+            for file_path, old_info in last_snapshot.files.items():
+                try:
+                    if os.path.exists(file_path):
+                        stat = os.stat(file_path)
+                        new_info = (stat.st_size, stat.st_mtime, 0)  # Хеш не вычисляем
+                        new_files_dict[file_path] = new_info
+                        
+                        # Проверяем изменения
+                        if old_info != new_info:
+                            changes['modified_files'].append(file_path)
+                    else:
+                        # Файл удален
+                        changes['deleted_files'].append(file_path)
+                except (OSError, IOError):
+                    # Файл недоступен - считаем удаленным
+                    changes['deleted_files'].append(file_path)
+                
+                files_checked += 1
+                # Делаем паузу каждые chunk_size файлов для неблокирующей работы
+                if files_checked >= chunk_size:
+                    time.sleep(0.005)  # 5ms пауза для освобождения GIL
+                    files_checked = 0
+            
+            # 2. Проверяем существующие директории
+            for dir_path in last_snapshot.directories:
+                if os.path.exists(dir_path):
+                    new_directories_set.add(dir_path)
+                else:
+                    changes['deleted_directories'].append(dir_path)
+            
+            # 3. Ищем новые файлы РЕКУРСИВНО в отслеживаемых директориях
+            monitored_dirs = self._get_monitored_directories()
+            for root_dir in monitored_dirs:
+                if not os.path.exists(root_dir):
+                    continue
+                
+                try:
+                    # РЕКУРСИВНАЯ проверка новых файлов (увеличена глубина для глубоко вложенных директорий)
+                    files_scanned_in_search = [0]  # Используем список для изменения в замыкании
+                    def _scan_for_new_files(current_dir, depth=0, max_depth=200):
+                        """Рекурсивный поиск новых файлов (до 200 уровней для глубоко вложенных директорий)"""
+                        if depth > max_depth:
+                            return
+                        
+                        try:
+                            for item in os.listdir(current_dir):
+                                item_path = os.path.join(current_dir, item)
+                                
+                                # Пропускаем, если уже есть в снимке
+                                if item_path in new_files_dict or item_path in new_directories_set:
+                                    continue
+                                
+                                try:
+                                    if os.path.isfile(item_path):
+                                        # Новый файл
+                                        if item_path not in last_snapshot.files:
+                                            stat = os.stat(item_path)
+                                            new_files_dict[item_path] = (stat.st_size, stat.st_mtime, 0)
+                                            changes['new_files'].append(item_path)
+                                            files_scanned_in_search[0] += 1
+                                            
+                                            # Делаем паузу каждые 200 файлов для неблокирующей работы
+                                            if files_scanned_in_search[0] % 200 == 0:
+                                                time.sleep(0.005)  # 5ms пауза для освобождения GIL
+                                    elif os.path.isdir(item_path):
+                                        # Новая директория
+                                        if item_path not in last_snapshot.directories:
+                                            new_directories_set.add(item_path)
+                                            changes['new_directories'].append(item_path)
+                                        # Рекурсивно проверяем поддиректорию
+                                        _scan_for_new_files(item_path, depth + 1, max_depth)
+                                except (OSError, IOError):
+                                    continue  # Пропускаем недоступные элементы
+                        except (OSError, IOError):
+                            return  # Пропускаем недоступные директории
+                    
+                    _scan_for_new_files(root_dir)
+                except (OSError, IOError):
+                    continue  # Пропускаем недоступные директории
+        
+        # Создаем обновленный снимок
+        updated_snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
+        updated_snapshot.directory_path = last_snapshot.directory_path
+        updated_snapshot.timestamp = datetime.datetime.now()
+        updated_snapshot.files = new_files_dict
+        updated_snapshot.directories = new_directories_set
+        updated_snapshot.files_scanned = len(new_files_dict)
+        updated_snapshot.directories_scanned = len(new_directories_set)
+        updated_snapshot.scan_duration = 0.0
+        updated_snapshot.hash_calculation_time = 0.0
+        updated_snapshot.memory_usage = 0
+        updated_snapshot.scan_start_time = None
+        
+        return changes, updated_snapshot
+    
+    def _auto_refresh_filesystem_monitor(self):
+        """Автоматическое обновление мониторинга с инкрементальной проверкой (быстро!)"""
+        if not hasattr(self, 'fs_canvas'):
+            self.root.after(2000, self._auto_refresh_filesystem_monitor)
+            return
+        
+        # Проверяем, открыта ли вкладка
+        try:
+            current_tab_index = self.notebook.index(self.notebook.select())
+            is_fs_tab = (current_tab_index == self.filesystem_monitor_tab_index)
+        except:
+            is_fs_tab = False
+        
+        # ВСЕГДА обновляем статистику (включая время), если мониторинг активен
+        if self.filesystem_monitoring_active:
+            if is_fs_tab:
+                self._update_filesystem_statistics()
+        
+        if not self.filesystem_monitoring_active or self.filesystem_monitoring_paused:
+            # Если на паузе, планируем проверку через 15 секунд (время уже обновлено выше)
+            self.root.after(15000, self._auto_refresh_filesystem_monitor)
+            return
+        
+        # КРИТИЧНО: Проверяем, не запущен ли уже поток проверки
+        # Это предотвращает создание множественных потоков
+        if self.filesystem_check_thread_running:
+            # Поток уже работает, просто планируем следующую проверку
+            if is_fs_tab:
+                self.root.after(2000, self._auto_refresh_filesystem_monitor)
+            else:
+                self.root.after(15000, self._auto_refresh_filesystem_monitor)
+            return
+        
+        # Запускаем проверку в фоновом потоке, чтобы не блокировать GUI
+        def _check_in_background():
+            try:
+                # Устанавливаем флаг работы потока
+                self.filesystem_check_thread_running = True
+                
+                if self.filesystem_monitor and self.filesystem_monitor.last_snapshot:
+                    # Используем инкрементальную проверку (быстро! без полного сканирования)
+                    result = self._incremental_check_changes(self.filesystem_monitor.last_snapshot)
+                    
+                    if result:
+                        changes, updated_snapshot = result
+                        
+                        # КРИТИЧНО: При первой проверке после создания baseline НЕ добавляем изменения в историю!
+                        # Это предотвращает появление "ложных" изменений от файлов, которые не попали в baseline
+                        # из-за ошибок доступа или других проблем при сканировании
+                        is_first_check = getattr(self, 'filesystem_baseline_just_created', False)
+                        
+                        # Обновляем последний снимок
+                        self.filesystem_monitor.last_snapshot = updated_snapshot
+                        
+                        # Сбрасываем флаг ПОСЛЕ обновления снимка, но ДО проверки изменений
+                        if is_first_check:
+                            self.filesystem_baseline_just_created = False
+                            # При первой проверке НЕ добавляем изменения в историю
+                            # Это позволяет "синхронизировать" снимок с реальным состоянием файловой системы
+                            # без создания ложных записей об изменениях
+                            
+                            # КРИТИЧНО: Обновляем метку базового снимка с актуальным количеством файлов
+                            # после синхронизации (количество могло измениться)
+                            if is_fs_tab:
+                                actual_file_count = len(updated_snapshot.files)
+                                self.root.after_idle(lambda: self.fs_baseline_label.config(
+                                    text=f"Базовый снимок: / ({actual_file_count} файлов) | В памяти", 
+                                    fg='green'))
+                        else:
+                            # Если есть изменения, добавляем в историю ТОЛЬКО если это не первая проверка
+                            if changes and (changes.get('new_files') or changes.get('modified_files') or 
+                                           changes.get('deleted_files') or changes.get('new_directories') or 
+                                           changes.get('deleted_directories')):
+                                changes['directory'] = '/'
+                                self.filesystem_changes_history.append(changes)
+                                
+                                # Обновляем GUI только если вкладка открыта (в главном потоке!)
+                                # Используем after_idle для более плавного обновления без блокировки
+                                if is_fs_tab:
+                                    self.root.after_idle(self._update_filesystem_display)
+            except Exception as e:
+                print(f"[FilesystemMonitor] Ошибка обновления: {e}")
+            finally:
+                # Сбрасываем флаг работы потока (гарантированно, даже при ошибке)
+                self.filesystem_check_thread_running = False
+                
+                # Планируем следующее обновление (в главном потоке!)
+                if is_fs_tab:
+                    # Вкладка открыта - обновляем часто (2 секунды)
+                    self.root.after(2000, self._auto_refresh_filesystem_monitor)
+                else:
+                    # Вкладка не открыта - обновляем редко (15 секунд)
+                    self.root.after(15000, self._auto_refresh_filesystem_monitor)
+        
+        # Запускаем проверку в отдельном потоке
+        threading.Thread(target=_check_in_background, daemon=True).start()
+    
+    def _update_filesystem_display(self):
+        """Обновление отображения изменений"""
+        # Сохраняем состояние развернутых секций перед обновлением
+        expanded_sections = set()
+        for widget in self.fs_accordion_frame.winfo_children():
+            if hasattr(widget, '_toggle_var') and widget._toggle_var.get():
+                # Получаем уникальный ключ секции
+                section_key = getattr(widget, '_section_key', None)
+                if section_key:
+                    expanded_sections.add(section_key)
+        
+        # Очищаем аккордеон
+        for widget in self.fs_accordion_frame.winfo_children():
+            widget.destroy()
+        
+        if not self.filesystem_changes_history:
+            self._update_filesystem_statistics()
+            self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+            return
+        
+        # Определяем тип представления
+        view_type = self.fs_view_var.get()
+        
+        if view_type == "structure":
+            self._display_structure()
+        elif view_type == "all" or view_type == "time":
+            self._display_by_time(expanded_sections)
+        elif view_type == "directories":
+            self._display_by_directories(expanded_sections)
+        elif view_type == "types":
+            self._display_by_types(expanded_sections)
+        
+        self._update_filesystem_statistics()
+        self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+    
+    def _display_by_time(self, expanded_sections=None):
+        """Отображение изменений по времени"""
+        if expanded_sections is None:
+            expanded_sections = set()
+        
+        # Группируем по временным интервалам (5 минут)
+        time_groups = {}
+        
+        for changes in self.filesystem_changes_history:
+            if not changes:
+                continue
+            
+            timestamp = changes.get('timestamp', datetime.datetime.now())
+            # Округляем до 5 минут
+            minutes = timestamp.minute // 5 * 5
+            time_key = timestamp.replace(minute=minutes, second=0, microsecond=0)
+            
+            if time_key not in time_groups:
+                time_groups[time_key] = []
+            time_groups[time_key].append(changes)
+        
+        # Сортируем по времени (новые сверху)
+        sorted_times = sorted(time_groups.keys(), reverse=True)
+        
+        for time_key in sorted_times:
+            changes_list = time_groups[time_key]
+            
+            # Подсчитываем статистику для группы
+            total_new = sum(len(self.filesystem_filter.filter_changes(ch).get('new_files', [])) for ch in changes_list)
+            total_modified = sum(len(self.filesystem_filter.filter_changes(ch).get('modified_files', [])) for ch in changes_list)
+            total_deleted = sum(len(self.filesystem_filter.filter_changes(ch).get('deleted_files', [])) for ch in changes_list)
+            
+            # Создаем секцию аккордеона
+            section_key = f"time_{time_key.isoformat()}"
+            self._create_time_section(time_key, changes_list, total_new, total_modified, total_deleted,
+                                     section_key, section_key in expanded_sections)
+    
+    def _display_by_directories(self, expanded_sections=None):
+        """Отображение изменений по директориям"""
+        if expanded_sections is None:
+            expanded_sections = set()
+        
+        # Группируем по директориям
+        dir_groups = {}
+        
+        for changes in self.filesystem_changes_history:
+            if not changes:
+                continue
+            
+            directory = changes.get('directory', '/')
+            if directory not in dir_groups:
+                dir_groups[directory] = []
+            dir_groups[directory].append(changes)
+        
+        # Сортируем директории
+        sorted_dirs = sorted(dir_groups.keys())
+        
+        for directory in sorted_dirs:
+            changes_list = dir_groups[directory]
+            
+            # Подсчитываем статистику
+            total_new = sum(len(self.filesystem_filter.filter_changes(ch).get('new_files', [])) for ch in changes_list)
+            total_modified = sum(len(self.filesystem_filter.filter_changes(ch).get('modified_files', [])) for ch in changes_list)
+            total_deleted = sum(len(self.filesystem_filter.filter_changes(ch).get('deleted_files', [])) for ch in changes_list)
+            
+            # Создаем секцию директории
+            section_key = f"dir_{directory}"
+            self._create_directory_section(directory, changes_list, total_new, total_modified, total_deleted,
+                                          section_key, section_key in expanded_sections)
+    
+    def _display_by_types(self, expanded_sections=None):
+        """Отображение изменений по типам"""
+        if expanded_sections is None:
+            expanded_sections = set()
+        
+        # Группируем по типам изменений
+        type_groups = {
+            'new': [],
+            'modified': [],
+            'deleted': [],
+            'new_dirs': [],
+            'deleted_dirs': []
+        }
+        
+        for changes in self.filesystem_changes_history:
+            if not changes:
+                continue
+            
+            filtered = self.filesystem_filter.filter_changes(changes)
+            
+            if filtered.get('new_files'):
+                type_groups['new'].append(('new_files', filtered['new_files'], changes))
+            if filtered.get('modified_files'):
+                type_groups['modified'].append(('modified_files', filtered['modified_files'], changes))
+            if filtered.get('deleted_files'):
+                type_groups['deleted'].append(('deleted_files', filtered['deleted_files'], changes))
+            if filtered.get('new_directories'):
+                type_groups['new_dirs'].append(('new_directories', filtered['new_directories'], changes))
+            if filtered.get('deleted_directories'):
+                type_groups['deleted_dirs'].append(('deleted_directories', filtered['deleted_directories'], changes))
+        
+        # Создаем секции для каждого типа
+        type_labels = {
+            'new': ('+ Новые файлы', 'new'),
+            'modified': ('~ Измененные файлы', 'modified'),
+            'deleted': ('- Удаленные файлы', 'deleted'),
+            'new_dirs': ('+Dir Новые папки', 'new_dirs'),
+            'deleted_dirs': ('-Dir Удаленные папки', 'deleted_dirs')
+        }
+        
+        for type_key, (label, tag) in type_labels.items():
+            if type_groups[type_key]:
+                self._create_type_section(label, tag, type_groups[type_key])
+    
+    def _create_time_section(self, time_key, changes_list, total_new, total_modified, total_deleted, 
+                            section_key=None, is_expanded=False):
+        """Создание секции аккордеона для временной группы"""
+        section_frame = self.tk.Frame(self.fs_accordion_frame, relief=self.tk.RAISED, borderwidth=1)
+        section_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Сохраняем ключ секции
+        if section_key:
+            section_frame._section_key = section_key
+        
+        # Заголовок секции
+        header_frame = self.tk.Frame(section_frame)
+        header_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        # Кнопка сворачивания
+        toggle_var = self.tk.BooleanVar(value=is_expanded)
+        toggle_btn = self.tk.Button(header_frame, text="v" if is_expanded else ">", width=2, 
+                                    command=lambda: self._toggle_section(section_frame, toggle_btn, toggle_var))
+        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Время и статистика
+        time_str = time_key.strftime("%H:%M")
+        end_time = time_key + datetime.timedelta(minutes=5)
+        end_time_str = end_time.strftime("%H:%M")
+        
+        stats_parts = []
+        if total_new > 0:
+            stats_parts.append(f"+{total_new} файлов")
+        if total_modified > 0:
+            stats_parts.append(f"~{total_modified}")
+        if total_deleted > 0:
+            stats_parts.append(f"-{total_deleted}")
+        
+        stats_text = f" | {' '.join(stats_parts)}" if stats_parts else ""
+        header_label = self.tk.Label(header_frame, 
+                                     text=f"{time_str} - {end_time_str} (5 минут){stats_text}",
+                                     font=('Arial', 9, 'bold'))
+        header_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Контент секции
+        content_frame = self.tk.Frame(section_frame)
+        if is_expanded:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+        else:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+            content_frame.pack_forget()  # Скрываем если не развернута
+        
+        # Группируем по директориям внутри временной группы
+        dir_groups = {}
+        for changes in changes_list:
+            directory = changes.get('directory', '/')
+            if directory not in dir_groups:
+                dir_groups[directory] = []
+            dir_groups[directory].append(changes)
+        
+        # Сохраняем ссылки для переключения
+        section_frame._content = content_frame
+        section_frame._toggle_var = toggle_var
+        section_frame._dir_groups = dir_groups
+        
+        # Создаем подсекции для директорий
+        for directory, dir_changes in sorted(dir_groups.items()):
+            self._create_directory_subsection(content_frame, directory, dir_changes)
+    
+    def _create_directory_section(self, directory, changes_list, total_new, total_modified, total_deleted,
+                                  section_key=None, is_expanded=False):
+        """Создание секции аккордеона для директории"""
+        section_frame = self.tk.Frame(self.fs_accordion_frame, relief=self.tk.RAISED, borderwidth=1)
+        section_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Сохраняем ключ секции
+        if section_key:
+            section_frame._section_key = section_key
+        
+        # Заголовок секции
+        header_frame = self.tk.Frame(section_frame)
+        header_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        # Кнопка сворачивания
+        toggle_var = self.tk.BooleanVar(value=is_expanded)
+        toggle_btn = self.tk.Button(header_frame, text="v" if is_expanded else ">", width=2,
+                                    command=lambda: self._toggle_section(section_frame, toggle_btn, toggle_var))
+        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Статистика по типам
+        stats_parts = []
+        if total_new > 0:
+            stats_parts.append(f"+{total_new}")
+        if total_modified > 0:
+            stats_parts.append(f"~{total_modified}")
+        if total_deleted > 0:
+            stats_parts.append(f"-{total_deleted}")
+        
+        stats_text = f" [{''.join(stats_parts)}]" if stats_parts else ""
+        header_label = self.tk.Label(header_frame,
+                                     text=f"Dir: {directory}{stats_text}",
+                                     font=('Arial', 9, 'bold'))
+        header_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Контент секции
+        content_frame = self.tk.Frame(section_frame)
+        if is_expanded:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+        else:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+            content_frame.pack_forget()  # Скрываем если не развернута
+        
+        section_frame._content = content_frame
+        section_frame._toggle_var = toggle_var
+        section_frame._changes_list = changes_list
+        
+        # Группируем по поддиректориям
+        for changes in changes_list:
+            self._create_changes_subsection(content_frame, changes)
+    
+    def _create_type_section(self, label, tag, items_list, section_key=None, is_expanded=False):
+        """Создание секции аккордеона для типа изменений"""
+        section_frame = self.tk.Frame(self.fs_accordion_frame, relief=self.tk.RAISED, borderwidth=1)
+        section_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Сохраняем ключ секции
+        if section_key:
+            section_frame._section_key = section_key
+        
+        # Заголовок секции
+        header_frame = self.tk.Frame(section_frame)
+        header_frame.pack(fill=self.tk.X, padx=5, pady=3)
+        
+        # Кнопка сворачивания
+        toggle_var = self.tk.BooleanVar(value=is_expanded)
+        toggle_btn = self.tk.Button(header_frame, text="v" if is_expanded else ">", width=2,
+                                    command=lambda: self._toggle_section(section_frame, toggle_btn, toggle_var))
+        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Подсчитываем общее количество
+        total_count = sum(len(items) for _, items, _ in items_list)
+        header_label = self.tk.Label(header_frame,
+                                     text=f"{label} ({total_count})",
+                                     font=('Arial', 9, 'bold'))
+        header_label.pack(side=self.tk.LEFT, padx=5)
+        
+        # Контент секции
+        content_frame = self.tk.Frame(section_frame)
+        if is_expanded:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+        else:
+            content_frame.pack(fill=self.tk.X, padx=10, pady=2)
+            content_frame.pack_forget()  # Скрываем если не развернута
+        
+        section_frame._content = content_frame
+        section_frame._toggle_var = toggle_var
+        section_frame._items_list = items_list
+        
+        # Группируем по директориям
+        dir_groups = {}
+        for change_type, items, changes in items_list:
+            directory = changes.get('directory', '/')
+            if directory not in dir_groups:
+                dir_groups[directory] = []
+            dir_groups[directory].append((change_type, items, changes))
+        
+        for directory, dir_items in sorted(dir_groups.items()):
+            dir_frame = self.tk.Frame(content_frame)
+            dir_frame.pack(fill=self.tk.X, padx=5, pady=2)
+            
+            dir_label = self.tk.Label(dir_frame, text=f"Dir: {directory}", font=('Arial', 9, 'bold'))
+            dir_label.pack(side=self.tk.LEFT)
+            
+            items_frame = self.tk.Frame(content_frame)
+            items_frame.pack(fill=self.tk.X, padx=15, pady=2)
+            
+            for change_type, items, changes in dir_items:
+                for item in items[:50]:  # Ограничиваем до 50 элементов
+                    item_label = self.tk.Label(items_frame, text=f"  • {item}", font=('Arial', 8))
+                    item_label.pack(anchor='w')
+                
+                if len(items) > 50:
+                    more_label = self.tk.Label(items_frame, 
+                                             text=f"  ... и еще {len(items) - 50} элементов",
+                                             font=('Arial', 8), fg='gray')
+                    more_label.pack(anchor='w')
+    
+    def _create_directory_subsection(self, parent_frame, directory, changes_list):
+        """Создание подсекции для директории"""
+        dir_frame = self.tk.Frame(parent_frame, relief=self.tk.GROOVE, borderwidth=1)
+        dir_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Заголовок подсекции
+        dir_header = self.tk.Frame(dir_frame)
+        dir_header.pack(fill=self.tk.X, padx=3, pady=2)
+        
+        # Подсчитываем статистику
+        total_new = sum(len(self.filesystem_filter.filter_changes(ch).get('new_files', [])) for ch in changes_list)
+        total_modified = sum(len(self.filesystem_filter.filter_changes(ch).get('modified_files', [])) for ch in changes_list)
+        total_deleted = sum(len(self.filesystem_filter.filter_changes(ch).get('deleted_files', [])) for ch in changes_list)
+        
+        stats_parts = []
+        if total_new > 0:
+            stats_parts.append(f"+{total_new}")
+        if total_modified > 0:
+            stats_parts.append(f"~{total_modified}")
+        if total_deleted > 0:
+            stats_parts.append(f"-{total_deleted}")
+        
+        stats_text = f" [{''.join(stats_parts)}]" if stats_parts else ""
+        dir_label = self.tk.Label(dir_header, text=f"Dir: {directory}{stats_text}", font=('Arial', 9))
+        dir_label.pack(side=self.tk.LEFT)
+        
+        # Детали изменений
+        for changes in changes_list:
+            self._create_changes_subsection(dir_frame, changes)
+    
+    def _create_changes_subsection(self, parent_frame, changes):
+        """Создание подсекции с деталями изменений"""
+        filtered = self.filesystem_filter.filter_changes(changes)
+        
+        # Группируем по поддиректориям
+        subdir_groups = {}
+        
+        # Новые файлы
+        for file_path in filtered.get('new_files', []):
+            subdir = os.path.dirname(file_path) if os.path.dirname(file_path) else '.'
+            if subdir not in subdir_groups:
+                subdir_groups[subdir] = {'new': [], 'modified': [], 'deleted': [], 'new_dirs': [], 'deleted_dirs': []}
+            subdir_groups[subdir]['new'].append(file_path)
+        
+        # Измененные файлы
+        for file_path in filtered.get('modified_files', []):
+            subdir = os.path.dirname(file_path) if os.path.dirname(file_path) else '.'
+            if subdir not in subdir_groups:
+                subdir_groups[subdir] = {'new': [], 'modified': [], 'deleted': [], 'new_dirs': [], 'deleted_dirs': []}
+            subdir_groups[subdir]['modified'].append(file_path)
+        
+        # Удаленные файлы
+        for file_path in filtered.get('deleted_files', []):
+            subdir = os.path.dirname(file_path) if os.path.dirname(file_path) else '.'
+            if subdir not in subdir_groups:
+                subdir_groups[subdir] = {'new': [], 'modified': [], 'deleted': [], 'new_dirs': [], 'deleted_dirs': []}
+            subdir_groups[subdir]['deleted'].append(file_path)
+        
+        # Новые папки
+        for dir_path in filtered.get('new_directories', []):
+            subdir = os.path.dirname(dir_path) if os.path.dirname(dir_path) else '.'
+            if subdir not in subdir_groups:
+                subdir_groups[subdir] = {'new': [], 'modified': [], 'deleted': [], 'new_dirs': [], 'deleted_dirs': []}
+            subdir_groups[subdir]['new_dirs'].append(dir_path)
+        
+        # Удаленные папки
+        for dir_path in filtered.get('deleted_directories', []):
+            subdir = os.path.dirname(dir_path) if os.path.dirname(dir_path) else '.'
+            if subdir not in subdir_groups:
+                subdir_groups[subdir] = {'new': [], 'modified': [], 'deleted': [], 'new_dirs': [], 'deleted_dirs': []}
+            subdir_groups[subdir]['deleted_dirs'].append(dir_path)
+        
+        # Создаем подсекции для каждой поддиректории
+        for subdir, items in sorted(subdir_groups.items()):
+            if not any(items.values()):
+                continue
+            
+            subdir_frame = self.tk.Frame(parent_frame)
+            subdir_frame.pack(fill=self.tk.X, padx=10, pady=1)
+            
+            if subdir != '.':
+                subdir_label = self.tk.Label(subdir_frame, text=f"  ├─ Dir: {subdir}/", font=('Arial', 8))
+                subdir_label.pack(anchor='w')
+            
+            # Новые файлы
+            if items['new']:
+                for file_path in items['new'][:20]:  # Ограничиваем до 20 файлов
+                    file_label = self.tk.Label(subdir_frame, text=f"    ├─ + {os.path.basename(file_path)}", 
+                                              font=('Arial', 8), fg='green')
+                    file_label.pack(anchor='w')
+                if len(items['new']) > 20:
+                    more_label = self.tk.Label(subdir_frame, 
+                                             text=f"    └─ ... и еще {len(items['new']) - 20} файлов",
+                                             font=('Arial', 8), fg='gray')
+                    more_label.pack(anchor='w')
+            
+            # Измененные файлы
+            if items['modified']:
+                for file_path in items['modified'][:20]:
+                    file_label = self.tk.Label(subdir_frame, text=f"    ├─ ~ {os.path.basename(file_path)}", 
+                                              font=('Arial', 8), fg='orange')
+                    file_label.pack(anchor='w')
+                if len(items['modified']) > 20:
+                    more_label = self.tk.Label(subdir_frame, 
+                                             text=f"    └─ ... и еще {len(items['modified']) - 20} файлов",
+                                             font=('Arial', 8), fg='gray')
+                    more_label.pack(anchor='w')
+            
+            # Удаленные файлы
+            if items['deleted']:
+                for file_path in items['deleted'][:20]:
+                    file_label = self.tk.Label(subdir_frame, text=f"    ├─ - {os.path.basename(file_path)}", 
+                                              font=('Arial', 8), fg='red')
+                    file_label.pack(anchor='w')
+                if len(items['deleted']) > 20:
+                    more_label = self.tk.Label(subdir_frame, 
+                                             text=f"    └─ ... и еще {len(items['deleted']) - 20} файлов",
+                                             font=('Arial', 8), fg='gray')
+                    more_label.pack(anchor='w')
+            
+            # Новые папки
+            if items['new_dirs']:
+                for dir_path in items['new_dirs']:
+                    dir_label = self.tk.Label(subdir_frame, text=f"    ├─ +Dir {os.path.basename(dir_path)}/ (новая папка)", 
+                                             font=('Arial', 8), fg='blue')
+                    dir_label.pack(anchor='w')
+            
+            # Удаленные папки
+            if items['deleted_dirs']:
+                for dir_path in items['deleted_dirs']:
+                    dir_label = self.tk.Label(subdir_frame, text=f"    ├─ -Dir {os.path.basename(dir_path)}/ (удалена)", 
+                                             font=('Arial', 8), fg='gray')
+                    dir_label.pack(anchor='w')
+    
+    def _display_structure(self):
+        """Отображение структуры базового снимка"""
+        if not self.filesystem_baseline_snapshot:
+            no_data_label = self.tk.Label(self.fs_accordion_frame, 
+                                          text="Подождите, идет обновление...", 
+                                          font=('Arial', 10), fg='gray')
+            no_data_label.pack(pady=20)
+            return
+        
+        # Получаем данные из снимка
+        snapshot = self.filesystem_baseline_snapshot
+        # Проверяем, есть ли данные в снимке
+        if not snapshot.files and not snapshot.directories:
+            no_data_label = self.tk.Label(self.fs_accordion_frame, 
+                                          text="Подождите, идет обновление...", 
+                                          font=('Arial', 10), fg='gray')
+            no_data_label.pack(pady=20)
+            return
+        
+        all_files = snapshot.files  # {full_path: (size, mtime, hash)}
+        all_directories = snapshot.directories  # {full_path, ...}
+        
+        # Получаем список отслеживаемых директорий
+        monitored_dirs = self._get_monitored_directories()
+        
+        # Строим дерево для каждой отслеживаемой директории
+        for root_dir in monitored_dirs:
+            if not os.path.exists(root_dir):
+                continue
+            
+            # Находим все файлы и директории, принадлежащие этой корневой директории
+            dir_files = {}
+            dir_dirs = set()
+            
+            for file_path in all_files.keys():
+                if file_path.startswith(root_dir + os.sep) or file_path == root_dir:
+                    dir_files[file_path] = all_files[file_path]
+            
+            for dir_path in all_directories:
+                if dir_path.startswith(root_dir + os.sep) or dir_path == root_dir:
+                    dir_dirs.add(dir_path)
+            
+            if not dir_files and not dir_dirs:
+                continue
+            
+            # Создаем узел для корневой директории
+            self._create_structure_node(self.fs_accordion_frame, root_dir, dir_files, dir_dirs, root_dir, depth=0)
+    
+    def _create_structure_node(self, parent_frame, node_path, all_files, all_directories, root_dir, depth=0):
+        """Создание узла дерева структуры с возможностью разворачивания"""
+        # Находим файлы и поддиректории для этого узла
+        node_files = []
+        node_subdirs = set()
+        
+        # Нормализуем пути
+        node_path_norm = os.path.normpath(node_path)
+        if node_path_norm.endswith(os.sep):
+            node_path_norm = node_path_norm[:-1]
+        node_path_norm_with_sep = node_path_norm + os.sep
+        
+        for file_path in all_files.keys():
+            file_path_norm = os.path.normpath(file_path)
+            if file_path_norm == node_path_norm:
+                # Файл в самой директории (не в поддиректории) - это сам файл директории
+                # Пропускаем, так как это директория, а не файл
+                continue
+            elif file_path_norm.startswith(node_path_norm_with_sep):
+                # Проверяем, что это прямой потомок (не вложенный глубже)
+                rel_path = os.path.relpath(file_path_norm, node_path_norm)
+                # Если нет разделителя пути, значит это файл прямо в этой директории
+                if os.sep not in rel_path and rel_path != '.':
+                    node_files.append(file_path)
+        
+        for dir_path in all_directories:
+            dir_path_norm = os.path.normpath(dir_path)
+            if dir_path_norm == node_path_norm:
+                # Это сама директория, пропускаем
+                continue
+            elif dir_path_norm.startswith(node_path_norm_with_sep):
+                # Проверяем, что это прямая поддиректория
+                rel_path = os.path.relpath(dir_path_norm, node_path_norm)
+                # Если нет разделителя пути, значит это прямая поддиректория
+                if os.sep not in rel_path and rel_path != '.':
+                    node_subdirs.add(dir_path)
+        
+        # Если нет файлов и поддиректорий, не показываем узел
+        if not node_files and not node_subdirs:
+            return
+        
+        # Создаем фрейм для узла
+        node_frame = self.tk.Frame(parent_frame)
+        node_frame.pack(fill=self.tk.X, padx=(depth * 15, 5), pady=1, anchor='w')
+        
+        # Заголовок узла с кнопкой разворачивания
+        header_frame = self.tk.Frame(node_frame)
+        header_frame.pack(fill=self.tk.X, anchor='w')
+        
+        # Определяем имя узла
+        if depth == 0:
+            node_name = node_path
+        else:
+            node_name = os.path.basename(node_path)
+        
+        # Подсчитываем количество файлов и поддиректорий
+        files_count = len(node_files)
+        subdirs_count = len(node_subdirs)
+        
+        # Кнопка разворачивания
+        toggle_var = self.tk.BooleanVar(value=False)
+        toggle_btn = self.tk.Button(header_frame, text=">", width=1,
+                                    command=lambda: self._toggle_structure_node(content_frame, toggle_btn, toggle_var))
+        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Метка с именем и статистикой
+        stats_text = f" ({files_count} файлов" + (f", {subdirs_count} папок" if subdirs_count > 0 else "") + ")"
+        header_label = self.tk.Label(header_frame, 
+                                     text=f"{node_name}{stats_text}",
+                                     font=('Arial', 9, 'bold' if depth == 0 else 'normal'),
+                                     anchor='w')
+        header_label.pack(side=self.tk.LEFT, padx=2)
+        
+        # Контент узла (скрыт по умолчанию)
+        content_frame = self.tk.Frame(node_frame)
+        content_frame._toggle_var = toggle_var
+        
+        # При разворачивании заполняем содержимое
+        def _populate_content():
+            # Очищаем старое содержимое
+            for widget in content_frame.winfo_children():
+                widget.destroy()
+            
+            # Сначала показываем поддиректории (рекурсивно) - отсортированные по возрастанию
+            for subdir_path in sorted(node_subdirs):
+                self._create_structure_node(content_frame, subdir_path, all_files, all_directories, root_dir, depth + 1)
+            
+            # Потом показываем файлы - отсортированные по возрастанию
+            sorted_files = sorted(node_files)
+            max_files_to_show = 20  # Показываем первые 20 файлов
+            
+            if len(sorted_files) <= max_files_to_show:
+                # Показываем все файлы
+                for file_path in sorted_files:
+                    file_name = os.path.basename(file_path)
+                    # Получаем расширение
+                    _, ext = os.path.splitext(file_name)
+                    ext_text = f" [{ext}]" if ext else ""
+                    
+                    file_label = self.tk.Label(content_frame, 
+                                              text=f"  ├─ {file_name}{ext_text}",
+                                              font=('Arial', 8),
+                                              anchor='w')
+                    file_label.pack(anchor='w', padx=(10, 0))
+            else:
+                # Показываем первые N файлов
+                for file_path in sorted_files[:max_files_to_show]:
+                    file_name = os.path.basename(file_path)
+                    _, ext = os.path.splitext(file_name)
+                    ext_text = f" [{ext}]" if ext else ""
+                    
+                    file_label = self.tk.Label(content_frame, 
+                                              text=f"  ├─ {file_name}{ext_text}",
+                                              font=('Arial', 8),
+                                              anchor='w')
+                    file_label.pack(anchor='w', padx=(10, 0))
+                
+                # Показываем сноску "и еще N файлов"
+                remaining_count = len(sorted_files) - max_files_to_show
+                more_files_frame = self.tk.Frame(content_frame)
+                more_files_frame.pack(anchor='w', padx=(10, 0), pady=2)
+                
+                more_label = self.tk.Label(more_files_frame,
+                                           text=f"  └─ ... и еще {remaining_count} файлов (нажмите для просмотра)",
+                                           font=('Arial', 8),
+                                           fg='blue',
+                                           cursor='hand2',
+                                           anchor='w')
+                more_label.pack(anchor='w')
+                
+                def _expand_all_files(event):
+                    # Удаляем сноску
+                    more_files_frame.destroy()
+                    # Показываем все оставшиеся файлы
+                    for file_path in sorted_files[max_files_to_show:]:
+                        file_name = os.path.basename(file_path)
+                        _, ext = os.path.splitext(file_name)
+                        ext_text = f" [{ext}]" if ext else ""
+                        
+                        file_label = self.tk.Label(content_frame, 
+                                                  text=f"  ├─ {file_name}{ext_text}",
+                                                  font=('Arial', 8),
+                                                  anchor='w')
+                        file_label.pack(anchor='w', padx=(10, 0))
+                
+                more_label.bind('<Button-1>', _expand_all_files)
+        
+        # Сохраняем функцию заполнения
+        content_frame._populate = _populate_content
+    
+    def _toggle_structure_node(self, content_frame, toggle_btn, toggle_var):
+        """Переключение видимости узла дерева структуры"""
+        if toggle_var.get():
+            # Сворачиваем
+            content_frame.pack_forget()
+            toggle_btn.config(text=">")
+            toggle_var.set(False)
+        else:
+            # Разворачиваем
+            # Заполняем содержимое при первом разворачивании
+            if not hasattr(content_frame, '_populated'):
+                content_frame._populate()
+                content_frame._populated = True
+            content_frame.pack(fill=self.tk.X, padx=(10, 0), pady=1, anchor='w')
+            toggle_btn.config(text="v")
+            toggle_var.set(True)
+    
+    def _toggle_section(self, section_frame, toggle_btn, toggle_var):
+        """Переключение видимости секции аккордеона"""
+        if toggle_var.get():
+            # Сворачиваем
+            section_frame._content.pack_forget()
+            toggle_btn.config(text=">")
+            toggle_var.set(False)
+        else:
+            # Разворачиваем
+            section_frame._content.pack(fill=self.tk.X, padx=10, pady=2)
+            toggle_btn.config(text="v")
+            toggle_var.set(True)
+        
+        # Обновляем прокрутку
+        self.fs_canvas.update_idletasks()
+        self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
         
     def create_processes_monitor_tab(self):
         """Создание вкладки Мониторинг"""
@@ -13483,6 +15991,11 @@ class AutomationGUI(object):
             
             # Получаем информацию о всех активных потоках и таймерах
             system_threads = self._get_all_system_threads_info()
+            
+            # Получаем информацию о мониторинге файловой системы
+            filesystem_monitor_info = None
+            if hasattr(self, 'filesystem_monitor') and self.filesystem_monitor:
+                filesystem_monitor_info = self.filesystem_monitor.get_process_info()
             
             # Добавляем процессы приложения
             for proc in app_processes:
@@ -13668,6 +16181,31 @@ class AutomationGUI(object):
                     name,
                     '---',
                     '---',
+                    status,
+                    info
+                ), tags=(status_tag,))
+            
+            # Добавляем информацию о мониторинге файловой системы
+            if filesystem_monitor_info:
+                cpu = filesystem_monitor_info.get('cpu', 0)
+                memory = filesystem_monitor_info.get('memory', 0)
+                status = filesystem_monitor_info.get('status', 'ОЖИДАНИЕ')
+                info = filesystem_monitor_info.get('info', '')
+                
+                if len(info) > 80:
+                    info = info[:77] + '...'
+                
+                # Определяем цвет по статусу
+                if status == 'СКАНИРОВАНИЕ' or status == 'СРАВНЕНИЕ':
+                    status_tag = 'fs_active'
+                else:
+                    status_tag = 'fs_idle'
+                
+                self.processes_tree.insert('', self.tk.END, values=(
+                    '---',
+                    'DirectoryMonitor',
+                    f"{cpu:.1f}%",
+                    f"{memory:.1f}",
                     status,
                     info
                 ), tags=(status_tag,))
@@ -17005,7 +19543,7 @@ class AutomationGUI(object):
             self.terminal_text.config(state=self.tk.NORMAL)
             self.terminal_text.insert(self.tk.END, "[INFO] Мониторинг системного вывода запущен\n")
             if self.terminal_autoscroll_enabled.get():  # Проверка автоперемотки
-            self.terminal_text.see(self.tk.END)
+                self.terminal_text.see(self.tk.END)
                 self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
             self.terminal_text.config(state=self.tk.DISABLED)
             
@@ -17072,7 +19610,7 @@ class AutomationGUI(object):
         # После обновления прокручиваем в конец (если автоперемотка включена)
         if hasattr(self, 'terminal_text') and hasattr(self, 'terminal_autoscroll_enabled'):
             if self.terminal_autoscroll_enabled.get():
-            self.terminal_text.see(self.tk.END)
+                self.terminal_text.see(self.tk.END)
                 self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
     
     def _extract_timestamp(self, message):
@@ -17182,7 +19720,6 @@ class AutomationGUI(object):
                 if not self.terminal_timestamp_enabled.get():
                     # Удаляем метку времени из начала сообщения
                     # Формат: "[2024-01-01 12:00:00.123] сообщение"
-                    import re
                     # Удаляем метку времени в формате [YYYY-MM-DD HH:MM:SS.mmm]
                     display_message = re.sub(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s*', '', display_message)
                 
@@ -19847,7 +22384,6 @@ class SystemUpdater(object):
             
         except Exception as e:
             print("   [ERROR] Ошибка проверки диска: %s" % str(e))
-            import traceback
             print("   [ERROR] Детали ошибки:")
             traceback.print_exc()
             return False
@@ -21087,48 +23623,224 @@ def cleanup_temp_files(temp_dir):
         print("[OK] Временные файлы очищены")
     except Exception as e:
         print("[WARNING] Предупреждение: не удалось очистить временные файлы: %s" % str(e))
-class DirectorySnapshot(object):
 # ============================================================================
 # КЛАССЫ МОНИТОРИНГА ДИРЕКТОРИЙ
 # ============================================================================
+
+class FilesystemFilter(object):
+    """Класс для фильтрации изменений файловой системы"""
+    
+    def __init__(self):
+        self.exclude_paths = [
+            '/tmp', '/var/tmp', '/proc', '/sys', '/dev',
+            '/run', '/var/run', '/lost+found',
+            '/etc/cups',  # Исключаем директорию CUPS (системные файлы печати)
+        ]
+        self.exclude_patterns = [
+            '*.tmp', '*.log', '*.cache', '*.swp', '*.lock',
+            '.DS_Store', 'Thumbs.db',
+        ]
+        self.exclude_hidden = True
+        self.min_file_size = 0
+    
+    def should_include(self, file_path, is_directory=False):
+        """Проверяет, нужно ли показывать файл/директорию"""
+        import fnmatch
+        
+        # Проверка путей
+        for exclude_path in self.exclude_paths:
+            if file_path.startswith(exclude_path):
+                return False
+        
+        # Проверка паттернов (только для файлов)
+        if not is_directory:
+            filename = os.path.basename(file_path)
+            for pattern in self.exclude_patterns:
+                if fnmatch.fnmatch(filename, pattern):
+                    return False
+        
+        # Проверка скрытых файлов
+        if self.exclude_hidden and os.path.basename(file_path).startswith('.'):
+            return False
+        
+        return True
+    
+    def filter_changes(self, changes):
+        """Фильтрует изменения согласно настройкам фильтра"""
+        filtered = {
+            'new_files': [],
+            'modified_files': [],
+            'deleted_files': [],
+            'new_directories': [],
+            'deleted_directories': [],
+            'timestamp': changes.get('timestamp')
+        }
+        
+        # Фильтруем новые файлы
+        for file_path in changes.get('new_files', []):
+            if self.should_include(file_path, is_directory=False):
+                filtered['new_files'].append(file_path)
+        
+        # Фильтруем измененные файлы
+        for file_path in changes.get('modified_files', []):
+            if self.should_include(file_path, is_directory=False):
+                filtered['modified_files'].append(file_path)
+        
+        # Фильтруем удаленные файлы
+        for file_path in changes.get('deleted_files', []):
+            if self.should_include(file_path, is_directory=False):
+                filtered['deleted_files'].append(file_path)
+        
+        # Фильтруем новые папки
+        for dir_path in changes.get('new_directories', []):
+            if self.should_include(dir_path, is_directory=True):
+                filtered['new_directories'].append(dir_path)
+        
+        # Фильтруем удаленные папки
+        for dir_path in changes.get('deleted_directories', []):
+            if self.should_include(dir_path, is_directory=True):
+                filtered['deleted_directories'].append(dir_path)
+        
+        return filtered
+
+class DirectorySnapshot(object):
     """Класс для хранения снимка состояния директории"""
     
-    def __init__(self, directory_path):
+    def __init__(self, directory_path, exclude_paths=None, max_depth=None, max_files=50000, calculate_hashes=False):
+        """
+        Инициализация снимка директории
         
+        Args:
+            directory_path: Путь к директории для сканирования
+            exclude_paths: Список путей для исключения из сканирования
+            max_depth: Максимальная глубина вложенности (None = без ограничений)
+            max_files: Максимальное количество файлов для сканирования
+            calculate_hashes: Вычислять ли хеши файлов (по умолчанию False для производительности)
+        """
         self.directory_path = directory_path
         self.timestamp = datetime.datetime.now()
         self.files = {}  # {relative_path: (size, mtime, hash)}
         self.directories = set()  # {relative_path1, relative_path2, ...}
+        
+        # Метрики производительности
+        self.scan_start_time = None
+        self.scan_duration = 0.0
+        self.files_scanned = 0
+        self.directories_scanned = 0
+        self.hash_calculation_time = 0.0
+        self.memory_usage = 0
+        
+        # Ограничения сканирования
+        self.max_depth = max_depth
+        self.max_files = max_files
+        self.calculate_hashes = calculate_hashes
+        
+        # Расширенный список путей для исключения
+        self.exclude_paths = exclude_paths or [
+            '/proc', '/sys', '/dev', '/tmp', '/var/tmp',
+            '/run', '/var/run', '/lost+found',
+            '/boot', '/snap', '/var/cache', '/var/log',
+            '/var/lib', '/usr/share/doc', '/usr/share/man',
+            '/home', '/root/.cache', '/root/.local',
+            '/var/spool', '/var/mail', '/var/backups',
+            '/etc/cups'  # Исключаем директорию CUPS (системные файлы печати)
+        ]
+        
         self._scan_directory()
+    
+    def _should_exclude_path(self, path):
+        """Проверяет, нужно ли исключить путь из сканирования"""
+        for exclude_path in self.exclude_paths:
+            if path.startswith(exclude_path):
+                return True
+        return False
     
     def _scan_directory(self):
         """Сканирование директории и создание снимка"""
         if not os.path.exists(self.directory_path):
             return
         
+        self.scan_start_time = time.time()
+        
         try:
+            # Вычисляем глубину корневой директории
+            root_depth = len(self.directory_path.rstrip('/').split('/'))
+            
+            # Счетчик для неблокирующей работы
+            files_processed = 0
+            chunk_size = 100  # Обрабатываем по 100 файлов, затем делаем паузу
+            
             for root, dirs, files in os.walk(self.directory_path):
+                # Проверяем ограничение по количеству файлов
+                if self.files_scanned >= self.max_files:
+                    break
+                
+                # Исключаем пути
+                if self._should_exclude_path(root):
+                    dirs[:] = []  # Не сканируем поддиректории
+                    continue
+                
+                # Проверяем ограничение по глубине
+                if self.max_depth is not None:
+                    current_depth = len(root.rstrip('/').split('/')) - root_depth
+                    if current_depth > self.max_depth:
+                        dirs[:] = []  # Не сканируем глубже
+                        continue
+                
                 # Добавляем директории
                 rel_root = os.path.relpath(root, self.directory_path)
                 if rel_root != '.':
                     self.directories.add(rel_root)
+                    self.directories_scanned += 1
                 
                 # Добавляем файлы
                 for file in files:
+                    # Проверяем ограничение по количеству файлов
+                    if self.files_scanned >= self.max_files:
+                        break
+                    
                     file_path = os.path.join(root, file)
                     rel_path = os.path.relpath(file_path, self.directory_path)
                     
+                    # Исключаем файлы в исключенных путях
+                    if self._should_exclude_path(file_path):
+                        continue
+                    
                     try:
                         stat = os.stat(file_path)
-                        # Простой хеш для быстрого сравнения (первые 8 байт + размер)
-                        file_hash = self._quick_hash(file_path)
+                        
+                        # Вычисляем хеш только если нужно
+                        file_hash = 0
+                        if self.calculate_hashes:
+                            hash_start = time.time()
+                            file_hash = self._quick_hash(file_path)
+                            self.hash_calculation_time += time.time() - hash_start
+                        
                         self.files[rel_path] = (stat.st_size, stat.st_mtime, file_hash)
+                        self.files_scanned += 1
+                        files_processed += 1
+                        
+                        # Делаем паузу каждые chunk_size файлов для неблокирующей работы
+                        if files_processed >= chunk_size:
+                            time.sleep(0.01)  # 10ms пауза
+                            files_processed = 0
                     except (OSError, IOError):
                         # Пропускаем файлы, к которым нет доступа
                         continue
+                
+                # Если достигли лимита, прекращаем обход
+                if self.files_scanned >= self.max_files:
+                    break
+                    
         except (OSError, IOError):
             # Пропускаем директории, к которым нет доступа
             pass
+        finally:
+            if self.scan_start_time:
+                self.scan_duration = time.time() - self.scan_start_time
+                # Вычисляем использование памяти (приблизительно)
+                import sys
+                self.memory_usage = sys.getsizeof(self.files) + sys.getsizeof(self.directories)
     
     def _quick_hash(self, file_path):
         """Быстрое хеширование файла (первые 8 байт + размер)"""
@@ -21139,6 +23851,79 @@ class DirectorySnapshot(object):
                 return hash(data + str(size).encode())
         except (OSError, IOError):
             return 0
+    
+    def get_performance_metrics(self):
+        """Возвращает метрики производительности сканирования"""
+        return {
+            'scan_duration': getattr(self, 'scan_duration', 0.0),
+            'files_scanned': getattr(self, 'files_scanned', 0),
+            'directories_scanned': getattr(self, 'directories_scanned', 0),
+            'hash_calculation_time': getattr(self, 'hash_calculation_time', 0.0),
+            'memory_usage': getattr(self, 'memory_usage', 0),
+            'timestamp': getattr(self, 'timestamp', datetime.datetime.now())
+        }
+    
+    def save_to_file(self, file_path):
+        """Сохраняет снимок в файл (pickle)"""
+        try:
+            # Создаем директорию если не существует
+            cache_dir = os.path.dirname(file_path)
+            if cache_dir and not os.path.exists(cache_dir):
+                os.makedirs(cache_dir, exist_ok=True)
+            
+            # Сохраняем снимок
+            with open(file_path, 'wb') as f:
+                pickle.dump({
+                    'directory_path': self.directory_path,
+                    'timestamp': self.timestamp,
+                    'files': self.files,
+                    'directories': list(self.directories),  # Преобразуем set в list для сериализации
+                    'performance_metrics': self.get_performance_metrics()
+                }, f)
+            return True
+        except Exception as e:
+            print(f"[DirectorySnapshot] Ошибка сохранения снимка: {e}")
+            return False
+    
+    @classmethod
+    def load_from_file(cls, file_path):
+        """Загружает снимок из файла"""
+        try:
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'rb') as f:
+                data = pickle.load(f)
+            
+            # Создаем экземпляр без сканирования
+            snapshot = cls.__new__(cls)
+            snapshot.directory_path = data['directory_path']
+            snapshot.timestamp = data['timestamp']
+            snapshot.files = data['files']
+            snapshot.directories = set(data['directories'])  # Преобразуем обратно в set
+            
+            # Восстанавливаем метрики
+            metrics = data.get('performance_metrics', {})
+            snapshot.scan_start_time = None
+            snapshot.scan_duration = metrics.get('scan_duration', 0.0)
+            snapshot.files_scanned = metrics.get('files_scanned', 0)
+            snapshot.directories_scanned = metrics.get('directories_scanned', 0)
+            snapshot.hash_calculation_time = metrics.get('hash_calculation_time', 0.0)
+            snapshot.memory_usage = metrics.get('memory_usage', 0)
+            snapshot.exclude_paths = []
+            
+            return snapshot
+        except Exception as e:
+            print(f"[DirectorySnapshot] Ошибка загрузки снимка: {e}")
+            return None
+    
+    def is_valid(self, max_age_hours=1):
+        """Проверяет, не устарел ли снимок"""
+        if not self.timestamp:
+            return False
+        
+        age = datetime.datetime.now() - self.timestamp
+        return age.total_seconds() < (max_age_hours * 3600)
 class DirectoryMonitor(object):
 # ============================================================================
 # КЛАСС МОНИТОРИНГА ИЗМЕНЕНИЙ В ДИРЕКТОРИИ
@@ -21151,6 +23936,13 @@ class DirectoryMonitor(object):
         self.last_snapshot = None  # Последний снимок
         self.monitoring = False
         self.compact_mode = compact_mode  # Режим компактного вывода
+        
+        # Метрики производительности
+        self.compare_start_time = None
+        self.compare_duration = 0.0
+        self.last_scan_metrics = {}
+        self.total_operations = 0
+        self.total_files_compared = 0
     
     def start_monitoring(self, directory_path):
         """Начать мониторинг директории (создать базовый снимок)"""
@@ -21331,6 +24123,9 @@ class DirectoryMonitor(object):
 
     def _compare_snapshots(self, old_snapshot, new_snapshot):
         """Сравнение двух снимков и определение изменений"""
+        self.compare_start_time = time.time()
+        self.total_operations += 1
+        
         changes = {
             'new_files': [],
             'modified_files': [],
@@ -21343,6 +24138,7 @@ class DirectoryMonitor(object):
         # Проверяем файлы
         old_files = set(old_snapshot.files.keys())
         new_files = set(new_snapshot.files.keys())
+        self.total_files_compared = len(old_files | new_files)
         
         # Новые файлы
         for file_path in new_files - old_files:
@@ -21371,7 +24167,50 @@ class DirectoryMonitor(object):
         for dir_path in old_dirs - new_dirs:
             changes['deleted_directories'].append(dir_path)
         
+        # Сохраняем метрики
+        if self.compare_start_time:
+            self.compare_duration = time.time() - self.compare_start_time
+            self.last_scan_metrics = new_snapshot.get_performance_metrics() if hasattr(new_snapshot, 'get_performance_metrics') else {}
+        
         return changes
+    
+    def get_performance_metrics(self):
+        """Возвращает метрики производительности мониторинга"""
+        return {
+            'compare_duration': self.compare_duration,
+            'total_operations': self.total_operations,
+            'total_files_compared': self.total_files_compared,
+            'last_scan_metrics': self.last_scan_metrics
+        }
+    
+    def get_process_info(self):
+        """Возвращает информацию для ProcessMonitor"""
+        if not self.monitoring:
+            return None
+        
+        # Определяем статус
+        if self.compare_start_time and (time.time() - self.compare_start_time) < 5:
+            status = 'СРАВНЕНИЕ'
+            cpu_usage = 2.0  # Примерная нагрузка
+        elif self.baseline and hasattr(self.baseline, 'scan_start_time') and self.baseline.scan_start_time:
+            status = 'СКАНИРОВАНИЕ'
+            cpu_usage = 5.0  # Примерная нагрузка при сканировании
+        else:
+            status = 'ОЖИДАНИЕ'
+            cpu_usage = 0.1
+        
+        # Вычисляем использование памяти
+        memory_mb = 0
+        if self.baseline:
+            memory_mb = getattr(self.baseline, 'memory_usage', 0) / (1024 * 1024)
+        
+        return {
+            'name': 'DirectoryMonitor',
+            'cpu': cpu_usage,
+            'memory': memory_mb,
+            'status': status,
+            'info': f"Мониторинг: {getattr(self.baseline, 'directory_path', 'N/A')} | Файлов: {getattr(self.baseline, 'files_scanned', 0)}"
+        }
     
     def format_changes(self, changes):
         """Форматирование изменений для вывода"""
@@ -21513,7 +24352,6 @@ def main():
     else:
         # Если передан log_file, но не передан timestamp - извлекаем из имени файла
         if log_timestamp is None:
-            import re
             match = re.search(r'(\d{8}_\d{6})', log_file)
             if match:
                 log_timestamp = match.group(1)
@@ -21606,33 +24444,33 @@ def main():
                 
                 # КРИТИЧНО: Проверяем что это действительно число, а не другой аргумент
                 if close_terminal_pid and close_terminal_pid.isdigit():
-                # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
-                try:
-                    pid = int(close_terminal_pid)
-                    
-                    # Проверяем что процесс существует
+                    # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
                     try:
-                        os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                        pid = int(close_terminal_pid)
                         
-                        # Сначала мягкое завершение
-                        os.kill(pid, signal.SIGTERM)
-                        
-                        # Даем время на завершение
-                        time.sleep(0.5)
-                        
-                        # Проверяем что процесс завершился
+                        # Проверяем что процесс существует
                         try:
-                            os.kill(pid, 0)
-                            # Процесс еще жив - отправляем SIGKILL
-                            os.kill(pid, signal.SIGKILL)
-                        except OSError:
-                            # Процесс уже завершился
+                            os.kill(pid, 0)  # Сигнал 0 - только проверка существования
+                            
+                            # Сначала мягкое завершение
+                            os.kill(pid, signal.SIGTERM)
+                            
+                            # Даем время на завершение
+                            time.sleep(0.5)
+                            
+                            # Проверяем что процесс завершился
+                            try:
+                                os.kill(pid, 0)
+                                # Процесс еще жив - отправляем SIGKILL
+                                os.kill(pid, signal.SIGKILL)
+                            except OSError:
+                                # Процесс уже завершился
+                                pass
+                                
+                        except OSError as e:
+                            # Процесс уже не существует
                             pass
                             
-                    except OSError as e:
-                        # Процесс уже не существует
-                        pass
-                        
                     except (ValueError, TypeError) as e:
                         print(f"[WARNING] Некорректный PID терминала: {close_terminal_pid}", gui_log=True)
                 else:
@@ -21853,7 +24691,7 @@ def main():
                         # Регистрируем все handlers
                         component_handlers['wine_packages'] = WinePackageHandler(**common_params)
                         component_handlers['wine_environment'] = WineEnvironmentHandler(**common_params)
-                        component_handlers['winetricks'] = WinetricksHandler(use_minimal=True, **common_params)
+                        component_handlers['winetricks'] = WinetricksHandler(use_minimal=False, **common_params)
                         component_handlers['system_config'] = SystemConfigHandler(**common_params)
                         component_handlers['application'] = ApplicationHandler(**common_params)
                         component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)

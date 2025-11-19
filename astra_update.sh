@@ -19,6 +19,9 @@ mkdir -p "$LOG_DIR"
 # Создаем ANALYSIS лог-файл (основной)
 ANALYSIS_LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
 
+# Очищаем логи
+#rm -rf "$LINUX_ASTRA_PATH/Log" 2>/dev/null
+
 # Инициализируем лог-файл (только если не существует - защита от повторного создания)
 if [ ! -f "$ANALYSIS_LOG_FILE" ]; then
     {
@@ -1203,11 +1206,6 @@ if [ "$CRITICAL_OK" = false ]; then
     echo "Ошибка Обновления"
     exit 1
 fi
-
-# Очищаем логи (ОТКЛЮЧЕНО для сохранения диагностики)
-log_message "Очистка старых логов ОТКЛЮЧЕНА для сохранения диагностики..."
-# rm -rf "$LINUX_ASTRA_PATH/Log" 2>/dev/null
-log_message "Старые логи НЕ удалены (сохранены для диагностики)"
 
 # КРИТИЧНО: Повторная установка прав перед запуском (на случай если они не были установлены ранее)
 if [ "$IS_BINARY" = true ]; then
