@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V2.5.129 (2025.11.20)
+# Версия проекта: V2.6.130 (2025.11.20)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -327,7 +327,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Если все три переменные пусты - остановиться с ошибкой "Нет изменений для коммита"
 
 2. **Проверка реальных изменений (внутренняя):** 
-   - Для каждого файла из `CHANGED_FILES`:
+   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date" → сохранить в временный файл (НЕ выводить в stdout)
    - Проверить, что есть реальные изменения кода (не только версии/даты)
    - Если нет реальных изменений - остановиться с ошибкой "Нет реальных изменений кода, только версии/даты"
@@ -353,7 +353,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 5. **Сбор подробной информации об изменениях:** 
    - Сохранить данные во временный файл `.commit_analysis_data.txt` (НЕ выводить в stdout)
-   - Для каждого файла из `CHANGED_FILES`:
+   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - Выполнить `git diff --stat HEAD "$file"` → сохранить статистику в файл
      - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
    - Вывести ТОЛЬКО: "=== Сбор данных для анализа... ==="
@@ -420,14 +420,14 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh`
    - Проверить: `[ -f "commit_message.txt" ]` - если нет, остановиться с ошибкой
    - Определить `TODAY = $(date +%Y.%m.%d)`
-   - Для каждого файла из `CHANGED_FILES`, если файл имеет расширение `.py`, `.sh` или `.md`:
-     - Выполнить `sed -i '' "s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file"`
-     - Также обновить даты в кавычках: `sed -i '' "s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file"`
+   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки), если файл имеет расширение `.py`, `.sh` или `.md`:
+     - Выполнить `sed -i '' "1,20s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file"` (ограничение первыми 20 строками)
+     - Также обновить даты в кавычках: `sed -i '' "1,20s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file"` (ограничение первыми 20 строками)
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
 10. **Проверка обновления дат:** 
-   - Для каждого файла из `CHANGED_FILES`, если файл имеет расширение `.py`, `.sh` или `.md`:
-     - Выполнить `grep -qF "($TODAY)" "$file"`
+   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки), если файл имеет расширение `.py`, `.sh` или `.md`:
+     - Выполнить `head -20 "$file" | grep -qF "($TODAY)"` (проверка только первых 20 строк)
      - Если не найдено - зафиксировать ошибку
    - Если есть ошибки - остановиться с ошибкой "Дата релиза не была обновлена в N файл(ах)"
    - Если все даты обновлены - вывести "✓ Все даты релиза успешно обновлены"
@@ -437,9 +437,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `version.txt`
    - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения)
-   - Преобразовать `ALL_VERSIONS` в массив: `IFS=' ' read -ra VERSION_ARRAY <<< "$ALL_VERSIONS"`
    - Для каждого файла `*.py`, `*.sh`, `*.md`:
-     - Для каждой версии из массива `VERSION_ARRAY` (использовать `for version in "${VERSION_ARRAY[@]}"`, НЕ использовать `while read` в pipe):
+     - Для каждой версии из `ALL_VERSIONS` (использовать `echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version`, НЕ использовать массивы `read -a` - не работает в zsh):
        - Экранировать точку: `ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')`
        - Выполнить `sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
      - Дополнительно обновить все версии формата `V${MAJOR}.${MINOR}.[0-9]+` в первых 20 строках: `sed -i '' "1,20s/V${MAJOR}\\.${MINOR}\\.[0-9]\\+/$NEW_VERSION/g" "$file"` (с подавлением ошибок)
@@ -457,9 +456,9 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Если все версии обновлены - продолжить
 
 13. **Добавление файлов в индекс:** 
-   - Для каждого файла из `CHANGED_FILES`: выполнить `git add "$file"`
-   - Для каждого файла из `NEW_FILES`: выполнить `git add "$file"`
-   - Для каждого файла из `DELETED_FILES`: выполнить `git add "$file"`
+   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
+   - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
+   - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждого файла `*.py`, `*.sh`, `*.md` (если он был изменен версией/датой): выполнить `git add "$file"`
    - ЗАПРЕЩЕНО использовать `git add .`
    - Выполнить `git status --short` для проверки
@@ -619,7 +618,7 @@ fi
 # ВАЖНО: Это внутренняя проверка, пользователь НЕ видит вывод
 REAL_CHANGES_TEMP=$(mktemp)
 HAS_REAL_CHANGES=0
-echo "$CHANGED_FILES" | while read file; do
+echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
@@ -686,7 +685,7 @@ echo "=== Сбор данных для анализа... ==="
 TODAY=$(date +%Y.%m.%d)
 ANALYSIS_DATA_FILE=".commit_analysis_data.txt"
 rm -f "$ANALYSIS_DATA_FILE"
-echo "$CHANGED_FILES" | while read file; do
+echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     echo "=== Файл: $file ===" >> "$ANALYSIS_DATA_FILE"
     STAT_TEMP=$(mktemp)
@@ -853,12 +852,12 @@ echo "✓ Файл commit_message.txt готов к использованию"
 TODAY=$(date +%Y.%m.%d)
 echo "=== ШАГ 9: Обновление дат релиза ==="
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
-echo "$CHANGED_FILES" | while read file; do
+echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     if [[ "$file" =~ \.(py|sh|md)$ ]] && [ -f "$file" ]; then
         echo "Обновляем дату релиза в: $file"
-        sed -i '' "s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file"
-        sed -i '' "s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file"
+        sed -i '' "1,20s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file" 2>/dev/null || true
+        sed -i '' "1,20s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file" 2>/dev/null || true
     fi
 done
 # КРИТИЧНО: Проверка успешности шага 9
@@ -870,13 +869,13 @@ fi
 echo "=== ШАГ 10: Проверка обновления дат релиза ==="
 TODAY=$(date +%Y.%m.%d)
 ERROR_FILE=$(mktemp)
-echo "$CHANGED_FILES" | while read file; do
+echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     if [[ "$file" =~ \.(py|sh|md)$ ]]; then
         echo "Проверка $file:"
-        if grep -qF "($TODAY)" "$file"; then
+        if head -20 "$file" | grep -qF "($TODAY)"; then
             echo "✓ Дата обновлена в $file"
-            grep -F "($TODAY)" "$file" | head -3
+            head -20 "$file" | grep -F "($TODAY)" | head -3
         else
             echo "✗ ОШИБКА: Дата не обновлена в $file (ожидалось: $TODAY)"
             echo "ERROR" >> "$ERROR_FILE"
@@ -911,12 +910,11 @@ MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
     [ -z "$ALL_VERSIONS" ] && stop_on_error "Не удалось найти версии в файлах проекта" || true && \
     echo "Найдены версии: $ALL_VERSIONS" || true
 echo "Обновление версий: $ALL_VERSIONS -> $NEW_VERSION"
-# Преобразуем ALL_VERSIONS в массив для правильной итерации
-IFS=' ' read -ra VERSION_ARRAY <<< "$ALL_VERSIONS"
+# Итерируемся по версиям из ALL_VERSIONS (используем echo | tr | while read, НЕ массивы - не работают в zsh)
 for f in *.py *.sh *.md; do
   [ ! -f "$f" ] && continue
-  # Обновляем каждую версию из ALL_VERSIONS (используем массив)
-  for version in "${VERSION_ARRAY[@]}"; do
+  # Обновляем каждую версию из ALL_VERSIONS
+  echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version; do
     [ -z "$version" ] && continue
     ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')
     sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$f" 2>/dev/null || true
@@ -967,17 +965,17 @@ fi
 # ШАГ 13: Добавляем измененные файлы явно (НЕ используем git add .)
 echo "=== ШАГ 13: Добавление файлов в индекс ==="
 ADD_ERROR_FILE=$(mktemp)
-echo "$CHANGED_FILES" | while read file; do
+echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен: $file" || (echo "✗ ОШИБКА: Не удалось добавить $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-echo "$NEW_FILES" | while read file; do
+echo "$NEW_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     [ -f "$file" ] && \
         (git add "$file" 2>/dev/null && echo "✓ Добавлен новый: $file" || (echo "✗ ОШИБКА: Не удалось добавить новый файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || \
         (echo "✗ ОШИБКА: Новый файл $file не существует" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-echo "$DELETED_FILES" | while read file; do
+echo "$DELETED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен удаленный: $file" || (echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
