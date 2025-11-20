@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V2.5.128 (2025.11.17)
+# Версия проекта: V2.5.129 (2025.11.20)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -291,12 +291,12 @@ print("ВНИМАНИЕ: Не все процессы остановлены")
 
 ### Примеры:
 ```
-V2.3.76 (2025.10.25) - текущая версия проекта (76 коммитов)
-├── astra_automation.py: V2.3.76 (2025.10.25) ← изменен сегодня
-├── astra_install.sh: V2.3.76 (2025.10.25) ← изменен вчера
-├── astra_update.sh: V2.3.76 (2025.10.25) ← изменен позавчера
-├── ASSISTANT_RULES.md: V2.3.76 (2025.10.25) ← изменен сегодня
-└── README.md: V2.3.76 (2025.10.25) ← обновлен сегодня
+V2.3.76 (2025.11.20) - текущая версия проекта (76 коммитов)
+├── astra_automation.py: V2.3.76 (2025.11.20) ← изменен сегодня
+├── astra_install.sh: V2.3.76 (2025.11.20) ← изменен вчера
+├── astra_update.sh: V2.3.76 (2025.11.20) ← изменен позавчера
+├── ASSISTANT_RULES.md: V2.3.76 (2025.11.20) ← изменен сегодня
+└── README.md: V2.3.76 (2025.11.20) ← обновлен сегодня
 ```
 
 ## 📁 ПРАВИЛО ДЛЯ ИСТОРИИ КОММИТОВ:
@@ -369,6 +369,7 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
    - Пользователь НЕ видит процесс анализа
 
 7. **Сохранение описания:** 
+   - Определить текущую дату: `TODAY=$(date +%Y.%m.%d)`
    - Формат описания СТРОГО определен:
      ```
      [Заголовок коммита - опишите кратко основные изменения]
@@ -386,10 +387,13 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
      - Нет удаленных компонентов (или описание если есть)
      
      Проект: FSA-AstraInstall
-     Дата: YYYY.MM.DD
+     Дата: $TODAY
      ```
+   - **КРИТИЧНО: НЕ комментировать изменения дат и версий в файлах проекта** - эти изменения делаются автоматически алгоритмом (шаги 9 и 11) и не должны упоминаться в описании коммита
+   - В описании указывать ТОЛЬКО реальные изменения кода, логики, правил, структуры и т.д.
    - Сохранить описание в файл `commit_message.txt` ТОЛЬКО через `echo`/`sed` (ЗАПРЕЩЕНО использовать `write` tool)
-   - Пример команды: `echo "[Заголовок]" > commit_message.txt && echo "" >> commit_message.txt && ...`
+   - В строке "Дата:" использовать переменную `$TODAY`, а НЕ статическую дату
+   - Пример команды: `echo "[Заголовок]" > commit_message.txt && echo "" >> commit_message.txt && ... && echo "Дата: $TODAY" >> commit_message.txt`
    - ТОЛЬКО после сохранения файла продолжать выполнение шага 8
 
 8. **Проверка файла сообщения:** 
@@ -429,13 +433,16 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
    - Если все даты обновлены - вывести "✓ Все даты релиза успешно обновлены"
 
 11. **Обновление версий проекта:** 
-   - Загрузить `MAJOR` и `MINOR` из `version.txt` (если еще не загружены)
-   - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк)
+   - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh` (КРИТИЧНО: без переменных продолжать нельзя)
+   - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
+   - Загрузить `MAJOR` и `MINOR` из `version.txt`
+   - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения)
+   - Преобразовать `ALL_VERSIONS` в массив: `IFS=' ' read -ra VERSION_ARRAY <<< "$ALL_VERSIONS"`
    - Для каждого файла `*.py`, `*.sh`, `*.md`:
-     - Для каждой версии из `ALL_VERSIONS` (разделить по пробелам, перебрать):
-       - Экранировать точку: `ESCAPED_VERSION = $(echo "$version" | sed 's/\./\\./g')`
-       - Выполнить `sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$file"`
-     - Дополнительно обновить все версии формата `V${MAJOR}.${MINOR}.[0-9]+` в первых 20 строках: `sed -i '' "1,20s/V${MAJOR}\\.${MINOR}\\.[0-9]\\+/$NEW_VERSION/g" "$file"`
+     - Для каждой версии из массива `VERSION_ARRAY` (использовать `for version in "${VERSION_ARRAY[@]}"`, НЕ использовать `while read` в pipe):
+       - Экранировать точку: `ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')`
+       - Выполнить `sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
+     - Дополнительно обновить все версии формата `V${MAJOR}.${MINOR}.[0-9]+` в первых 20 строках: `sed -i '' "1,20s/V${MAJOR}\\.${MINOR}\\.[0-9]\\+/$NEW_VERSION/g" "$file"` (с подавлением ошибок)
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
 12. **Проверка обновления версий:** 
@@ -509,6 +516,15 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
 - Разбивайте сложные команды на несколько простых
 - Используйте простые `if/elif` вместо сложных `grep -Eq` с regex в pipe
 
+**🚨 КРИТИЧНО: ОБЪЕДИНЕНИЕ КОМАНД ТОЛЬКО ВНУТРИ ОДНОГО ШАГА:**
+- **ВАЖНО:** Команды разных шагов НЕ объединяются - каждый шаг выполняется отдельно для возможности проверки результата
+- **ОБЪЕДИНЯТЬ** можно только команды ВНУТРИ одного шага через `&&` или `;`
+- **ПРИМЕРЫ объединения внутри шага:**
+  - Несколько `echo` в одном шаге: `echo "Текст1" && echo "Текст2" && echo "Текст3"`
+  - Создание файла и запись в одном шаге: `echo "Содержимое" > file.txt && echo "Дополнительно" >> file.txt`
+- **ЗАПРЕЩЕНО** объединять команды разных шагов - между шагами должны быть четкие границы
+- **ПРИОРИТЕТ:** Возможность проверить результат каждого шага перед переходом к следующему
+
 **🚨 КРИТИЧНО: ЗАПРЕТ ДЛИННЫХ КОМАНД:**
 - **ЗАПРЕЩЕНО** выполнять команды длиннее 200 символов в одной строке
 - **ОБЯЗАТЕЛЬНО** разбивать длинные команды на несколько коротких команд
@@ -518,6 +534,11 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
 
 **🚨 КРИТИЧНО: ОБЯЗАТЕЛЬНОЕ ПОВТОРЕНИЕ ШАГОВ ДО УСПЕШНОГО ЗАВЕРШЕНИЯ:**
 - **КАЖДЫЙ ШАГ** алгоритма создания снимка ДОЛЖЕН быть выполнен успешно (exit code 0)
+- **ЗАПРЕЩЕНО ПРОПУСКАТЬ ШАГИ** - все шаги с 0 по 20 должны быть выполнены строго по порядку
+- **ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА УСПЕШНОСТИ:** После каждого шага ДОЛЖНА быть явная проверка успешности выполнения:
+  - Проверка exit code: `if [ $? -ne 0 ]; then stop_on_error "Ошибка в шаге X"; fi`
+  - Проверка наличия ожидаемого результата (файл, переменная, вывод)
+  - ТОЛЬКО после успешной проверки переход к следующему шагу
 - **ЕСЛИ** команда была прервана (Command was canceled) - **ЛОГИКА ПОВТОРЕНИЯ:**
   1. **ПЕРВАЯ попытка прерывания:** Ассистент МОЖЕТ автоматически повторить команду с упрощением (разбить на части, убрать сложные pipe-цепочки)
   2. **ВТОРАЯ и последующие попытки прерывания:** Ассистент ДОЛЖЕН остановиться, сообщить пользователю и спросить, как действовать дальше
@@ -527,7 +548,7 @@ V2.3.76 (2025.10.25) - текущая версия проекта (76 комми
 - **ЗАПРЕЩЕНО** продолжать выполнение следующих шагов, если предыдущий шаг не завершился успешно
 - **ЗАПРЕЩЕНО** пропускать шаги или переходить к следующему шагу после прерывания команды
 - **ПРИ ПОВТОРЕНИИ:** Ассистент ДОЛЖЕН выполнить ту же команду (или её упрощенную версию), а НЕ переходить к следующему шагу
-- **ПРОВЕРКА УСПЕХА:** После каждой команды проверять exit code и наличие ожидаемого вывода перед переходом к следующей команде
+- **ПРОВЕРКА УСПЕХА:** После каждого шага проверять exit code и наличие ожидаемого вывода перед переходом к следующему шагу
 
 **⚠️ КРИТИЧНО: ПРОВЕРКА ДИРЕКТОРИИ:**
 - **ВСЕГДА** проверять текущую директорию перед выполнением команд: `pwd`
@@ -552,6 +573,14 @@ if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
     }
 fi
 echo "✓ Рабочая директория: $(pwd)"
+if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
+    echo "❌ ОШИБКА: Проверка директории не прошла"
+    exit 1
+fi
+# КРИТИЧНО: Проверка успешности шага 0
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 0 не выполнен успешно"
+fi
 
 # КРИТИЧНО: Функция для остановки процесса при ошибках
 # ВАЖНО: При автоматическом выполнении ассистентом функция просто завершает выполнение
@@ -566,19 +595,21 @@ stop_on_error() {
 }
 
 # ШАГ 1: Определяем измененные файлы (включая новые и удаленные)
+echo "=== ШАГ 1: Измененные файлы ==="
 CHANGED_FILES=$(git diff --name-only HEAD)
-# Упрощение: разбиваем сложную pipe-цепочку на отдельные шаги через временные файлы
 GIT_STATUS_OUTPUT=$(git status --short)
 GIT_STATUS_FILTERED=$(mktemp)
 echo "$GIT_STATUS_OUTPUT" | grep "^??" > "$GIT_STATUS_FILTERED" 2>/dev/null || true
 NEW_FILES=$(awk '{print $2}' "$GIT_STATUS_FILTERED")
 rm -f "$GIT_STATUS_FILTERED"
 DELETED_FILES=$(git diff --name-only --diff-filter=D HEAD)
-echo "=== ШАГ 1: Измененные файлы ==="
 echo "Измененные файлы: $CHANGED_FILES"
 echo "Новые файлы: $NEW_FILES"
 echo "Удаленные файлы: $DELETED_FILES"
-
+# КРИТИЧНО: Проверка успешности шага 1
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 1 не выполнен успешно"
+fi
 # КРИТИЧНО: Проверка наличия изменений
 if [ -z "$CHANGED_FILES" ] && [ -z "$NEW_FILES" ] && [ -z "$DELETED_FILES" ]; then
     stop_on_error "Нет изменений для коммита. Проверьте статус репозитория."
@@ -590,7 +621,6 @@ REAL_CHANGES_TEMP=$(mktemp)
 HAS_REAL_CHANGES=0
 echo "$CHANGED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
-    # Упрощение: разбиваем сложную pipe-цепочку на отдельные шаги через временные файлы
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
     DIFF_TEMP3=$(mktemp)
@@ -598,73 +628,53 @@ echo "$CHANGED_FILES" | while read file; do
     grep -E "^\+|^\-" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
     grep -v -E "^\+\+\+|^\-\-\-" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
     grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "$DIFF_TEMP3" 2>/dev/null || true
-    if [ -s "$DIFF_TEMP3" ]; then
-        echo "1" >> "$REAL_CHANGES_TEMP"
-    fi
+    [ -s "$DIFF_TEMP3" ] && echo "1" >> "$REAL_CHANGES_TEMP" || true
     rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
 done
-# Проверяем наличие реальных изменений
-if [ -f "$REAL_CHANGES_TEMP" ] && [ -s "$REAL_CHANGES_TEMP" ]; then
-    HAS_REAL_CHANGES=1
-fi
+[ -f "$REAL_CHANGES_TEMP" ] && [ -s "$REAL_CHANGES_TEMP" ] && HAS_REAL_CHANGES=1 || true
 rm -f "$REAL_CHANGES_TEMP"
-if [ $HAS_REAL_CHANGES -eq 0 ]; then
-    stop_on_error "Нет реальных изменений кода, только версии/даты"
+[ $HAS_REAL_CHANGES -eq 0 ] && stop_on_error "Нет реальных изменений кода, только версии/даты" || true
+# КРИТИЧНО: Проверка успешности шага 2
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 2 не выполнен успешно"
 fi
 
 # ШАГ 3: Определяем текущую версию в файлах
 echo "=== ШАГ 3: Определение текущей версии ==="
-# КРИТИЧНО: Проверяем текущую директорию
-if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
-    cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || stop_on_error "Не удалось перейти в директорию проекта"
-fi
-
-# КРИТИЧНО: Искать ВСЕ возможные версии в файлах (V2.5.125, V3.0.100 и т.д.)
-# НЕ только одну версию, так как разные файлы могут иметь разные версии
-# Поиск работает для любых версий формата V{MAJOR}.{MINOR}.{PATCH}, независимо от значений
-# ВАЖНО: Версии ищем ТОЛЬКО в начале файла (первые 20 строк), чтобы не затронуть версии в комментариях/коде в середине файла
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
 VERSION_TEMP=$(mktemp)
 for f in *.py *.sh *.md; do
-  if [ -f "$f" ]; then
-    head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
-  fi
+  [ -f "$f" ] && head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
 done
-# Находим все уникальные версии
 ALL_VERSIONS=$(grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" "$VERSION_TEMP" | sort -u | tr '\n' ' ')
-# КРИТИЧНО: CURRENT_VERSION используется только для основной замены в шаге 11
-# В шаге 11 все версии будут обновлены до NEW_VERSION независимо от CURRENT_VERSION
-# Это работает даже если MAJOR или MINOR изменились в version.txt
-# Поэтому выбор первой версии не критичен - все версии будут обновлены
-CURRENT_VERSION=$(echo "$ALL_VERSIONS" | awk '{print $1}')  # Берем первую для основной замены
+CURRENT_VERSION=$(echo "$ALL_VERSIONS" | awk '{print $1}')
 rm -f "$VERSION_TEMP"
-
+echo "Найдены версии в файлах: $ALL_VERSIONS"
+echo "Основная версия для замены: $CURRENT_VERSION"
+# КРИТИЧНО: Проверка успешности шага 3
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 3 не выполнен успешно"
+fi
 # КРИТИЧНО: Проверка что версии найдены
 if [ -z "$CURRENT_VERSION" ]; then
     stop_on_error "Не удалось найти версию в файлах проекта"
 fi
 
-echo "Найдены версии в файлах: $ALL_VERSIONS"
-echo "Основная версия для замены: $CURRENT_VERSION"
-
 # ШАГ 4: Определяем новую версию проекта
 echo "=== ШАГ 4: Определение новой версии ==="
-# Читаем версию из version.txt
-if [ ! -f "version.txt" ]; then
-    stop_on_error "Файл version.txt не найден"
-fi
+[ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true
 MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
 MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-if [ -z "$MAJOR" ] || [ -z "$MINOR" ]; then
-    stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt"
-fi
+[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
 CURRENT_COMMIT=$(git rev-list --count HEAD)
-if [ -z "$CURRENT_COMMIT" ]; then
-    stop_on_error "Не удалось определить количество коммитов"
-fi
+[ -z "$CURRENT_COMMIT" ] && stop_on_error "Не удалось определить количество коммитов" || true
 NEW_PATCH=$((CURRENT_COMMIT + 1))
 NEW_VERSION="V${MAJOR}.${MINOR}.${NEW_PATCH}"
 echo "Новая версия: $NEW_VERSION (текущая: $CURRENT_VERSION)"
-
+# КРИТИЧНО: Проверка успешности шага 4
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 4 не выполнен успешно"
+fi
 # КРИТИЧНО: Проверка новой версии
 if [ -z "$NEW_VERSION" ] || [ "$NEW_VERSION" = "V.." ]; then
     stop_on_error "Не удалось сформировать новую версию: $NEW_VERSION"
@@ -674,48 +684,29 @@ fi
 echo "=== ШАГ 5: Сбор подробной информации об изменениях ==="
 echo "=== Сбор данных для анализа... ==="
 TODAY=$(date +%Y.%m.%d)
-
-# ВАЖНО: Сохраняем данные во временный файл, НЕ выводим в stdout
 ANALYSIS_DATA_FILE=".commit_analysis_data.txt"
 rm -f "$ANALYSIS_DATA_FILE"
-
-# Собираем полную информацию об изменениях для каждого файла и сохраняем в файл
 echo "$CHANGED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
-    
     echo "=== Файл: $file ===" >> "$ANALYSIS_DATA_FILE"
-    
-    # Получаем статистику изменений
     STAT_TEMP=$(mktemp)
     git diff --stat HEAD "$file" > "$STAT_TEMP" 2>/dev/null || true
     STAT_LINE=$(tail -1 "$STAT_TEMP" 2>/dev/null || echo "")
-    if [ ! -z "$STAT_LINE" ]; then
-        echo "Статистика: $STAT_LINE" >> "$ANALYSIS_DATA_FILE"
-    fi
+    [ ! -z "$STAT_LINE" ] && echo "Статистика: $STAT_LINE" >> "$ANALYSIS_DATA_FILE" || true
     rm -f "$STAT_TEMP"
-    
-    # Получаем полный diff (без версий/дат)
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
     DIFF_TEMP3=$(mktemp)
     git diff HEAD "$file" > "$DIFF_TEMP" 2>/dev/null
-    
     grep -E "^\+|^\-" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
     grep -v -E "^\+\+\+|^\-\-\-" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
     grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "$DIFF_TEMP3" 2>/dev/null || true
-    
-    # Сохраняем первые 100 строк изменений для анализа
-    if [ -s "$DIFF_TEMP3" ]; then
-        echo "Изменения:" >> "$ANALYSIS_DATA_FILE"
-        head -100 "$DIFF_TEMP3" >> "$ANALYSIS_DATA_FILE"
-    fi
-    
+    [ -s "$DIFF_TEMP3" ] && echo "Изменения:" >> "$ANALYSIS_DATA_FILE" && head -100 "$DIFF_TEMP3" >> "$ANALYSIS_DATA_FILE" || true
     rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
     echo "" >> "$ANALYSIS_DATA_FILE"
     echo "---" >> "$ANALYSIS_DATA_FILE"
     echo "" >> "$ANALYSIS_DATA_FILE"
 done
-
 echo "=== Ассистент анализирует изменения и формирует описание коммита... ==="
 echo ""
 echo "=========================================="
@@ -733,15 +724,21 @@ echo ""
 echo "❌ ЗАПРЕЩЕНО: Продолжать выполнение без создания файла commit_message.txt!"
 echo ""
 echo "=========================================="
+# КРИТИЧНО: Проверка успешности шага 5
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 5 не выполнен успешно"
+fi
 
 # ШАГ 6-7: Анализ изменений ассистентом и сохранение описания
 # КРИТИЧНО: После выполнения ШАГ 5 (когда команда завершилась и выведены маркеры паузы) ассистент должен:
 # 1. ОСТАНОВИТЬСЯ и прочитать информацию из файла .commit_analysis_data.txt
 # 2. Проанализировать все изменения в файлах
 # 3. Сформировать краткое понятное описание на русском языке в формате коммита
-# 4. Сохранить описание в файл commit_message.txt через sed/echo (НЕ использовать write tool)
-# 5. Удалить временный файл .commit_analysis_data.txt после чтения
-# 6. ТОЛЬКО после сохранения файла продолжать выполнение следующей команды (ШАГ 8)
+# 4. КРИТИЧНО: НЕ комментировать изменения дат и версий в файлах - эти изменения делаются автоматически алгоритмом
+# 5. В описании указывать ТОЛЬКО реальные изменения кода, логики, правил, структуры и т.д.
+# 6. Сохранить описание в файл commit_message.txt через sed/echo (НЕ использовать write tool)
+# 7. Удалить временный файл .commit_analysis_data.txt после чтения
+# 8. ТОЛЬКО после сохранения файла продолжать выполнение следующей команды (ШАГ 8)
 # Пользователь НЕ видит процесс анализа
 #
 # Формат описания должен быть:
@@ -760,7 +757,7 @@ echo "=========================================="
 # - Нет удаленных компонентов (или описание если есть)
 #
 # Проект: FSA-AstraInstall
-# Дата: YYYY.MM.DD
+# Дата: $TODAY (использовать переменную TODAY, определенную через $(date +%Y.%m.%d))
 #
 # ПРИМЕР команды для сохранения (ассистент должен выполнить после анализа):
 # TODAY=$(date +%Y.%m.%d)
@@ -778,10 +775,12 @@ echo "=========================================="
 
 # ШАГ 8: Проверяем файл сообщения коммита
 echo "=== ШАГ 8: Проверка файла сообщения коммита ==="
-if [ ! -f "commit_message.txt" ] || [ ! -s "commit_message.txt" ]; then
-    stop_on_error "Файл commit_message.txt не найден или пуст. Ассистент должен был сформировать описание в ШАГ 6-7."
-fi
+[ ! -f "commit_message.txt" ] || [ ! -s "commit_message.txt" ] && stop_on_error "Файл commit_message.txt не найден или пуст. Ассистент должен был сформировать описание в ШАГ 6-7." || true
 echo "✓ Файл commit_message.txt готов для коммита"
+# КРИТИЧНО: Проверка успешности шага 8
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 8 не выполнен успешно"
+fi
 
 # ШАГ 8.5: Ожидание разрешения на продолжение (возможность редактирования файла)
 echo "=== ШАГ 8.5: Ожидание разрешения на продолжение ==="
@@ -793,25 +792,23 @@ echo "----------------------------------------"
 cat commit_message.txt
 echo "----------------------------------------"
 echo ""
-
-# КРИТИЧНО: Сохраняем все переменные в файл перед паузой
-# Это необходимо, так как после паузы ассистент продолжит выполнение в новой команде
-# и переменные будут потеряны
 echo "=== Сохранение переменных для продолжения ==="
 VARS_FILE=".commit_vars.sh"
-{
-    echo "# Переменные для продолжения создания коммита"
-    echo "# Этот файл будет удален после завершения процесса"
-    echo "CHANGED_FILES=\"$CHANGED_FILES\""
-    echo "NEW_FILES=\"$NEW_FILES\""
-    echo "DELETED_FILES=\"$DELETED_FILES\""
-    echo "CURRENT_VERSION=\"$CURRENT_VERSION\""
-    echo "NEW_VERSION=\"$NEW_VERSION\""
-    echo "ALL_VERSIONS=\"$ALL_VERSIONS\""
-} > "$VARS_FILE"
+# КРИТИЧНО: Создаем файл через echo/sed (ЗАПРЕЩЕНО использовать write tool)
+echo "# Переменные для продолжения создания коммита" > "$VARS_FILE"
+echo "# Этот файл будет удален после завершения процесса" >> "$VARS_FILE"
+echo 'CHANGED_FILES="'$CHANGED_FILES'"' >> "$VARS_FILE"
+echo 'NEW_FILES="'$NEW_FILES'"' >> "$VARS_FILE"
+echo 'DELETED_FILES="'$DELETED_FILES'"' >> "$VARS_FILE"
+echo 'CURRENT_VERSION="'$CURRENT_VERSION'"' >> "$VARS_FILE"
+echo 'NEW_VERSION="'$NEW_VERSION'"' >> "$VARS_FILE"
+echo 'ALL_VERSIONS="'$ALL_VERSIONS'"' >> "$VARS_FILE"
+# КРИТИЧНО: ОБЯЗАТЕЛЬНАЯ проверка создания файла
+if [ ! -f "$VARS_FILE" ] || [ ! -s "$VARS_FILE" ]; then
+    stop_on_error "Файл $VARS_FILE не был создан или пуст. Невозможно продолжить без переменных."
+fi
 echo "✓ Переменные сохранены в $VARS_FILE"
 echo ""
-
 echo "=========================================="
 echo "🚨 КРИТИЧНО: ОБЯЗАТЕЛЬНАЯ ПАУЗА ДЛЯ АССИСТЕНТА 🚨"
 echo "=========================================="
@@ -838,58 +835,45 @@ echo ""
 echo "=========================================="
 echo "⏸ ПАУЗА: Ожидание разрешения пользователя"
 echo "=========================================="
+# КРИТИЧНО: Проверка успешности шага 8.5
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 8.5 не выполнен успешно"
+fi
 
 # ШАГ 9: Обновляем дату релиза ТОЛЬКО в измененных файлах
-# КРИТИЧНО: Перед продолжением проверяем, что файл commit_message.txt все еще существует и не пуст
-# (на случай если пользователь попросил его отредактировать)
 echo "=== ШАГ 9: Загрузка переменных и проверка файла ==="
-
-# КРИТИЧНО: Загружаем переменные из файла (они были сохранены перед паузой)
-if [ ! -f ".commit_vars.sh" ]; then
-    stop_on_error "Файл .commit_vars.sh не найден. Переменные не были сохранены перед паузой."
-fi
+[ ! -f ".commit_vars.sh" ] && stop_on_error "Файл .commit_vars.sh не найден. Переменные не были сохранены перед паузой." || true
 source .commit_vars.sh || stop_on_error "Не удалось загрузить переменные из .commit_vars.sh"
 echo "✓ Переменные загружены:"
 echo "  CHANGED_FILES: $CHANGED_FILES"
 echo "  CURRENT_VERSION: $CURRENT_VERSION"
 echo "  NEW_VERSION: $NEW_VERSION"
-
-if [ ! -f "commit_message.txt" ] || [ ! -s "commit_message.txt" ]; then
-    stop_on_error "Файл commit_message.txt не найден или пуст. Пожалуйста, убедитесь что файл содержит сообщение коммита."
-fi
+[ ! -f "commit_message.txt" ] || [ ! -s "commit_message.txt" ] && stop_on_error "Файл commit_message.txt не найден или пуст. Пожалуйста, убедитесь что файл содержит сообщение коммита." || true
 echo "✓ Файл commit_message.txt готов к использованию"
-
 TODAY=$(date +%Y.%m.%d)
 echo "=== ШАГ 9: Обновление дат релиза ==="
-# КРИТИЧНО: Проверяем текущую директорию
-if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
-    cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || stop_on_error "Не удалось перейти в директорию проекта"
-fi
-
-# КРИТИЧНО: Обновляем даты релиза в измененных файлах
-# Ищем все возможные форматы дат: (2025.11.16), (2025.11.17) и т.д.
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
 echo "$CHANGED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
     if [[ "$file" =~ \.(py|sh|md)$ ]] && [ -f "$file" ]; then
         echo "Обновляем дату релиза в: $file"
-        # Обновляем дату в скобках (формат: (YYYY.MM.DD))
         sed -i '' "s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file"
-        # Также обновляем в кавычках (для APP_VERSION и подобных)
         sed -i '' "s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file"
     fi
 done
+# КРИТИЧНО: Проверка успешности шага 9
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 9 не выполнен успешно"
+fi
 
 # ШАГ 10: Проверяем обновление дат релиза
 echo "=== ШАГ 10: Проверка обновления дат релиза ==="
-TODAY=$(date +%Y.%m.%d)  # КРИТИЧНО: Определяем TODAY здесь, чтобы она была доступна в while read
-# КРИТИЧНО: Используем while read для обработки многострочных значений (не for, так как разделяет по пробелам)
-# КРИТИЧНО: Используем временный файл для подсчета ошибок, так как переменные в while read не видны снаружи
+TODAY=$(date +%Y.%m.%d)
 ERROR_FILE=$(mktemp)
 echo "$CHANGED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
     if [[ "$file" =~ \.(py|sh|md)$ ]]; then
         echo "Проверка $file:"
-        # Упрощение: используем -F для фиксированной строки вместо regex (безопаснее)
         if grep -qF "($TODAY)" "$file"; then
             echo "✓ Дата обновлена в $file"
             grep -F "($TODAY)" "$file" | head -3
@@ -899,262 +883,173 @@ echo "$CHANGED_FILES" | while read file; do
         fi
     fi
 done
-# КРИТИЧНО: Проверяем наличие ошибок в временном файле
-if [ -f "$ERROR_FILE" ] && [ -s "$ERROR_FILE" ]; then
-    ERROR_COUNT=$(wc -l < "$ERROR_FILE")
-    rm "$ERROR_FILE"
-    stop_on_error "Обнаружено $ERROR_COUNT файл(ов), в которых дата релиза не была обновлена! Ожидалось: $TODAY"
-else
-    rm -f "$ERROR_FILE"
-    echo "✓ Все даты релиза успешно обновлены"
+[ -f "$ERROR_FILE" ] && [ -s "$ERROR_FILE" ] && ERROR_COUNT=$(wc -l < "$ERROR_FILE") && rm "$ERROR_FILE" && stop_on_error "Обнаружено $ERROR_COUNT файл(ов), в которых дата релиза не была обновлена! Ожидалось: $TODAY" || rm -f "$ERROR_FILE"
+echo "✓ Все даты релиза успешно обновлены"
+# КРИТИЧНО: Проверка успешности шага 10
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 10 не выполнен успешно"
 fi
 
 # ШАГ 11: Обновляем версию проекта во ВСЕХ файлах
 echo "=== ШАГ 11: Обновление версий проекта ==="
-# КРИТИЧНО: Проверяем текущую директорию
-if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
-    cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || stop_on_error "Не удалось перейти в директорию проекта"
-fi
-
-# КРИТИЧНО: Загружаем MAJOR и MINOR из version.txt для формирования динамического паттерна
-if [ ! -f "version.txt" ]; then
-    stop_on_error "Файл version.txt не найден"
-fi
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
+# КРИТИЧНО: Загружаем переменные из .commit_vars.sh
+[ -f ".commit_vars.sh" ] && source .commit_vars.sh || stop_on_error "Файл .commit_vars.sh не найден. Невозможно продолжить без переменных."
+[ -z "$NEW_VERSION" ] && stop_on_error "Переменная NEW_VERSION не загружена" || true
+[ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true
 MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
 MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-if [ -z "$MAJOR" ] || [ -z "$MINOR" ]; then
-    stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt"
-fi
-
-# КРИТИЧНО: Проверяем, что ALL_VERSIONS загружена (из .commit_vars.sh или из шага 3)
-# Если пуста, пересобираем список версий
-# ВАЖНО: Версии ищем ТОЛЬКО в начале файла (первые 20 строк)
-if [ -z "$ALL_VERSIONS" ]; then
-    echo "⚠️ ALL_VERSIONS не загружена, пересобираем список версий..."
-    VERSION_TEMP=$(mktemp)
+[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
+[ -z "$ALL_VERSIONS" ] && \
+    echo "⚠️ ALL_VERSIONS не загружена, пересобираем список версий..." && \
+    VERSION_TEMP=$(mktemp) && \
+    for f in *.py *.sh *.md; do
+      [ -f "$f" ] && head -20 "$f" | grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
+    done && \
+    ALL_VERSIONS=$(sort -u "$VERSION_TEMP" | tr '\n' ' ' | sed 's/ $//') && \
+    rm -f "$VERSION_TEMP" && \
+    [ -z "$ALL_VERSIONS" ] && stop_on_error "Не удалось найти версии в файлах проекта" || true && \
+    echo "Найдены версии: $ALL_VERSIONS" || true
+echo "Обновление версий: $ALL_VERSIONS -> $NEW_VERSION"
+# Преобразуем ALL_VERSIONS в массив для правильной итерации
+IFS=' ' read -ra VERSION_ARRAY <<< "$ALL_VERSIONS"
 for f in *.py *.sh *.md; do
-  if [ -f "$f" ]; then
-        head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
-      fi
-    done
-    ALL_VERSIONS=$(grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" "$VERSION_TEMP" | sort -u | tr '\n' ' ')
-    rm -f "$VERSION_TEMP"
-    if [ -z "$ALL_VERSIONS" ]; then
-        stop_on_error "Не удалось найти версии в файлах проекта"
-    fi
-    echo "Найдены версии: $ALL_VERSIONS"
-fi
-
-# КРИТИЧНО: Обновляем ВСЕ найденные версии до новой версии
-# Обновляем каждую версию из ALL_VERSIONS индивидуально, чтобы гарантировать обновление всех версий
-# независимо от их MAJOR.MINOR (включая случайные версии типа V4.8.XXX)
-# ВАЖНО: Заменяем версии ТОЛЬКО в начале файла (первые 20 строк), чтобы не затронуть версии в комментариях/коде в середине файла
-# Также обновляем все версии по паттернам для надежности
-for f in *.py *.sh *.md; do
-  if [ -f "$f" ]; then
-    # Сначала обновляем каждую найденную версию из ALL_VERSIONS индивидуально
-    # Это гарантирует обновление ВСЕХ версий, включая случайные (V4.8.XXX и т.д.)
-    # Ограничиваем замену первыми 20 строками файла
-    echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version; do
-      [ ! -z "$version" ] || continue
-      # Экранируем точку для sed
-      ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')
-      # Заменяем только в первых 20 строках: 1,20s/.../.../g
-      sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$f"
-    done
-    # Дополнительно обновляем все версии формата V{NEW_MAJOR}.{NEW_MINOR}.XXX (на случай, если какая-то версия не попала в ALL_VERSIONS)
-    # Также ограничиваем первыми 20 строками
-    NEW_PATTERN="V${MAJOR}\\.${MINOR}\\.[0-9]\\+"
-    sed -i '' "1,20s/$NEW_PATTERN/$NEW_VERSION/g" "$f"
-  fi
+  [ ! -f "$f" ] && continue
+  # Обновляем каждую версию из ALL_VERSIONS (используем массив)
+  for version in "${VERSION_ARRAY[@]}"; do
+    [ -z "$version" ] && continue
+    ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')
+    sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$f" 2>/dev/null || true
+  done
+  # Дополнительно обновляем все версии формата V{MAJOR}.{MINOR}.XXX
+  NEW_PATTERN="V${MAJOR}\\.${MINOR}\\.[0-9]\\+"
+  sed -i '' "1,20s/$NEW_PATTERN/$NEW_VERSION/g" "$f" 2>/dev/null || true
 done
+echo "✓ Версии обновлены во всех файлах"
+# КРИТИЧНО: Проверка успешности шага 11
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 11 не выполнен успешно"
+fi
 
 # ШАГ 12: Проверяем обновление версий
 echo "=== ШАГ 12: Проверка обновления версий ==="
-# КРИТИЧНО: Проверяем текущую директорию
-if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
-    cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || stop_on_error "Не удалось перейти в директорию проекта"
-fi
-
-# КРИТИЧНО: Загружаем MAJOR и MINOR из version.txt для проверки (если еще не загружены)
-if [ -z "$MAJOR" ] || [ -z "$MINOR" ]; then
-    if [ ! -f "version.txt" ]; then
-        stop_on_error "Файл version.txt не найден"
-    fi
-    MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
-    MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-    if [ -z "$MAJOR" ] || [ -z "$MINOR" ]; then
-        stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt"
-    fi
-fi
-
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
+[ -z "$MAJOR" ] || [ -z "$MINOR" ] && \
+    [ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true && \
+    MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2) && \
+    MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2) && \
+    [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true || true
 VERSION_ERRORS=0
 VERSION_ERROR_FILES=""
 for f in *.py *.sh *.md; do
-  if [ -f "$f" ]; then
-    # Проверяем наличие новой версии ТОЛЬКО в начале файла (первые 20 строк)
+  [ -f "$f" ] && \
     if head -20 "$f" | grep -q "$NEW_VERSION"; then
         echo "✓ Версия обновлена в $f"
     else
-        # Проверяем, есть ли вообще версия в файле (может быть файл без версии)
-        # Используем динамический паттерн на основе MAJOR и MINOR
-        # Ищем ТОЛЬКО в начале файла (первые 20 строк)
         VERSION_PATTERN="V${MAJOR}\\.${MINOR}"
         if head -20 "$f" | grep -q "$VERSION_PATTERN"; then
             OLD_VER=$(head -20 "$f" | grep -o "V${MAJOR}\\.${MINOR}\\.[0-9]\+" | head -1)
             echo "✗ ОШИБКА: Версия НЕ обновлена в $f (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
-        VERSION_ERRORS=$((VERSION_ERRORS + 1))
-        VERSION_ERROR_FILES="$VERSION_ERROR_FILES $f"
+            VERSION_ERRORS=$((VERSION_ERRORS + 1))
+            VERSION_ERROR_FILES="$VERSION_ERROR_FILES $f"
         else
             echo "ℹ Файл $f не содержит версию в начале файла (пропускаем)"
-        fi
-    fi
-  fi
+        fi || true
+    fi || true
 done
-
-# КРИТИЧНО: Проверка обновления версий
-if [ $VERSION_ERRORS -gt 0 ]; then
-    stop_on_error "Версия не обновлена в $VERSION_ERRORS файл(ах):$VERSION_ERROR_FILES"
-fi
+[ $VERSION_ERRORS -gt 0 ] && stop_on_error "Версия не обновлена в $VERSION_ERRORS файл(ах):$VERSION_ERROR_FILES" || true
 echo "✓ Все версии успешно обновлены"
+# КРИТИЧНО: Проверка успешности шага 12
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 12 не выполнен успешно"
+fi
 
 # ШАГ 13: Добавляем измененные файлы явно (НЕ используем git add .)
 echo "=== ШАГ 13: Добавление файлов в индекс ==="
-# КРИТИЧНО: Используем while read для обработки многострочных значений (не for, так как разделяет по пробелам)
-# Это критически важно! Переменные CHANGED_FILES, NEW_FILES, DELETED_FILES могут содержать несколько файлов через перенос строки
-
-# КРИТИЧНО: Используем временный файл для отслеживания ошибок при добавлении файлов
 ADD_ERROR_FILE=$(mktemp)
-ADD_ERROR_COUNT=0
-
-# Добавляем изначально измененные файлы
 echo "$CHANGED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
-    if git add "$file" 2>/dev/null; then
-        echo "✓ Добавлен: $file"
-    else
-        echo "✗ ОШИБКА: Не удалось добавить $file в индекс"
-        echo "ERROR" >> "$ADD_ERROR_FILE"
-    fi
+    git add "$file" 2>/dev/null && echo "✓ Добавлен: $file" || (echo "✗ ОШИБКА: Не удалось добавить $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-
-# Добавляем новые файлы
 echo "$NEW_FILES" | while read file; do
     [ ! -z "$file" ] || continue
-    if [ -f "$file" ]; then
-        if git add "$file" 2>/dev/null; then
-            echo "✓ Добавлен новый: $file"
-        else
-            echo "✗ ОШИБКА: Не удалось добавить новый файл $file в индекс"
-            echo "ERROR" >> "$ADD_ERROR_FILE"
-        fi
-    else
-        echo "✗ ОШИБКА: Новый файл $file не существует"
-        echo "ERROR" >> "$ADD_ERROR_FILE"
-    fi
+    [ -f "$file" ] && \
+        (git add "$file" 2>/dev/null && echo "✓ Добавлен новый: $file" || (echo "✗ ОШИБКА: Не удалось добавить новый файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || \
+        (echo "✗ ОШИБКА: Новый файл $file не существует" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-
-# Добавляем удаленные файлы
 echo "$DELETED_FILES" | while read file; do
     [ ! -z "$file" ] || continue
-    if git add "$file" 2>/dev/null; then
-        echo "✓ Добавлен удаленный: $file"
-    else
-        echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс"
-        echo "ERROR" >> "$ADD_ERROR_FILE"
-    fi
+    git add "$file" 2>/dev/null && echo "✓ Добавлен удаленный: $file" || (echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-
-# Добавляем файлы с обновленными версиями/датами (все измененные .py .sh .md файлы)
-# Получаем список всех измененных файлов проекта (относительно HEAD)
 for f in *.py *.sh *.md; do
-    if [ -f "$f" ]; then
-        # Проверяем есть ли изменения в файле относительно HEAD
-        if ! git diff --quiet HEAD -- "$f" 2>/dev/null; then
-            # Файл изменен, добавляем его (git add безопасно добавляет только если есть изменения)
-            if git add "$f" 2>/dev/null; then
-                echo "✓ Добавлен измененный: $f"
-            else
-                echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс"
-                echo "ERROR" >> "$ADD_ERROR_FILE"
-            fi
-        fi
-    fi
+    [ -f "$f" ] && \
+    ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
+        (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
 done
-
-# КРИТИЧНО: Проверка ошибок при добавлении файлов
-if [ -f "$ADD_ERROR_FILE" ] && [ -s "$ADD_ERROR_FILE" ]; then
-    ADD_ERROR_COUNT=$(wc -l < "$ADD_ERROR_FILE")
-    rm "$ADD_ERROR_FILE"
-    stop_on_error "Не удалось добавить $ADD_ERROR_COUNT файл(ов) в индекс. Проверьте права доступа и состояние файлов."
-else
-    rm -f "$ADD_ERROR_FILE"
-fi
-
-# Показываем итоговый статус
+[ -f "$ADD_ERROR_FILE" ] && [ -s "$ADD_ERROR_FILE" ] && ADD_ERROR_COUNT=$(wc -l < "$ADD_ERROR_FILE") && rm "$ADD_ERROR_FILE" && stop_on_error "Не удалось добавить $ADD_ERROR_COUNT файл(ов) в индекс. Проверьте права доступа и состояние файлов." || rm -f "$ADD_ERROR_FILE"
 echo "=== Итоговый статус индекса ==="
 git status --short
-
-# КРИТИЧНО: Проверка наличия файлов в индексе
 STAGED_FILES=$(git diff --cached --name-only)
-if [ -z "$STAGED_FILES" ]; then
-    stop_on_error "Нет файлов в индексе для коммита. Файлы не были добавлены в индекс."
+[ -z "$STAGED_FILES" ] && stop_on_error "Нет файлов в индексе для коммита. Файлы не были добавлены в индекс." || true
+# КРИТИЧНО: Проверка успешности шага 13
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 13 не выполнен успешно"
 fi
 
 # ШАГ 14: Создаем коммит
 echo "=== ШАГ 14: Создание коммита ==="
-if ! git commit -F commit_message.txt; then
-    stop_on_error "Не удалось создать коммит. Проверьте сообщение коммита и состояние репозитория."
+git commit -F commit_message.txt || stop_on_error "Не удалось создать коммит. Проверьте сообщение коммита и состояние репозитория."
+# КРИТИЧНО: Проверка успешности шага 14
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 14 не выполнен успешно"
 fi
 
 # ШАГ 15: Верификация коммита
 echo "=== ШАГ 15: Верификация коммита ==="
-if ! git log -1 --stat > /dev/null 2>&1; then
-    stop_on_error "Не удалось получить информацию о последнем коммите. Коммит не был создан."
-fi
+git log -1 --stat > /dev/null 2>&1 || stop_on_error "Не удалось получить информацию о последнем коммите. Коммит не был создан."
 git log -1 --stat
-
-# КРИТИЧНО: Проверка создания коммита
 COMMIT_HASH=$(git log -1 --format="%H")
-if [ -z "$COMMIT_HASH" ]; then
-    stop_on_error "Коммит не найден. Коммит не был создан."
-fi
+[ -z "$COMMIT_HASH" ] && stop_on_error "Коммит не найден. Коммит не был создан." || true
 echo "✓ Коммит успешно создан: $COMMIT_HASH"
+# КРИТИЧНО: Проверка успешности шага 15
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 15 не выполнен успешно"
+fi
 
 # ШАГ 16: Удаляем временные файлы
 echo "=== ШАГ 16: Удаление временных файлов ==="
-rm -f commit_message.txt
-rm -f .commit_vars.sh
-rm -f .commit_analysis_data.txt
+rm -f commit_message.txt .commit_vars.sh .commit_analysis_data.txt
 echo "✓ Временные файлы удалены"
+# КРИТИЧНО: Проверка успешности шага 16
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 16 не выполнен успешно"
+fi
 
 # ШАГ 17: Проверяем, нужна ли локальная история (изменён ли один из ключевых файлов)
-# КРИТИЧНО: Используем простую проверку без сложного regex для избежания зависаний
 echo "=== ШАГ 17: Проверка необходимости истории ==="
-# КРИТИЧНО: CHANGED_FILES должна быть загружена в шаге 9
-# Если переменная пуста, значит она не была загружена - это ошибка
-if [ -z "$CHANGED_FILES" ]; then
-    stop_on_error "Переменная CHANGED_FILES не загружена. Проверьте выполнение шага 9 (загрузка переменных из .commit_vars.sh)."
-fi
+[ -z "$CHANGED_FILES" ] && stop_on_error "Переменная CHANGED_FILES не загружена. Проверьте выполнение шага 9 (загрузка переменных из .commit_vars.sh)." || true
 NEED_HISTORY=no
-# Упрощение: объединяем три проверки в одну
-if echo "$CHANGED_FILES" | grep -qE "(astra_automation\.py|astra_install\.sh|astra_update\.sh)"; then
-    NEED_HISTORY=yes
-fi
+echo "$CHANGED_FILES" | grep -qE "(astra_automation\.py|astra_install\.sh|astra_update\.sh)" && NEED_HISTORY=yes || true
 echo "NEED_HISTORY=$NEED_HISTORY"
+# КРИТИЧНО: Проверка успешности шага 17
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 17 не выполнен успешно"
+fi
 
 # ШАГ 18: Создаем локальную историю (только если NEED_HISTORY=yes)
-if [ "$NEED_HISTORY" = "yes" ]; then
-  echo "=== ШАГ 18: Создание локальной истории ==="
-  COMMIT_DATE=$(date +%Y_%m_%d_%H_%M)
-  mkdir -p "History/$COMMIT_DATE"
-  cp astra_automation.py "History/$COMMIT_DATE/" 2>/dev/null || true
-  cp astra_install.sh "History/$COMMIT_DATE/" 2>/dev/null || true
-  cp astra_update.sh "History/$COMMIT_DATE/" 2>/dev/null || true
-  echo "=== ШАГ 19: Валидация истории ==="
-  ls -la "History/$COMMIT_DATE/"
-else
+[ "$NEED_HISTORY" = "yes" ] && \
+  echo "=== ШАГ 18: Создание локальной истории ===" && \
+  COMMIT_DATE=$(date +%Y_%m_%d_%H_%M) && \
+  mkdir -p "History/$COMMIT_DATE" && \
+  cp astra_automation.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp astra_install.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp astra_update.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  echo "=== ШАГ 19: Валидация истории ===" && \
+  ls -la "History/$COMMIT_DATE/" || \
   echo "История не требуется (ключевые файлы не изменялись)"
+# КРИТИЧНО: Проверка успешности шага 18
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 18 не выполнен успешно"
 fi
 
 # ШАГ 20: Подтверждение завершения и отчёт
@@ -1175,10 +1070,13 @@ echo ""
 echo "Статистика изменений:"
 git diff --stat HEAD~1 HEAD
 echo ""
-if [ "$NEED_HISTORY" = "yes" ]; then
-    echo "Локальная история создана:"
-    echo "History/$COMMIT_DATE/"
-    echo ""
-fi
+[ "$NEED_HISTORY" = "yes" ] && \
+    echo "Локальная история создана:" && \
+    echo "History/$COMMIT_DATE/" && \
+    echo "" || true
 echo "=== Процесс завершён успешно ==="
+# КРИТИЧНО: Проверка успешности шага 20
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 20 не выполнен успешно"
+fi
 ```
