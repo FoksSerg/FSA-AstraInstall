@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.130 (2025.11.17)
+Версия: V2.6.131 (2025.11.22)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.130 (2025.11.17)"
+APP_VERSION = "V2.6.131 (2025.11.22)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -60,15 +60,26 @@ import urllib.request
 import urllib.parse
 import pickle
 import json
+import bisect
+import gzip
+import fnmatch
+import datetime
 
 # GUI components (tkinter) - опционально для консольного режима
 try:
     import tkinter
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
     import tkinter.messagebox
-    import tkinter.filedialog
+    import tkinter.filedialog as filedialog
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
+    tk = None
+    ttk = None
+    messagebox = None
+    scrolledtext = None
+    filedialog = None
 
 # ============================================================================
 # УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
@@ -109,6 +120,15 @@ COMPONENTS_CONFIG = {
     },
     
     # CONT-Designer компоненты
+    'cont_package': {
+        'name': 'Пакет CONT-Designer',
+        'category': 'package',
+        'package_type': 'cont',
+        'dependencies': [],
+        'gui_selectable': False,
+        'description': 'Пакет установки CONT-Designer',
+        'sort_order': 2.5
+    },
     'wine_system': {
         'name': 'Wine (системный с пакетами)',
         'command_name': 'wine winetricks winbind zenity',
@@ -196,6 +216,119 @@ COMPONENTS_CONFIG = {
         'sort_order': 7
     },
     
+    # Пакет Astra IDE (из архива)
+    'astra_package': {
+        'name': 'Пакет Astra IDE',
+        'category': 'package',
+        'package_type': 'astra_ide',
+        'dependencies': [],
+        'gui_selectable': False,
+        'description': 'Пакет установки Astra IDE',
+        'sort_order': 8
+    },
+    'astra_wine_9': {
+        'name': 'Wine 9.0',
+        'path': '/opt/wine-9.0/bin/wine',
+        'category': 'wine_packages',
+        'dependencies': [],
+        'check_paths': ['/opt/wine-9.0/bin/wine'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Wine версии 9.0 для совместимости',
+        'sort_order': 9,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine_9.0-1_amd64.deb',
+        'source_priority': 'archive',
+        'source_fallback': True
+    },
+    'astra_wine_astraregul': {
+        'name': 'Wine Astraregul',
+        'path': '/opt/wine-astraregul/bin/wine',
+        'category': 'wine_packages',
+        'dependencies': ['astra_wine_9'],
+        'check_paths': ['/opt/wine-astraregul/bin/wine'],
+        'install_method': 'package_manager',
+        'uninstall_method': 'package_manager',
+        'gui_selectable': True,
+        'description': 'Основной Wine пакет Astraregul',
+        'sort_order': 10,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine-astraregul_10.0-rc6-3_amd64.deb',
+        'source_priority': 'archive',
+        'source_fallback': True
+    },
+    'astra_wineprefix': {
+        'name': 'WINEPREFIX',
+        'path': '~/.wine-astraregul',
+        'category': 'wine_environment',
+        'dependencies': ['astra_wine_astraregul'],
+        'check_method': 'wineprefix',
+        'check_paths': ['~/.wine-astraregul'],
+        'install_method': 'wine_init',
+        'uninstall_method': 'wine_cleanup',
+        'gui_selectable': True,
+        'description': 'Wine префикс для Astra.IDE',
+        'sort_order': 11,
+        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+        'winetricks_archive_name': 'winetricks_packages.tar.gz'
+    },
+    'astra_ide': {
+        'name': 'Astra.IDE',
+        'path': 'drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe',
+        'category': 'wine_application',
+        'dependencies': ['astra_wineprefix'],
+        'check_paths': ['drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe'],
+        'install_method': 'wine_application',
+        'uninstall_method': 'wine_application',
+        'uninstall_paths': [
+            'drive_c/Program Files/AstraRegul',
+            'drive_c/Program Files (x86)/AstraRegul',
+            '~/.local/share/applications/wine/Programs/AstraRegul'
+        ],
+        'wineprefix_path': '~/.wine-astraregul',
+        'source_dir': 'AstraPack',
+        'archive_name': None,  # Имя архива (если None, используется {source_dir}.tar.gz)
+        'copy_method': 'replace',
+        'source_priority': 'archive',
+        'source_fallback': True,
+        'gui_selectable': True,
+        'description': 'Astra.IDE приложение (из архива)',
+        'sort_order': 12
+    },
+    'astra_start_script': {
+        'name': 'Скрипт запуска',
+        'path': '~/start-astraide.sh',
+        'category': 'application',
+        'dependencies': ['astra_ide'],
+        'check_paths': ['~/start-astraide.sh'],
+        'install_method': 'script_creation',
+        'uninstall_method': 'script_removal',
+        'gui_selectable': True,
+        'description': 'Скрипт для запуска Astra.IDE',
+        'sort_order': 13
+    },
+    'astra_desktop_shortcut': {
+        'name': 'Ярлык рабочего стола',
+        'shortcut_name': 'Astra.IDE',
+        'path': 'AstraRegul.desktop',
+        'category': 'desktop_shortcut',
+        'dependencies': ['astra_ide'],
+        'check_paths': ['AstraRegul.desktop'],
+        'install_method': 'desktop_shortcut',
+        'uninstall_method': 'desktop_shortcut',
+        'desktop_entry_type': 'Application',
+        'script_path': '~/start-astraide.sh',
+        'script_args': '',
+        'working_dir': None,
+        'terminal': True,
+        'icon': '',
+        'comment': 'Ярлык Astra.IDE на рабочем столе',
+        'gui_selectable': True,
+        'description': 'Ярлык Astra.IDE на рабочем столе',
+        'sort_order': 14
+    },
+    
     # Wine пакеты системы
     'wine_9': {
         'name': 'Wine 9.0',
@@ -207,7 +340,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'package_manager',
         'gui_selectable': True,
         'description': 'Wine версии 9.0 для совместимости',
-        'sort_order': 8,
+        'sort_order': 15,
         'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
         'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine_9.0-1_amd64.deb',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
@@ -223,7 +356,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'package_manager',
         'gui_selectable': True,
         'description': 'Основной Wine пакет Astraregul',
-        'sort_order': 9,
+        'sort_order': 16,
         'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
         'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine-astraregul_10.0-rc6-3_amd64.deb',
         'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
@@ -241,7 +374,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks_tool',
         'gui_selectable': True,
         'description': 'Инструмент Winetricks для установки Wine компонентов',
-        'sort_order': 10.5,
+        'sort_order': 18,
         'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     
@@ -257,7 +390,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'wine_cleanup',
         'gui_selectable': True,
         'description': 'Wine префикс для Astra.IDE',
-        'sort_order': 10,
+        'sort_order': 17,
         'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
         'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива winetricks в папке Winetricks
     },
@@ -278,7 +411,7 @@ COMPONENTS_CONFIG = {
         'comment': 'Ярлык для открытия папки кэша Wine',
         'gui_selectable': True,
         'description': 'Ярлык для открытия папки кэша Wine',
-        'sort_order': 11
+        'sort_order': 19
     },
     'winetricks_cache_shortcut': {
         'name': 'Winetricks Кэш',
@@ -295,7 +428,7 @@ COMPONENTS_CONFIG = {
         'comment': 'Ярлык для открытия папки кэша Winetricks',
         'gui_selectable': True,
         'description': 'Ярлык для открытия папки кэша Winetricks',
-        'sort_order': 12
+        'sort_order': 20
     },
     
     # Winetricks компоненты
@@ -313,7 +446,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Mono runtime для Wine',
-        'sort_order': 13,
+        'sort_order': 21,
         # Параметры загрузки wine-mono из интернета (для удобства обновления версии)
         'download_url': 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi',
         'download_sha256': '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810',
@@ -336,7 +469,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': '.NET Framework 4.8',
-        'sort_order': 14,
+        'sort_order': 22,
         # Параметры загрузки .NET Framework 4.8 из интернета (для удобства обновления версии)
         'download_url': 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe',
         'download_sha256': '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53',
@@ -362,7 +495,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2013 Redistributable',
-        'sort_order': 15,
+        'sort_order': 23,
         # Параметры загрузки Visual C++ 2013 из интернета (для удобства обновления версии)
         'download_url_x86': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe',
         'download_sha256_x86': '89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17',
@@ -390,7 +523,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'Visual C++ 2022 Redistributable',
-        'sort_order': 16,
+        'sort_order': 24,
         # Параметры загрузки Visual C++ 2022 из интернета (для удобства обновления версии)
         # ВНИМАНИЕ: SHA256 хеши временные, нужно обновить при получении актуальных
         'download_url_x86': 'https://aka.ms/vs/17/release/vc_redist.x86.exe',
@@ -417,7 +550,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_43',
-        'sort_order': 17,
+        'sort_order': 25,
         'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     'd3dcompiler_47': {
@@ -434,7 +567,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DirectX d3dcompiler_47',
-        'sort_order': 18,
+        'sort_order': 26,
         # Параметры загрузки d3dcompiler_47 из интернета (для удобства обновления версии)
         'download_url_32': 'https://raw.githubusercontent.com/mozilla/fxc2/master/dll/d3dcompiler_47_32.dll',
         'download_sha256_32': '2ad0d4987fc4624566b190e747c9d95038443956ed816abfd1e2d389b5ec0851',
@@ -460,7 +593,7 @@ COMPONENTS_CONFIG = {
         'uninstall_method': 'winetricks',
         'gui_selectable': True,
         'description': 'DXVK - Vulkan-based D3D11 implementation',
-        'sort_order': 19,
+        'sort_order': 27,
         # Параметры загрузки DXVK из интернета (для удобства обновления версии)
         'download_url': 'https://github.com/doitsujin/dxvk/releases/download/v2.5.3/dxvk-2.5.3.tar.gz',
         'download_sha256': 'd8e6ef7d1168095165e1f8a98c7d5a4485b080467bb573d2a9ef3e3d79ea1eb8',
@@ -470,9 +603,9 @@ COMPONENTS_CONFIG = {
         'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
     },
     
-    # Astra.IDE и связанные компоненты
-    'astra_ide': {
-        'name': 'Astra.IDE',
+    # Astra.IDE и связанные компоненты (установка через установщик .exe)
+    'astra_ide_installer': {
+        'name': 'Astra.IDE (установщик)',
         'path': 'drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe',
         'category': 'application',
         'dependencies': ['wineprefix', 'dotnet48', 'vcrun2013', 'vcrun2022'],
@@ -485,27 +618,27 @@ COMPONENTS_CONFIG = {
             '~/.local/share/applications/wine/Programs/AstraRegul'
         ],
         'gui_selectable': True,
-        'description': 'Astra.IDE приложение',
-        'sort_order': 20
+        'description': 'Astra.IDE приложение (установка через установщик .exe)',
+        'sort_order': 28
     },
     'start_script': {
         'name': 'Скрипт запуска',
         'path': '~/start-astraide.sh',
         'category': 'application',
-        'dependencies': ['astra_ide'],
+        'dependencies': ['astra_ide_installer'],
         'check_paths': ['~/start-astraide.sh'],
         'install_method': 'script_creation',
         'uninstall_method': 'script_removal',
         'gui_selectable': True,
         'description': 'Скрипт для запуска Astra.IDE',
-        'sort_order': 21
+        'sort_order': 29
     },
     'desktop_shortcut': {
         'name': 'Ярлык рабочего стола',
         'shortcut_name': 'Astra.IDE',
         'path': 'AstraRegul.desktop',
         'category': 'desktop_shortcut',
-        'dependencies': ['astra_ide'],
+        'dependencies': ['astra_ide_installer'],
         'check_paths': ['AstraRegul.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
@@ -518,7 +651,7 @@ COMPONENTS_CONFIG = {
         'comment': 'Ярлык Astra.IDE на рабочем столе',
         'gui_selectable': True,
         'description': 'Ярлык Astra.IDE на рабочем столе',
-        'sort_order': 22
+        'sort_order': 30
     },
     
     # Шаблоны Wine приложений (для динамического создания экземпляров)
@@ -636,7 +769,6 @@ def fix_dir_permissions(dir_path):
             real_user = os.environ.get('SUDO_USER')
             if real_user and real_user != 'root':
                 try:
-                    import pwd
                     user_info = pwd.getpwnam(real_user)
                     os.chown(dir_path, user_info.pw_uid, user_info.pw_gid)
                     os.chmod(dir_path, 0o755)
@@ -647,7 +779,6 @@ def fix_dir_permissions(dir_path):
         # Если не root, устанавливаем права для текущего пользователя
         if current_uid != 0:
             try:
-                import pwd
                 user_info = pwd.getpwuid(current_uid)
                 os.chown(dir_path, current_uid, user_info.pw_gid)
                 os.chmod(dir_path, 0o755)
@@ -2221,6 +2352,33 @@ class ComponentHandler(ABC):
             str: Категория ('wine_packages', 'wine_environment', 'winetricks', 'system_config', 'application')
         """
         pass
+    
+    def _check_command_available(self, command: str) -> bool:
+        """
+        Проверка доступности команды в системе
+        
+        Args:
+            command: Имя команды (например, 'rsync', 'tar', 'cp')
+        
+        Returns:
+            bool: True если команда доступна
+        """
+        return shutil.which(command) is not None
+    
+    def _truncate_path(self, path: str, max_length: int = 60) -> str:
+        """
+        Обрезает путь, оставляя конец, если он слишком длинный
+        
+        Args:
+            path: Полный путь
+            max_length: Максимальная длина (по умолчанию 60)
+        
+        Returns:
+            str: Обрезанный путь с "..." в начале если нужно
+        """
+        if len(path) <= max_length:
+            return path
+        return "..." + path[-(max_length - 3):]
 
 # ============================================================================
 # ОБРАБОТЧИК WINE ПАКЕТОВ
@@ -2516,7 +2674,9 @@ class WinePackageHandler(ComponentHandler):
         
         package_names = {
             'wine_astraregul': 'wine-astraregul',
-            'wine_9': 'wine-9.0'
+            'wine_9': 'wine-9.0',
+            'astra_wine_9': 'wine-9.0',
+            'astra_wine_astraregul': 'wine-astraregul'
         }
         
         if component_id not in package_names:
@@ -2571,7 +2731,9 @@ class WinePackageHandler(ComponentHandler):
             # Удаляем директории Wine вручную
             wine_dirs = {
                 'wine_astraregul': '/opt/wine-astraregul',
-                'wine_9': '/opt/wine-9.0'
+                'wine_9': '/opt/wine-9.0',
+                'astra_wine_9': '/opt/wine-9.0',
+                'astra_wine_astraregul': '/opt/wine-astraregul'
             }
             if component_id in wine_dirs:
                 wine_dir = wine_dirs[component_id]
@@ -2793,7 +2955,6 @@ class SystemConfigHandler(ComponentHandler):
                     try:
                         current_uid = os.getuid()
                         if current_uid != 0:  # Не root
-                            import pwd
                             user_info = pwd.getpwuid(current_uid)
                             os.chown(winetricks_path, current_uid, user_info.pw_gid)
                     except Exception:
@@ -2809,7 +2970,6 @@ class SystemConfigHandler(ComponentHandler):
                     
         except Exception as e:
             print(f"Ошибка установки winetricks инструмента: {e}", level='ERROR')
-            import traceback
             for line in traceback.format_exc().split('\n'):
                 if line.strip():
                     print(f"[DEBUG] {line}", level='DEBUG')
@@ -3126,6 +3286,651 @@ class WineEnvironmentHandler(ComponentHandler):
         # КРИТИЧНО: Используем единую функцию проверки статуса из глобального модуля
         # НЕ передаем wineprefix_path - глобальная функция сама определит его из конфигурации компонента
         return check_component_status(component_id, wineprefix_path=None)
+    
+    def _get_script_dir(self):
+        """Получить директорию скрипта"""
+        return os.path.dirname(os.path.abspath(__file__))
+    
+    def create_wineprefix_template(self, component_id: str, config: dict, 
+                                    archive_name: str = None, 
+                                    output_dir: str = None,
+                                    clean_temp: bool = True,
+                                    clean_cache: bool = False,
+                                    gui_instance=None) -> str:
+        """
+        Создать архив образа Wine-префикса (самый быстрый метод через системный tar)
+        
+        Args:
+            component_id: ID компонента wineprefix
+            config: Конфигурация компонента
+            archive_name: Имя архива (если None, генерируется автоматически)
+            output_dir: Директория для сохранения (если None, используется AstraPack/WinePrefixes/)
+            clean_temp: Очистить временные файлы перед архивацией
+            clean_cache: Очистить кэш перед архивацией
+            gui_instance: Экземпляр GUI для обновления прогресса
+        
+        Returns:
+            str: Путь к созданному архиву или None в случае ошибки
+        """
+        global CANCEL_OPERATION
+        
+        # Сбрасываем флаг отмены
+        CANCEL_OPERATION = False
+        
+        print(f"Создание образа Wine-префикса: {config.get('name', component_id)}")
+        
+        # 1. Определяем путь к префиксу
+        wineprefix_path = config.get('wineprefix_path')
+        if wineprefix_path:
+            wineprefix_path = expand_user_path(wineprefix_path)
+        else:
+            wineprefix_path = self.wineprefix
+        
+        if not os.path.exists(wineprefix_path):
+            print(f"WINEPREFIX не найден: {wineprefix_path}", level='ERROR')
+            return None
+        
+        # Проверяем наличие system.reg
+        system_reg = os.path.join(wineprefix_path, 'system.reg')
+        if not os.path.exists(system_reg):
+            print(f"WINEPREFIX не инициализирован (нет system.reg): {wineprefix_path}", level='ERROR')
+            return None
+        
+        # 2. Останавливаем все Wine-процессы
+        print("Остановка всех Wine-процессов...")
+        if gui_instance:
+            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                text="Остановка Wine-процессов...", fg='blue'
+            ))
+        
+        all_processes = self._collect_all_processes_for_stop(component_id)
+        if all_processes:
+            print(f"Остановка процессов: {', '.join(sorted(all_processes))}")
+            processes_stopped = self._stop_processes(list(all_processes), max_wait_time=30)
+            if not processes_stopped:
+                print("Не все процессы остановлены, продолжаем архивацию", level='WARNING')
+        
+        self._terminate_wineserver()
+        time.sleep(2)
+        
+        # 3. Очистка (опционально)
+        if clean_temp:
+            print("Очистка временных файлов...")
+            if gui_instance:
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Очистка временных файлов...", fg='blue'
+                ))
+            # Очистка временных файлов
+            temp_patterns = ['*.tmp', '*.log', '*.bak']
+            for root, dirs, files in os.walk(wineprefix_path):
+                for file in files:
+                    if any(file.endswith(pattern.replace('*', '')) for pattern in temp_patterns):
+                        try:
+                            file_path = os.path.join(root, file)
+                            os.remove(file_path)
+                        except:
+                            pass
+        
+        # 4. Определяем путь для сохранения архива
+        if not output_dir:
+            if self.astrapack_dir:
+                output_dir = os.path.join(self.astrapack_dir, 'WinePrefixes')
+            else:
+                script_dir = self._get_script_dir()
+                output_dir = os.path.join(script_dir, 'WinePrefixes')
+        
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 5. Генерируем имя архива
+        if not archive_name:
+            archive_name = f"{component_id}_template.tar.gz"
+        
+        archive_path = os.path.join(output_dir, archive_name)
+        
+        if os.path.exists(archive_path):
+            print(f"Архив уже существует: {archive_path}", level='WARNING')
+        
+        # 6. Подсчитываем размер для прогресса
+        print("Подсчет размера архива...")
+        if gui_instance:
+            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                text="Подсчет размера...", fg='blue'
+            ))
+        
+        total_size = 0
+        total_files = 0
+        total_dirs = 0
+        
+        for root, dirs, files in os.walk(wineprefix_path):
+            if CANCEL_OPERATION:
+                print("Операция отменена пользователем")
+                return None
+            total_dirs += len(dirs)
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    total_size += os.path.getsize(file_path)
+                    total_files += 1
+                except:
+                    pass
+        
+        # Форматируем размер
+        if total_size < 1024 * 1024:
+            size_str = f"{total_size / 1024:.1f} КБ"
+        elif total_size < 1024 * 1024 * 1024:
+            size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+        else:
+            size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+        
+        print(f"Размер архива: {size_str} ({total_files} файлов, {total_dirs} папок)")
+        
+        # 7. Инициализируем прогресс в GUI
+        if gui_instance:
+            gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(maximum=100, value=0))
+            gui_instance.root.after(0, lambda: gui_instance.wine_time_label.config(text="0 мин 0 сек"))
+            gui_instance.root.after(0, lambda: gui_instance.wine_size_label.config(text="0 MB"))
+            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                text="Создание архива...", fg='blue'
+            ))
+        
+        start_time = time.time()
+        
+        # 8. Создаем архив через системный tar с мониторингом прогресса
+        print(f"Создание архива: {archive_path}")
+        
+        # Проверяем наличие tar
+        if not self._check_command_available('tar'):
+            print("Команда tar не найдена, используем Python tarfile (медленнее)", level='WARNING')
+            return self._create_archive_with_tarfile(wineprefix_path, archive_path, gui_instance, 
+                                                    start_time, total_size, total_files)
+        
+        # Строим команду tar
+        # ПРОВЕРКА: Убеждаемся, что пути существуют и правильные
+        if not os.path.exists(wineprefix_path):
+            print(f"[ERROR] Путь wineprefix не существует: {wineprefix_path}", level='ERROR')
+            return None
+        
+        if not os.path.isdir(wineprefix_path):
+            print(f"[ERROR] Путь wineprefix не является директорией: {wineprefix_path}", level='ERROR')
+            return None
+        
+        # Проверяем родительскую директорию
+        parent_dir = os.path.dirname(wineprefix_path)
+        if not os.path.exists(parent_dir):
+            print(f"[ERROR] Родительская директория не существует: {parent_dir}", level='ERROR')
+            return None
+        
+        # Получаем абсолютные пути для надежности
+        wineprefix_path_abs = os.path.abspath(wineprefix_path)
+        archive_path_abs = os.path.abspath(archive_path)
+        parent_dir_abs = os.path.abspath(parent_dir)
+        basename = os.path.basename(wineprefix_path_abs)
+        
+        print(f"[DEBUG] Создание архива:")
+        print(f"[DEBUG]   wineprefix_path: {wineprefix_path_abs}")
+        print(f"[DEBUG]   archive_path: {archive_path_abs}")
+        print(f"[DEBUG]   parent_dir: {parent_dir_abs}")
+        print(f"[DEBUG]   basename: {basename}")
+        
+        tar_cmd = [
+            'tar',
+            '-czf',  # -c (create), -z (gzip), -f (file)
+            archive_path_abs,
+            '-C', parent_dir_abs,  # Переходим в родительскую директорию
+            basename  # Архивируем только папку префикса
+        ]
+        
+        print(f"[DEBUG] Команда tar: {' '.join(tar_cmd)}")
+        
+        # Запускаем tar в отдельном процессе
+        process = subprocess.Popen(
+            tar_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=parent_dir_abs  # Устанавливаем рабочую директорию
+        )
+        
+        # Собираем список всех файлов для отслеживания текущего (в фоне, не блокируя запуск tar)
+        all_files = []
+        cumulative_sizes = []
+        cumulative_size = 0
+        files_ready = threading.Event()  # Событие готовности списка файлов
+        
+        def collect_files():
+            """Сбор списка файлов в фоне"""
+            nonlocal cumulative_size
+            try:
+                for root, dirs, files in os.walk(wineprefix_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        try:
+                            file_size = os.path.getsize(file_path)
+                            arcname = os.path.relpath(file_path, wineprefix_path)
+                            all_files.append(arcname)
+                            cumulative_size += file_size
+                            cumulative_sizes.append(cumulative_size)
+                        except:
+                            pass
+            finally:
+                files_ready.set()  # Сигнализируем о готовности
+        
+        # Запускаем сбор файлов в отдельном потоке (не блокируем запуск tar)
+        collect_thread = threading.Thread(target=collect_files, daemon=True)
+        collect_thread.start()
+        
+        # Переменная для хранения текущего обрабатываемого файла
+        current_file = [os.path.basename(wineprefix_path)]  # Используем список для изменения из вложенной функции
+        
+        # Флаг для остановки потока мониторинга
+        monitoring_active = threading.Event()
+        monitoring_active.set()  # Устанавливаем флаг активным
+        
+        # Мониторим прогресс через обход файлов
+        def monitor_progress():
+            """Мониторинг прогресса архивации"""
+            while monitoring_active.is_set() and process.poll() is None:
+                if CANCEL_OPERATION:
+                    print("Операция отменена, завершаем процесс...")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    return
+                
+                # Проверяем размер создаваемого архива
+                if os.path.exists(archive_path):
+                    try:
+                        current_archive_size = os.path.getsize(archive_path)
+                        # Приблизительный прогресс на основе размера архива
+                        # Используем более консервативный коэффициент сжатия (0.6) для расчета максимума
+                        # Но не ограничиваем прогресс - он может достичь 100%
+                        if total_size > 0:
+                            estimated_final_size = total_size * 0.6  # Более консервативная оценка
+                            progress = min(100, (current_archive_size / max(estimated_final_size, 1)) * 100)
+                        else:
+                            progress = 0
+                        
+                        # Определяем текущий файл на основе размера архива (только если список готов)
+                        if files_ready.is_set() and cumulative_sizes and current_archive_size > 0:
+                            # Предполагаем коэффициент сжатия ~0.7 (архив примерно 70% от исходного размера)
+                            estimated_processed_size = current_archive_size / 0.7
+                            # Бинарный поиск для быстрого нахождения файла (O(log n) вместо O(n))
+                            idx = bisect.bisect_left(cumulative_sizes, estimated_processed_size)
+                            if idx < len(all_files):
+                                # Показываем только папку, без имени файла
+                                file_path = all_files[idx]
+                                dir_path = os.path.dirname(file_path)
+                                current_file[0] = dir_path if dir_path else os.path.basename(wineprefix_path)
+                            elif all_files:
+                                # Показываем только папку последнего файла
+                                last_file = all_files[-1]
+                                dir_path = os.path.dirname(last_file)
+                                current_file[0] = dir_path if dir_path else os.path.basename(wineprefix_path)
+                        
+                        elapsed_time = time.time() - start_time
+                        elapsed_minutes = int(elapsed_time // 60)
+                        elapsed_seconds = int(elapsed_time % 60)
+                        
+                        # Использование диска (размер архива)
+                        if current_archive_size < 1024 * 1024:
+                            disk_str = f"{current_archive_size / 1024:.1f} КБ"
+                        elif current_archive_size < 1024 * 1024 * 1024:
+                            disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
+                        else:
+                            disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                        
+                        # Обновляем GUI
+                        if gui_instance:
+                            gui_instance.root.after(0, lambda p=progress: gui_instance.wine_progress.config(value=p))
+                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                                    gui_instance.wine_time_label.config(text=t))
+                            gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
+                            gui_instance.root.after(0, lambda cf=current_file[0]: gui_instance.wine_stage_label.config(
+                                text=f"Архивация: {self._truncate_path(cf, 60)}", fg='blue'
+                            ))
+                    except:
+                        pass
+                
+                time.sleep(0.5)  # Обновляем каждые 0.5 секунды
+        
+        # Запускаем мониторинг в отдельном потоке
+        monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+        monitor_thread.start()
+        
+        # Ждем завершения процесса
+        try:
+            stdout, stderr = process.communicate()
+            
+            # Останавливаем поток мониторинга
+            monitoring_active.clear()
+            
+            # Закрываем файловые дескрипторы процесса
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except:
+                    pass
+            if process.stderr:
+                try:
+                    process.stderr.close()
+                except:
+                    pass
+            
+            # КРИТИЧНО: Убеждаемся, что процесс полностью завершился
+            if process.poll() is None:
+                print("[WARNING] Процесс tar еще не завершился, ждем...", level='WARNING')
+                try:
+                    process.wait(timeout=30)  # Ждем до 30 секунд
+                except subprocess.TimeoutExpired:
+                    print("[ERROR] Процесс tar не завершился за 30 секунд!", level='ERROR')
+                    # Завершаем все дочерние процессы
+                    try:
+                        if PSUTIL_AVAILABLE:
+                            parent = psutil.Process(process.pid)
+                            children = parent.children(recursive=True)
+                            for child in children:
+                                try:
+                                    child.terminate()
+                                except:
+                                    pass
+                            # Ждем завершения дочерних процессов
+                            gone, alive = psutil.wait_procs(children, timeout=5)
+                            for child in alive:
+                                try:
+                                    child.kill()
+                                except:
+                                    pass
+                    except:
+                        pass
+                    process.kill()
+                    process.wait()
+                    return None
+            
+            # Проверяем, что процесс завершился с кодом
+            if process.returncode is None:
+                print("[ERROR] Не удалось получить код возврата процесса tar", level='ERROR')
+                return None
+            
+            if CANCEL_OPERATION:
+                # Удаляем частично созданный архив
+                if os.path.exists(archive_path):
+                    try:
+                        os.remove(archive_path)
+                    except:
+                        pass
+                if gui_instance:
+                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                        text="Операция отменена", fg='orange'
+                    ))
+                return None
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Неизвестная ошибка"
+                stdout_msg = stdout.decode('utf-8', errors='ignore') if stdout else ""
+                print(f"Ошибка создания архива (код {process.returncode}): {error_msg}", level='ERROR')
+                if stdout_msg:
+                    print(f"[DEBUG] stdout: {stdout_msg}", level='DEBUG')
+                print(f"[DEBUG] Команда была: {' '.join(tar_cmd)}", level='DEBUG')
+                if gui_instance:
+                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                        text="Ошибка создания архива", fg='red'
+                    ))
+                return None
+            
+            # Успешное завершение
+            # Небольшая задержка для завершения записи архива
+            time.sleep(0.5)
+            
+            # КРИТИЧНО: Убеждаемся, что все дочерние процессы завершены
+            try:
+                if PSUTIL_AVAILABLE and process.pid:
+                    try:
+                        parent = psutil.Process(process.pid)
+                        # Проверяем, не остались ли дочерние процессы
+                        children = parent.children(recursive=True)
+                        if children:
+                            print(f"[DEBUG] Обнаружено {len(children)} дочерних процессов, ожидаем их завершения...", level='DEBUG')
+                            gone, alive = psutil.wait_procs(children, timeout=5)
+                            if alive:
+                                print(f"[WARNING] {len(alive)} дочерних процессов не завершились, принудительно завершаем...", level='WARNING')
+                                for child in alive:
+                                    try:
+                                        child.kill()
+                                    except:
+                                        pass
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        # Процесс уже завершен или нет доступа
+                        pass
+            except Exception as e:
+                print(f"[DEBUG] Ошибка проверки дочерних процессов: {e}", level='DEBUG')
+            
+            # КРИТИЧНО: Синхронизируем файловую систему для гарантии записи
+            try:
+                sync_result = subprocess.run(['sync'], timeout=10, 
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if sync_result.returncode != 0:
+                    print(f"[WARNING] Ошибка синхронизации файловой системы: {sync_result.stderr.decode('utf-8', errors='ignore')}", level='WARNING')
+            except Exception as e:
+                print(f"[WARNING] Не удалось синхронизировать файловую систему: {e}", level='WARNING')
+            
+            # Проверяем, что архив существует и доступен (используем абсолютный путь)
+            if not os.path.exists(archive_path_abs):
+                print(f"[ERROR] Архив не найден после создания: {archive_path_abs}", level='ERROR')
+                return None
+            
+            # Убеждаемся, что файл полностью записан и доступен
+            max_retries = 5
+            retry_count = 0
+            archive_size = 0
+            while retry_count < max_retries:
+                try:
+                    # Пытаемся получить размер файла
+                    archive_size = os.path.getsize(archive_path_abs)
+                    # Пытаемся открыть файл для чтения
+                    with open(archive_path_abs, 'rb') as test_file:
+                        test_file.seek(0, 2)  # Переходим в конец файла
+                        actual_size = test_file.tell()
+                    if archive_size == actual_size and archive_size > 0:
+                        break  # Файл готов
+                    else:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            time.sleep(1)  # Ждем 1 секунду перед повторной попыткой
+                except (IOError, OSError) as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        print(f"[ERROR] Архив недоступен после {max_retries} попыток: {e}", level='ERROR')
+                        return None
+                    time.sleep(1)  # Ждем 1 секунду перед повторной попыткой
+            
+            # Проверяем размер архива (должен быть больше 0)
+            if archive_size == 0:
+                print(f"[ERROR] Архив создан, но имеет размер 0 байт!", level='ERROR')
+                if os.path.exists(archive_path_abs):
+                    try:
+                        os.remove(archive_path_abs)
+                    except:
+                        pass
+                return None
+            
+            # Проверяем целостность архива (пытаемся открыть и прочитать заголовок)
+            try:
+                with gzip.open(archive_path_abs, 'rb') as f:
+                    # Читаем первые несколько байт для проверки
+                    header = f.read(512)
+                    if len(header) < 100:  # Минимальный размер для валидного tar.gz
+                        print(f"[WARNING] Архив слишком мал или поврежден (заголовок: {len(header)} байт)", level='WARNING')
+            except Exception as e:
+                print(f"[WARNING] Не удалось проверить целостность архива: {e}", level='WARNING')
+                # Не возвращаем None, так как это может быть ложная тревога
+            
+            elapsed_time = time.time() - start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            # Финальное обновление GUI
+            if gui_instance:
+                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                        gui_instance.wine_time_label.config(text=t))
+                
+                # Финальный размер архива (уже получен выше при проверке)
+                if archive_size < 1024 * 1024:
+                    disk_str = f"{archive_size / 1024:.1f} КБ"
+                elif archive_size < 1024 * 1024 * 1024:
+                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
+                else:
+                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                
+                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архив создан успешно", fg='green'
+                ))
+            
+            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
+            print(f"Путь: {archive_path}")
+            
+            # Устанавливаем права пользователя на архив и папку
+            try:
+                real_user = os.environ.get('SUDO_USER')
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                    # Устанавливаем владельца на архив (используем абсолютный путь)
+                    os.chown(archive_path_abs, uid, gid)
+                    # Устанавливаем владельца на папку output_dir
+                    os.chown(output_dir, uid, gid)
+                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
+            except Exception as e:
+                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
+            
+            # Возвращаем оригинальный путь (не абсолютный)
+            return archive_path
+            
+        except Exception as e:
+            # Останавливаем поток мониторинга при ошибке
+            if 'monitoring_active' in locals():
+                monitoring_active.clear()
+            # Закрываем файловые дескрипторы процесса
+            if 'process' in locals():
+                try:
+                    if process.stdout:
+                        process.stdout.close()
+                    if process.stderr:
+                        process.stderr.close()
+                    # Завершаем процесс если он еще работает
+                    if process.poll() is None:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except:
+                            process.kill()
+                            process.wait()
+                except:
+                    pass
+            print(f"Ошибка при создании архива: {e}", level='ERROR')
+            traceback.print_exc()
+            if gui_instance:
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Ошибка создания архива", fg='red'
+                ))
+            return None
+    
+    def _create_archive_with_tarfile(self, wineprefix_path, archive_path, gui_instance, 
+                                     start_time, total_size, total_files):
+        """Fallback: создание архива через Python tarfile (медленнее)"""
+        global CANCEL_OPERATION
+        
+        try:
+            processed_size = 0
+            processed_files = 0  # Счетчик обработанных файлов
+            with tarfile.open(archive_path, 'w:gz') as tar:
+                # Добавляем весь префикс
+                for root, dirs, files in os.walk(wineprefix_path):
+                    if CANCEL_OPERATION:
+                        return None
+                    
+                    for file in files:
+                        if CANCEL_OPERATION:
+                            return None
+                        
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, wineprefix_path)
+                        # Получаем относительный путь к папке (без имени файла)
+                        folder_path = os.path.relpath(root, wineprefix_path)
+                        
+                        try:
+                            tar.add(file_path, arcname=arcname)
+                            processed_size += os.path.getsize(file_path)
+                            processed_files += 1  # Увеличиваем счетчик файлов
+                            
+                            # Обновляем прогресс по количеству файлов (более точно)
+                            if gui_instance and total_files > 0:
+                                progress = min(100, (processed_files / total_files) * 100)
+                                elapsed_time = time.time() - start_time
+                                elapsed_minutes = int(elapsed_time // 60)
+                                elapsed_seconds = int(elapsed_time % 60)
+                                
+                                gui_instance.root.after(0, lambda p=progress: 
+                                    gui_instance.wine_progress.config(value=p))
+                                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                    gui_instance.wine_time_label.config(text=t))
+                                gui_instance.root.after(0, lambda fp=folder_path if folder_path != '.' else os.path.basename(wineprefix_path): gui_instance.wine_stage_label.config(
+                                    text=f"Архивация: {self._truncate_path(fp, 60)}", fg='blue'
+                                ))
+                        except:
+                            pass
+            
+            # Финальное обновление GUI после успешного завершения
+            if gui_instance:
+                elapsed_time = time.time() - start_time
+                elapsed_minutes = int(elapsed_time // 60)
+                elapsed_seconds = int(elapsed_time % 60)
+                
+                # Устанавливаем 100% прогресс
+                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                    gui_instance.wine_time_label.config(text=t))
+                
+                # Финальный размер архива
+                archive_size = os.path.getsize(archive_path)
+                if archive_size < 1024 * 1024:
+                    disk_str = f"{archive_size / 1024:.1f} КБ"
+                elif archive_size < 1024 * 1024 * 1024:
+                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
+                else:
+                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                
+                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архив создан успешно", fg='green'
+                ))
+            
+            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
+            print(f"Обработано файлов: {processed_files} из {total_files}")
+            print(f"Путь: {archive_path}")
+            
+            # Устанавливаем права пользователя на архив и папку
+            try:
+                real_user = os.environ.get('SUDO_USER')
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                    # Устанавливаем владельца на архив
+                    os.chown(archive_path, uid, gid)
+                    # Устанавливаем владельца на папку output_dir (получаем из archive_path)
+                    output_dir = os.path.dirname(archive_path)
+                    if os.path.exists(output_dir):
+                        os.chown(output_dir, uid, gid)
+                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
+            except Exception as e:
+                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
+            
+            return archive_path
+        except Exception as e:
+            print(f"Ошибка создания архива через tarfile: {e}", level='ERROR')
+            return None
 
 # ============================================================================
 # ОБРАБОТЧИК WINETRICKS КОМПОНЕНТОВ
@@ -3415,7 +4220,6 @@ class WinetricksHandler(ComponentHandler):
                             real_user = os.environ.get('SUDO_USER')
                             if real_user and real_user != 'root':
                                 try:
-                                    import pwd
                                     user_info = pwd.getpwnam(real_user)
                                     os.chown(target_path, user_info.pw_uid, user_info.pw_gid)
                                 except (KeyError, ImportError):
@@ -3429,7 +4233,6 @@ class WinetricksHandler(ComponentHandler):
                 
         except Exception as e:
             print(f"[ERROR] Ошибка при извлечении из архива: {e}", level='ERROR')
-            import traceback
             for line in traceback.format_exc().split('\n'):
                 if line.strip():
                     print(f"[DEBUG] {line}", level='DEBUG')
@@ -3643,7 +4446,6 @@ class WinetricksHandler(ComponentHandler):
                     # Вариант 1: Через временный bash скрипт (более надежный для сложных команд)
                     temp_script = None
                     try:
-                        import tempfile
                         # Создаем временный скрипт
                         temp_script = tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False)
                         temp_script.write('#!/bin/bash\n')
@@ -3762,7 +4564,6 @@ class WinetricksHandler(ComponentHandler):
                         with open(winetricks_log, 'r', encoding='utf-8', errors='ignore') as f:
                             log_content = f.read()
                             command_name = config.get('command_name', component_id)
-                            import re
                             pattern = r'\b' + re.escape(command_name) + r'\b'
                             if re.search(pattern, log_content):
                                 print(f"[DEBUG] WinetricksHandler.install() компонент {component_id} ({command_name}) найден в winetricks.log", level='DEBUG')
@@ -4271,6 +5072,12 @@ class WineApplicationHandler(ComponentHandler):
         # 2. Путь к архиву (в AstraPack/Cont/ или AstraPack/)
         archive_path = None
         if self.astrapack_dir:
+            # Получаем имя архива из конфигурации (если указано)
+            archive_name = config.get('archive_name')
+            if not archive_name:
+                # Если не указано, используем старое поведение: {source_dir}.tar.gz
+                archive_name = f"{source_dir}.tar.gz"
+            
             # Определяем группу по component_id (cont -> Cont, astra -> Astra)
             group_name = None
             if 'cont' in component_id.lower():
@@ -4279,10 +5086,10 @@ class WineApplicationHandler(ComponentHandler):
                 group_name = 'Astra'
             
             if group_name:
-                archive_path = os.path.join(self.astrapack_dir, group_name, f"{source_dir}.tar.gz")
+                archive_path = os.path.join(self.astrapack_dir, group_name, archive_name)
             else:
                 # Если группа не определена, ищем в корне AstraPack
-                archive_path = os.path.join(self.astrapack_dir, f"{source_dir}.tar.gz")
+                archive_path = os.path.join(self.astrapack_dir, archive_name)
         
         # Определяем порядок проверки источников
         if source_priority == 'directory':
@@ -4338,6 +5145,12 @@ class WineApplicationHandler(ComponentHandler):
         # Определяем возможные пути к архиву
         # Для CountPack ищем в AstraPack/Cont/CountPack.tar.gz
         if self.astrapack_dir:
+            # Получаем имя архива из конфигурации (если указано)
+            archive_name = config.get('archive_name')
+            if not archive_name:
+                # Если не указано, используем старое поведение: {source_dir}.tar.gz
+                archive_name = f"{source_dir}.tar.gz"
+            
             # Определяем группу по component_id (cont -> Cont, astra -> Astra)
             group_name = None
             if 'cont' in component_id.lower():
@@ -4346,10 +5159,10 @@ class WineApplicationHandler(ComponentHandler):
                 group_name = 'Astra'
             
             if group_name:
-                archive_path = os.path.join(self.astrapack_dir, group_name, f"{source_dir}.tar.gz")
+                archive_path = os.path.join(self.astrapack_dir, group_name, archive_name)
             else:
                 # Если группа не определена, ищем в корне AstraPack
-                archive_path = os.path.join(self.astrapack_dir, f"{source_dir}.tar.gz")
+                archive_path = os.path.join(self.astrapack_dir, archive_name)
         
         # Определяем путь к целевому префиксу
         wineprefix_path = config.get('wineprefix_path', self.wineprefix)
@@ -8997,7 +9810,7 @@ class WineComponentsChecker(object):
             'd3dcompiler_43': False,
             'd3dcompiler_47': False,
             'dxvk': False,
-            'astra_ide': False,
+            'astra_ide_installer': False,
             'start_script': False,
             'desktop_shortcut': False
         }
@@ -9170,7 +9983,7 @@ class WineComponentsChecker(object):
             
             if os.path.isfile(astra_exe):
                 print("   [OK] Astra.IDE установлена: %s" % astra_dirs[0])
-                self.checks['astra_ide'] = True
+                self.checks['astra_ide_installer'] = True
                 return True
             else:
                 print("   [ERR] Astra.IDE.exe не найден: %s" % astra_exe)
@@ -9316,7 +10129,7 @@ class WineComponentsChecker(object):
     
     def is_astra_ide_installed(self):
         """Проверка что Astra.IDE установлена"""
-        return self.checks['astra_ide']
+        return self.checks['astra_ide_installer']
     
     def display_summary(self):
         """Отображение итоговой сводки"""
@@ -9328,7 +10141,7 @@ class WineComponentsChecker(object):
             'wine_9': 'Wine 9.0',
             'ptrace_scope': 'ptrace_scope (разрешен)',
             'wineprefix': 'WINEPREFIX',
-            'astra_ide': 'Astra.IDE установлена',
+            'astra_ide_installer': 'Astra.IDE установлена',
             'start_script': 'Скрипт запуска',
             'desktop_shortcut': 'Ярлык рабочего стола'
         }
@@ -9361,7 +10174,7 @@ class WineComponentsChecker(object):
             'wine_9': 'Wine 9.0',
             'ptrace_scope': 'ptrace_scope',
             'wineprefix': 'WINEPREFIX',
-            'astra_ide': 'Astra.IDE',
+            'astra_ide_installer': 'Astra.IDE',
             'start_script': 'Скрипт запуска',
             'desktop_shortcut': 'Ярлык рабочего стола'
         }
@@ -11422,9 +12235,6 @@ class ToolTip:
             x = self.widget.winfo_rootx() + 20
             y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
             
-            # Импортируем tkinter
-            import tkinter as tk
-            
             # Создаем всплывающее окно
             self.tooltip_window = tw = tk.Toplevel(self.widget)
             tw.wm_overrideredirect(True)  # Убираем рамку окна
@@ -11511,9 +12321,6 @@ class AutomationGUI(object):
             if not self._install_gui_dependencies():
                 raise RuntimeError("Не удалось установить зависимости GUI")
         
-        # Теперь импортируем tkinter
-        import tkinter as tk
-        from tkinter import ttk
         
         # Сохраняем модули как атрибуты класса
         self.tk = tk
@@ -11540,6 +12347,12 @@ class AutomationGUI(object):
         
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+        
+        # Инициализация системного трея (только для Linux)
+        self.tray_icon = None
+        self.tray_thread = None
+        if platform.system() == "Linux":
+            self._init_system_tray()
         
         # Размер окна
         window_width = 1000
@@ -11642,9 +12455,11 @@ class AutomationGUI(object):
         
         # Автоматически запускаем проверку компонентов при инициализации GUI (только один раз при запуске)
         if not console_mode:
-            self.root.after(2000, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI (только при запуске)
+            self.root.after(1500, self._auto_check_components)  # Задержка 2 сек для полной инициализации GUI (только при запуске)
             # Автоматически запускаем мониторинг файловой системы через 5 секунд после запуска GUI
             self.root.after(5000, self._start_filesystem_monitoring)  # Задержка 5 сек для полной инициализации GUI
+            # Приветственное сообщение и проверка системы при запуске
+            self.root.after(2000, self._startup_welcome_and_check)  # Задержка 3 сек для полной инициализации GUI
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -11751,7 +12566,22 @@ class AutomationGUI(object):
     def _install_gui_dependencies(self):
         """Установка зависимостей для GUI"""
         try:
-            # Проверяем наличие tkinter
+            # Проверяем наличие pystray и Pillow для Linux трея
+            if platform.system() == "Linux":
+                try:
+                    # Динамический импорт для избежания предупреждений линтера
+                    pystray = __import__('pystray')
+                    from PIL import Image
+                    print("[INFO] pystray и Pillow уже установлены", level='DEBUG')
+                except ImportError:
+                    print("[INFO] Устанавливаем pystray и Pillow для системного трея...")
+                    try:
+                        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pystray', 'Pillow'], 
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        print("[OK] pystray и Pillow успешно установлены")
+                    except Exception as e:
+                        print(f"[WARNING] Не удалось установить pystray и Pillow: {e}", level='WARNING')
+                        print("[INFO] Функция сворачивания в трей будет недоступна", level='INFO')
             return True
         except ImportError as e:
             print(f"[WARNING] tkinter не найден: {e}")
@@ -12201,6 +13031,12 @@ class AutomationGUI(object):
             if not running_processes:
                 # Нет процессов - просто закрываем
                 print("[INFO] Нет запущенных процессов установки - закрываем GUI")
+                # Останавливаем трей перед закрытием
+                if self.tray_icon:
+                    try:
+                        self.tray_icon.stop()
+                    except:
+                        pass
                 if self.close_terminal_pid:
                     self._close_terminal_process()
                 self.root.destroy()
@@ -12210,8 +13046,6 @@ class AutomationGUI(object):
             self._close_dialog_open = True
             
             # Есть процессы - показываем форму
-            import tkinter as tk
-            from tkinter import messagebox
             
             # Создаем МОДАЛЬНОЕ окно
             dialog = tk.Toplevel(self.root)
@@ -12486,6 +13320,12 @@ class AutomationGUI(object):
                     if self.close_terminal_pid:
                         self._close_terminal_process()
                     
+                    # Останавливаем трей перед закрытием
+                    if self.tray_icon:
+                        try:
+                            self.tray_icon.stop()
+                        except:
+                            pass
                     # Закрываем основное приложение
                     self.root.destroy()
                     
@@ -12496,6 +13336,12 @@ class AutomationGUI(object):
                     self._close_dialog_open = False
                     try:
                         dialog.destroy()
+                        # Останавливаем трей перед закрытием
+                        if self.tray_icon:
+                            try:
+                                self.tray_icon.stop()
+                            except:
+                                pass
                         self.root.destroy()
                     except:
                         pass
@@ -12535,12 +13381,25 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[ERROR] Ошибка создания формы закрытия: {e}")
             # Fallback - просто закрываем
+            # Останавливаем трей перед закрытием
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except:
+                    pass
             if self.close_terminal_pid:
                 self._close_terminal_process()
             self.root.destroy()
     
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
+        # Для Linux: сворачиваем в трей вместо закрытия (если трей доступен)
+        if platform.system() == "Linux" and self.tray_icon:
+            print("[INFO] Окно сворачивается в системный трей", gui_log=True)
+            self.root.withdraw()  # Скрываем окно
+            return  # Не закрываем приложение
+        
+        # Для других ОС или если трей не доступен - обычное закрытие
         # Защита от повторного вызова
         if hasattr(self, '_closing_in_progress') and self._closing_in_progress:
             return
@@ -12590,6 +13449,88 @@ class AutomationGUI(object):
             except Exception as e:
                 # Игнорируем ошибки при изменении размера
                 pass
+    
+    def _init_system_tray(self):
+        """Инициализация системного трея (Linux)"""
+        try:
+            # Динамический импорт для избежания предупреждений линтера
+            pystray = __import__('pystray')
+            from PIL import Image, ImageDraw
+            
+            # Создаем простую иконку (синий квадрат на сером фоне)
+            image = Image.new('RGB', (64, 64), color='gray')
+            draw = ImageDraw.Draw(image)
+            # Рисуем синий квадрат в центре
+            draw.rectangle([16, 16, 48, 48], fill='blue')
+            # Добавляем текст "FSA" (упрощенно)
+            try:
+                draw.text((20, 20), "FSA", fill='white')
+            except:
+                pass  # Если шрифт недоступен, просто квадрат
+            
+            # Создаем меню трея
+            menu = pystray.Menu(
+                pystray.MenuItem('Показать', self._show_window),
+                pystray.MenuItem('Скрыть', self._hide_window),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem('Выход', self._quit_application)
+            )
+            
+            self.tray_icon = pystray.Icon("FSA-AstraInstall", image, 
+                                          f"{APP_NAME} {APP_VERSION}", menu)
+            
+            # Добавляем обработчик двойного клика на иконку (показать/скрыть окно)
+            def on_icon_clicked(icon, item):
+                if self.root.winfo_viewable():
+                    self._hide_window()
+                else:
+                    self._show_window()
+            
+            self.tray_icon.on_click = on_icon_clicked
+            
+            # Запускаем трей в отдельном потоке
+            self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            self.tray_thread.start()
+            
+            print("[INFO] Иконка системного трея создана", level='DEBUG')
+            
+        except ImportError as e:
+            print(f"[WARNING] Не удалось импортировать pystray или PIL: {e}", level='WARNING')
+            print("[INFO] Функция сворачивания в трей будет недоступна", level='INFO')
+            self.tray_icon = None
+        except Exception as e:
+            print(f"[WARNING] Не удалось создать иконку в трее: {e}", level='WARNING')
+            self.tray_icon = None
+    
+    def _show_window(self, icon=None, item=None):
+        """Показать окно из трея"""
+        try:
+            self.root.after(0, lambda: self.root.deiconify())
+            self.root.after(0, lambda: self.root.lift())
+            self.root.after(0, lambda: self.root.focus_force())
+            print("[INFO] Окно показано из системного трея", level='DEBUG')
+        except Exception as e:
+            print(f"[ERROR] Ошибка показа окна: {e}", level='ERROR')
+    
+    def _hide_window(self, icon=None, item=None):
+        """Скрыть окно в трей"""
+        try:
+            self.root.after(0, lambda: self.root.withdraw())
+            print("[INFO] Окно скрыто в системный трей", level='DEBUG')
+        except Exception as e:
+            print(f"[ERROR] Ошибка скрытия окна: {e}", level='ERROR')
+    
+    def _quit_application(self, icon=None, item=None):
+        """Полный выход из приложения"""
+        try:
+            # Останавливаем трей
+            if self.tray_icon:
+                self.tray_icon.stop()
+            # Вызываем обычное закрытие
+            self._closing_in_progress = False  # Сбрасываем флаг для возможности закрытия
+            self._close_parent_terminal()
+        except Exception as e:
+            print(f"[ERROR] Ошибка выхода из приложения: {e}", level='ERROR')
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -13509,7 +14450,6 @@ class AutomationGUI(object):
     def open_replay_dialog(self):
         """Открытие диалога выбора лога для replay"""
         try:
-            import tkinter.filedialog as filedialog
             
             # Определяем директорию для поиска логов
             script_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') and sys.argv else os.getcwd()
@@ -13519,7 +14459,7 @@ class AutomationGUI(object):
                 log_dir = os.path.join(script_dir, "Log")
             
             # Выбор файла
-            log_file = filedialog.askopenfilename(
+            log_file = tkinter.filedialog.askopenfilename(
                 title="Выберите RAW лог для воспроизведения",
                 initialdir=log_dir if os.path.exists(log_dir) else script_dir,
                 filetypes=[
@@ -13825,7 +14765,18 @@ class AutomationGUI(object):
         self.uninstall_wine_button.pack(side=self.tk.LEFT, padx=5)
         ToolTip(self.uninstall_wine_button, "Удалить отмеченные галочками компоненты")
         
-        # Кнопка отмены (активна только во время установки/удаления)
+        # Кнопка создания образа Wine-префикса (после "Удалить выбранные")
+        self.create_template_button = self.tk.Button(main_buttons_frame, 
+                                            text="Создать Образ", 
+                                            command=self.create_wineprefix_template_from_selected,
+                                            font=('Arial', 10, 'bold'),
+                                            bg='#9C27B0',  # Фиолетовый цвет
+                                            fg='white',
+                                            state=self.tk.DISABLED)  # По умолчанию неактивна
+        self.create_template_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.create_template_button, "Создать архив образа выбранного Wine-префикса (только для установленных)")
+        
+        # Кнопка отмены (прижата к правому краю)
         self.cancel_operation_button = self.tk.Button(main_buttons_frame, 
                                                      text="Отменить", 
                                                      command=self.cancel_operation,
@@ -13833,7 +14784,7 @@ class AutomationGUI(object):
                                                      bg='#FF9800',
                                                      fg='white',
                                                      state=self.tk.DISABLED)
-        self.cancel_operation_button.pack(side=self.tk.LEFT, padx=5)
+        self.cancel_operation_button.pack(side=self.tk.RIGHT, padx=5)  # ПРИЖАТО К ПРАВОМУ КРАЮ
         ToolTip(self.cancel_operation_button, "Прервать текущую операцию установки/удаления")
         
         # Вторая строка: Флажок использования минимального winetricks и статус
@@ -15356,7 +16307,7 @@ class AutomationGUI(object):
         
         # Время и статистика
         time_str = time_key.strftime("%H:%M")
-        end_time = time_key + datetime.timedelta(minutes=5)
+        end_time = time_key + datetime.datetime.timedelta(minutes=5)
         end_time_str = end_time.strftime("%H:%M")
         
         stats_parts = []
@@ -16290,12 +17241,12 @@ class AutomationGUI(object):
                 # Планируем следующее обновление через 0.5 секунды
                 self.root.after(500, self._auto_refresh_processes_monitor)
             else:
-                # Вкладка не открыта - не обновляем, но планируем проверку через 1 секунду
+                # Вкладка не открыта - не обновляем, но планируем проверку через 5 секунд
                 # чтобы когда пользователь откроет вкладку, обновление возобновилось
-                self.root.after(1000, self._auto_refresh_processes_monitor)
+                self.root.after(5000, self._auto_refresh_processes_monitor)
         except Exception as e:
-            # При ошибке планируем проверку через 1 секунду
-            self.root.after(1000, self._auto_refresh_processes_monitor)
+            # При ошибке планируем проверку через 5 секунд
+            self.root.after(5000, self._auto_refresh_processes_monitor)
     
     def create_packages_tab(self):
         """Создание вкладки Пакеты с динамическим обновлением"""
@@ -17208,6 +18159,56 @@ class AutomationGUI(object):
             except:
                 pass
     
+    def _startup_welcome_and_check(self):
+        """Приветственное сообщение и проверка системы при запуске"""
+        try:
+            # Приветственное сообщение
+            welcome_msg = f"Добро пожаловать в {APP_NAME} {APP_VERSION}!"
+            print("=" * 60, gui_log=True)
+            print(welcome_msg, gui_log=True)
+            print("=" * 60, gui_log=True)
+            print("Проверка состояния системы...", gui_log=True)
+            
+            # Проверка необходимости обновления
+            if hasattr(self, 'system_updater') and self.system_updater:
+                update_check = self.system_updater.check_system_update_needed()
+                
+                if update_check['needs_update'] is True:
+                    # Система требует обновления
+                    print("", gui_log=True)
+                    print("[ВНИМАНИЕ] Система требует обновления", gui_log=True)
+                    print(f"   {update_check['message']}", gui_log=True)
+                    print("   Рекомендуется выполнить обновление через вкладку 'Обновление ОС'", gui_log=True)
+                    print("", gui_log=True)
+                    
+                    # Обновляем статусную строку (если есть)
+                    if hasattr(self, 'status_label'):
+                        self.status_label.config(
+                            text=f"[!] Требуется обновление: {update_check['upgradable_count']} пакетов",
+                            fg='orange'
+                        )
+                elif update_check['needs_update'] is False:
+                    # Система актуальна
+                    print(f"[OK] {update_check['message']}", gui_log=True)
+                    print("", gui_log=True)
+                    
+                    if hasattr(self, 'status_label'):
+                        self.status_label.config(
+                            text="[OK] Система актуальна",
+                            fg='green'
+                        )
+                else:
+                    # Ошибка проверки
+                    print(f"[WARNING] {update_check['message']}", gui_log=True)
+                    print("", gui_log=True)
+            
+            print("Проверка завершена. Готов к работе.", gui_log=True)
+            print("=" * 60, gui_log=True)
+            print("", gui_log=True)
+            
+        except Exception as e:
+            print(f"Ошибка при проверке системы: {str(e)}", gui_log=True)
+    
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
         self.wine_status_label.config(text="Проверка...")
@@ -17761,6 +18762,9 @@ class AutomationGUI(object):
             self.install_wine_button.config(state=self.tk.NORMAL)
         else:
             self.install_wine_button.config(state=self.tk.DISABLED)
+        
+        # Обновляем состояние кнопки "Создать Образ"
+        self._update_create_template_button_state()
     
     def run_wine_install(self):
         """Запуск установки Wine компонентов"""
@@ -18187,6 +19191,9 @@ class AutomationGUI(object):
             
             # Обновляем кнопки
             self._update_wine_buttons()
+            
+            # Обновляем состояние кнопки "Создать Образ"
+            self._update_create_template_button_state()
     
     def on_wine_tree_double_click(self, event):
         """Обработка двойного клика по таблице Wine компонентов - открытие папки компонента"""
@@ -18263,8 +19270,6 @@ class AutomationGUI(object):
         component_name = config.get('name', component_id)
         
         # Создаем диалоговое окно
-        import tkinter as tk
-        from tkinter import messagebox, scrolledtext
         
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Содержимое файла: {component_name}")
@@ -18766,7 +19771,6 @@ class AutomationGUI(object):
             selected = final_selected
         
         # Подтверждение удаления (показываем понятные названия компонентов)
-        import tkinter.messagebox as messagebox
         component_names = []
         for component_id in selected:
             if component_id in COMPONENTS_CONFIG:
@@ -18859,7 +19863,6 @@ class AutomationGUI(object):
     
     def cancel_operation(self):
         """Прервать текущую операцию установки/удаления"""
-        import tkinter.messagebox as messagebox
         
         if not messagebox.askyesno("Подтверждение отмены", 
                                   "Вы уверены, что хотите прервать текущую операцию?\n\n"
@@ -18989,6 +19992,195 @@ class AutomationGUI(object):
             use_minimal = self.use_minimal_winetricks.get()
             self.component_handlers['winetricks'].set_use_minimal(use_minimal)
             print(f"[GUI] Режим winetricks изменен: {'минимальный' if use_minimal else 'оригинальный'}", gui_log=True)
+    
+    def _update_create_template_button_state(self):
+        """Обновить состояние кнопки 'Создать Образ' на основе выбранного компонента"""
+        if not hasattr(self, 'create_template_button'):
+            return
+        
+        # Получаем выбранные компоненты
+        selected = self.get_selected_wine_components()
+        
+        # Кнопка активна только если выбран ОДИН компонент с категорией wine_environment и статусом OK
+        if len(selected) == 1:
+            component_id = selected[0]
+            
+            if component_id in COMPONENTS_CONFIG:
+                config = COMPONENTS_CONFIG[component_id]
+                category = config.get('category')
+                
+                # Проверяем категорию
+                if category == 'wine_environment':
+                    # Проверяем статус компонента
+                    status_text, status_tag = self.component_status_manager.get_component_status(
+                        component_id, config.get('name', '')
+                    )
+                    
+                    # Кнопка активна только если статус 'ok' (установлен)
+                    if status_tag == 'ok':
+                        self.create_template_button.config(state=self.tk.NORMAL)
+                        return
+        
+        # Во всех остальных случаях кнопка неактивна
+        self.create_template_button.config(state=self.tk.DISABLED)
+    
+    def create_wineprefix_template_from_selected(self):
+        """Создать образ Wine-префикса из выбранного компонента"""
+        
+        # 1. Получаем выбранные компоненты
+        selected = self.get_selected_wine_components()
+        
+        if not selected or len(selected) != 1:
+            return  # Кнопка должна быть неактивна в этом случае
+        
+        component_id = selected[0]
+        
+        # 2. Проверяем, что компонент существует и имеет правильную категорию
+        if component_id not in COMPONENTS_CONFIG:
+            return
+        
+        config = COMPONENTS_CONFIG[component_id]
+        
+        if config.get('category') != 'wine_environment':
+            return
+        
+        # 3. Проверяем статус (должен быть OK, но проверим еще раз)
+        status_text, status_tag = self.component_status_manager.get_component_status(
+            component_id, config.get('name', '')
+        )
+        
+        if status_tag != 'ok':
+            self.wine_status_label.config(
+                text=f"Компонент '{component_id}' не установлен. Сначала установите его.", 
+                fg='orange'
+            )
+            messagebox.showwarning(
+                "Предупреждение", 
+                f"Компонент '{component_id}' не установлен.\n"
+                f"Статус: {status_text}\n\n"
+                f"Сначала установите компонент, затем создайте образ."
+            )
+            return
+        
+        # 4. Проверяем, что префикс существует
+        wineprefix_path = config.get('wineprefix_path', '~/.wine-astraregul')
+        wineprefix_path = os.path.expanduser(wineprefix_path)
+        
+        if not os.path.exists(wineprefix_path):
+            self.wine_status_label.config(text=f"Wine-префикс не найден: {wineprefix_path}", fg='red')
+            messagebox.showerror(
+                "Ошибка", 
+                f"Wine-префикс не найден:\n{wineprefix_path}"
+            )
+            return
+        
+        # Проверяем наличие system.reg
+        system_reg = os.path.join(wineprefix_path, 'system.reg')
+        if not os.path.exists(system_reg):
+            self.wine_status_label.config(text=f"Wine-префикс не инициализирован", fg='red')
+            messagebox.showerror(
+                "Ошибка", 
+                f"Wine-префикс не инициализирован:\n{wineprefix_path}"
+            )
+            return
+        
+        # 5. Показываем диалог выбора пути и имени архива
+        default_name = f"{component_id}_template.tar.gz"
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        astrapack_dir = os.path.join(script_dir, "AstraPack")
+        default_dir = os.path.join(astrapack_dir, 'WinePrefixes') if os.path.exists(astrapack_dir) else os.path.expanduser('~')
+        
+        os.makedirs(default_dir, exist_ok=True)
+        
+        archive_path = tkinter.filedialog.asksaveasfilename(
+            title="Сохранить образ Wine-префикса",
+            initialdir=default_dir,
+            initialfile=default_name,
+            defaultextension=".tar.gz",
+            filetypes=[
+                ("Tar GZ архивы", "*.tar.gz"),
+                ("Все файлы", "*.*")
+            ]
+        )
+        
+        if not archive_path:
+            self.wine_status_label.config(text="Создание образа отменено", fg='gray')
+            return
+        
+        # 6. Получаем обработчик и запускаем создание
+        if 'wine_environment' not in self.component_handlers:
+            self.wine_status_label.config(text="Обработчик Wine-окружения не найден", fg='red')
+            return
+        
+        handler = self.component_handlers['wine_environment']
+        
+        # 7. Активируем кнопку "Отменить"
+        self.cancel_operation_button.config(state=self.tk.NORMAL)
+        
+        # 8. Запускаем создание архива в отдельном потоке
+        self.wine_status_label.config(text="Создание образа...", fg='blue')
+        self.create_template_button.config(state=self.tk.DISABLED)
+        
+        def create_archive_thread():
+            try:
+                result = handler.create_wineprefix_template(
+                    component_id=component_id,
+                    config=config,
+                    archive_name=os.path.basename(archive_path),
+                    output_dir=os.path.dirname(archive_path),
+                    clean_temp=True,
+                    clean_cache=False,
+                    gui_instance=self  # ПЕРЕДАЕМ GUI для обновления прогресса
+                )
+                
+                self.root.after(0, lambda: self._on_wineprefix_template_created(
+                    result, archive_path, component_id
+                ))
+            except Exception as e:
+                error_msg = str(e)  # Сохраняем в локальную переменную для lambda
+                self.root.after(0, lambda: self._on_wineprefix_template_error(
+                    error_msg, component_id
+                ))
+        
+        thread = threading.Thread(target=create_archive_thread, daemon=True)
+        thread.start()
+    
+    def _on_wineprefix_template_created(self, result, archive_path, component_id):
+        """Обработчик успешного создания образа"""
+        self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
+        self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
+        
+        if result:
+            try:
+                size_bytes = os.path.getsize(result)
+                if size_bytes < 1024:
+                    size_str = f"{size_bytes} Б"
+                elif size_bytes < 1024 * 1024:
+                    size_str = f"{size_bytes / 1024:.1f} КБ"
+                elif size_bytes < 1024 * 1024 * 1024:
+                    size_str = f"{size_bytes / (1024 * 1024):.1f} МБ"
+                else:
+                    size_str = f"{size_bytes / (1024 * 1024 * 1024):.2f} ГБ"
+            except:
+                size_str = "неизвестно"
+            
+            self.wine_status_label.config(text=f"Образ создан: {os.path.basename(result)} ({size_str})", fg='green')
+            messagebox.showinfo(
+                "Успешно", 
+                f"Образ Wine-префикса успешно создан:\n{result}\n\n"
+                f"Размер: {size_str}"
+            )
+        else:
+            self.wine_status_label.config(text="Не удалось создать образ", fg='red')
+            messagebox.showerror("Ошибка", "Не удалось создать образ Wine-префикса")
+    
+    def _on_wineprefix_template_error(self, error_msg, component_id):
+        """Обработчик ошибки создания образа"""
+        self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
+        self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
+        self.wine_status_label.config(text=f"Ошибка создания образа: {error_msg[:50]}...", fg='red')
+        messagebox.showerror("Ошибка", f"Ошибка при создании образа:\n{error_msg}")
     
     def _wine_uninstall_completed(self, success):
         """Обработка завершения удаления (вызывается из главного потока)"""
@@ -20187,8 +21379,6 @@ class AutomationGUI(object):
             self._close_dialog_open = True
             
             # Есть процессы - показываем форму
-            import tkinter as tk
-            from tkinter import messagebox
             
             # Создаем МОДАЛЬНОЕ окно
             dialog = tk.Toplevel(self.root)
@@ -22133,6 +23323,61 @@ class SystemUpdater(object):
         except Exception as e:
             print(f"[ERROR] Ошибка обновления детальных баров: {e}")
     
+    def check_system_update_needed(self):
+        """
+        Проверка необходимости обновления системы через apt
+        
+        Returns:
+            dict: {
+                'needs_update': bool или None (если ошибка),
+                'upgradable_count': int,
+                'message': str
+            }
+        """
+        try:
+            # Проверяем наличие обновлений
+            result = subprocess.run(
+                ['apt', 'list', '--upgradable'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                upgradable_count = len(lines) - 1 if len(lines) > 1 else 0  # Первая строка - заголовок
+                
+                if upgradable_count > 0:
+                    return {
+                        'needs_update': True,
+                        'upgradable_count': upgradable_count,
+                        'message': f'Доступно {upgradable_count} обновлений пакетов. Рекомендуется обновить систему перед установкой компонентов.'
+                    }
+                else:
+                    return {
+                        'needs_update': False,
+                        'upgradable_count': 0,
+                        'message': 'Система актуальна, все пакеты обновлены.'
+                    }
+            else:
+                return {
+                    'needs_update': None,
+                    'upgradable_count': 0,
+                    'message': 'Не удалось проверить наличие обновлений.'
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                'needs_update': None,
+                'upgradable_count': 0,
+                'message': 'Таймаут при проверке обновлений (превышено 10 секунд).'
+            }
+        except Exception as e:
+            return {
+                'needs_update': None,
+                'upgradable_count': 0,
+                'message': f'Ошибка проверки обновлений: {str(e)}'
+            }
+    
     def start_monitoring(self):
         """Начать мониторинг времени и дискового пространства"""
         self.start_time = time.time()
@@ -23645,7 +24890,6 @@ class FilesystemFilter(object):
     
     def should_include(self, file_path, is_directory=False):
         """Проверяет, нужно ли показывать файл/директорию"""
-        import fnmatch
         
         # Проверка путей
         for exclude_path in self.exclude_paths:
@@ -23839,7 +25083,6 @@ class DirectorySnapshot(object):
             if self.scan_start_time:
                 self.scan_duration = time.time() - self.scan_start_time
                 # Вычисляем использование памяти (приблизительно)
-                import sys
                 self.memory_usage = sys.getsizeof(self.files) + sys.getsizeof(self.directories)
     
     def _quick_hash(self, file_path):
