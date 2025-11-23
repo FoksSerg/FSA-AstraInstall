@@ -4,7 +4,7 @@
 Скрипт объединения astra_update.sh + astra_install.sh + astra_automation.py
 в единый Python файл FSA-AstraInstall_unified.py
 
-Версия: V2.6.131 (2025.11.16)
+Версия: V2.6.132 (2025.11.16)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 

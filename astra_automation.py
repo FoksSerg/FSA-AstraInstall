@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.131 (2025.11.22)
+Версия: V2.6.132 (2025.11.24)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.131 (2025.11.22)"
+APP_VERSION = "V2.6.132 (2025.11.24)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -3397,33 +3397,6 @@ class WineEnvironmentHandler(ComponentHandler):
                 text="Подсчет размера...", fg='blue'
             ))
         
-        total_size = 0
-        total_files = 0
-        total_dirs = 0
-        
-        for root, dirs, files in os.walk(wineprefix_path):
-            if CANCEL_OPERATION:
-                print("Операция отменена пользователем")
-                return None
-            total_dirs += len(dirs)
-            for file in files:
-                file_path = os.path.join(root, file)
-                try:
-                    total_size += os.path.getsize(file_path)
-                    total_files += 1
-                except:
-                    pass
-        
-        # Форматируем размер
-        if total_size < 1024 * 1024:
-            size_str = f"{total_size / 1024:.1f} КБ"
-        elif total_size < 1024 * 1024 * 1024:
-            size_str = f"{total_size / (1024 * 1024):.1f} МБ"
-        else:
-            size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
-        
-        print(f"Размер архива: {size_str} ({total_files} файлов, {total_dirs} папок)")
-        
         # 7. Инициализируем прогресс в GUI
         if gui_instance:
             gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(maximum=100, value=0))
@@ -3435,466 +3408,312 @@ class WineEnvironmentHandler(ComponentHandler):
         
         start_time = time.time()
         
-        # 8. Создаем архив через системный tar с мониторингом прогресса
+        # 8. Создаем архив через Python tarfile (гарантированно поддерживает длинные пути)
         print(f"Создание архива: {archive_path}")
         
-        # Проверяем наличие tar
-        if not self._check_command_available('tar'):
-            print("Команда tar не найдена, используем Python tarfile (медленнее)", level='WARNING')
-            return self._create_archive_with_tarfile(wineprefix_path, archive_path, gui_instance, 
-                                                    start_time, total_size, total_files)
+        # Всегда используем Python tarfile для гарантированной поддержки длинных путей
+        # total_size и total_files будут рассчитаны внутри функции
+        # Варианты архивации:
+        # use_archive_method = 'hybrid' - гибридный с фильтрацией симлинков (tarfile)
+        # use_archive_method = 'simple' - упрощенный без фильтрации (tarfile)
+        # use_archive_method = 'system_tar_max' - через системный tar с настраиваемым сжатием (КАК СИСТЕМНЫЙ АРХИВАТОР) - РЕКОМЕНДУЕТСЯ
+        use_archive_method = 'system_tar_max'  # Выбор метода архивации
         
-        # Строим команду tar
-        # ПРОВЕРКА: Убеждаемся, что пути существуют и правильные
-        if not os.path.exists(wineprefix_path):
-            print(f"[ERROR] Путь wineprefix не существует: {wineprefix_path}", level='ERROR')
-            return None
-        
-        if not os.path.isdir(wineprefix_path):
-            print(f"[ERROR] Путь wineprefix не является директорией: {wineprefix_path}", level='ERROR')
-            return None
-        
-        # Проверяем родительскую директорию
-        parent_dir = os.path.dirname(wineprefix_path)
-        if not os.path.exists(parent_dir):
-            print(f"[ERROR] Родительская директория не существует: {parent_dir}", level='ERROR')
-            return None
-        
-        # Получаем абсолютные пути для надежности
-        wineprefix_path_abs = os.path.abspath(wineprefix_path)
-        archive_path_abs = os.path.abspath(archive_path)
-        parent_dir_abs = os.path.abspath(parent_dir)
-        basename = os.path.basename(wineprefix_path_abs)
-        
-        print(f"[DEBUG] Создание архива:")
-        print(f"[DEBUG]   wineprefix_path: {wineprefix_path_abs}")
-        print(f"[DEBUG]   archive_path: {archive_path_abs}")
-        print(f"[DEBUG]   parent_dir: {parent_dir_abs}")
-        print(f"[DEBUG]   basename: {basename}")
-        
-        tar_cmd = [
-            'tar',
-            '-czf',  # -c (create), -z (gzip), -f (file)
-            archive_path_abs,
-            '-C', parent_dir_abs,  # Переходим в родительскую директорию
-            basename  # Архивируем только папку префикса
-        ]
-        
-        print(f"[DEBUG] Команда tar: {' '.join(tar_cmd)}")
-        
-        # Запускаем tar в отдельном процессе
-        process = subprocess.Popen(
-            tar_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=parent_dir_abs  # Устанавливаем рабочую директорию
-        )
-        
-        # Собираем список всех файлов для отслеживания текущего (в фоне, не блокируя запуск tar)
-        all_files = []
-        cumulative_sizes = []
-        cumulative_size = 0
-        files_ready = threading.Event()  # Событие готовности списка файлов
-        
-        def collect_files():
-            """Сбор списка файлов в фоне"""
-            nonlocal cumulative_size
-            try:
-                for root, dirs, files in os.walk(wineprefix_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        try:
-                            file_size = os.path.getsize(file_path)
-                            arcname = os.path.relpath(file_path, wineprefix_path)
-                            all_files.append(arcname)
-                            cumulative_size += file_size
-                            cumulative_sizes.append(cumulative_size)
-                        except:
-                            pass
-            finally:
-                files_ready.set()  # Сигнализируем о готовности
-        
-        # Запускаем сбор файлов в отдельном потоке (не блокируем запуск tar)
-        collect_thread = threading.Thread(target=collect_files, daemon=True)
-        collect_thread.start()
-        
-        # Переменная для хранения текущего обрабатываемого файла
-        current_file = [os.path.basename(wineprefix_path)]  # Используем список для изменения из вложенной функции
-        
-        # Флаг для остановки потока мониторинга
-        monitoring_active = threading.Event()
-        monitoring_active.set()  # Устанавливаем флаг активным
-        
-        # Мониторим прогресс через обход файлов
-        def monitor_progress():
-            """Мониторинг прогресса архивации"""
-            while monitoring_active.is_set() and process.poll() is None:
-                if CANCEL_OPERATION:
-                    print("Операция отменена, завершаем процесс...")
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    return
-                
-                # Проверяем размер создаваемого архива
-                if os.path.exists(archive_path):
-                    try:
-                        current_archive_size = os.path.getsize(archive_path)
-                        # Приблизительный прогресс на основе размера архива
-                        # Используем более консервативный коэффициент сжатия (0.6) для расчета максимума
-                        # Но не ограничиваем прогресс - он может достичь 100%
-                        if total_size > 0:
-                            estimated_final_size = total_size * 0.6  # Более консервативная оценка
-                            progress = min(100, (current_archive_size / max(estimated_final_size, 1)) * 100)
-                        else:
-                            progress = 0
-                        
-                        # Определяем текущий файл на основе размера архива (только если список готов)
-                        if files_ready.is_set() and cumulative_sizes and current_archive_size > 0:
-                            # Предполагаем коэффициент сжатия ~0.7 (архив примерно 70% от исходного размера)
-                            estimated_processed_size = current_archive_size / 0.7
-                            # Бинарный поиск для быстрого нахождения файла (O(log n) вместо O(n))
-                            idx = bisect.bisect_left(cumulative_sizes, estimated_processed_size)
-                            if idx < len(all_files):
-                                # Показываем только папку, без имени файла
-                                file_path = all_files[idx]
-                                dir_path = os.path.dirname(file_path)
-                                current_file[0] = dir_path if dir_path else os.path.basename(wineprefix_path)
-                            elif all_files:
-                                # Показываем только папку последнего файла
-                                last_file = all_files[-1]
-                                dir_path = os.path.dirname(last_file)
-                                current_file[0] = dir_path if dir_path else os.path.basename(wineprefix_path)
-                        
-                        elapsed_time = time.time() - start_time
-                        elapsed_minutes = int(elapsed_time // 60)
-                        elapsed_seconds = int(elapsed_time % 60)
-                        
-                        # Использование диска (размер архива)
-                        if current_archive_size < 1024 * 1024:
-                            disk_str = f"{current_archive_size / 1024:.1f} КБ"
-                        elif current_archive_size < 1024 * 1024 * 1024:
-                            disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
-                        else:
-                            disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                        
-                        # Обновляем GUI
-                        if gui_instance:
-                            gui_instance.root.after(0, lambda p=progress: gui_instance.wine_progress.config(value=p))
-                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                                    gui_instance.wine_time_label.config(text=t))
-                            gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
-                            gui_instance.root.after(0, lambda cf=current_file[0]: gui_instance.wine_stage_label.config(
-                                text=f"Архивация: {self._truncate_path(cf, 60)}", fg='blue'
-                            ))
-                    except:
-                        pass
-                
-                time.sleep(0.5)  # Обновляем каждые 0.5 секунды
-        
-        # Запускаем мониторинг в отдельном потоке
-        monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
-        monitor_thread.start()
-        
-        # Ждем завершения процесса
-        try:
-            stdout, stderr = process.communicate()
-            
-            # Останавливаем поток мониторинга
-            monitoring_active.clear()
-            
-            # Закрываем файловые дескрипторы процесса
-            if process.stdout:
-                try:
-                    process.stdout.close()
-                except:
-                    pass
-            if process.stderr:
-                try:
-                    process.stderr.close()
-                except:
-                    pass
-            
-            # КРИТИЧНО: Убеждаемся, что процесс полностью завершился
-            if process.poll() is None:
-                print("[WARNING] Процесс tar еще не завершился, ждем...", level='WARNING')
-                try:
-                    process.wait(timeout=30)  # Ждем до 30 секунд
-                except subprocess.TimeoutExpired:
-                    print("[ERROR] Процесс tar не завершился за 30 секунд!", level='ERROR')
-                    # Завершаем все дочерние процессы
-                    try:
-                        if PSUTIL_AVAILABLE:
-                            parent = psutil.Process(process.pid)
-                            children = parent.children(recursive=True)
-                            for child in children:
-                                try:
-                                    child.terminate()
-                                except:
-                                    pass
-                            # Ждем завершения дочерних процессов
-                            gone, alive = psutil.wait_procs(children, timeout=5)
-                            for child in alive:
-                                try:
-                                    child.kill()
-                                except:
-                                    pass
-                    except:
-                        pass
-                    process.kill()
-                    process.wait()
-                    return None
-            
-            # Проверяем, что процесс завершился с кодом
-            if process.returncode is None:
-                print("[ERROR] Не удалось получить код возврата процесса tar", level='ERROR')
-                return None
-            
-            if CANCEL_OPERATION:
-                # Удаляем частично созданный архив
-                if os.path.exists(archive_path):
-                    try:
-                        os.remove(archive_path)
-                    except:
-                        pass
-                if gui_instance:
-                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                        text="Операция отменена", fg='orange'
-                    ))
-                return None
-            
-            if process.returncode != 0:
-                error_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Неизвестная ошибка"
-                stdout_msg = stdout.decode('utf-8', errors='ignore') if stdout else ""
-                print(f"Ошибка создания архива (код {process.returncode}): {error_msg}", level='ERROR')
-                if stdout_msg:
-                    print(f"[DEBUG] stdout: {stdout_msg}", level='DEBUG')
-                print(f"[DEBUG] Команда была: {' '.join(tar_cmd)}", level='DEBUG')
-                if gui_instance:
-                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                        text="Ошибка создания архива", fg='red'
-                    ))
-                return None
-            
-            # Успешное завершение
-            # Небольшая задержка для завершения записи архива
-            time.sleep(0.5)
-            
-            # КРИТИЧНО: Убеждаемся, что все дочерние процессы завершены
-            try:
-                if PSUTIL_AVAILABLE and process.pid:
-                    try:
-                        parent = psutil.Process(process.pid)
-                        # Проверяем, не остались ли дочерние процессы
-                        children = parent.children(recursive=True)
-                        if children:
-                            print(f"[DEBUG] Обнаружено {len(children)} дочерних процессов, ожидаем их завершения...", level='DEBUG')
-                            gone, alive = psutil.wait_procs(children, timeout=5)
-                            if alive:
-                                print(f"[WARNING] {len(alive)} дочерних процессов не завершились, принудительно завершаем...", level='WARNING')
-                                for child in alive:
-                                    try:
-                                        child.kill()
-                                    except:
-                                        pass
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        # Процесс уже завершен или нет доступа
-                        pass
-            except Exception as e:
-                print(f"[DEBUG] Ошибка проверки дочерних процессов: {e}", level='DEBUG')
-            
-            # КРИТИЧНО: Синхронизируем файловую систему для гарантии записи
-            try:
-                sync_result = subprocess.run(['sync'], timeout=10, 
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if sync_result.returncode != 0:
-                    print(f"[WARNING] Ошибка синхронизации файловой системы: {sync_result.stderr.decode('utf-8', errors='ignore')}", level='WARNING')
-            except Exception as e:
-                print(f"[WARNING] Не удалось синхронизировать файловую систему: {e}", level='WARNING')
-            
-            # Проверяем, что архив существует и доступен (используем абсолютный путь)
-            if not os.path.exists(archive_path_abs):
-                print(f"[ERROR] Архив не найден после создания: {archive_path_abs}", level='ERROR')
-                return None
-            
-            # Убеждаемся, что файл полностью записан и доступен
-            max_retries = 5
-            retry_count = 0
-            archive_size = 0
-            while retry_count < max_retries:
-                try:
-                    # Пытаемся получить размер файла
-                    archive_size = os.path.getsize(archive_path_abs)
-                    # Пытаемся открыть файл для чтения
-                    with open(archive_path_abs, 'rb') as test_file:
-                        test_file.seek(0, 2)  # Переходим в конец файла
-                        actual_size = test_file.tell()
-                    if archive_size == actual_size and archive_size > 0:
-                        break  # Файл готов
-                    else:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            time.sleep(1)  # Ждем 1 секунду перед повторной попыткой
-                except (IOError, OSError) as e:
-                    retry_count += 1
-                    if retry_count >= max_retries:
-                        print(f"[ERROR] Архив недоступен после {max_retries} попыток: {e}", level='ERROR')
-                        return None
-                    time.sleep(1)  # Ждем 1 секунду перед повторной попыткой
-            
-            # Проверяем размер архива (должен быть больше 0)
-            if archive_size == 0:
-                print(f"[ERROR] Архив создан, но имеет размер 0 байт!", level='ERROR')
-                if os.path.exists(archive_path_abs):
-                    try:
-                        os.remove(archive_path_abs)
-                    except:
-                        pass
-                return None
-            
-            # Проверяем целостность архива (пытаемся открыть и прочитать заголовок)
-            try:
-                with gzip.open(archive_path_abs, 'rb') as f:
-                    # Читаем первые несколько байт для проверки
-                    header = f.read(512)
-                    if len(header) < 100:  # Минимальный размер для валидного tar.gz
-                        print(f"[WARNING] Архив слишком мал или поврежден (заголовок: {len(header)} байт)", level='WARNING')
-            except Exception as e:
-                print(f"[WARNING] Не удалось проверить целостность архива: {e}", level='WARNING')
-                # Не возвращаем None, так как это может быть ложная тревога
-            
-            elapsed_time = time.time() - start_time
-            elapsed_minutes = int(elapsed_time // 60)
-            elapsed_seconds = int(elapsed_time % 60)
-            
-            # Финальное обновление GUI
-            if gui_instance:
-                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                        gui_instance.wine_time_label.config(text=t))
-                
-                # Финальный размер архива (уже получен выше при проверке)
-                if archive_size < 1024 * 1024:
-                    disk_str = f"{archive_size / 1024:.1f} КБ"
-                elif archive_size < 1024 * 1024 * 1024:
-                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
-                else:
-                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                
-                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архив создан успешно", fg='green'
-                ))
-            
-            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
-            print(f"Путь: {archive_path}")
-            
-            # Устанавливаем права пользователя на архив и папку
-            try:
-                real_user = os.environ.get('SUDO_USER')
-                if os.geteuid() == 0 and real_user and real_user != 'root':
-                    uid = pwd.getpwnam(real_user).pw_uid
-                    gid = pwd.getpwnam(real_user).pw_gid
-                    # Устанавливаем владельца на архив (используем абсолютный путь)
-                    os.chown(archive_path_abs, uid, gid)
-                    # Устанавливаем владельца на папку output_dir
-                    os.chown(output_dir, uid, gid)
-                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
-            except Exception as e:
-                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
-            
-            # Возвращаем оригинальный путь (не абсолютный)
-            return archive_path
-            
-        except Exception as e:
-            # Останавливаем поток мониторинга при ошибке
-            if 'monitoring_active' in locals():
-                monitoring_active.clear()
-            # Закрываем файловые дескрипторы процесса
-            if 'process' in locals():
-                try:
-                    if process.stdout:
-                        process.stdout.close()
-                    if process.stderr:
-                        process.stderr.close()
-                    # Завершаем процесс если он еще работает
-                    if process.poll() is None:
-                        process.terminate()
-                        try:
-                            process.wait(timeout=5)
-                        except:
-                            process.kill()
-                            process.wait()
-                except:
-                    pass
-            print(f"Ошибка при создании архива: {e}", level='ERROR')
-            traceback.print_exc()
-            if gui_instance:
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Ошибка создания архива", fg='red'
-                ))
-            return None
+        if use_archive_method == 'simple':
+            return self._create_archive_simple(wineprefix_path, archive_path, gui_instance, start_time)
+        elif use_archive_method == 'system_tar_max':
+            # Получаем уровень сжатия из параметра функции (если передан)
+            compression_level = getattr(self, '_current_compression_level', 6)  # По умолчанию 6
+            return self._create_archive_system_tar_max_compression(wineprefix_path, archive_path, gui_instance, start_time, compression_level)
+        else:  # 'hybrid' - по умолчанию
+            return self._create_archive_with_tarfile(wineprefix_path, archive_path, gui_instance, start_time)
     
-    def _create_archive_with_tarfile(self, wineprefix_path, archive_path, gui_instance, 
-                                     start_time, total_size, total_files):
-        """Fallback: создание архива через Python tarfile (медленнее)"""
+    def _create_archive_with_tarfile(self, wineprefix_path, archive_path, gui_instance, start_time):
+        """Создание архива через Python tarfile с поддержкой длинных путей (формат PAX)
+        Использует гибридный подход: директории без симлинков архивируются целиком,
+        директории с симлинками - по одному файлу"""
         global CANCEL_OPERATION
         
         try:
             processed_size = 0
             processed_files = 0  # Счетчик обработанных файлов
-            with tarfile.open(archive_path, 'w:gz') as tar:
-                # Добавляем весь префикс
-                for root, dirs, files in os.walk(wineprefix_path):
+            skipped_symlinks = 0
+            last_gui_update = 0  # Время последнего обновления GUI
+            last_archive_size = 0  # Размер архива при последнем обновлении
+            
+            # Получаем абсолютные пути
+            wineprefix_path_abs = os.path.abspath(wineprefix_path)
+            archive_path_abs = os.path.abspath(archive_path)
+            real_wineprefix = os.path.realpath(wineprefix_path_abs)
+            
+            # Структуры данных для гибридного подхода
+            all_dirs = set()  # Множество всех директорий (включая пустые)
+            dirs_without_symlinks = {}  # {dir_path: dir_size} - директории без внешних симлинков
+            dirs_with_symlinks = {}  # {dir_path: [(file_path, file_size, arcname), ...]} - директории с симлинками
+            total_size = 0  # Общий размер всех файлов для архивации
+            total_files = 0  # Общее количество файлов
+            total_dirs = 0  # Общее количество директорий
+            
+            # Вспомогательная функция для проверки внешнего симлинка
+            def is_external_symlink(file_path):
+                """Проверяет, является ли файл внешним симлинком"""
+                try:
+                    if not os.path.islink(file_path):
+                        return False
+                    
+                    link_target = os.readlink(file_path)
+                    if not os.path.isabs(link_target):
+                        link_target = os.path.join(os.path.dirname(file_path), link_target)
+                    link_target = os.path.abspath(link_target)
+                    
+                    try:
+                        real_target = os.path.realpath(link_target)
+                        if not real_target.startswith(real_wineprefix + os.sep):
+                            return True  # Внешний симлинк
+                    except:
+                        # Если не удалось проверить путь - считаем внешним для безопасности
+                        return True
+                except:
+                    # Если ошибка при проверке симлинка - пропускаем
+                    return True
+                return False
+            
+            # Первый проход: собираем информацию о директориях и файлах
+            print("Анализ структуры файлов...")
+            current_dir_files = {}  # {dir_path: [(file_path, file_size, arcname), ...]}
+            current_dir_has_symlinks = {}  # {dir_path: bool}
+            
+            for root, dirs, files in os.walk(wineprefix_path_abs):
+                if CANCEL_OPERATION:
+                    print("Операция отменена пользователем")
+                    return None
+                
+                # Добавляем текущую директорию в множество
+                rel_dir = os.path.relpath(root, wineprefix_path_abs)
+                if rel_dir != '.':
+                    all_dirs.add(rel_dir)
+                total_dirs += len(dirs)
+                
+                dir_path = root
+                current_dir_files[dir_path] = []
+                current_dir_has_symlinks[dir_path] = False
+                
+                # Обрабатываем файлы
+                for file in files:
                     if CANCEL_OPERATION:
                         return None
                     
-                    for file in files:
+                    file_path = os.path.join(root, file)
+                    
+                    # Пропускаем внешние симлинки
+                    if is_external_symlink(file_path):
+                        skipped_symlinks += 1
+                        if skipped_symlinks <= 5:
+                            print(f"Пропущен внешний симлинк: {os.path.relpath(file_path, wineprefix_path_abs)}", level='DEBUG')
+                        current_dir_has_symlinks[dir_path] = True
+                        continue
+                    
+                    # Получаем размер файла
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        arcname = os.path.relpath(file_path, wineprefix_path_abs)
+                        current_dir_files[dir_path].append((file_path, file_size, arcname))
+                        total_size += file_size
+                        total_files += 1
+                    except:
+                        pass
+        
+            # Группируем директории по наличию симлинков
+            for dir_path, files_list in current_dir_files.items():
+                rel_dir = os.path.relpath(dir_path, wineprefix_path_abs)
+                
+                if current_dir_has_symlinks[dir_path] or len(files_list) == 0:
+                    # Директория с симлинками или пустая - обрабатываем по одному файлу
+                    if len(files_list) > 0:
+                        dirs_with_symlinks[rel_dir] = files_list
+                else:
+                    # Директория без симлинков - считаем общий размер и обрабатываем целиком
+                    dir_size = sum(file_size for _, file_size, _ in files_list)
+                    dir_file_count = len(files_list)
+                    dirs_without_symlinks[rel_dir] = (dir_path, dir_size, dir_file_count)
+            
+            # Форматируем размер для вывода
+            if total_size < 1024 * 1024:
+                size_str = f"{total_size / 1024:.1f} КБ"
+            elif total_size < 1024 * 1024 * 1024:
+                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+            else:
+                size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+            
+            print(f"Размер архива: {size_str} ({total_files} файлов, {total_dirs} папок)")
+            print(f"Директорий без симлинков: {len(dirs_without_symlinks)}, с симлинками: {len(dirs_with_symlinks)}")
+            
+            # Обновляем GUI сразу после анализа структуры (стартуем таймер)
+            if gui_instance:
+                current_time = time.time()
+                elapsed_time = current_time - start_time
+                elapsed_minutes = int(elapsed_time // 60)
+                elapsed_seconds = int(elapsed_time % 60)
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                    gui_instance.wine_time_label.config(text=t))
+            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Начало архивации...", fg='blue'
+                ))
+            
+            # Используем формат PAX для гарантированной поддержки длинных путей
+            with tarfile.open(archive_path_abs, 'w:gz', format=tarfile.PAX_FORMAT) as tar:
+                # Второй проход: добавляем все директории (включая пустые)
+                for rel_dir in sorted(all_dirs):
+                    if CANCEL_OPERATION:
+                        return None
+                    
+                    dir_path = os.path.join(wineprefix_path_abs, rel_dir)
+                    try:
+                        tarinfo = tar.gettarinfo(dir_path, arcname=rel_dir)
+                        tarinfo.type = tarfile.DIRTYPE  # Явно указываем тип директории
+                        tar.addfile(tarinfo)
+                    except Exception as e:
+                        print(f"Ошибка при добавлении директории {rel_dir}: {e}", level='DEBUG')
+                
+                # Третий проход: архивируем директории без симлинков целиком
+                dirs_processed = 0
+                for rel_dir, (dir_path, dir_size, dir_file_count) in sorted(dirs_without_symlinks.items()):
+                    if CANCEL_OPERATION:
+                        return None
+                    
+                    try:
+                        tar.add(dir_path, arcname=rel_dir, recursive=True)
+                        processed_size += dir_size
+                        processed_files += dir_file_count
+                        dirs_processed += 1
+                        
+                        # Обновляем GUI периодически (каждые 10 директорий, каждую секунду или после первой директории)
+                        current_time = time.time()
+                        should_update = (
+                            dirs_processed == 1 or  # Сразу после первой директории
+                            dirs_processed % 10 == 0 or  # Каждые 10 директорий
+                            current_time - last_gui_update >= 1.0  # Или каждую секунду
+                        )
+                        
+                        if gui_instance and total_size > 0 and should_update:
+                            progress = min(100, (processed_size / total_size) * 100)
+                            elapsed_time = current_time - start_time
+                            elapsed_minutes = int(elapsed_time // 60)
+                            elapsed_seconds = int(elapsed_time % 60)
+                            
+                            # Проверяем размер архива в реальном времени
+                            current_archive_size = 0
+                            if os.path.exists(archive_path_abs):
+                                try:
+                                    current_archive_size = os.path.getsize(archive_path_abs)
+                                except:
+                                    pass
+                            
+                            # Форматируем размер архива
+                            if current_archive_size < 1024 * 1024:
+                                disk_str = f"{current_archive_size / 1024:.1f} КБ"
+                            elif current_archive_size < 1024 * 1024 * 1024:
+                                disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
+                            else:
+                                disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                            
+                            gui_instance.root.after(0, lambda p=progress: 
+                                gui_instance.wine_progress.config(value=p))
+                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                gui_instance.wine_time_label.config(text=t))
+                            gui_instance.root.after(0, lambda d=disk_str: 
+                                gui_instance.wine_size_label.config(text=d))
+                            gui_instance.root.after(0, lambda fp=rel_dir if rel_dir != '.' else os.path.basename(wineprefix_path): gui_instance.wine_stage_label.config(
+                                text=f"Архивация: {self._truncate_path(fp, 60)}", fg='blue'
+                            ))
+                            
+                            last_gui_update = current_time
+                            last_archive_size = current_archive_size
+                    except Exception as e:
+                        print(f"Ошибка при добавлении директории {rel_dir} в архив: {e}", level='DEBUG')
+                
+                # Четвертый проход: архивируем директории с симлинками по одному файлу
+                for rel_dir, files_list in sorted(dirs_with_symlinks.items()):
+                    if CANCEL_OPERATION:
+                        return None
+                    
+                    for file_path, file_size, arcname in files_list:
                         if CANCEL_OPERATION:
                             return None
                         
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, wineprefix_path)
                         # Получаем относительный путь к папке (без имени файла)
-                        folder_path = os.path.relpath(root, wineprefix_path)
+                        folder_path = os.path.dirname(arcname) if os.path.dirname(arcname) else '.'
                         
                         try:
-                            tar.add(file_path, arcname=arcname)
-                            processed_size += os.path.getsize(file_path)
-                            processed_files += 1  # Увеличиваем счетчик файлов
+                            tar.add(file_path, arcname=arcname, recursive=False)
+                            processed_size += file_size
+                            processed_files += 1
                             
-                            # Обновляем прогресс по количеству файлов (более точно)
-                            if gui_instance and total_files > 0:
-                                progress = min(100, (processed_files / total_files) * 100)
-                                elapsed_time = time.time() - start_time
+                            # Обновляем GUI периодически (каждые 50 файлов или каждую секунду)
+                            current_time = time.time()
+                            should_update = (
+                                processed_files % 50 == 0 or  # Каждые 50 файлов
+                                current_time - last_gui_update >= 1.0  # Или каждую секунду
+                            )
+                            
+                            if gui_instance and total_size > 0 and should_update:
+                                # Прогресс рассчитываем по размеру обработанных файлов (более точно)
+                                progress = min(100, (processed_size / total_size) * 100)
+                                elapsed_time = current_time - start_time
                                 elapsed_minutes = int(elapsed_time // 60)
                                 elapsed_seconds = int(elapsed_time % 60)
+                                
+                                # Проверяем размер архива в реальном времени
+                                current_archive_size = 0
+                                if os.path.exists(archive_path_abs):
+                                    try:
+                                        current_archive_size = os.path.getsize(archive_path_abs)
+                                    except:
+                                        pass
+                                
+                                # Форматируем размер архива
+                                if current_archive_size < 1024 * 1024:
+                                    disk_str = f"{current_archive_size / 1024:.1f} КБ"
+                                elif current_archive_size < 1024 * 1024 * 1024:
+                                    disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
+                                else:
+                                    disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
                                 
                                 gui_instance.root.after(0, lambda p=progress: 
                                     gui_instance.wine_progress.config(value=p))
                                 gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
                                     gui_instance.wine_time_label.config(text=t))
+                                gui_instance.root.after(0, lambda d=disk_str: 
+                                    gui_instance.wine_size_label.config(text=d))
                                 gui_instance.root.after(0, lambda fp=folder_path if folder_path != '.' else os.path.basename(wineprefix_path): gui_instance.wine_stage_label.config(
                                     text=f"Архивация: {self._truncate_path(fp, 60)}", fg='blue'
                                 ))
-                        except:
+                                
+                                last_gui_update = current_time
+                                last_archive_size = current_archive_size
+                        except Exception as e:
+                            print(f"Ошибка при добавлении файла {file_path} в архив: {e}", level='DEBUG')
                             pass
+            
+            if skipped_symlinks > 0:
+                print(f"Пропущено внешних симлинков: {skipped_symlinks}", level='DEBUG')
             
             # Финальное обновление GUI после успешного завершения
             if gui_instance:
+
                 elapsed_time = time.time() - start_time
                 elapsed_minutes = int(elapsed_time // 60)
                 elapsed_seconds = int(elapsed_time % 60)
-                
-                # Устанавливаем 100% прогресс
+
+            # Устанавливаем 100% прогресс
+
                 gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
                 gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                    gui_instance.wine_time_label.config(text=t))
-                
-                # Финальный размер архива
-                archive_size = os.path.getsize(archive_path)
+                gui_instance.wine_time_label.config(text=t))
+
+            # Финальный размер архива
+
+                archive_size = os.path.getsize(archive_path_abs)
                 if archive_size < 1024 * 1024:
                     disk_str = f"{archive_size / 1024:.1f} КБ"
                 elif archive_size < 1024 * 1024 * 1024:
@@ -3909,7 +3728,7 @@ class WineEnvironmentHandler(ComponentHandler):
             
             print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
             print(f"Обработано файлов: {processed_files} из {total_files}")
-            print(f"Путь: {archive_path}")
+            print(f"Путь: {archive_path_abs}")
             
             # Устанавливаем права пользователя на архив и папку
             try:
@@ -3918,18 +3737,656 @@ class WineEnvironmentHandler(ComponentHandler):
                     uid = pwd.getpwnam(real_user).pw_uid
                     gid = pwd.getpwnam(real_user).pw_gid
                     # Устанавливаем владельца на архив
-                    os.chown(archive_path, uid, gid)
+                    os.chown(archive_path_abs, uid, gid)
                     # Устанавливаем владельца на папку output_dir (получаем из archive_path)
-                    output_dir = os.path.dirname(archive_path)
+                    output_dir = os.path.dirname(archive_path_abs)
                     if os.path.exists(output_dir):
                         os.chown(output_dir, uid, gid)
                     print(f"Установлен владелец архива и папки на пользователя: {real_user}")
             except Exception as e:
                 print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
             
-            return archive_path
+            return archive_path_abs
         except Exception as e:
             print(f"Ошибка создания архива через tarfile: {e}", level='ERROR')
+            traceback.print_exc()
+            return None
+    
+    def _create_archive_simple(self, wineprefix_path, archive_path, gui_instance, start_time):
+        """Упрощенное создание архива через Python tarfile без фильтрации симлинков
+        Максимальная скорость - один вызов tar.add() для всей папки
+        tarfile сам обработает симлинки (сохранит как симлинки, не следует по ним)"""
+        global CANCEL_OPERATION
+        
+        try:
+            last_gui_update = 0  # Время последнего обновления GUI
+            last_archive_size = 0  # Размер архива при последнем обновлении
+            
+            # Получаем абсолютные пути
+            wineprefix_path_abs = os.path.abspath(wineprefix_path)
+            archive_path_abs = os.path.abspath(archive_path)
+            
+            # Подсчитываем общий размер для прогресса (опционально, можно пропустить)
+            print("Подсчет размера архива...")
+            total_size = 0
+            total_files = 0
+            for root, dirs, files in os.walk(wineprefix_path_abs):
+                if CANCEL_OPERATION:
+                    print("Операция отменена пользователем")
+                    return None
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        if not os.path.islink(file_path):  # Считаем только реальные файлы
+                            total_size += os.path.getsize(file_path)
+                            total_files += 1
+                    except:
+                        pass
+            
+            # Форматируем размер для вывода
+            if total_size < 1024 * 1024:
+                size_str = f"{total_size / 1024:.1f} КБ"
+            elif total_size < 1024 * 1024 * 1024:
+                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+            else:
+                size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+            
+            print(f"Размер архива: {size_str} ({total_files} файлов)")
+            print("Создание архива (упрощенный режим - без фильтрации симлинков)...")
+            
+            # Обновляем GUI сразу (стартуем таймер)
+            if gui_instance:
+                current_time = time.time()
+                elapsed_time = current_time - start_time
+                elapsed_minutes = int(elapsed_time // 60)
+                elapsed_seconds = int(elapsed_time % 60)
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                    gui_instance.wine_time_label.config(text=t))
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архивация...", fg='blue'
+                ))
+            
+            # Используем формат PAX для гарантированной поддержки длинных путей
+            with tarfile.open(archive_path_abs, 'w:gz', format=tarfile.PAX_FORMAT) as tar:
+                # Запускаем мониторинг в отдельном потоке
+                monitoring_active = threading.Event()
+                monitoring_active.set()
+                
+                def monitor_progress():
+                    """Мониторинг прогресса через размер архива"""
+                    nonlocal last_gui_update, last_archive_size
+                    while monitoring_active.is_set():
+                        if CANCEL_OPERATION:
+                            break
+                        
+                        current_time = time.time()
+                        if gui_instance and os.path.exists(archive_path_abs):
+                            try:
+                                current_archive_size = os.path.getsize(archive_path_abs)
+                                
+                                # Обновляем GUI каждую секунду
+                                if current_time - last_gui_update >= 1.0 or current_archive_size != last_archive_size:
+                                    elapsed_time = current_time - start_time
+                                    elapsed_minutes = int(elapsed_time // 60)
+                                    elapsed_seconds = int(elapsed_time % 60)
+                                    
+                                    # Форматируем размер архива
+                                    if current_archive_size < 1024 * 1024:
+                                        disk_str = f"{current_archive_size / 1024:.1f} КБ"
+                                    elif current_archive_size < 1024 * 1024 * 1024:
+                                        disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
+                                    else:
+                                        disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                                    
+                                    # Прогресс рассчитываем по размеру архива (приблизительно)
+                                    # Точный прогресс сложно рассчитать без знания финального размера
+                                    if total_size > 0:
+                                        # Приблизительный прогресс (с учетом сжатия)
+                                        # Сжатый архив обычно в 2-3 раза меньше исходного
+                                        estimated_compressed_size = total_size / 2.5
+                                        if estimated_compressed_size > 0:
+                                            progress = min(95, (current_archive_size / estimated_compressed_size) * 100)
+                                        else:
+                                            progress = min(95, (current_archive_size / total_size) * 100 * 2.5)
+                                    else:
+                                        progress = 0
+                                    
+                                    gui_instance.root.after(0, lambda p=progress: 
+                                        gui_instance.wine_progress.config(value=p))
+                                    gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                        gui_instance.wine_time_label.config(text=t))
+                                    gui_instance.root.after(0, lambda d=disk_str: 
+                                        gui_instance.wine_size_label.config(text=d))
+                                    
+                                    last_gui_update = current_time
+                                    last_archive_size = current_archive_size
+                            except:
+                                pass
+                        
+                        time.sleep(0.5)  # Проверяем каждые 0.5 секунды
+                
+                # Запускаем мониторинг
+                monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+                monitor_thread.start()
+                
+                # Один вызов для всей папки - максимальная скорость
+                tar.add(wineprefix_path_abs, arcname='.', recursive=True)
+            
+            # Останавливаем мониторинг
+            monitoring_active.clear()
+            time.sleep(0.6)  # Даем время мониторингу завершиться
+            
+            # Финальное обновление GUI после успешного завершения
+            if gui_instance:
+                elapsed_time = time.time() - start_time
+                elapsed_minutes = int(elapsed_time // 60)
+                elapsed_seconds = int(elapsed_time % 60)
+                
+                # Устанавливаем 100% прогресс
+                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                        gui_instance.wine_time_label.config(text=t))
+                
+                # Финальный размер архива
+                archive_size = os.path.getsize(archive_path_abs)
+                if archive_size < 1024 * 1024:
+                    disk_str = f"{archive_size / 1024:.1f} КБ"
+                elif archive_size < 1024 * 1024 * 1024:
+                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
+                else:
+                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                
+                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архив создан успешно", fg='green'
+                ))
+            
+            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
+            print(f"Путь: {archive_path_abs}")
+            
+            # Устанавливаем права пользователя на архив и папку
+            try:
+                real_user = os.environ.get('SUDO_USER')
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                    # Устанавливаем владельца на архив
+                    os.chown(archive_path_abs, uid, gid)
+                    # Устанавливаем владельца на папку output_dir (получаем из archive_path)
+                    output_dir = os.path.dirname(archive_path_abs)
+                    if os.path.exists(output_dir):
+                        os.chown(output_dir, uid, gid)
+                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
+            except Exception as e:
+                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
+            
+            return archive_path_abs
+        except Exception as e:
+            print(f"Ошибка создания архива (упрощенный режим): {e}", level='ERROR')
+            traceback.print_exc()
+            return None
+    
+    def _create_archive_system_tar_max_compression(self, wineprefix_path, archive_path, 
+                                                    gui_instance, start_time, compression_level=6):
+        """Создание архива через системный tar с настраиваемым уровнем сжатия gzip
+        ТОЧНАЯ КОПИЯ метода системного архиватора"""
+        global CANCEL_OPERATION
+        
+        try:
+            # Получаем абсолютные пути
+            wineprefix_path_abs = os.path.abspath(wineprefix_path)
+            archive_path_abs = os.path.abspath(archive_path)
+            
+            print(f"[DEBUG] Создание архива через системный tar с уровнем сжатия {compression_level}")
+            print(f"[DEBUG] Путь к wineprefix: {wineprefix_path_abs}")
+            print(f"[DEBUG] Путь к архиву: {archive_path_abs}")
+            
+            # Проверяем наличие tar
+            if not shutil.which('tar'):
+                error_msg = "Системный tar не найден"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            
+            # Подсчитываем размер исходных файлов для оценки прогресса
+            print("Подсчет размера исходных файлов...")
+            total_size = 0
+            
+            for root, dirs, files in os.walk(wineprefix_path_abs):
+                if CANCEL_OPERATION:
+                    return None
+                
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        total_size += os.path.getsize(file_path)
+                    except:
+                        pass
+            
+            # Форматируем размер
+            if total_size < 1024 * 1024:
+                size_str = f"{total_size / 1024:.1f} КБ"
+            elif total_size < 1024 * 1024 * 1024:
+                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+            else:
+                size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+            
+            print(f"Размер исходных файлов: {size_str}")
+            print(f"Создание архива через системный tar с уровнем сжатия {compression_level}...")
+            
+            # Обновляем GUI
+            if gui_instance:
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архивация...", fg='blue'
+                ))
+            
+            # КОМАНДА КАК У СИСТЕМНОГО АРХИВАТОРА
+            # Проверяем уровень сжатия
+            if compression_level == 0:
+                # Без сжатия
+                tar_cmd = ['tar', '-cf', archive_path_abs, '-C', wineprefix_path_abs, '.']
+                env = os.environ.copy()  # Не устанавливаем GZIP
+                initial_ratio = 1.05  # ~105% от исходного размера (без сжатия + метаданные tar)
+                print(f"[DEBUG] Команда tar (без сжатия): {' '.join(tar_cmd)}")
+            else:
+                # Со сжатием
+                tar_cmd = ['tar', '-czf', archive_path_abs, '-C', wineprefix_path_abs, '.']
+                env = os.environ.copy()
+                env['GZIP'] = f'-{compression_level}'
+                # Коэффициенты сжатия: от ~55% (уровень 1) до ~32% (уровень 9)
+                initial_ratio = 0.55 - (compression_level - 1) * 0.025
+                print(f"[DEBUG] Команда tar (со сжатием {compression_level}): {' '.join(tar_cmd)}")
+                print(f"[DEBUG] Команда: GZIP=-{compression_level} {' '.join(tar_cmd)}")
+            
+            print(f"[DEBUG] Размер исходных файлов: {total_size / (1024**3):.2f} ГБ")
+            
+            process = subprocess.Popen(
+                tar_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                bufsize=1,  # Небуферизованный вывод для чтения в реальном времени
+                universal_newlines=True  # Для чтения текста, а не байтов
+            )
+            
+            # Мониторим прогресс по размеру архива
+            last_gui_update = 0
+            
+            # Адаптивный расчет финального размера на основе уровня сжатия
+            estimated_final_size = total_size * initial_ratio
+            max_archive_size = 0
+            
+            while process.poll() is None:
+                if CANCEL_OPERATION:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except:
+                        process.kill()
+                    print("Операция отменена пользователем")
+                    return None
+                
+                current_time = time.time()
+                
+                # Обновляем GUI каждые 0.5 секунды для более плавного прогресса
+                if gui_instance and current_time - last_gui_update >= 0.5:
+                    if os.path.exists(archive_path_abs):
+                        try:
+                            current_archive_size = os.path.getsize(archive_path_abs)
+                            
+                            # Адаптивное обновление оценки финального размера
+                            if current_archive_size > max_archive_size:
+                                max_archive_size = current_archive_size
+                                # Если архив уже больше 80% от начальной оценки, увеличиваем оценку
+                                if current_archive_size > estimated_final_size * 0.8:
+                                    if compression_level == 0:
+                                        # Для уровня 0 ограничиваем оценку максимум 1.1 от исходного размера
+                                        estimated_final_size = min(current_archive_size * 1.1, total_size * 1.1)
+                                    else:
+                                        # Для уровней со сжатием используем стандартную логику
+                                        estimated_final_size = current_archive_size * 1.2  # +20% запас
+                            
+                            # Форматируем размер архива
+                            if current_archive_size < 1024 * 1024:
+                                disk_str = f"{current_archive_size / 1024:.1f} КБ"
+                            elif current_archive_size < 1024 * 1024 * 1024:
+                                disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
+                            else:
+                                disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                            
+                            # Форматируем оценку финального размера
+                            if estimated_final_size < 1024 * 1024:
+                                estimated_str = f"{estimated_final_size / 1024:.1f} КБ"
+                            elif estimated_final_size < 1024 * 1024 * 1024:
+                                estimated_str = f"{estimated_final_size / (1024 * 1024):.1f} МБ"
+                            else:
+                                estimated_str = f"{estimated_final_size / (1024 * 1024 * 1024):.2f} ГБ"
+                            
+                            # Прогресс по размеру архива с учетом степени сжатия
+                            if estimated_final_size > 0:
+                                progress = min(95, (current_archive_size / estimated_final_size) * 100)
+                            else:
+                                progress = 0
+                            
+                            elapsed_time = current_time - start_time
+                            elapsed_minutes = int(elapsed_time // 60)
+                            elapsed_seconds = int(elapsed_time % 60)
+                            
+                            gui_instance.root.after(0, lambda p=progress: 
+                                gui_instance.wine_progress.config(value=p))
+                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                                gui_instance.wine_time_label.config(text=t))
+                            gui_instance.root.after(0, lambda d=disk_str: 
+                                gui_instance.wine_size_label.config(text=d))
+                            
+                            # Отображаем размер вместо количества элементов
+                            gui_instance.root.after(0, lambda cs=disk_str, es=estimated_str: 
+                                gui_instance.wine_stage_label.config(
+                                    text=f"Архивация: {cs} / ~{es}", fg='blue'
+                                ))
+                            
+                            last_gui_update = current_time
+                        except:
+                            pass
+            
+                time.sleep(0.5)
+            
+            # Ждем завершения
+            stdout, stderr = process.communicate()
+            return_code = process.returncode
+            
+            # КРИТИЧЕСКИ ВАЖНО: Явно закрываем все файловые дескрипторы процесса
+            try:
+                if process.stdout:
+                    process.stdout.close()
+                if process.stderr:
+                    process.stderr.close()
+                if process.stdin:
+                    process.stdin.close()
+            except:
+                pass
+            
+            # Дополнительная проверка: убеждаемся, что процесс полностью завершился
+            try:
+                process.wait(timeout=1)
+            except:
+                pass
+            
+            if return_code != 0:
+                error_msg = f"tar завершился с ошибкой (код {return_code})"
+                if stderr:
+                    stderr_text = stderr.decode('utf-8', errors='ignore')
+                    error_msg += f": {stderr_text}"
+                    print(f"[ERROR] {error_msg}", level='ERROR')
+                if gui_instance:
+                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                        text=f"Ошибка архивации", fg='red'
+                    ))
+                return None
+            
+            # КРИТИЧЕСКИ ВАЖНО: Множественная синхронизация файловой системы
+            print(f"[DEBUG] Синхронизация файловой системы (первая попытка)...")
+            try:
+                subprocess.run(['sync'], check=False, timeout=15)
+            except Exception as e:
+                print(f"[WARNING] Ошибка первой синхронизации: {e}", level='WARNING')
+            
+            # Дополнительное ожидание для гарантии записи на диск
+            print(f"[DEBUG] Ожидание завершения записи на диск...")
+            time.sleep(5)  # Увеличиваем задержку до 5 секунд
+            
+            # Вторая синхронизация
+            print(f"[DEBUG] Синхронизация файловой системы (вторая попытка)...")
+            try:
+                subprocess.run(['sync'], check=False, timeout=15)
+            except Exception as e:
+                print(f"[WARNING] Ошибка второй синхронизации: {e}", level='WARNING')
+            
+            # Проверяем архив
+            if not os.path.exists(archive_path_abs):
+                error_msg = f"Архив не был создан"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            
+            # Проверяем размер несколько раз (на случай, если он еще пишется)
+            archive_size = 0
+            size_stable_count = 0
+            for attempt in range(10):
+                try:
+                    current_size = os.path.getsize(archive_path_abs)
+                    if current_size == archive_size and current_size > 0:
+                        size_stable_count += 1
+                        if size_stable_count >= 3:
+                            # Размер стабилизировался 3 раза подряд
+                            archive_size = current_size
+                            break
+                    else:
+                        size_stable_count = 0
+                    archive_size = current_size
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"[WARNING] Ошибка при проверке размера (попытка {attempt+1}): {e}", level='WARNING')
+            
+            print(f"[DEBUG] Финальный размер созданного архива: {archive_size} байт ({archive_size / (1024**3):.2f} ГБ)")
+            
+            if archive_size == 0:
+                error_msg = f"Архив пустой"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            
+            # Проверяем, что файл доступен для чтения
+            print(f"[DEBUG] Проверка доступности файла для чтения...")
+            try:
+                test_file = open(archive_path_abs, 'rb')
+                test_file.read(1)  # Пробуем прочитать 1 байт
+                test_file.close()
+                print(f"[DEBUG] Файл доступен для чтения")
+            except Exception as e:
+                error_msg = f"Файл недоступен для чтения: {e}"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            
+            # Проверяем целостность
+            print(f"[DEBUG] Проверка целостности архива...")
+            file_count = 0  # Инициализируем для использования в дальнейшем
+            try:
+                # Определяем команду проверки в зависимости от уровня сжатия
+                if compression_level == 0:
+                    # Без сжатия - используем tar -tf (без флага -z)
+                    test_result = subprocess.run(['tar', '-tf', archive_path_abs], 
+                                                capture_output=True, timeout=60)
+                else:
+                    # Со сжатием - используем tar -tzf (с флагом -z для gzip)
+                    test_result = subprocess.run(['tar', '-tzf', archive_path_abs], 
+                                                capture_output=True, timeout=60)
+                if test_result.returncode != 0:
+                    error_msg = f"Архив поврежден или не может быть открыт"
+                    print(f"[ERROR] {error_msg}", level='ERROR')
+                    if test_result.stderr:
+                        stderr_text = test_result.stderr.decode('utf-8', errors='ignore')
+                        print(f"[ERROR] Детали: {stderr_text}", level='ERROR')
+                    return None
+                file_count = len([line for line in test_result.stdout.decode('utf-8', errors='ignore').split('\n') if line.strip()])
+                print(f"[DEBUG] Архив содержит {file_count} элементов")
+                if file_count == 0:
+                    error_msg = f"Архив пустой (не содержит файлов)"
+                    print(f"[ERROR] {error_msg}", level='ERROR')
+                    return None
+            except subprocess.TimeoutExpired:
+                error_msg = f"Проверка целостности превысила таймаут (файл слишком большой или поврежден)"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            except Exception as e:
+                print(f"[WARNING] Не удалось проверить целостность: {e}", level='WARNING')
+            
+            # Дополнительная проверка: читаем заголовки всех файлов из архива
+            print(f"[DEBUG] Чтение заголовков файлов из архива для проверки...")
+            try:
+                files_read = 0
+                files_logged = 0
+                # Определяем режим открытия в зависимости от уровня сжатия
+                if compression_level == 0:
+                    # Без сжатия - используем 'r' (без gzip)
+                    tar_mode = 'r'
+                else:
+                    # Со сжатием - используем 'r:gz' (с gzip)
+                    tar_mode = 'r:gz'
+                
+                with tarfile.open(archive_path_abs, tar_mode) as tar:
+                    members = tar.getmembers()
+                    total_members = len(members)
+                    print(f"[DEBUG] Всего элементов в архиве: {total_members}")
+                    
+                    for member in members:
+                        if CANCEL_OPERATION:
+                            break
+                        
+                        files_read += 1
+                        
+                        # Выводим каждый сотый файл в лог
+                        if files_read % 100 == 0 or files_read == 1 or files_read == total_members:
+                            files_logged += 1
+                            member_type = "DIR" if member.isdir() else ("LINK" if member.issym() or member.islnk() else "FILE")
+                            size_info = f", размер: {member.size} байт" if member.isfile() else ""
+                            print(f"[DEBUG] Файл #{files_read}/{total_members}: {member.name} ({member_type}{size_info})")
+                        
+                        # Пробуем прочитать заголовок файла (для файлов)
+                        if member.isfile() and member.size > 0:
+                            try:
+                                # Читаем только метаданные, не содержимое
+                                tarinfo = tar.getmember(member.name)
+                                if tarinfo is None:
+                                    print(f"[WARNING] Не удалось получить информацию о файле: {member.name}", level='WARNING')
+                            except Exception as e:
+                                print(f"[WARNING] Ошибка при чтении заголовка файла {member.name}: {e}", level='WARNING')
+                
+                print(f"[DEBUG] Проверка завершена: прочитано {files_read} элементов, выведено в лог {files_logged} файлов")
+                
+                # Обновляем file_count из проверки через tarfile (более точное значение)
+                if files_read > 0:
+                    file_count = files_read
+                
+                if files_read == 0:
+                    error_msg = f"Архив не содержит файлов"
+                    print(f"[ERROR] {error_msg}", level='ERROR')
+                    return None
+                
+            except tarfile.TarError as e:
+                error_msg = f"Ошибка чтения архива через tarfile: {e}"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                return None
+            except Exception as e:
+                error_msg = f"Неожиданная ошибка при проверке архива: {e}"
+                print(f"[ERROR] {error_msg}", level='ERROR')
+                traceback.print_exc()
+                return None
+            
+            # Финальное обновление GUI
+            if gui_instance:
+                elapsed_time = time.time() - start_time
+                elapsed_minutes = int(elapsed_time // 60)
+                elapsed_seconds = int(elapsed_time % 60)
+                
+                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
+                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
+                    gui_instance.wine_time_label.config(text=t))
+                
+                if archive_size < 1024 * 1024:
+                    disk_str = f"{archive_size / 1024:.1f} КБ"
+                elif archive_size < 1024 * 1024 * 1024:
+                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
+                else:
+                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+                
+                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
+                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
+                    text="Архив создан успешно", fg='green'
+                ))
+            
+            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
+            print(f"Путь: {archive_path_abs}")
+            print(f"Размер: {disk_str}")
+            
+            # КРИТИЧЕСКИ ВАЖНО: Проверяем и размонтируем архив, если он смонтирован через archivemount
+            # Это необходимо, чтобы файл можно было переместить или скопировать
+            print(f"[DEBUG] Проверка монтирования архива через archivemount...")
+            try:
+                # Проверяем через mount, смонтирован ли архив
+                mount_result = subprocess.run(['mount'], capture_output=True, text=True, timeout=5)
+                if mount_result.returncode == 0:
+                    for line in mount_result.stdout.split('\n'):
+                        if archive_path_abs in line and 'archivemount' in line:
+                            # Находим точку монтирования
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                mount_point = parts[2]  # Третье поле - точка монтирования
+                                print(f"[DEBUG] Найдена точка монтирования: {mount_point}")
+                                
+                                # Размонтируем архив
+                                print(f"[DEBUG] Размонтирование архива: {mount_point}")
+                                try:
+                                    unmount_result = subprocess.run(['fusermount', '-u', mount_point], 
+                                                                  capture_output=True, timeout=10)
+                                    if unmount_result.returncode == 0:
+                                        print(f"[DEBUG] Архив успешно размонтирован")
+                                        time.sleep(1)  # Даем время на размонтирование
+                                    else:
+                                        error_text = unmount_result.stderr.decode('utf-8', errors='ignore')
+                                        print(f"[WARNING] Не удалось размонтировать архив: {error_text}", level='WARNING')
+                                        # Пробуем принудительное размонтирование
+                                        try:
+                                            subprocess.run(['fusermount', '-uz', mount_point], 
+                                                          capture_output=True, timeout=10)
+                                            print(f"[DEBUG] Принудительное размонтирование выполнено")
+                                            time.sleep(1)
+                                        except:
+                                            pass
+                                except FileNotFoundError:
+                                    # fusermount не найден, пробуем umount
+                                    try:
+                                        subprocess.run(['umount', mount_point], 
+                                                      capture_output=True, timeout=10)
+                                        print(f"[DEBUG] Размонтирование через umount выполнено")
+                                        time.sleep(1)
+                                    except:
+                                        pass
+                                except Exception as e:
+                                    print(f"[WARNING] Ошибка при размонтировании: {e}", level='WARNING')
+            except Exception as e:
+                print(f"[DEBUG] Ошибка при проверке монтирования (не критично): {e}", level='DEBUG')
+            
+            # Финальная синхронизация после размонтирования
+            print(f"[DEBUG] Финальная синхронизация файловой системы...")
+            try:
+                subprocess.run(['sync'], check=False, timeout=15)
+                print(f"[DEBUG] Файловая система полностью синхронизирована")
+            except Exception as e:
+                print(f"[WARNING] Ошибка финальной синхронизации: {e}", level='WARNING')
+            
+            # Дополнительная задержка перед возвратом
+            time.sleep(2)
+            
+            # Устанавливаем права пользователя ПОСЛЕ размонтирования (чтобы гарантировать успешную установку)
+            print(f"[DEBUG] Установка прав пользователя на архив...")
+            try:
+                real_user = os.environ.get('SUDO_USER')
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                    os.chown(archive_path_abs, uid, gid)
+                    output_dir = os.path.dirname(archive_path_abs)
+                    if os.path.exists(output_dir):
+                        os.chown(output_dir, uid, gid)
+                    print(f"Установлен владелец архива на пользователя: {real_user}")
+            except Exception as e:
+                print(f"Предупреждение: не удалось установить права: {e}", level='WARNING')
+            
+            print(f"[DEBUG] Архив готов к использованию: {archive_path_abs}")
+            
+            return archive_path_abs
+            
+        except Exception as e:
+            print(f"Ошибка создания архива через системный tar: {e}", level='ERROR')
+            traceback.print_exc()
             return None
 
 # ============================================================================
@@ -20084,7 +20541,7 @@ class AutomationGUI(object):
             )
             return
         
-        # 5. Показываем диалог выбора пути и имени архива
+        # 5. Показываем кастомный диалог выбора пути, имени архива и уровня сжатия
         default_name = f"{component_id}_template.tar.gz"
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20093,20 +20550,150 @@ class AutomationGUI(object):
         
         os.makedirs(default_dir, exist_ok=True)
         
-        archive_path = tkinter.filedialog.asksaveasfilename(
-            title="Сохранить образ Wine-префикса",
-            initialdir=default_dir,
-            initialfile=default_name,
-            defaultextension=".tar.gz",
-            filetypes=[
-                ("Tar GZ архивы", "*.tar.gz"),
-                ("Все файлы", "*.*")
-            ]
-        )
+        # Создаем кастомный диалог с выбором пути и уровня сжатия
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Создание образа Wine-префикса")
+        dialog.geometry("650x420")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
         
-        if not archive_path:
+        # Центрируем окно
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (650 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (420 // 2)
+        dialog.geometry(f"650x420+{x}+{y}")
+        
+        # Результат диалога
+        result = {'archive_path': None, 'compression_level': 6, 'confirmed': False}
+        
+        # Заголовок
+        tk.Label(dialog, text="Настройки создания архива", 
+                font=('TkDefaultFont', 14, 'bold')).pack(pady=15)
+        
+        # Путь сохранения
+        path_frame = tk.Frame(dialog)
+        path_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        tk.Label(path_frame, text="Путь:", font=('TkDefaultFont', 10, 'bold')).pack(anchor=tk.W)
+        
+        path_entry_frame = tk.Frame(path_frame)
+        path_entry_frame.pack(fill=tk.X, pady=5)
+        
+        archive_path_var = tk.StringVar(value=os.path.join(default_dir, default_name))
+        path_entry = tk.Entry(path_entry_frame, textvariable=archive_path_var, font=('TkDefaultFont', 10))
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        def browse_path():
+            initial_path = archive_path_var.get()
+            if initial_path:
+                initial_dir = os.path.dirname(initial_path) if os.path.dirname(initial_path) else default_dir
+                initial_file = os.path.basename(initial_path)
+            else:
+                initial_dir = default_dir
+                initial_file = default_name
+            
+            # Временно снимаем модальность основного окна, чтобы диалог выбора файла был виден
+            dialog.grab_release()
+            dialog.update()
+            
+            file_path = tkinter.filedialog.asksaveasfilename(
+                title="Сохранить образ Wine-префикса",
+                parent=dialog,  # Указываем родительское окно
+                initialdir=initial_dir,
+                initialfile=initial_file,
+                defaultextension=".tar.gz",
+                filetypes=[
+                    ("Tar GZ архивы", "*.tar.gz"),
+                    ("Все файлы", "*.*")
+                ]
+            )
+            
+            # Возвращаем модальность основного окна обратно
+            dialog.grab_set()
+            
+            if file_path:
+                archive_path_var.set(file_path)
+        
+        tk.Button(path_entry_frame, text="Обзор...", command=browse_path, width=10).pack(side=tk.LEFT)
+        
+        # Степень сжатия
+        compression_frame = tk.LabelFrame(dialog, text="Сжатие", font=('TkDefaultFont', 10, 'bold'))
+        compression_frame.pack(pady=15, padx=20, fill=tk.X)
+        
+        compression_inner_frame = tk.Frame(compression_frame)
+        compression_inner_frame.pack(pady=10, padx=10, fill=tk.X)
+        
+        tk.Label(compression_inner_frame, text="Без сжатия", font=('TkDefaultFont', 9)).pack(side=tk.LEFT)
+        
+        compression_var = tk.IntVar(value=6)  # Среднее по умолчанию
+        compression_scale = tk.Scale(
+            compression_inner_frame,
+            from_=0,
+            to=9,
+            orient=tk.HORIZONTAL,
+            variable=compression_var,
+            length=350,
+            font=('TkDefaultFont', 9)
+        )
+        compression_scale.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        
+        tk.Label(compression_inner_frame, text="Максимум", font=('TkDefaultFont', 9)).pack(side=tk.LEFT)
+        
+        # Значение уровня
+        level_label = tk.Label(compression_frame, text=f"Уровень: {compression_var.get()}", 
+                              font=('TkDefaultFont', 10))
+        level_label.pack(pady=5)
+        
+        def update_level(*args):
+            level = compression_var.get()
+            if level == 0:
+                level_label.config(text="Уровень: Без сжатия")
+            else:
+                level_label.config(text=f"Уровень: {level}")
+        
+        compression_var.trace('w', update_level)
+        
+        # Кнопки
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=15, padx=20)
+        
+        def confirm():
+            archive_path = archive_path_var.get().strip()
+            if not archive_path:
+                self.tk.messagebox.showerror("Ошибка", "Укажите путь для сохранения архива")
+                return
+            
+            result['archive_path'] = archive_path
+            result['compression_level'] = compression_var.get()
+            result['confirmed'] = True
+            dialog.destroy()
+        
+        def cancel():
+            dialog.destroy()
+        
+        create_btn = tk.Button(button_frame, text="Создать", command=confirm, 
+                 width=10, font=('TkDefaultFont', 11, 'bold'),
+                 bg='#4CAF50', fg='white', relief=tk.RAISED, bd=2,
+                 activebackground='#45a049', activeforeground='white',
+                 cursor='hand2')
+        create_btn.pack(side=tk.LEFT, padx=8, ipady=7, ipadx=2)
+        
+        cancel_btn = tk.Button(button_frame, text="Отмена", command=cancel, 
+                 width=10, font=('TkDefaultFont', 11, 'bold'),
+                 bg='#666666', fg='white', relief=tk.RAISED, bd=2,
+                 activebackground='#555555', activeforeground='white',
+                 cursor='hand2')
+        cancel_btn.pack(side=tk.LEFT, padx=8, ipady=7, ipadx=2)
+        
+        dialog.wait_window()
+        
+        if not result['confirmed']:
             self.wine_status_label.config(text="Создание образа отменено", fg='gray')
             return
+        
+        archive_path = result['archive_path']
+        compression_level = result['compression_level']
         
         # 6. Получаем обработчик и запускаем создание
         if 'wine_environment' not in self.component_handlers:
@@ -20114,6 +20701,9 @@ class AutomationGUI(object):
             return
         
         handler = self.component_handlers['wine_environment']
+        
+        # Сохраняем уровень сжатия в handler для использования в create_archive
+        handler._current_compression_level = compression_level
         
         # 7. Активируем кнопку "Отменить"
         self.cancel_operation_button.config(state=self.tk.NORMAL)
