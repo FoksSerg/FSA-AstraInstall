@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.133 (2025.11.24)
+Версия: V2.6.134 (2025.11.25)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.133 (2025.11.24)"
+APP_VERSION = "V2.6.134 (2025.11.25)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -711,7 +711,22 @@ COMPONENTS_CONFIG = {
 # ============================================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
 # ============================================================================
-CANCEL_OPERATION = False # Прерывание запущенных операций 
+CANCEL_OPERATION = False  # Прерывание запущенных операций
+
+# Глобальные экземпляры менеджеров (объявления, инициализируются после определения классов)
+_global_universal_runner = None  # UniversalProcessRunner
+_global_dual_logger = None  # DualStreamLogger
+_global_progress_manager = None  # UniversalProgressManager
+_global_activity_tracker = None  # ActivityTracker
+
+# Глобальная ссылка на GUI экземпляр
+sys._gui_instance = None
+
+# Глобальная переменная для лог-файла (устанавливается в main())
+GLOBAL_LOG_FILE = None
+
+# Сохранение оригинального print() для fallback (инициализируется после импорта builtins)
+_original_print = None
 
 # ============================================================================
 # УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С КОМПОНЕНТАМИ
@@ -1548,7 +1563,7 @@ class ActivityTracker(object):
         """Получить последние операции"""
         return sorted(self.operation_history, key=lambda x: x['end_time'], reverse=True)[:limit]
 
-# Глобальный трекер активности
+# Глобальный трекер активности (инициализируется после определения класса ActivityTracker)
 _global_activity_tracker = ActivityTracker()
 
 def track_class_activity(class_name):
@@ -2711,7 +2726,7 @@ class ComponentHandler(ABC):
             bool: True если команда доступна
         """
         return shutil.which(command) is not None
-   
+    
 class WinePackageHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК WINE ПАКЕТОВ
@@ -3682,10 +3697,13 @@ class WineEnvironmentHandler(ComponentHandler):
         
         # 2. Останавливаем все Wine-процессы
         print("Остановка всех Wine-процессов...")
-        if gui_instance:
-            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                text="Остановка Wine-процессов...", fg='blue'
-            ))
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='archive_create',
+            stage_name='Остановка Wine-процессов...',
+            stage_progress=0,
+            global_progress=0
+        )
         
         all_processes = self._collect_all_processes_for_stop(component_id)
         if all_processes:
@@ -3700,10 +3718,13 @@ class WineEnvironmentHandler(ComponentHandler):
         # 3. Очистка (опционально)
         if clean_temp:
             print("Очистка временных файлов...")
-            if gui_instance:
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Очистка временных файлов...", fg='blue'
-                ))
+            progress_manager = get_global_progress_manager()
+            progress_manager.update_progress(
+                process_type='archive_create',
+                stage_name='Очистка временных файлов...',
+                stage_progress=0,
+                global_progress=0
+            )
             # Очистка временных файлов
             temp_patterns = ['*.tmp', '*.log', '*.bak']
             for root, dirs, files in os.walk(wineprefix_path):
@@ -3736,19 +3757,21 @@ class WineEnvironmentHandler(ComponentHandler):
         
         # 6. Подсчитываем размер для прогресса
         print("Подсчет размера архива...")
-        if gui_instance:
-            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                text="Подсчет размера...", fg='blue'
-            ))
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='archive_create',
+            stage_name='Подсчет размера...',
+            stage_progress=0,
+            global_progress=0
+        )
         
         # 7. Инициализируем прогресс в GUI
-        if gui_instance:
-            gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(maximum=100, value=0))
-            gui_instance.root.after(0, lambda: gui_instance.wine_time_label.config(text="0 мин 0 сек"))
-            gui_instance.root.after(0, lambda: gui_instance.wine_size_label.config(text="0 MB"))
-            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                text="Создание архива...", fg='blue'
-            ))
+        progress_manager.update_progress(
+            process_type='archive_create',
+            stage_name='Создание архива...',
+            stage_progress=0,
+            global_progress=0
+        )
         
         start_time = time.time()
         
@@ -3805,11 +3828,14 @@ class WineEnvironmentHandler(ComponentHandler):
             print(f"Размер исходных файлов: {size_str}")
             print(f"Создание архива через системный tar с уровнем сжатия {compression_level}...")
             
-            # Обновляем GUI
-            if gui_instance:
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архивация...", fg='blue'
-                ))
+            # Обновляем GUI через progress_manager
+            progress_manager = get_global_progress_manager()
+            progress_manager.update_progress(
+                process_type='archive_create',
+                stage_name='Архивация...',
+                stage_progress=0,
+                global_progress=0
+            )
             
             # КОМАНДА КАК У СИСТЕМНОГО АРХИВАТОРА
             # Проверяем уровень сжатия
@@ -3900,21 +3926,17 @@ class WineEnvironmentHandler(ComponentHandler):
                                 progress = 0
                             
                             elapsed_time = current_time - start_time
-                            elapsed_minutes = int(elapsed_time // 60)
-                            elapsed_seconds = int(elapsed_time % 60)
                             
-                            gui_instance.root.after(0, lambda p=progress: 
-                                gui_instance.wine_progress.config(value=p))
-                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                gui_instance.wine_time_label.config(text=t))
-                            gui_instance.root.after(0, lambda d=disk_str: 
-                                gui_instance.wine_size_label.config(text=d))
-                            
-                            # Отображаем размер вместо количества элементов
-                            gui_instance.root.after(0, lambda cs=disk_str, es=estimated_str: 
-                                gui_instance.wine_stage_label.config(
-                                    text=f"Архивация: {cs} / ~{es}", fg='blue'
-                                ))
+                            # Обновляем через progress_manager
+                            progress_manager = get_global_progress_manager()
+                            progress_manager.update_progress(
+                                process_type='archive_create',
+                                stage_name=f"Архивация: {disk_str} / ~{estimated_str}",
+                                stage_progress=progress,
+                                global_progress=progress,
+                                details=f"Размер архива: {disk_str}",
+                                elapsed_time=elapsed_time
+                            )
                             
                             last_gui_update = current_time
                         except:
@@ -3949,10 +3971,15 @@ class WineEnvironmentHandler(ComponentHandler):
                     stderr_text = stderr.decode('utf-8', errors='ignore')
                     error_msg += f": {stderr_text}"
                     print(f"[ERROR] {error_msg}", level='ERROR')
-                if gui_instance:
-                    gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                        text=f"Ошибка архивации", fg='red'
-                    ))
+                # Обновляем через глобальный progress_manager
+                progress_manager = get_global_progress_manager()
+                progress_manager.update_progress(
+                    process_type='archive_create',
+                    stage_name='Ошибка архивации',
+                    stage_progress=0,
+                    global_progress=0,
+                    details=error_msg
+                )
                 return None
             
             # КРИТИЧЕСКИ ВАЖНО: Множественная синхронизация файловой системы
@@ -4113,26 +4140,27 @@ class WineEnvironmentHandler(ComponentHandler):
                 return None
             
             # Финальное обновление GUI
-            if gui_instance:
-                elapsed_time = time.time() - start_time
-                elapsed_minutes = int(elapsed_time // 60)
-                elapsed_seconds = int(elapsed_time % 60)
-                
-                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                    gui_instance.wine_time_label.config(text=t))
-                
-                if archive_size < 1024 * 1024:
-                    disk_str = f"{archive_size / 1024:.1f} КБ"
-                elif archive_size < 1024 * 1024 * 1024:
-                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
-                else:
-                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                
-                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архив создан успешно", fg='green'
-                ))
+            elapsed_time = time.time() - start_time
+            elapsed_minutes = int(elapsed_time // 60)
+            elapsed_seconds = int(elapsed_time % 60)
+            
+            if archive_size < 1024 * 1024:
+                disk_str = f"{archive_size / 1024:.1f} КБ"
+            elif archive_size < 1024 * 1024 * 1024:
+                disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
+            else:
+                disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
+            
+            # Обновляем через progress_manager
+            progress_manager = get_global_progress_manager()
+            progress_manager.update_progress(
+                process_type='archive_create',
+                stage_name='Архив создан успешно',
+                stage_progress=100,
+                global_progress=100,
+                details=f"Размер архива: {disk_str}",
+                elapsed_time=elapsed_time
+            )
             
             print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
             print(f"Путь: {archive_path_abs}")
@@ -4423,8 +4451,8 @@ class WinetricksHandler(ComponentHandler):
                                 full_path = archive_files_by_name[filename]
                                 if full_path.startswith(archive_prefix):
                                     has_prefix = True
-                                    break
-                        
+                                break
+                    
                         # Если есть префикс - удаляем его, если нет - извлекаем как есть
                         if has_prefix:
                             extract_items = {
@@ -5212,11 +5240,19 @@ class WineApplicationHandler(ComponentHandler):
         if wineprefix_path:
             self.wineprefix = expand_user_path(wineprefix_path)
         
-        # Обновляем прогресс
+        # НОВОЕ: Получаем диапазон прогресса для этого компонента
+        progress_range = getattr(self, '_current_progress_range', None)
+        
+        # Обновляем прогресс (начало компонента)
+        if progress_range:
+            start_progress = int(progress_range[0])
+        else:
+            start_progress = 0
+        
         self._update_progress(
             stage_name=f"Установка {component_name}",
             stage_progress=0,
-            global_progress=0,
+            global_progress=start_progress,
             details=f"Подготовка к установке {component_id}",
             elapsed_time=0
         )
@@ -5226,8 +5262,8 @@ class WineApplicationHandler(ComponentHandler):
         source_dir = config.get('source_dir')
         
         if copy_method == 'replace' and source_dir:
-            # Копируем предустановленную конфигурацию с передачей времени начала
-            if not self._copy_preinstalled_config(component_id, config, install_start_time):
+            # Копируем предустановленную конфигурацию с передачей времени начала и диапазона прогресса
+            if not self._copy_preinstalled_config(component_id, config, install_start_time, progress_range=progress_range):
                 self._update_status(component_id, 'error')
                 return False
         
@@ -5238,6 +5274,19 @@ class WineApplicationHandler(ComponentHandler):
         elif install_method == 'wine_application':
             # Для wine_application просто проверяем статус после копирования
             if self.check_status(component_id, config):
+                # НОВОЕ: Обновляем прогресс (завершение компонента)
+                if progress_range:
+                    end_progress = int(progress_range[1])
+                else:
+                    end_progress = 100
+                
+                self._update_progress(
+                    stage_name=f"Установка {component_name}",
+                    stage_progress=100,
+                    global_progress=end_progress,
+                    details=f"{component_name} установлен успешно",
+                    elapsed_time=int(time.time() - install_start_time)
+                )
                 self._update_status(component_id, 'ok')
                 return True
             else:
@@ -5269,7 +5318,7 @@ class WineApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
-    def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
+    def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: float = None, progress_range: tuple = None) -> bool:
         """
         Копирование предустановленной конфигурации Wine префикса
         Поддерживает приоритеты источников: 'directory' (папка) или 'archive' (архив)
@@ -5279,6 +5328,8 @@ class WineApplicationHandler(ComponentHandler):
             component_id: ID компонента
             config: Конфигурация компонента
             install_start_time: Время начала установки (для отслеживания времени)
+            progress_range: Диапазон прогресса для этого компонента (start, end) в процентах.
+                           Если None, используется диапазон по умолчанию (2-90)
         
         Returns:
             bool: True если копирование успешно
@@ -5330,6 +5381,33 @@ class WineApplicationHandler(ComponentHandler):
         else:  # 'archive' или по умолчанию
             check_order = ['archive', 'directory'] if source_fallback else ['archive']
         
+        # НОВОЕ: Вычисляем диапазон прогресса для распаковки внутри компонента
+        if progress_range:
+            # Масштабируем диапазон компонента в диапазон распаковки
+            # Распаковка занимает 2-90% от диапазона компонента
+            component_start, component_end = progress_range
+            component_range = component_end - component_start
+            
+            # Распаковка: 2-90% от диапазона компонента
+            extract_start = component_start + (component_range * 0.02)  # 2% от диапазона
+            extract_end = component_start + (component_range * 0.90)    # 90% от диапазона
+            
+            # Установка прав: 90-97% от диапазона компонента
+            permissions_start = component_start + (component_range * 0.90)
+            permissions_end = component_start + (component_range * 0.97)
+            
+            # Финальная настройка: 97-100% от диапазона компонента
+            final_start = component_start + (component_range * 0.97)
+            final_end = component_end
+        else:
+            # Диапазоны по умолчанию
+            extract_start = 2
+            extract_end = 90
+            permissions_start = 90
+            permissions_end = 97
+            final_start = 97
+            final_end = 100
+        
         # Пробуем источники в порядке приоритета
         for source_type in check_order:
             if source_type == 'directory':
@@ -5346,7 +5424,11 @@ class WineApplicationHandler(ComponentHandler):
             elif source_type == 'archive':
                 if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
                     print(f"Пробуем источник: архив {archive_path}")
-                    if self._copy_from_archive_fast(archive_path, source_dir, component_id, config, install_start_time):
+                    # НОВОЕ: Передаем диапазон прогресса для распаковки
+                    if self._copy_from_archive_fast(
+                        archive_path, source_dir, component_id, config, install_start_time,
+                        progress_range=(extract_start, extract_end, permissions_start, permissions_end, final_start, final_end)
+                    ):
                         return True
                     elif not source_fallback:
                         # Если fallback отключен и источник не сработал - выходим
@@ -5480,7 +5562,8 @@ class WineApplicationHandler(ComponentHandler):
                                      copy_uid, copy_gid, component_id, config, install_start_time)
     
     def _copy_from_archive_fast(self, archive_path: str, source_dir: str, component_id: str,
-                               config: dict, install_start_time: float) -> bool:
+                               config: dict, install_start_time: float,
+                               progress_range: tuple = None) -> bool:
         """
         Быстрая распаковка архива через универсальную функцию extract_archive()
         
@@ -5490,6 +5573,9 @@ class WineApplicationHandler(ComponentHandler):
             component_id: ID компонента
             config: Конфигурация компонента
             install_start_time: Время начала установки
+            progress_range: Кортеж с диапазонами прогресса:
+                           (extract_start, extract_end, permissions_start, permissions_end, final_start, final_end)
+                           Если None, используются диапазоны по умолчанию
         
         Returns:
             bool: True если распаковка успешна
@@ -5507,14 +5593,47 @@ class WineApplicationHandler(ComponentHandler):
         else:
             extract_items = None  # Извлекать всё
         
-        # Callback для обновления прогресса
-        def progress_callback(progress, details):
+        # НАСТРАИВАЕМЫЕ ДИАПАЗОНЫ ПРОГРЕССА ДЛЯ ЭТАПОВ УСТАНОВКИ
+        if progress_range and len(progress_range) >= 6:
+            # Используем переданные диапазоны
+            EXTRACT_START, EXTRACT_END, PERMISSIONS_START, PERMISSIONS_END, FINAL_START, FINAL_END = progress_range[:6]
+        else:
+            # Диапазоны по умолчанию
+            EXTRACT_START = 2
+            EXTRACT_END = 90
+            PERMISSIONS_START = 90
+            PERMISSIONS_END = 97
+            FINAL_START = 97
+            FINAL_END = 100
+        
+        # Callback для обновления прогресса распаковки
+        def progress_callback(extract_progress, details):
+            """
+            Масштабирует прогресс распаковки в диапазон общего прогресса установки
+            
+            Args:
+                extract_progress: Прогресс распаковки (0-100)
+                details: Детали распаковки
+            """
+            # Преобразуем прогресс распаковки (0-100) в диапазон общего прогресса
+            scaled_progress = EXTRACT_START + (extract_progress / 100) * (EXTRACT_END - EXTRACT_START)
+            
             self._update_progress(
                 stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
-                stage_progress=0,
-                global_progress=progress,
-                details=details
+                stage_progress=extract_progress,  # Прогресс этапа распаковки (0-100)
+                global_progress=int(scaled_progress),  # Масштабированный общий прогресс
+                details=details,
+                elapsed_time=int(time.time() - install_start_time)
             )
+        
+        # Обновляем прогресс: начало распаковки
+        self._update_progress(
+            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_progress=0,
+            global_progress=int(EXTRACT_START),
+            details="Начало распаковки архива...",
+            elapsed_time=int(time.time() - install_start_time)
+        )
         
         # Распаковываем через универсальную функцию
         result = extract_archive(
@@ -5528,20 +5647,51 @@ class WineApplicationHandler(ComponentHandler):
             print(f"Ошибка распаковки: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
             return False
         
+        # Обновляем прогресс: завершение распаковки
+        self._update_progress(
+            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_progress=100,
+            global_progress=int(EXTRACT_END),
+            details=f"Распаковка завершена: {result['extracted_count']} элементов",
+            elapsed_time=int(time.time() - install_start_time)
+        )
+        
         # Устанавливаем владельца и права (tar может не сохранить владельца)
         print("Установка владельца и прав доступа...")
+        
+        # Обновляем прогресс: начало установки прав
+        self._update_progress(
+            stage_name="Установка прав доступа",
+            stage_progress=0,
+            global_progress=int(PERMISSIONS_START),
+            details="Установка прав доступа на файлы...",
+            elapsed_time=int(time.time() - install_start_time)
+        )
+        
         self._set_extracted_files_permissions(wineprefix_path)
+        
+        # Обновляем прогресс: завершение установки прав
+        self._update_progress(
+            stage_name="Установка прав доступа",
+            stage_progress=100,
+            global_progress=int(PERMISSIONS_END),
+            details="Права доступа установлены",
+            elapsed_time=int(time.time() - install_start_time)
+        )
         
         elapsed_time = time.time() - install_start_time
         elapsed_minutes = int(elapsed_time // 60)
         elapsed_seconds = int(elapsed_time % 60)
         
         print(f"Распаковка завершена за {elapsed_minutes}м {elapsed_seconds}с")
+        
+        # Обновляем прогресс: финальная настройка
         self._update_progress(
-            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
-            stage_progress=0,
-            global_progress=100,
-            details=f"Успешно извлечено {result['extracted_count']} элементов"
+            stage_name="Финальная настройка",
+            stage_progress=100,
+            global_progress=int(FINAL_END),
+            details=f"Успешно извлечено {result['extracted_count']} элементов за {elapsed_minutes}м {elapsed_seconds}с",
+            elapsed_time=int(elapsed_time)
         )
         
         return True
@@ -7816,9 +7966,10 @@ def universal_print(*args, **kwargs):
                 except Exception:
                     pass  # Игнорируем ошибки
 
-# Сохраняем оригинальный print для fallback
+# Сохраняем оригинальный print для fallback (инициализируется после импорта builtins)
 if not hasattr(builtins, '_original_print'):
     builtins._original_print = builtins.print
+    _original_print = builtins._original_print
 
 # Переопределяем builtins.print - это позволяет использовать стандартный print() везде
 builtins.print = universal_print
@@ -7826,24 +7977,8 @@ builtins.print = universal_print
 # ============================================================================
 # ГЛОБАЛЬНЫЙ UNIVERSALPROCESSRUNNER - ДОСТУПЕН С САМОГО НАЧАЛА
 # ============================================================================
-
-# Глобальный экземпляр UniversalProcessRunner будет создан после определения класса
-_global_universal_runner = None
-
-# Глобальный экземпляр DualStreamLogger для двойных потоков логирования
-_global_dual_logger = None
-
-def get_global_universal_runner():
-    """Получение глобального экземпляра UniversalProcessRunner"""
-    global _global_universal_runner
-    # Глобальный логгер должен быть создан на строке 848, но на всякий случай проверяем
-    if _global_universal_runner is None:
-        # Fallback: создаем логгер если он еще не создан (не должно происходить)
-        _global_universal_runner = UniversalProcessRunner()
-    return _global_universal_runner
-
-# Устанавливаем sys._gui_instance = None для начальной работы
-sys._gui_instance = None
+# Объявления глобальных переменных перенесены в начало файла (после строки 714)
+# Функция get_global_universal_runner() будет добавлена после инициализации экземпляра
 
 class InteractiveConfig(object):
 # ============================================================================
@@ -8692,6 +8827,19 @@ class UniversalProcessRunner(object):
 # ============================================================================
 # Инициализируем глобальный экземпляр ПОСЛЕ определения класса
 _global_universal_runner = UniversalProcessRunner()
+
+# ============================================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ
+# ============================================================================
+
+def get_global_universal_runner():
+    """Получение глобального экземпляра UniversalProcessRunner"""
+    global _global_universal_runner
+    if _global_universal_runner is None:
+        # Fallback: создаем если еще не создан (не должно происходить)
+        _global_universal_runner = UniversalProcessRunner()
+    return _global_universal_runner
+
 class RepoChecker(object):
 # ============================================================================
 # КЛАССЫ АВТОМАТИЗАЦИИ
@@ -9820,9 +9968,7 @@ class InstallationMonitor(object):
             'elapsed_time': 0,
             'wine_processes': [],
             'wineprefix_size': 0,
-            'active': False,
-            'cpu_usage': 0,
-            'network_speed': 0.0
+            'active': False
         }
         
         # Время выполнения
@@ -9872,10 +10018,6 @@ class InstallationMonitor(object):
                 status['wineprefix_size'] = int(total_size / (1024 * 1024))
         except:
             pass
-        
-        # CPU и сеть
-        status['cpu_usage'] = self._get_cpu_usage()
-        status['network_speed'] = self._get_network_speed()
         
         return status
     
@@ -11064,6 +11206,123 @@ class ComponentInstaller(object):
         full_path = os.path.join(script_dir, source_dir_name)
         return full_path
     
+    def _calculate_component_weights(self, component_ids):
+        """
+        Вычисляет веса компонентов для пропорционального распределения прогресса
+        
+        Args:
+            component_ids: Список ID компонентов
+        
+        Returns:
+            dict: {component_id: {'weight': float, 'archive_path': str, 'size': int, 'normalized_weight': float}}
+        """
+        weights = {}
+        total_weight = 0
+        
+        astrapack_dir = self._get_astrapack_dir()
+        
+        for component_id in component_ids:
+            # Получаем конфигурацию компонента
+            config = None
+            
+            # Проверяем динамический экземпляр
+            if hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+                instance_config = self.wine_app_manager.get_instance_config(component_id)
+                if instance_config:
+                    config = instance_config
+            
+            # Проверяем существующий компонент
+            if not config and component_id in COMPONENTS_CONFIG:
+                config = COMPONENTS_CONFIG[component_id]
+            
+            if not config:
+                # Компонент не найден - используем минимальный вес
+                weights[component_id] = {
+                    'weight': 100 * 1024 * 1024,  # 100 МБ
+                    'archive_path': None,
+                    'size': 100 * 1024 * 1024
+                }
+                total_weight += weights[component_id]['weight']
+                continue
+            
+            # Определяем вес компонента
+            weight = 0
+            archive_path = None
+            
+            # Вариант 1: Есть архив (source_dir)
+            source_dir = config.get('source_dir')
+            if source_dir:
+                archive_name = config.get('archive_name')
+                if not archive_name:
+                    archive_name = f"{source_dir}.tar.gz"
+                
+                # Определяем группу по component_id
+                group_name = None
+                if 'cont' in component_id.lower():
+                    group_name = 'Cont'
+                elif 'astra' in component_id.lower():
+                    group_name = 'Astra'
+                
+                # Пробуем найти архив (.tar.gz и .tar)
+                if group_name:
+                    archive_path_gz = os.path.join(astrapack_dir, group_name, archive_name)
+                    archive_path_tar = os.path.join(astrapack_dir, group_name, f"{source_dir}.tar")
+                else:
+                    archive_path_gz = os.path.join(astrapack_dir, archive_name)
+                    archive_path_tar = os.path.join(astrapack_dir, f"{source_dir}.tar")
+                
+                # Проверяем оба варианта
+                if os.path.exists(archive_path_gz) and os.path.isfile(archive_path_gz):
+                    archive_path = archive_path_gz
+                    weight = os.path.getsize(archive_path)
+                elif os.path.exists(archive_path_tar) and os.path.isfile(archive_path_tar):
+                    archive_path = archive_path_tar
+                    weight = os.path.getsize(archive_path)
+                else:
+                    # Архив не найден - используем примерный вес на основе source_dir
+                    weight = 500 * 1024 * 1024  # 500 МБ по умолчанию для архивов
+            
+            # Вариант 2: Winetricks компонент
+            elif config.get('category') == 'winetricks':
+                # Примерный вес для winetricks компонентов
+                weight = 200 * 1024 * 1024  # 200 МБ
+            
+            # Вариант 3: Apt пакет
+            elif config.get('category') == 'wine_packages':
+                weight = 50 * 1024 * 1024  # 50 МБ
+            
+            # Вариант 4: Wine приложение (может быть архив или нет)
+            elif config.get('category') == 'wine_application':
+                # Проверяем, есть ли архив
+                if source_dir:
+                    # Уже обработано выше
+                    pass
+                else:
+                    weight = 300 * 1024 * 1024  # 300 МБ по умолчанию
+            
+            # Вариант 5: Другое
+            else:
+                weight = 100 * 1024 * 1024  # 100 МБ по умолчанию
+            
+            weights[component_id] = {
+                'weight': weight,
+                'archive_path': archive_path,
+                'size': weight
+            }
+            total_weight += weight
+        
+        # Нормализуем веса (делаем их долями от 0 до 1)
+        if total_weight > 0:
+            for component_id in weights:
+                weights[component_id]['normalized_weight'] = weights[component_id]['weight'] / total_weight
+        else:
+            # Если все веса 0 - равномерное распределение
+            uniform_weight = 1.0 / len(weights) if weights else 1.0
+            for component_id in weights:
+                weights[component_id]['normalized_weight'] = uniform_weight
+        
+        return weights
+    
     def _get_handler_for_component(self, component_id):
         """
         Получить handler для компонента
@@ -11161,7 +11420,7 @@ class ComponentInstaller(object):
             print(f"Не удалось получить дисковое пространство: {e}", level='WARNING')
             self.initial_disk_space = 0
     
-    def install_component(self, component_id):
+    def install_component(self, component_id, progress_range=None):
         """
         Установка одного компонента
         
@@ -11171,11 +11430,13 @@ class ComponentInstaller(object):
         
         Args:
             component_id: ID компонента
+            progress_range: Диапазон прогресса для этого компонента (start, end) в процентах.
+                           Если None, компонент использует свой внутренний прогресс (0-100)
             
         Returns:
             bool: True если установка успешна, False если ошибка
         """
-        print(f"install_component() вызван с component_id={component_id}", level='DEBUG')
+        print(f"install_component() вызван с component_id={component_id}, progress_range={progress_range}", level='DEBUG')
         
         # Получаем конфигурацию компонента
         config = None
@@ -11208,6 +11469,16 @@ class ComponentInstaller(object):
         handler = self._get_handler_for_component(component_id)
         if handler:
             print(f"install_component() найден handler для категории {category}: {type(handler).__name__}", level='DEBUG')
+            
+            # НОВОЕ: Передаем progress_range в handler, если он поддерживает
+            if hasattr(handler, 'set_progress_range'):
+                handler.set_progress_range(progress_range)
+                print(f"install_component() установлен диапазон прогресса для handler: {progress_range}", level='DEBUG')
+            elif progress_range:
+                # Сохраняем progress_range в handler для использования в install()
+                handler._current_progress_range = progress_range
+                print(f"install_component() сохранен диапазон прогресса в handler: {progress_range}", level='DEBUG')
+            
             print(f"install_component() ВЫЗЫВАЕМ handler.install({component_id}, config) - компонент должен получить статус 'installing'", level='DEBUG')
             result = handler.install(component_id, config)
             print(f"install_component() handler.install() вернул: {result}", level='DEBUG')
@@ -11299,6 +11570,16 @@ class ComponentInstaller(object):
         print(f"install_components() разрешены зависимости: {resolved_components}", level='DEBUG')
         print("Компоненты с учетом зависимостей: %s" % ', '.join(resolved_components))
         
+        # КОМАНДА СТАРТ: Начало установки всех компонентов
+        if self.progress_manager:
+            self.progress_manager.update_progress(
+                process_type='start',
+                stage_name='Начало установки компонентов',
+                stage_progress=0,
+                global_progress=0,
+                details=f'Установка компонентов: {", ".join(resolved_components)}'
+            )
+        
         # КРИТИЧНО: Устанавливаем статус 'pending' для ВСЕХ компонентов, которые будут установлены
         # (и выбранных, и зависимостей), но еще не установлены
         print(f"install_components() проверка статусов перед установкой pending", level='DEBUG')
@@ -11322,8 +11603,60 @@ class ComponentInstaller(object):
         # Получаем handler для вызова методов управления процессами
         handler = self._get_any_handler()
         
+        
+        # НОВОЕ: Предварительный расчет весов компонентов для распределения прогресса
+        print(f"[INFO] Расчет весов компонентов для распределения прогресса...")
+        component_weights = self._calculate_component_weights(resolved_components)
+        
+        # Вычисляем диапазоны прогресса для каждого компонента
+        progress_ranges = {}
+        current_progress = 0.0
+        
+        for component_id in resolved_components:
+            if component_id in component_weights:
+                normalized_weight = component_weights[component_id]['normalized_weight']
+                component_progress_range = normalized_weight * 100.0  # Диапазон в процентах
+                
+                progress_ranges[component_id] = (
+                    current_progress,
+                    min(100.0, current_progress + component_progress_range)  # Ограничиваем 100%
+                )
+                
+                size_mb = component_weights[component_id]['size'] / (1024 * 1024)
+                print(f"[INFO] Компонент {component_id}: вес={size_mb:.1f} МБ ({normalized_weight*100:.1f}%), "
+                      f"диапазон прогресса={progress_ranges[component_id][0]:.1f}%-{progress_ranges[component_id][1]:.1f}%")
+                
+                current_progress += component_progress_range
+            else:
+                # Если вес не рассчитан - равномерное распределение оставшегося прогресса
+                remaining_components = len([c for c in resolved_components if c not in progress_ranges])
+                if remaining_components > 0:
+                    remaining_progress = 100.0 - current_progress
+                    uniform_range = remaining_progress / remaining_components
+                    progress_ranges[component_id] = (
+                        current_progress,
+                        min(100.0, current_progress + uniform_range)
+                    )
+                    current_progress += uniform_range
+        
         print(f"install_components() начинаем цикл установки компонентов", level='DEBUG')
         for idx, component_id in enumerate(resolved_components):
+            # НОВОЕ: Проверяем флаг отмены перед каждой итерацией
+            if CANCEL_OPERATION:
+                print("[INFO] Установка прервана пользователем", level='WARNING')
+                print("Установка прервана пользователем", gui_log=True)
+                # КОМАНДА CANCEL: Отмена процесса
+                if self.progress_manager:
+                    self.progress_manager.update_progress(
+                        process_type='cancel',
+                        stage_name='Установка отменена',
+                        stage_progress=0,
+                        global_progress=0,
+                        details='Установка прервана пользователем'
+                    )
+                success = False
+                break
+            
             print(f"install_components() обработка компонента {idx+1}/{len(resolved_components)}: {component_id}", level='DEBUG')
             is_installed = self.check_component_status(component_id)
             print(f"install_components() обработка {component_id}: установлен={is_installed}", level='DEBUG')
@@ -11332,14 +11665,68 @@ class ComponentInstaller(object):
                 if idx > 0 and handler:  # Не проверяем перед первым компонентом
                     handler._ensure_no_conflicting_processes(max_wait=30)
                 
+                # НОВОЕ: Проверяем флаг отмены перед установкой компонента
+                if CANCEL_OPERATION:
+                    print("[INFO] Установка прервана пользователем перед установкой компонента", level='WARNING')
+                    print("Установка прервана пользователем", gui_log=True)
+                    # КОМАНДА CANCEL: Отмена процесса
+                    if self.progress_manager:
+                        self.progress_manager.update_progress(
+                            process_type='cancel',
+                            stage_name='Установка отменена',
+                            stage_progress=0,
+                            global_progress=0,
+                            details='Установка прервана пользователем'
+                        )
+                    success = False
+                    break
+                
+                # НОВОЕ: Получаем диапазон прогресса для этого компонента
+                progress_range = progress_ranges.get(component_id, (0.0, 100.0))
+                
                 print(f"install_components() НАЧИНАЕМ установку компонента {component_id} - компонент должен получить статус 'installing'", level='DEBUG')
-                result = self.install_component(component_id)
+                print(f"[INFO] Установка компонента {component_id} с диапазоном прогресса: {progress_range[0]:.1f}%-{progress_range[1]:.1f}%")
+                
+                # НОВОЕ: Передаем progress_range в install_component
+                result = self.install_component(component_id, progress_range=progress_range)
                 print(f"install_components() установка компонента {component_id} завершена: result={result}", level='DEBUG')
+                
+                # НОВОЕ: Проверяем флаг отмены после установки компонента
+                if CANCEL_OPERATION:
+                    print("[INFO] Установка прервана пользователем после установки компонента", level='WARNING')
+                    print("Установка прервана пользователем", gui_log=True)
+                    # КОМАНДА CANCEL: Отмена процесса
+                    if self.progress_manager:
+                        self.progress_manager.update_progress(
+                            process_type='cancel',
+                            stage_name='Установка отменена',
+                            stage_progress=0,
+                            global_progress=0,
+                            details='Установка прервана пользователем'
+                        )
+                    success = False
+                    break
                 
                 # КРИТИЧНО: После установки компонента проверяем завершение всех процессов
                 if result and handler:
                     print(f"install_components() {component_id} установлен успешно", level='DEBUG')
                     handler._wait_for_all_processes_terminated(max_wait=30)
+                    
+                    # НОВОЕ: Проверяем флаг отмены после завершения процессов
+                    if CANCEL_OPERATION:
+                        print("[INFO] Установка прервана пользователем после завершения процессов", level='WARNING')
+                        print("Установка прервана пользователем", gui_log=True)
+                        # КОМАНДА CANCEL: Отмена процесса
+                        if self.progress_manager:
+                            self.progress_manager.update_progress(
+                                process_type='cancel',
+                                stage_name='Установка отменена',
+                                stage_progress=0,
+                                global_progress=0,
+                                details='Установка прервана пользователем'
+                            )
+                        success = False
+                        break
                     
                     # Остановка wineserver (только для winetricks компонентов)
                     category = get_component_field(component_id, 'category')
@@ -11348,6 +11735,22 @@ class ComponentInstaller(object):
                         handler._terminate_wineserver()
                         # Финальная проверка что все процессы завершены
                         handler._wait_for_all_processes_terminated(max_wait=10)
+                    
+                    # НОВОЕ: Проверяем флаг отмены после остановки wineserver
+                    if CANCEL_OPERATION:
+                        print("[INFO] Установка прервана пользователем после остановки wineserver", level='WARNING')
+                        print("Установка прервана пользователем", gui_log=True)
+                        # КОМАНДА CANCEL: Отмена процесса
+                        if self.progress_manager:
+                            self.progress_manager.update_progress(
+                                process_type='cancel',
+                                stage_name='Установка отменена',
+                                stage_progress=0,
+                                global_progress=0,
+                                details='Установка прервана пользователем'
+                            )
+                        success = False
+                        break
                     
                     # Умная пауза между установками компонентов (в зависимости от категории)
                     if idx < len(resolved_components) - 1:  # Не делаем паузу после последнего компонента
@@ -11389,8 +11792,27 @@ class ComponentInstaller(object):
         print(f"install_components() завершение: success={success}", level='DEBUG')
         if success:
             print("Все компоненты установлены успешно")
+            # КОМАНДА COMPLETE: Завершение установки всех компонентов
+            if self.progress_manager:
+                self.progress_manager.update_progress(
+                    process_type='complete',
+                    stage_name='Установка завершена',
+                    stage_progress=100,
+                    global_progress=100,
+                    details='Все компоненты установлены успешно'
+                )
         else:
             print("Некоторые компоненты не установлены")
+            # Если была отмена, команда 'cancel' уже отправлена в цикле
+            # Если была ошибка, отправляем 'cancel' для остановки счетчика
+            if self.progress_manager and not CANCEL_OPERATION:
+                self.progress_manager.update_progress(
+                    process_type='cancel',
+                    stage_name='Установка прервана',
+                    stage_progress=0,
+                    global_progress=0,
+                    details='Ошибка установки компонентов'
+                )
         
         return success
     
@@ -11739,16 +12161,12 @@ class AutomationGUI(object):
         self.replay_progress_timer = None
         self._replay_controls_visible = False
         
-        # Таймер обновления прогресса установки (время и диск)
-        self.installation_progress_timer = None
-        self.disk_update_counter = 0  # Счетчик для обновления диска каждые 5 секунд
-        
         # Инициализируем новую универсальную архитектуру
         self.component_status_manager = ComponentStatusManager(callback=self._component_status_callback)
         
         # Создаем handlers напрямую (будет зарегистрировано позже в create_widgets())
         self.component_handlers = {}
-        # ComponentInstaller будет создан позже в create_widgets() после создания component_progress_manager
+        # ComponentInstaller будет создан позже в create_widgets() после инициализации глобального progress_manager
         self.component_installer = None
         
         # Лог-файл (будет установлен позже из main)
@@ -11768,6 +12186,10 @@ class AutomationGUI(object):
         self._last_terminal_search = ""  # Последний поисковый запрос
         self._force_terminal_update = False  # Флаг принудительного обновления
         
+        # КРИТИЧНО: Устанавливаем глобальную ссылку на GUI ПЕРЕД create_widgets()
+        # чтобы глобальный progress_manager мог получить доступ к GUI
+        sys._gui_instance = self
+        
         # Создаем интерфейс
         self.create_widgets()
         
@@ -11783,9 +12205,6 @@ class AutomationGUI(object):
         # КРИТИЧНО: Показываем окно только после полной готовности
         # Небольшая задержка для гарантии полной инициализации всех компонентов
         self.root.after(100, self._show_window_ready)
-        
-        # Устанавливаем глобальную ссылку на GUI для перенаправления print()
-        sys._gui_instance = self
         
         # Передаем ссылки на детальные бары для прямого обновления (будет установлено после создания SystemUpdater)
         
@@ -11876,7 +12295,7 @@ class AutomationGUI(object):
             'logger': None,  # Не используется в новой архитектуре
             'callback': self._component_status_callback,
             'universal_runner': self.universal_runner,
-            'progress_manager': self.component_progress_manager,
+            'progress_manager': get_global_progress_manager(),  # Используем глобальный менеджер
             'dual_logger': globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
             'status_manager': self.component_status_manager  # КРИТИЧНО
         }
@@ -11900,7 +12319,7 @@ class AutomationGUI(object):
         self.component_installer = ComponentInstaller(
             component_handlers=self.component_handlers,
             status_manager=self.component_status_manager,
-            progress_manager=self.component_progress_manager,
+            progress_manager=get_global_progress_manager(),  # Используем глобальный менеджер
             universal_runner=self.universal_runner,
             dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
             use_minimal_winetricks=self.use_minimal_winetricks.get() if hasattr(self, 'use_minimal_winetricks') else True
@@ -13169,11 +13588,11 @@ class AutomationGUI(object):
             except Exception as e:
                 print(f"[ERROR] Ошибка в send_component_progress_to_gui: {e}")
         
-        # Создаем UniversalProgressManager для компонентов
-        self.component_progress_manager = UniversalProgressManager(
-            universal_runner=self.universal_runner,
-            gui_callback=send_component_progress_to_gui
-        )
+        # Используем глобальный UniversalProgressManager для компонентов
+        # Получаем или создаем глобальный менеджер
+        global_progress_manager = get_global_progress_manager()
+        # Устанавливаем его как глобальный (если еще не установлен)
+        set_global_progress_manager(global_progress_manager)
         
         # Регистрируем handlers с правильными параметрами
         self._register_component_handlers()
@@ -17376,67 +17795,6 @@ class AutomationGUI(object):
                     if hasattr(self, 'app_cpu_label'):
                         self.app_cpu_label.config(text="0.0%", fg='gray')
             
-            # Обновляем CPU и сеть с цветовой индикацией (если элементы существуют)
-            if hasattr(self, 'wine_cpu_progress'):
-                try:
-                    # Получаем текущую загрузку CPU
-                    if PSUTIL_AVAILABLE:
-                        cpu_usage = psutil.cpu_percent(interval=None)  # Неблокирующий вызов
-                    else:
-                        cpu_usage = 0
-                    
-                    # Обновляем прогресс-бар
-                    self.wine_cpu_progress['value'] = cpu_usage
-                    
-                    # Обновляем текстовую метку
-                    if hasattr(self, 'wine_cpu_label'):
-                        self.wine_cpu_label.config(text="%.1f%%" % cpu_usage)
-                    
-                    # Принудительно обновляем GUI
-                    self.root.update_idletasks()
-                except:
-                    self.wine_cpu_progress['value'] = 0
-                    self.wine_cpu_label.config(text="0.0%", fg='gray')
-            
-            if hasattr(self, 'wine_net_progress'):
-                try:
-                    # Получаем текущую сетевую активность
-                    if PSUTIL_AVAILABLE:
-                        net_io = psutil.net_io_counters()
-                        current_bytes = net_io.bytes_sent + net_io.bytes_recv
-                        current_time = time.time()
-                        
-                        # Вычисляем скорость только если есть предыдущие данные
-                        if self.last_net_time > 0 and current_time > self.last_net_time:
-                            time_diff = current_time - self.last_net_time
-                            bytes_diff = current_bytes - self.last_net_bytes
-                            net_speed = (bytes_diff / (1024 * 1024)) / time_diff  # MB/s
-                        else:
-                            net_speed = 0
-                        
-                        # Сохраняем текущие значения для следующего расчета
-                        self.last_net_bytes = current_bytes
-                        self.last_net_time = current_time
-                    else:
-                        net_speed = 0
-                    
-                    # Ограничиваем скорость для отображения (увеличиваем лимит)
-                    net_speed = min(200.0, net_speed)  # Увеличиваем лимит до 200 MB/s
-                    net_percent = min(100, int(net_speed * 0.5))  # Масштабируем: 200 MB/s = 100%
-                    
-                    # Обновляем прогресс-бар
-                    self.wine_net_progress['value'] = net_percent
-                    
-                    # Обновляем текстовую метку
-                    if hasattr(self, 'wine_net_label'):
-                        self.wine_net_label.config(text="%.2f MB/s" % net_speed)
-                    
-                    # Принудительно обновляем GUI
-                    self.root.update_idletasks()
-                except:
-                    self.wine_net_progress['value'] = 0
-                    self.wine_net_label.config(text="0.00 MB/s", fg='gray')
-            
             # Проверяем общие требования
             warnings = []
             if free_gb < 4.0:
@@ -18230,9 +18588,6 @@ class AutomationGUI(object):
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
         
-        # НОВОЕ: Запускаем таймер обновления времени и дискового пространства
-        self.start_progress_timer()
-        
         # Запускаем установку в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,), name="WineInstallThread")
@@ -18272,9 +18627,6 @@ class AutomationGUI(object):
     
     def _install_completed(self, success):
         """Завершение установки (вызывается в главном потоке)"""
-        # НОВОЕ: Останавливаем таймер обновления времени и диска
-        self.stop_progress_timer()
-        
         # Разблокируем кнопки
         self.install_wine_button.config(state=self.tk.NORMAL)
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
@@ -18288,6 +18640,17 @@ class AutomationGUI(object):
         else:
             self.wine_status_label.config(text="Ошибка установки", fg='red')
             print("[ERROR] Ошибка установки компонентов", gui_log=True)
+        
+        # КОМАНДА COMPLETE: Завершение установки
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='complete',
+                stage_name='Установка завершена' if success else 'Установка прервана',
+                stage_progress=100 if success else 0,
+                global_progress=100 if success else 0,
+                details='Установка завершена успешно' if success else 'Ошибка установки'
+            )
         
         # КРИТИЧНО: Обновляем статусы всех компонентов после завершения установки
         # Это гарантирует, что статусы пропущенных компонентов будут правильными
@@ -18333,11 +18696,18 @@ class AutomationGUI(object):
     
     def _reset_progress_panel(self):
         """Сброс панели прогресса перед началом установки"""
-        self.wine_progress['value'] = 0
-        self.wine_time_label.config(text="0 мин 0 сек")
-        self.wine_size_label.config(text="0 MB")
-        self.wine_proc_label.config(text="неактивны", fg='gray')
-        self.wine_stage_label.config(text="Подготовка...", fg='blue')
+        # Используем глобальный progress_manager для обновления прогресса
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='start',  # КОМАНДА СТАРТ: Начало процесса
+            stage_name='Подготовка...',
+            stage_progress=0,
+            global_progress=0,  # Сброс таймера и диска
+            details='Подготовка к установке...'
+        )
+        # Обновляем только wine_proc_label (не относится к прогрессу)
+        if hasattr(self, 'wine_proc_label'):
+            self.wine_proc_label.config(text="неактивны", fg='gray')
     
     def _create_progress_bar(self, value, max_value=100, width=10):
         """Создать текстовый прогресс-бар с цветовой индикацией"""
@@ -18356,16 +18726,27 @@ class AutomationGUI(object):
     
     def _update_install_progress(self, data):
         """Обновление прогресса установки из монитора (вызывается из главного потока)"""
-        # Обновляем время
-        minutes = data['elapsed_time'] // 60
-        seconds = data['elapsed_time'] % 60
-        self.wine_time_label.config(text="%d мин %d сек" % (minutes, seconds))
+        # Используем глобальный progress_manager для обновления прогресса
+        progress_manager = get_global_progress_manager()
         
-        # Обновляем размер
+        # Вычисляем прогресс на основе размера
         size_mb = data['wineprefix_size']
-        self.wine_size_label.config(text="%d MB" % size_mb)
+        # Wine packages: ~100MB, winetricks: ~500MB, Astra.IDE: ~1500MB
+        # Общий примерный размер: ~2100MB
+        estimated_total = 2100
+        progress_percent = min(100, int((size_mb / estimated_total) * 100))
         
-        # Обновляем процессы с цветовой индикацией
+        # Обновляем через progress_manager (таймер, диск, CPU и сеть обновятся автоматически)
+        progress_manager.update_progress(
+            process_type='wine_install',
+            stage_name=self.wine_stage_label.cget('text') if hasattr(self, 'wine_stage_label') else 'Установка',
+            stage_progress=progress_percent,
+            global_progress=progress_percent,
+            details=f"Размер: {size_mb} MB",
+            elapsed_time=data.get('elapsed_time', 0)
+        )
+        
+        # Обновляем только процессы (не относится к прогрессу, это отдельный элемент)
         if data['wine_processes']:
             procs_text = ", ".join(data['wine_processes'][:3])  # Первые 3
             if len(data['wine_processes']) > 3:
@@ -18383,61 +18764,6 @@ class AutomationGUI(object):
             self.wine_proc_label.config(text=procs_text, fg=proc_color)
         else:
             self.wine_proc_label.config(text="неактивны", fg='gray')
-        
-        # Обновляем CPU с прогресс-баром и цветовой индикацией
-        cpu_usage = data.get('cpu_usage', 0)
-        
-        # Обновляем прогресс-бар CPU
-        if hasattr(self, 'wine_cpu_progress'):
-            self.wine_cpu_progress['value'] = cpu_usage
-        
-        # Цветовая индикация CPU
-        if cpu_usage < 30:
-            cpu_color = 'green'
-        elif cpu_usage < 70:
-            cpu_color = 'orange'
-        else:
-            cpu_color = 'red'
-        
-        # Обновляем цвет прогресс-бара CPU (упрощенная версия)
-        if hasattr(self, 'wine_cpu_progress'):
-            self.wine_cpu_progress['value'] = cpu_usage
-        
-        if hasattr(self, 'wine_cpu_label'):
-            self.wine_cpu_label.config(text="%.1f%%" % cpu_usage, fg=cpu_color)
-        
-        # Обновляем Сеть с прогресс-баром и цветовой индикацией
-        net_speed = data.get('network_speed', 0.0)
-        # Масштабируем до 10 MB/s для прогресс-бара
-        net_percent = min(100, int((net_speed / 10.0) * 100))
-        
-        # Обновляем прогресс-бар сети
-        if hasattr(self, 'wine_net_progress'):
-            self.wine_net_progress['value'] = net_percent
-        
-        # Цветовая индикация сети
-        if net_speed < 1.0:
-            net_color = 'gray'  # Низкая активность
-        elif net_speed < 5.0:
-            net_color = 'green'  # Нормальная активность
-        elif net_speed < 10.0:
-            net_color = 'orange'  # Высокая активность
-        else:
-            net_color = 'red'  # Очень высокая активность
-        
-        # Обновляем цвет прогресс-бара сети (упрощенная версия)
-        if hasattr(self, 'wine_net_progress'):
-            self.wine_net_progress['value'] = net_percent
-        
-        if hasattr(self, 'wine_net_label'):
-            self.wine_net_label.config(text="%.1f MB/s" % net_speed, fg=net_color)
-        
-        # Обновляем прогресс-бар (примерная оценка на основе размера и времени)
-        # Wine packages: ~100MB, winetricks: ~500MB, Astra.IDE: ~1500MB
-        # Общий примерный размер: ~2100MB
-        estimated_total = 2100
-        progress_percent = min(100, int((size_mb / estimated_total) * 100))
-        self.wine_progress['value'] = progress_percent
     
     def _update_install_status(self, message):
         """Обновление статуса установки в GUI (вызывается из главного потока)"""
@@ -18449,25 +18775,40 @@ class AutomationGUI(object):
         
         # Обновляем статус-метку (только первые 80 символов)
         short_msg = message[:80] + "..." if len(message) > 80 else message
-        self.wine_status_label.config(text=short_msg, fg='blue')
+        if hasattr(self, 'wine_status_label'):
+            self.wine_status_label.config(text=short_msg, fg='blue')
         
         # Определяем текущий этап по сообщению
+        stage_name = None
         if "ШАГ 1" in message or "WINE ПАКЕТОВ" in message:
-            self.wine_stage_label.config(text="Установка Wine пакетов", fg='blue')
+            stage_name = "Установка Wine пакетов"
         elif "ШАГ 2" in message or "ptrace_scope" in message:
-            self.wine_stage_label.config(text="Настройка безопасности", fg='blue')
+            stage_name = "Настройка безопасности"
         elif "ШАГ 3" in message or "ОКРУЖЕНИЯ WINE" in message:
-            self.wine_stage_label.config(text="Настройка окружения Wine", fg='blue')
+            stage_name = "Настройка окружения Wine"
         elif "ШАГ 4" in message or "WINETRICKS" in message:
-            self.wine_stage_label.config(text="Установка компонентов winetricks", fg='blue')
+            stage_name = "Установка компонентов winetricks"
         elif "ШАГ 5" in message or "СКРИПТОВ" in message:
-            self.wine_stage_label.config(text="Создание скриптов запуска", fg='blue')
+            stage_name = "Создание скриптов запуска"
         elif "ШАГ 6" in message or "ASTRA.IDE" in message:
-            self.wine_stage_label.config(text="Установка Astra.IDE", fg='blue')
+            stage_name = "Установка Astra.IDE"
         elif "УСПЕШНО" in message:
-            self.wine_stage_label.config(text="Установка завершена!", fg='green')
+            stage_name = "Установка завершена!"
         elif "ОШИБКА" in message or "ПРЕРВАНА" in message:
-            self.wine_stage_label.config(text="Ошибка установки", fg='red')
+            stage_name = "Ошибка установки"
+        
+        # Обновляем этап через progress_manager
+        if stage_name:
+            progress_manager = get_global_progress_manager()
+            # Получаем текущий прогресс из progress_manager
+            current_progress = getattr(progress_manager, 'global_progress', 0)
+            progress_manager.update_progress(
+                process_type='wine_install',
+                stage_name=stage_name,
+                stage_progress=current_progress,
+                global_progress=current_progress,
+                details=short_msg
+            )
         
         # Добавляем в лог
         print(message, gui_log=True)
@@ -18493,20 +18834,33 @@ class AutomationGUI(object):
     
     def _wine_install_completed(self, success):
         """Обработка завершения установки (вызывается из главного потока)"""
-        # НОВОЕ: Останавливаем таймер обновления времени и диска
-        self.stop_progress_timer()
+        # Используем глобальный progress_manager для обновления прогресса
+        progress_manager = get_global_progress_manager()
         
         if success:
-            self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
-            self.wine_stage_label.config(text="Установка завершена!", fg='green')
-            self.wine_progress['value'] = 100
+            if hasattr(self, 'wine_status_label'):
+                self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
+            progress_manager.update_progress(
+                process_type='complete',  # КОМАНДА COMPLETE: Завершение установки
+                stage_name='Установка завершена!',
+                stage_progress=100,
+                global_progress=100,
+                details='Установка завершена успешно!'
+            )
             print("[SUCCESS] Установка Wine и Astra.IDE завершена успешно", gui_log=True)
             
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
-            self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
-            self.wine_stage_label.config(text="Ошибка установки", fg='red')
+            if hasattr(self, 'wine_status_label'):
+                self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
+            progress_manager.update_progress(
+                process_type='cancel',  # КОМАНДА CANCEL: Отмена установки
+                stage_name='Ошибка установки',
+                stage_progress=0,
+                global_progress=0,
+                details='Установка прервана'
+            )
             print("[ERROR] Установка Wine и Astra.IDE прервана", gui_log=True)
         
         # Включаем кнопки обратно
@@ -19174,9 +19528,6 @@ class AutomationGUI(object):
         self.root.update_idletasks()  # Принудительное обновление GUI
         # Дополнительная задержка не нужна - update_idletasks() уже обновил GUI
         
-        # НОВОЕ: Запускаем таймер обновления времени и дискового пространства
-        self.start_progress_timer()
-        
         # Запускаем удаление в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         uninstall_thread = threading.Thread(target=self._perform_wine_uninstall, args=(selected,), name="WineUninstallThread")
@@ -19219,6 +19570,18 @@ class AutomationGUI(object):
         # Устанавливаем флаг отмены
         global CANCEL_OPERATION
         CANCEL_OPERATION = True
+        
+        # КОМАНДА CANCEL: Отмена процесса
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='cancel',
+                stage_name='Операция отменена',
+                stage_progress=0,
+                global_progress=0,
+                details='Операция прервана пользователем'
+            )
+        
         # Синхронизируем UI состояние
         if hasattr(self, 'is_running'):
             self.is_running = False
@@ -19660,9 +20023,6 @@ class AutomationGUI(object):
     
     def _wine_uninstall_completed(self, success):
         """Обработка завершения удаления (вызывается из главного потока)"""
-        # НОВОЕ: Останавливаем таймер обновления времени и диска
-        self.stop_progress_timer()
-        
         # НОВОЕ: Удаляем экземпляры из менеджера после успешного удаления wineprefix
         if success and hasattr(self, 'component_installer') and self.component_installer and hasattr(self.component_installer, 'wine_app_manager'):
             wine_app_manager = self.component_installer.wine_app_manager
@@ -20178,6 +20538,9 @@ class AutomationGUI(object):
             status: Текст статуса для полей этапа и детелей
             detail: Дополнительный текст (не используется, для совместимости)
         """
+        # Используем глобальный progress_manager для обновления прогресса
+        progress_manager = get_global_progress_manager()
+        
         # Определяем цвет по содержимому
         if "успешно" in status.lower() or "завершена" in status.lower() and "ошибк" not in status.lower():
             color = 'green'
@@ -20186,15 +20549,23 @@ class AutomationGUI(object):
         else:
             color = 'blue'
         
-        # Обновляем "Подготовка..." в детальном прогрессе
+        # Получаем текущий прогресс из progress_manager
+        current_progress = getattr(progress_manager, 'global_progress', 0)
+        
+        # Обновляем через progress_manager
+        progress_manager.update_progress(
+            process_type='component_install',
+            stage_name=status,
+            stage_progress=current_progress,
+            global_progress=current_progress,
+            details=detail or status
+        )
+        
+        # Обновляем "Подготовка..." в детальном прогрессе (если есть)
         if hasattr(self, 'stage_label'):
             self.stage_label.config(text=status, fg=color)
         
-        # Обновляем поле "Этап" в прогрессе установки
-        if hasattr(self, 'wine_stage_label'):
-            self.wine_stage_label.config(text=status, fg=color)
-        
-        # Обновляем зеленую строку детелей
+        # Обновляем зеленую строку детелей (если есть)
         if hasattr(self, 'detail_label'):
             self.detail_label.config(text=status)
         
@@ -20234,22 +20605,26 @@ class AutomationGUI(object):
                 total_packages = 1600  # Можно сделать динамическим
                 progress_percent = min(100, (package_num / total_packages) * 100)
                 
-                # Обновляем GUI элементы
-                self.wine_progress['value'] = progress_percent
-                
                 # Обновляем размер
                 current_size = getattr(self, 'current_download_size', 0)
                 current_size += size_mb
                 self.current_download_size = current_size
-                self.wine_size_label.config(text=f"{current_size:.1f} MB")
-                
-                # Обновляем этап
-                self.wine_stage_label.config(text=f"Скачивание: {package_name}")
                 
                 # Обновляем время (примерно)
                 elapsed_minutes = int(package_num / 100)  # Примерно 100 пакетов в минуту
                 elapsed_seconds = int((package_num % 100) * 0.6)  # Примерно 0.6 сек на пакет
-                self.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_seconds} сек")
+                elapsed_time = elapsed_minutes * 60 + elapsed_seconds
+                
+                # Используем глобальный progress_manager для обновления прогресса
+                progress_manager = get_global_progress_manager()
+                progress_manager.update_progress(
+                    process_type='apt_install',
+                    stage_name=f"Скачивание: {package_name}",
+                    stage_progress=progress_percent,
+                    global_progress=progress_percent,
+                    details=f"Пакет {package_num}/{total_packages}, размер: {current_size:.1f} MB",
+                    elapsed_time=elapsed_time
+                )
                 
         except Exception as e:
             # Игнорируем ошибки парсинга
@@ -20259,14 +20634,30 @@ class AutomationGUI(object):
         """Обработка обновления этапа"""
         try:
             stage_text = message.replace("[STAGE] ", "")
-            self.wine_stage_label.config(text=stage_text)
+            
+            # Используем глобальный progress_manager для обновления прогресса
+            progress_manager = get_global_progress_manager()
             
             # Сбрасываем прогресс для новых этапов
             if "Чтение списков пакетов" in stage_text:
-                self.wine_progress['value'] = 0
                 self.current_download_size = 0
-                self.wine_size_label.config(text="0 MB")
-                self.wine_time_label.config(text="0 мин 0 сек")
+                progress_manager.update_progress(
+                    process_type='apt_install',
+                    stage_name=stage_text,
+                    stage_progress=0,
+                    global_progress=0,  # Сброс таймера и диска
+                    details='Начало этапа'
+                )
+            else:
+                # Получаем текущий прогресс из progress_manager
+                current_progress = getattr(progress_manager, 'global_progress', 0)
+                progress_manager.update_progress(
+                    process_type='apt_install',
+                    stage_name=stage_text,
+                    stage_progress=current_progress,
+                    global_progress=current_progress,
+                    details=stage_text
+                )
                 
         except Exception as e:
             pass
@@ -20419,20 +20810,19 @@ class AutomationGUI(object):
             pass
     
     def handle_advanced_progress(self, message):
-        """Обработка расширенного прогресса"""
+        """Обработка расширенного прогресса
+        
+        ПРИМЕЧАНИЕ: Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+        теперь обновляются напрямую через UniversalProgressManager._update_gui_directly().
+        Этот метод обновляет только дополнительные элементы (stage_label, detail_label, speed_label).
+        """
         try:
             # Извлекаем данные прогресса
             data_str = message.replace("[ADVANCED_PROGRESS] ", "")
             progress_data = ast.literal_eval(data_str)
             
-            # Обновляем глобальный прогресс (внизу формы)
-            if hasattr(self, 'wine_progress'):
-                if "Система актуальна" in progress_data['stage_name']:
-                    self.wine_progress['value'] = 100  # Полный прогресс для актуальной системы
-                else:
-                    self.wine_progress['value'] = progress_data['global_progress']
-            
             # Обновляем детальный прогресс (на вкладке Управление)
+            # Основные элементы прогресса обновляются через UniversalProgressManager
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text=progress_data['stage_name'])
             
@@ -20472,26 +20862,24 @@ class AutomationGUI(object):
                 else:
                     self.speed_label.config(text="")
             
-            # НОВОЕ: Обновляем wine_time_label напрямую
-            if hasattr(self, 'wine_time_label') and 'elapsed_time' in progress_data:
-                elapsed_seconds = progress_data['elapsed_time']
-                elapsed_minutes = elapsed_seconds // 60
-                elapsed_secs = elapsed_seconds % 60
-                self.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_secs} сек")
+            # Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+            # обновляются напрямую через UniversalProgressManager._update_gui_directly()
+            # Не обновляем их здесь, чтобы избежать конфликтов
             
-            # Обновляем статус
-            if hasattr(self, 'status_label'):
-                if "Система актуальна" in progress_data['stage_name']:
-                    self.status_label.config(text="Система актуальна!!!")
-                else:
-                    self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
+        except Exception as e:
+            print(f"[ERROR] Ошибка обработки расширенного прогресса: {e}", level='ERROR')
                 
         except Exception as e:
             # Игнорируем ошибки парсинга
             pass
     
     def handle_universal_progress(self, message):
-        """Обработка универсального прогресса от нового парсера"""
+        """Обработка универсального прогресса от нового парсера
+        
+        ПРИМЕЧАНИЕ: Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+        теперь обновляются напрямую через UniversalProgressManager._update_gui_directly().
+        Этот метод обновляет только дополнительные элементы (stage_label, detail_label, status_label).
+        """
         try:
             # Если message уже словарь - используем его напрямую
             if isinstance(message, dict):
@@ -20513,7 +20901,7 @@ class AutomationGUI(object):
             if hasattr(self, 'system_updater') and self.system_updater and 'download_progress' in progress_data:
                 self.system_updater.update_detailed_bars(progress_data)
             
-            # Обновляем старые элементы для совместимости
+            # Обновляем дополнительные элементы (не основные элементы прогресса)
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text=progress_data['stage_name'])
             if hasattr(self, 'detail_label'):
@@ -20522,28 +20910,37 @@ class AutomationGUI(object):
                     self.root.update_idletasks()
             if hasattr(self, 'status_label'):
                 self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
+            
+            # Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+            # обновляются напрямую через UniversalProgressManager._update_gui_directly()
+            # Не обновляем их здесь, чтобы избежать конфликтов
                 
         except Exception as e:
             pass
 
     def handle_real_time_progress(self, message):
-        """Обработка прогресса в реальном времени от нового парсера"""
+        """Обработка прогресса в реальном времени от нового парсера
+        
+        ПРИМЕЧАНИЕ: Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+        теперь обновляются напрямую через UniversalProgressManager._update_gui_directly().
+        Этот метод обновляет только дополнительные элементы (stage_label, detail_label).
+        """
         try:
             # Извлекаем данные прогресса
             data_str = message.replace("[REAL_TIME_PROGRESS] ", "")
             progress_data = ast.literal_eval(data_str)
             
-            # Обновляем глобальный прогресс (внизу формы)
-            if hasattr(self, 'wine_progress'):
-                self.wine_progress['value'] = progress_data['global_progress']
-            
             # Обновляем детальные бары если есть данные
             if hasattr(self, 'system_updater') and self.system_updater and 'download_progress' in progress_data:
                 self.system_updater.update_detailed_bars(progress_data)
             
-            # Обновляем детальный прогресс (на вкладке Управление)
+            # Обновляем дополнительные элементы (не основные элементы прогресса)
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text=progress_data['stage_name'])
+            
+            # Основные элементы прогресса (wine_progress, wine_stage_label, wine_time_label, wine_size_label)
+            # обновляются напрямую через UniversalProgressManager._update_gui_directly()
+            # Не обновляем их здесь, чтобы избежать конфликтов
             
             
             if hasattr(self, 'detail_label'):
@@ -20638,14 +21035,20 @@ class AutomationGUI(object):
     def reset_progress_bars(self):
         """Сброс всех прогресс-баров в начальное состояние"""
         try:
-            # Сбрасываем глобальный прогресс (внизу формы)
-            if hasattr(self, 'wine_progress'):
-                self.wine_progress['value'] = 0
+            # Сбрасываем через глобальный progress_manager
+            progress_manager = get_global_progress_manager()
+            progress_manager.update_progress(
+                process_type='reset',
+                stage_name='Подготовка...',
+                stage_progress=0,
+                global_progress=0,
+                details=''
+            )
             
             # Сбрасываем детальный прогресс (на вкладке Управление)
             self._reset_detailed_bars()
             
-            # Сбрасываем метки
+            # Сбрасываем метки на вкладке Управление
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text="Подготовка...")
             
@@ -20654,16 +21057,6 @@ class AutomationGUI(object):
             
             if hasattr(self, 'speed_label'):
                 self.speed_label.config(text="")
-            
-            # Сбрасываем время и размер
-            if hasattr(self, 'wine_time_label'):
-                self.wine_time_label.config(text="0 мин 0 сек")
-            
-            if hasattr(self, 'wine_size_label'):
-                self.wine_size_label.config(text="0 MB")
-            
-            if hasattr(self, 'wine_stage_label'):
-                self.wine_stage_label.config(text="Подготовка...", fg='blue')
             
             # Сбрасываем статистику
             if hasattr(self, 'downloaded_packages_label'):
@@ -20687,103 +21080,6 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
     
-    def start_progress_timer(self):
-        """Запуск таймера обновления времени и дискового пространства"""
-        # Останавливаем предыдущий таймер если был
-        self.stop_progress_timer()
-        
-        # НОВОЕ: Начинаем независимый мониторинг времени и диска
-        self.progress_start_time = time.time()
-        try:
-            disk_usage = shutil.disk_usage('/')
-            self.progress_initial_disk_space = disk_usage.used
-            print(f"[MONITORING] Мониторинг запущен: начальное занятое место {self.progress_initial_disk_space / (1024**3):.2f} ГБ")
-        except Exception as e:
-            print(f"[MONITORING] Не удалось получить дисковое пространство: {e}", level='WARNING')
-            self.progress_initial_disk_space = 0
-        
-        # Сбрасываем счетчик обновления диска
-        self.disk_update_counter = 0
-        
-        # Запускаем новый таймер
-        self._update_progress_timer()
-    
-    def stop_progress_timer(self):
-        """Остановка таймера обновления"""
-        if self.installation_progress_timer:
-            try:
-                self.root.after_cancel(self.installation_progress_timer)
-            except:
-                pass
-            self.installation_progress_timer = None
-        
-        # НОВОЕ: Сбрасываем мониторинг
-        self.progress_start_time = None
-        self.progress_initial_disk_space = None
-    
-    def _update_progress_timer(self):
-        """Периодическое обновление времени и дискового пространства"""
-        try:
-            # НОВОЕ: Независимый мониторинг - просто считаем от progress_start_time
-            if self.progress_start_time is None:
-                # Мониторинг не запущен, планируем следующую проверку
-                self.installation_progress_timer = self.root.after(1000, self._update_progress_timer)
-                return
-            
-            # Вычисляем прошедшее время
-            elapsed_time = time.time() - self.progress_start_time
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            
-            # Обновляем метку времени
-            if hasattr(self, 'wine_time_label'):
-                self.wine_time_label.config(text=f"{minutes} мин {seconds} сек")
-            
-            # Увеличиваем счетчик и обновляем диск каждые 3 вызова (3 секунды)
-            self.disk_update_counter += 1
-            if self.disk_update_counter >= 3:
-                self.disk_update_counter = 0
-                self._update_disk_space()
-            
-            # Планируем следующее обновление через 1 секунду
-            self.installation_progress_timer = self.root.after(1000, self._update_progress_timer)
-            
-        except Exception as e:
-            # Логируем ошибку для отладки
-            print(f"[TIMER_ERROR] {e}")
-            pass  # Игнорируем ошибки таймера
-    
-    def _update_disk_space(self):
-        """Обновление информации о дисковом пространстве"""
-        try:
-            if self.progress_initial_disk_space is None:
-                return
-            
-            # Получаем текущее ЗАНЯТОЕ место
-            disk_usage = shutil.disk_usage('/')
-            current_used = disk_usage.used
-            
-            # Вычисляем разницу
-            disk_change = current_used - self.progress_initial_disk_space
-            size_mb = disk_change / (1024**2)
-            
-            if disk_change > 0:
-                # Место занято (установлено больше)
-                if hasattr(self, 'wine_size_label'):
-                    self.wine_size_label.config(text=f"{size_mb:.0f} MB")
-            elif disk_change < 0:
-                # Место освобождено (удалено)
-                if hasattr(self, 'wine_size_label'):
-                    self.wine_size_label.config(text=f"{abs(size_mb):.0f} MB освобождено")
-            else:
-                # Без изменений
-                if hasattr(self, 'wine_size_label'):
-                    self.wine_size_label.config(text="0 MB")
-                
-        except Exception as e:
-            print(f"[DISK_ERROR] Ошибка обновления диска: {e}")
-            traceback.print_exc()
-        
     def start_automation(self):
         """Запуск автоматизации"""
         if self.is_running:
@@ -20807,9 +21103,6 @@ class AutomationGUI(object):
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
         
-        # НОВОЕ: Запускаем периодическое обновление таймера (он сам запустит мониторинг)
-        self.start_progress_timer()
-        
         # Запускаем автоматизацию в отдельном потоке
         print("[AUTOMATION] Запускаем поток автоматизации...")
         self.process_thread = threading.Thread(target=self.run_automation, name="AutomationThread")
@@ -20822,13 +21115,21 @@ class AutomationGUI(object):
         """Остановка автоматизации"""
         print("[STOP] Попытка мягкой остановки процесса...", gui_log=True)
         
-        # НОВОЕ: Останавливаем таймер прогресса
-        self.stop_progress_timer()
-        
         # Устанавливаем флаг отмены и синхронизируем UI состояние
         global CANCEL_OPERATION
         CANCEL_OPERATION = True
         self.is_running = False
+        
+        # КОМАНДА CANCEL: Остановка автоматизации
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='cancel',
+                stage_name='Операция остановлена',
+                stage_progress=0,
+                global_progress=0,
+                details='Операция прервана'
+            )
         
         # Даем время на мягкую остановку
         time.sleep(2)
@@ -21200,8 +21501,6 @@ class AutomationGUI(object):
         finally:
             thread_name = threading.current_thread().name
             print(f"Поток {thread_name} завершил выполнение (run_automation)", level='DEBUG')
-            # НОВОЕ: Останавливаем таймер прогресса
-            self.stop_progress_timer()
             
             # Сбрасываем флаг только если процесс НЕ был остановлен пользователем
             if self.is_running:  # Если флаг еще True, значит процесс завершился естественно
@@ -21296,10 +21595,16 @@ class AutomationGUI(object):
                 if hasattr(self, 'config_label'):
                     self.config_label.config(text=f"{configured_count}/{total_packages} ({config_val:.1f}%)")
             
-            # Обновляем общий прогресс-бар
-            if hasattr(self, 'wine_progress'):
-                total_progress = (download_val + unpack_val + config_val) / 3
-                self.wine_progress['value'] = total_progress
+            # Обновляем общий прогресс через глобальный progress_manager
+            progress_manager = get_global_progress_manager()
+            total_progress = (download_val + unpack_val + config_val) / 3
+            progress_manager.update_progress(
+                process_type='apt_install',
+                stage_name='Обновление системы',
+                stage_progress=total_progress,
+                global_progress=total_progress,
+                details=f"Скачивание: {download_val:.1f}%, Распаковка: {unpack_val:.1f}%, Настройка: {config_val:.1f}%"
+            )
             
         except Exception as e:
             print(f"[ERROR] Ошибка установки значений: {e}")
@@ -21605,19 +21910,20 @@ class UniversalProgressManager:
 # ============================================================================
 # КЛАСС - УНИВЕРСАЛЬНЫЙ МЕНЕДЖЕР ПРОГРЕССА ДЛЯ ВСЕХ ПРОЦЕССОВ
 # ============================================================================
-    """Универсальный менеджер прогресса для всех процессов проекта"""
+    """Универсальный менеджер прогресса для всех процессов проекта
     
-    def __init__(self, universal_runner=None, gui_callback=None):
+    АВТОНОМНЫЙ: Сам управляет таймером, диском, этапом и прогрессом.
+    Обновляет GUI напрямую без промежуточных обработчиков.
+    """
+    
+    def __init__(self, universal_runner=None):
         """
         Инициализация универсального менеджера прогресса
         
         Args:
-            universal_runner: Ссылка на UniversalProcessRunner для отправки данных в GUI
-            gui_callback: Callback функция для отправки данных в GUI
+            universal_runner: Ссылка на UniversalProcessRunner (опционально)
         """
-        
-        self.universal_runner = universal_runner or UniversalProcessRunner()
-        self.gui_callback = gui_callback
+        self.universal_runner = universal_runner
         
         # Текущее состояние
         self.current_process = None
@@ -21627,6 +21933,40 @@ class UniversalProgressManager:
         self.stage_name = "Ожидание"
         self.details = ""
         
+        # Управление таймером
+        self.start_time = None  # Время начала операции
+        self.final_elapsed_time = None  # Финальное время после завершения процесса
+        
+        # Управление диском
+        self.initial_disk_space = None  # Начальное использование диска
+        self.final_disk_used_mb = None  # Финальное использование диска после завершения процесса
+        
+        # Управление сетью (для расчета скорости)
+        self.last_net_bytes = 0
+        self.last_net_time = 0
+        
+        # Динамическое масштабирование сети
+        self.max_network_speed = 10.0  # Начальный максимум (MB/s)
+        self.low_speed_counter = 0  # Счетчик секунд с низкой скоростью
+        
+        # Усреднение CPU и сети (скользящее среднее)
+        self.cpu_history = []
+        self.network_history = []
+        self.average_window = 5
+        
+        # Автономный таймер для обновления CPU и сети каждую секунду
+        self.cpu_net_timer_id = None
+        
+        print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
+        
+        # Запускаем автономный таймер для CPU и сети
+        self._start_cpu_net_timer()
+    
+    def _get_gui_instance(self):
+        """Получить экземпляр GUI"""
+        if hasattr(sys, '_gui_instance') and sys._gui_instance:
+            return sys._gui_instance
+        return None
     
     def update_progress(self, process_type, stage_name, stage_progress, global_progress, details="", **kwargs):
         """
@@ -21638,8 +21978,10 @@ class UniversalProgressManager:
             stage_progress: Прогресс этапа (0-100)
             global_progress: Глобальный прогресс (0-100)
             details: Детальная информация
-            **kwargs: Дополнительные параметры (download_progress, unpack_progress, etc.)
+            **kwargs: Дополнительные параметры:
+                - elapsed_time: для переопределения времени
         """
+        
         self.current_process = process_type
         self.current_stage = stage_name
         self.stage_progress = stage_progress
@@ -21647,14 +21989,364 @@ class UniversalProgressManager:
         self.stage_name = stage_name
         self.details = details
         
-        # НОВОЕ: Сохраняем elapsed_time из kwargs
-        self.elapsed_time = kwargs.get('elapsed_time', 0)
+        # КОМАНДЫ УПРАВЛЕНИЯ ПРОЦЕССОМ: start, complete, cancel
+        if process_type == 'start':
+            # КОМАНДА СТАРТ: Начало процесса - запускаем таймер и сбрасываем диск
+            self.start_time = time.time()
+            self.final_elapsed_time = None
+            self.final_disk_used_mb = None
+            try:
+                disk_usage = shutil.disk_usage('/')
+                self.initial_disk_space = disk_usage.used
+                print(f"[PROGRESS] Команда СТАРТ: таймер запущен, начальное использование диска: {self.initial_disk_space / (1024**3):.2f} ГБ")
+            except Exception as e:
+                self.initial_disk_space = None
+                print(f"[WARNING] Не удалось получить начальное использование диска: {e}")
+        elif process_type == 'complete' or process_type == 'cancel':
+            # КОМАНДЫ ЗАВЕРШЕНИЯ/ОТМЕНЫ: Сохраняем финальные значения времени и диска
+            status_msg = "отменен" if process_type == 'cancel' else "завершен"
+            if self.start_time is not None and self.final_elapsed_time is None:
+                self.final_elapsed_time = time.time() - self.start_time
+                print(f"[PROGRESS] Процесс {status_msg}: финальное время сохранено ({self.final_elapsed_time:.1f} сек)")
+            if self.initial_disk_space is not None and self.final_disk_used_mb is None:
+                try:
+                    current_disk_usage = shutil.disk_usage('/').used
+                    self.final_disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
+                    print(f"[PROGRESS] Процесс {status_msg}: финальное использование диска сохранено: {self.final_disk_used_mb:.0f} MB")
+                except Exception as e:
+                    print(f"[WARNING] Не удалось сохранить финальное использование диска: {e}")
+        elif global_progress == 0 and process_type == 'reset':
+            # Сброс процесса - останавливаем таймер и очищаем все значения
+            self.start_time = None
+            self.initial_disk_space = None
+            self.final_elapsed_time = None
+            self.final_disk_used_mb = None
         
-        # Сохраняем дополнительные параметры
-        self.extra_data = kwargs
+        # Вычисляем elapsed_time
+        if 'elapsed_time' in kwargs:
+            elapsed_time = kwargs['elapsed_time']
+        elif self.start_time:
+            elapsed_time = time.time() - self.start_time
+        else:
+            elapsed_time = 0
         
-        # Отправляем обновление в GUI
-        self._send_progress_update()
+        # УПРАВЛЕНИЕ ДИСКОМ: Сброс при global_progress=0
+        if global_progress == 0:
+            try:
+                disk_usage = shutil.disk_usage('/')
+                self.initial_disk_space = disk_usage.used
+                print(f"[PROGRESS] Диск сброшен, начальное использование: {self.initial_disk_space / (1024**3):.2f} ГБ")
+            except Exception as e:
+                self.initial_disk_space = None
+                print(f"[WARNING] Не удалось получить начальное использование диска: {e}")
+        
+        # Вычисляем использование диска
+        disk_used_mb = 0
+        if self.initial_disk_space is not None:
+            try:
+                current_disk_usage = shutil.disk_usage('/').used
+                disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
+            except Exception:
+                pass
+        
+        # ОБНОВЛЯЕМ GUI НАПРЯМУЮ (только прогресс, этап, время и диск)
+        self._update_gui_directly(global_progress, stage_name, elapsed_time, disk_used_mb)
+    
+    def _update_gui_directly(self, global_progress, stage_name, elapsed_time, disk_used_mb):
+        """Обновление GUI элементов напрямую (только прогресс, этап, время и диск)
+        
+        Args:
+            global_progress: Глобальный прогресс (0-100)
+            stage_name: Название этапа
+            elapsed_time: Прошедшее время (секунды)
+            disk_used_mb: Использование диска (MB)
+        """
+        
+        gui = self._get_gui_instance()
+        if not gui:
+            return
+        
+        # Обновляем в главном потоке через root.after()
+        def update():
+            try:
+                # 1. Прогресс-бар
+                if hasattr(gui, 'wine_progress'):
+                    gui.wine_progress['value'] = global_progress
+                
+                # 2. Этап
+                if hasattr(gui, 'wine_stage_label'):
+                    gui.wine_stage_label.config(text=stage_name)
+                
+            except Exception as e:
+                print(f"[ERROR] Ошибка обновления GUI: {e}", level='ERROR')
+        
+        # Выполняем обновление в главном потоке GUI
+        if hasattr(gui, 'root'):
+            gui.root.after(0, update)
+    
+    def _start_cpu_net_timer(self):
+        """Запуск автономного таймера для обновления CPU и сети каждую секунду"""
+        gui = self._get_gui_instance()
+        if not gui or not hasattr(gui, 'root'):
+            # GUI еще не готов, пробуем через sys._gui_instance или откладываем
+            if hasattr(sys, '_gui_instance') and sys._gui_instance and hasattr(sys._gui_instance, 'root'):
+                try:
+                    sys._gui_instance.root.after(1000, self._start_cpu_net_timer)
+                except:
+                    pass
+            return
+        
+        # Останавливаем предыдущий таймер если был
+        if self.cpu_net_timer_id:
+            try:
+                gui.root.after_cancel(self.cpu_net_timer_id)
+            except:
+                pass
+        
+        # Запускаем обновление CPU и сети (ВСЕГДА, независимо от процессов)
+        self._update_cpu_network_only()
+        
+        # Запускаем обновление времени и диска (зависит от состояния процесса)
+        self._update_time_disk()
+        
+        # Планируем следующее обновление через 1 секунду
+        self.cpu_net_timer_id = gui.root.after(1000, self._start_cpu_net_timer)
+    
+    def _update_time_disk(self):
+        """Обновление времени и диска каждую секунду (зависит от состояния процесса)"""
+        gui = self._get_gui_instance()
+        if not gui:
+            return
+        
+        def update():
+            try:
+                # Определяем состояние процесса
+                # Процесс завершен ТОЛЬКО если финальные значения сохранены (значит была команда 'complete' или 'cancel')
+                is_process_completed = (self.final_elapsed_time is not None or self.final_disk_used_mb is not None)
+                
+                is_process_active = (not is_process_completed and 
+                                    ((self.global_progress > 0 and self.global_progress < 100) or 
+                                     (self.current_process is not None and 
+                                      self.current_process != 'reset' and 
+                                      self.current_process != 'complete' and 
+                                      self.current_process != 'cancel' and
+                                      self.current_process != 'start')))
+                is_process_reset = (not is_process_completed and
+                                   self.global_progress == 0 and 
+                                   (self.current_process is None or self.current_process == 'reset'))
+                
+                # ВРЕМЯ - обновляем только если процесс активен (не завершен и не сброшен)
+                if is_process_active and self.start_time is not None:
+                    # Процесс идет - обновляем время
+                    elapsed_time = time.time() - self.start_time
+                    elapsed_minutes = int(elapsed_time // 60)
+                    elapsed_secs = int(elapsed_time % 60)
+                    
+                    if hasattr(gui, 'wine_time_label'):
+                        gui.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_secs} сек")
+                elif is_process_completed:
+                    # Процесс завершен - показываем сохраненное финальное время
+                    if self.final_elapsed_time is not None:
+                        elapsed_minutes = int(self.final_elapsed_time // 60)
+                        elapsed_secs = int(self.final_elapsed_time % 60)
+                    elif self.start_time is not None:
+                        # Если финальное время не сохранено, вычисляем один раз
+                        self.final_elapsed_time = time.time() - self.start_time
+                        elapsed_minutes = int(self.final_elapsed_time // 60)
+                        elapsed_secs = int(self.final_elapsed_time % 60)
+                    else:
+                        elapsed_minutes = 0
+                        elapsed_secs = 0
+                    
+                    if hasattr(gui, 'wine_time_label'):
+                        gui.wine_time_label.config(text=f"{elapsed_minutes} мин {elapsed_secs} сек")
+                elif is_process_reset:
+                    # Процесс сброшен - показываем 0
+                    if hasattr(gui, 'wine_time_label'):
+                        gui.wine_time_label.config(text="0 мин 0 сек")
+                
+                # ДИСК - обновляем только если процесс активен (не завершен и не сброшен)
+                if is_process_active and self.initial_disk_space is not None:
+                    try:
+                        current_disk_usage = shutil.disk_usage('/').used
+                        disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
+                        
+                        if hasattr(gui, 'wine_size_label'):
+                            # Форматируем с разделителем тысяч (пробел)
+                            disk_text = f"{disk_used_mb:,.0f}".replace(',', ' ') + " MB"
+                            gui.wine_size_label.config(text=disk_text)
+                    except Exception:
+                        pass
+                elif is_process_completed:
+                    # Процесс завершен - показываем сохраненное финальное использование диска
+                    if self.final_disk_used_mb is not None:
+                        disk_used_mb = self.final_disk_used_mb
+                    elif self.initial_disk_space is not None:
+                        # Если финальное значение не сохранено, вычисляем один раз
+                        try:
+                            current_disk_usage = shutil.disk_usage('/').used
+                            self.final_disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
+                            disk_used_mb = self.final_disk_used_mb
+                        except Exception:
+                            disk_used_mb = 0
+                    else:
+                        disk_used_mb = 0
+                    
+                    if hasattr(gui, 'wine_size_label'):
+                        # Форматируем с разделителем тысяч (пробел)
+                        disk_text = f"{disk_used_mb:,.0f}".replace(',', ' ') + " MB"
+                        gui.wine_size_label.config(text=disk_text)
+                elif is_process_reset:
+                    # Процесс сброшен - показываем 0
+                    if hasattr(gui, 'wine_size_label'):
+                        gui.wine_size_label.config(text="0 MB")
+
+            except Exception as e:
+                print(f"[ERROR] Ошибка обновления времени и диска: {e}", level='ERROR')
+        
+        # Выполняем обновление в главном потоке GUI
+        if hasattr(gui, 'root'):
+            gui.root.after(0, update)
+    
+    def _get_averaged_value(self, history, new_value, window_size):
+        """Вычисление скользящего среднего значения"""
+        history.append(new_value)
+        if len(history) > window_size:
+            history.pop(0)
+        return sum(history) / len(history) if history else new_value
+    
+    def _update_cpu_network_only(self):
+        """Обновление ТОЛЬКО CPU и сети каждую секунду (ВСЕГДА, независимо от процессов)"""
+        gui = self._get_gui_instance()
+        if not gui:
+            return
+        
+        def update():
+            try:
+                # CPU - получаем среднюю загрузку по всем ядрам (0-100%)
+                cpu_usage = 0
+                if PSUTIL_AVAILABLE:
+                    try:
+                        cpu_usage = psutil.cpu_percent(interval=0.1, percpu=False)
+                        cpu_usage = self._get_averaged_value(self.cpu_history, cpu_usage, self.average_window)
+                    except Exception:
+                        cpu_usage = 0
+                
+                if hasattr(gui, 'wine_cpu_progress'):
+                    gui.wine_cpu_progress['value'] = cpu_usage
+                    
+                    # Цветовая индикация CPU - применяем к прогресс-бару через стиль
+                    style = gui.ttk.Style()
+                    
+                    # Определяем цвет в зависимости от загрузки
+                    if cpu_usage < 30:
+                        cpu_color = '#4CAF50'  # green
+                    elif cpu_usage < 70:
+                        cpu_color = '#FF9800'  # orange  
+                    else:
+                        cpu_color = '#F44336'  # red
+                    
+                    # Создаем или обновляем стиль для CPU прогресс-бара
+                    style_name = 'CPUProgressbar.Horizontal.TProgressbar'
+                    try:
+                        style.configure(style_name, background=cpu_color, troughcolor='#E0E0E0')
+                        gui.wine_cpu_progress.configure(style=style_name)
+                    except:
+                        # Если стили не поддерживаются, оставляем без изменений
+                        pass
+                
+                # Текст CPU без цвета (нейтральный)
+                if hasattr(gui, 'wine_cpu_label'):
+                    gui.wine_cpu_label.config(text=f"{cpu_usage:.1f}%", fg='black')
+                
+                # СЕТЬ - получаем скорость и обновляем прогресс-бар и метку
+                network_speed = 0.0
+                if PSUTIL_AVAILABLE:
+                    try:
+                        net_io = psutil.net_io_counters()
+                        current_bytes = net_io.bytes_sent + net_io.bytes_recv
+                        current_time = time.time()
+                        
+                        # Инициализация при первом вызове
+                        if self.last_net_time == 0:
+                            self.last_net_bytes = current_bytes
+                            self.last_net_time = current_time
+                            network_speed = 0.0  # Первый вызов - скорость 0
+                        else:
+                            # Вычисляем скорость только если есть предыдущие данные
+                            if self.last_net_time > 0 and current_time > self.last_net_time:
+                                time_diff = current_time - self.last_net_time
+                                bytes_diff = current_bytes - self.last_net_bytes
+                                network_speed = (bytes_diff / (1024 * 1024)) / time_diff  # MB/s
+                                network_speed = self._get_averaged_value(self.network_history, network_speed, self.average_window)
+                            else:
+                                network_speed = 0
+                            
+                            # Сохраняем текущие значения для следующего расчета
+                            self.last_net_bytes = current_bytes
+                            self.last_net_time = current_time
+                            
+                            # Ограничиваем скорость для отображения
+                            network_speed = min(200.0, network_speed)  # Лимит 200 MB/s
+                    except Exception:
+                        network_speed = 0.0
+                
+                # ДИНАМИЧЕСКОЕ МАСШТАБИРОВАНИЕ СЕТИ
+                # Если скорость превышает текущий максимум - поднимаем шкалу
+                if network_speed > self.max_network_speed:
+                    self.max_network_speed = network_speed * 1.2  # Запас 20%
+                    self.low_speed_counter = 0  # Сбрасываем счетчик
+                
+                # Если скорость очень низкая (< 0.5 MB/s) - увеличиваем счетчик
+                if network_speed < 0.5:
+                    self.low_speed_counter += 1
+                    # Если низкая скорость продолжается более 2 минут (120 секунд)
+                    if self.low_speed_counter >= 120:
+                        # Уменьшаем максимум на 5% каждые 10 секунд
+                        if self.low_speed_counter % 10 == 0:
+                            self.max_network_speed = max(5.0, self.max_network_speed * 0.95)
+                else:
+                    # Если скорость есть (даже небольшая) - сбрасываем счетчик
+                    self.low_speed_counter = 0
+                
+                # Расчет процента для прогресс-бара на основе динамического максимума
+                net_percent = min(100, int((network_speed / self.max_network_speed) * 100))
+                
+                if hasattr(gui, 'wine_net_progress'):
+                    gui.wine_net_progress['value'] = net_percent
+                    
+                    # Цветовая индикация сети - применяем к прогресс-бару через стиль
+                    style = gui.ttk.Style()
+                    
+                    # Определяем цвет в зависимости от процента от максимума
+                    if net_percent < 10:
+                        net_color = '#9E9E9E'  # gray (низкая активность)
+                    elif net_percent < 50:
+                        net_color = '#4CAF50'  # green (норма)
+                    elif net_percent < 80:
+                        net_color = '#FF9800'  # orange (высокая)
+                    else:
+                        net_color = '#F44336'  # red (очень высокая)
+                    
+                    # Создаем или обновляем стиль для сетевого прогресс-бара
+                    style_name = 'NetProgressbar.Horizontal.TProgressbar'
+                    try:
+                        style.configure(style_name, background=net_color, troughcolor='#E0E0E0')
+                        gui.wine_net_progress.configure(style=style_name)
+                    except:
+                        # Если стили не поддерживаются, оставляем без изменений
+                        pass
+                
+                # Текст сети без цвета (нейтральный)
+                if hasattr(gui, 'wine_net_label'):
+                    gui.wine_net_label.config(text=f"{network_speed:.1f} MB/s", fg='black')
+                    
+            except Exception as e:
+                print(f"[ERROR] Ошибка обновления CPU и сети: {e}", level='ERROR')
+        
+        # Выполняем обновление в главном потоке GUI
+        if hasattr(gui, 'root'):
+            gui.root.after(0, update)
     
     def update_statistics(self, process_type, stats_data):
         """
@@ -21669,34 +22361,24 @@ class UniversalProgressManager:
             message = f"[STATISTICS] {process_type}: {stats_data}"
             self.universal_runner.send_message(message)
     
-    def _send_progress_update(self):
-        """Отправка обновления прогресса в GUI"""
-        try:
-            progress_data = {
-                'process_type': self.current_process,
-                'stage_name': self.stage_name,
-                'stage_progress': self.stage_progress,
-                'global_progress': self.global_progress,
-                'details': self.details,
-                'timestamp': datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                'elapsed_time': getattr(self, 'elapsed_time', 0)  # НОВОЕ: Добавляем время
-            }
-            
-            # Добавляем дополнительные данные из kwargs
-            if hasattr(self, 'extra_data') and self.extra_data:
-                progress_data.update(self.extra_data)
-            
-            # Отправляем через gui_callback если доступен
-            if self.gui_callback:
-                self.gui_callback(progress_data)
-            
-            # Также отправляем через UniversalProcessRunner для совместимости
-            if hasattr(self.universal_runner, 'send_message'):
-                message = f"[UNIVERSAL_PROGRESS] {progress_data}"
-                self.universal_runner.send_message(message)
-                
-        except Exception as e:
-            pass
+# ============================================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С ГЛОБАЛЬНЫМИ ПЕРЕМЕННЫМИ
+# ============================================================================
+
+def get_global_progress_manager():
+    """Получение глобального экземпляра UniversalProgressManager"""
+    global _global_progress_manager
+    if _global_progress_manager is None:
+        universal_runner = get_global_universal_runner()
+        _global_progress_manager = UniversalProgressManager(
+            universal_runner=universal_runner
+        )
+    return _global_progress_manager
+
+def set_global_progress_manager(progress_manager):
+    """Установка глобального экземпляра UniversalProgressManager"""
+    global _global_progress_manager
+    _global_progress_manager = progress_manager
 
 class SystemUpdateParser:
 # ============================================================================
@@ -21897,12 +22579,16 @@ class SystemUpdateParser:
                     if self.system_updater:
                         self.system_updater.update_detailed_bars(detailed_progress)
                         
-                        # ПРЯМОЕ обновление глобального бара
-                        if hasattr(self.system_updater, 'gui_instance'):
-                            gui = self.system_updater.gui_instance
-                            if hasattr(gui, 'wine_progress'):
-                                gui.wine_progress['value'] = 100.0
-                                print(f"[PARSER] Глобальный бар обновлён на 100%", gui_log=True)
+                        # Обновляем через глобальный progress_manager
+                        progress_manager = get_global_progress_manager()
+                        progress_manager.update_progress(
+                            process_type='system_update',
+                            stage_name='Завершено',
+                            stage_progress=100.0,
+                            global_progress=100.0,
+                            details='Обновление системы завершено'
+                        )
+                        print(f"[PARSER] Глобальный бар обновлён на 100%", gui_log=True)
                     
                     # Обновляем глобальный прогресс
                     if self.universal_manager:
@@ -22278,15 +22964,18 @@ class SystemUpdateParser:
             detail_text: Текст для detail_label (детали операций). Если пустой - не обновляется
         """
         try:
-            # Обновляем через GUI если доступен
-            if self.system_updater and hasattr(self.system_updater, 'gui_instance'):
-                gui = self.system_updater.gui_instance
-                # Обновляем wine_stage_label (поле "Этап") только если передан текст
-                if status_text and hasattr(gui, 'wine_stage_label'):
-                    gui.wine_stage_label.config(text=status_text, fg='blue')
-                # Обновляем detail_label (зеленая строка) только если передан текст
-                if detail_text and hasattr(gui, 'detail_label'):
-                    gui.detail_label.config(text=detail_text)
+            # Обновляем через глобальный progress_manager
+            if status_text or detail_text:
+                progress_manager = get_global_progress_manager()
+                # Получаем текущий прогресс из менеджера
+                current_progress = getattr(progress_manager, 'global_progress', 0)
+                progress_manager.update_progress(
+                    process_type='system_update',
+                    stage_name=status_text if status_text else progress_manager.stage_name,
+                    stage_progress=current_progress,
+                    global_progress=current_progress,
+                    details=detail_text if detail_text else progress_manager.details
+                )
         except Exception as e:
             pass  # Игнорируем ошибки обновления GUI
     
@@ -22746,7 +23435,7 @@ class SystemUpdater(object):
         self.send_progress_to_gui = send_progress_to_gui
         
         # НОВЫЙ универсальный менеджер прогресса
-        self.universal_progress_manager = UniversalProgressManager(universal_runner=self.universal_runner, gui_callback=self.send_progress_to_gui)
+        self.universal_progress_manager = UniversalProgressManager(universal_runner=self.universal_runner)
         
         # НОВЫЙ парсер обновления системы
         self.system_update_parser = SystemUpdateParser(universal_manager=self.universal_progress_manager, system_updater=self)
