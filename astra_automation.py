@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.132 (2025.11.24)
+Версия: V2.6.133 (2025.11.24)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.132 (2025.11.24)"
+APP_VERSION = "V2.6.133 (2025.11.24)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -706,9 +706,7 @@ COMPONENTS_CONFIG = {
         'sort_order': 25,
         'gui_selectable': True  # Можно выбирать для установки в wineprefix
     },
-    
 }
-
 
 # ============================================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
@@ -718,7 +716,6 @@ CANCEL_OPERATION = False # Прерывание запущенных опера�
 # ============================================================================
 # УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С КОМПОНЕНТАМИ
 # ============================================================================
-
 def expand_user_path(path):
     """
     Расширяет путь с учетом SUDO_USER для корректной работы при запуске с sudo
@@ -814,6 +811,342 @@ def get_component_data(component_id):
         dict: Конфигурация компонента или None
     """
     return COMPONENTS_CONFIG.get(component_id)
+
+def extract_archive(
+    archive_path: str,
+    extract_to: str,
+    extract_items: dict = None,
+    progress_callback: callable = None
+) -> dict:
+    """
+    Универсальная функция распаковки архивов для всех компонентов проекта
+    
+    Автоматически определяет тип архива (сжатый/несжатый) и распаковывает через системный tar.
+    Автоматически определяет структуру архива и выбирает режим извлечения.
+    Автоматически обрабатывает вложенные архивы (архивы внутри архива).
+    
+    Args:
+        archive_path: Путь к архиву
+        extract_to: Директория для распаковки
+        extract_items: Что извлекать (dict):
+            - None или {} - извлекать всё из корня
+            - {'mode': 'folder', 'path': 'CountPack'} - извлечь папку (если есть), иначе всё из корня
+            - {'mode': 'files', 'paths': ['file1.exe', 'file2.dll']} - извлечь файлы
+            - {'mode': 'files', 'paths': ['archive.tar.gz'], 'extract_from_nested': {...}} - 
+              извлечь вложенный архив и распаковать его
+        progress_callback: Функция для обновления прогресса (progress_percent, details)
+                          Вызывается периодически во время распаковки
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'extracted_count': int,
+            'total_items': int,
+            'error': str (если success=False)
+        }
+    """
+    global CANCEL_OPERATION
+    
+    result = {
+        'success': False,
+        'extracted_count': 0,
+        'total_items': 0,
+        'error': None
+    }
+    
+    try:
+        # 1. Определяем тип архива (сжатый/несжатый) по магическим числам
+        with open(archive_path, 'rb') as f:
+            first_bytes = f.read(2)
+            is_compressed = (first_bytes == b'\x1f\x8b')
+        
+        # ЛОГИРОВАНИЕ для отладки
+        if is_compressed:
+            print(f"[DEBUG] Архив сжат (gzip): {os.path.basename(archive_path)}")
+        else:
+            print(f"[DEBUG] Архив несжатый (tar): {os.path.basename(archive_path)}")
+            print(f"[DEBUG] Первые байты: {first_bytes.hex()}")
+        
+        # 2. Читаем метаданные для определения структуры
+        tar_mode = 'r:gz' if is_compressed else 'r'
+        with tarfile.open(archive_path, tar_mode) as tar:
+            members = tar.getmembers()
+            
+            # Определяем что извлекать
+            if extract_items is None or not extract_items:
+                # Всё из корня
+                items_to_extract = [m for m in members if m.isfile()]
+                tar_cmd_items = ['.']
+            elif extract_items.get('mode') == 'folder':
+                # УНИВЕРСАЛЬНАЯ ЛОГИКА: проверяем наличие папки в архиве
+                folder_path = extract_items.get('path')
+                prefix = f"{folder_path}/"
+                
+                # Проверяем, есть ли папка в архиве
+                has_folder = any(
+                    m.name.startswith(prefix) or m.name == folder_path 
+                    for m in members
+                )
+                
+                if has_folder:
+                    # Папка есть - извлекаем только её
+                    items_to_extract = [m for m in members 
+                                      if m.name.startswith(prefix) and m.name != folder_path]
+                    tar_cmd_items = ['--strip-components=1', f'{folder_path}/']
+                    print(f"[INFO] В архиве найдена папка {folder_path}, извлекаем только её")
+                else:
+                    # Папки нет - извлекаем всё из корня (автоматический fallback)
+                    items_to_extract = [m for m in members if m.isfile()]
+                    tar_cmd_items = ['.']
+                    print(f"[INFO] Папка {folder_path} не найдена в архиве, извлекаем всё из корня")
+            elif extract_items.get('mode') == 'files':
+                # Файлы - находим их пути в архиве
+                file_paths = extract_items.get('paths', [])
+                archive_files_by_path = {m.name: m.name for m in members if m.isfile()}
+                archive_files_by_name = {os.path.basename(m.name): m.name for m in members if m.isfile()}
+                
+                found_paths = []
+                nested_archives = []  # Список вложенных архивов для обработки
+                
+                # Список расширений архивов для проверки (inline проверка)
+                archive_extensions = ['.tar.gz', '.tar', '.zip', '.7z', '.rar', '.gz']
+                
+                for file_path in file_paths:
+                    if file_path in archive_files_by_path:
+                        full_path = archive_files_by_path[file_path]
+                        found_paths.append(full_path)
+                        
+                        # ПРОВЕРКА: является ли файл архивом? (inline проверка)
+                        filename_lower = os.path.basename(file_path).lower()
+                        if any(filename_lower.endswith(ext) for ext in archive_extensions):
+                            nested_archives.append({
+                                'path_in_archive': full_path,
+                                'filename': os.path.basename(file_path),
+                                'extract_from_nested': extract_items.get('extract_from_nested')
+                            })
+                    elif os.path.basename(file_path) in archive_files_by_name:
+                        full_path = archive_files_by_name[os.path.basename(file_path)]
+                        found_paths.append(full_path)
+                        
+                        # ПРОВЕРКА: является ли файл архивом? (inline проверка)
+                        filename_lower = os.path.basename(file_path).lower()
+                        if any(filename_lower.endswith(ext) for ext in archive_extensions):
+                            nested_archives.append({
+                                'path_in_archive': full_path,
+                                'filename': os.path.basename(file_path),
+                                'extract_from_nested': extract_items.get('extract_from_nested')
+                            })
+                    else:
+                        # Ищем по части пути
+                        for member in members:
+                            if member.isfile() and (file_path in member.name or os.path.basename(file_path) == os.path.basename(member.name)):
+                                found_paths.append(member.name)
+                                
+                                # ПРОВЕРКА: является ли файл архивом? (inline проверка)
+                                filename_lower = os.path.basename(member.name).lower()
+                                if any(filename_lower.endswith(ext) for ext in archive_extensions):
+                                    nested_archives.append({
+                                        'path_in_archive': member.name,
+                                        'filename': os.path.basename(member.name),
+                                        'extract_from_nested': extract_items.get('extract_from_nested')
+                                    })
+                                break
+                
+                items_to_extract = [m for m in members if m.name in found_paths]
+                
+                # Определяем общий префикс для удаления (если есть)
+                strip_components = extract_items.get('strip_components', 0)
+                if strip_components > 0:
+                    tar_cmd_items = ['--strip-components=' + str(strip_components)] + found_paths
+                else:
+                    tar_cmd_items = found_paths
+                
+                # Если есть вложенные архивы - сохраняем информацию для обработки после распаковки
+                if nested_archives:
+                    extract_items['_nested_archives'] = nested_archives
+            else:
+                result['error'] = f"Неизвестный режим извлечения: {extract_items.get('mode')}"
+                return result
+            
+            total_items = len(items_to_extract)
+            result['total_items'] = total_items
+            
+            # Проверяем, что есть что извлекать
+            if total_items == 0:
+                result['error'] = "Не найдено элементов для извлечения"
+                return result
+        
+        # 3. Распаковываем через системный tar
+        if not shutil.which('tar'):
+            result['error'] = "Команда tar не найдена"
+            return result
+        
+        tar_extract_flag = '-xzf' if is_compressed else '-xf'
+        tar_cmd = ['tar', tar_extract_flag, archive_path, '-C', extract_to] + tar_cmd_items
+        
+        old_umask = os.umask(0o022)
+        try:
+            process = subprocess.Popen(
+                tar_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            
+            # Простой мониторинг прогресса через подсчет файлов
+            initial_count = 0
+            if progress_callback:
+                # Подсчитываем начальное количество файлов
+                for root, dirs, files in os.walk(extract_to):
+                    initial_count += len(files)
+                
+                while process.poll() is None:
+                    if CANCEL_OPERATION:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except:
+                            process.kill()
+                        os.umask(old_umask)
+                        result['error'] = "Операция отменена"
+                        return result
+                    
+                    # Подсчитываем файлы и обновляем прогресс
+                    current_count = 0
+                    for root, dirs, files in os.walk(extract_to):
+                        current_count += len(files)
+                    
+                    extracted_count = current_count - initial_count
+                    if total_items > 0:
+                        progress = min(95, int((extracted_count / total_items) * 100))
+                    else:
+                        progress = 0
+                    
+                    progress_callback(progress, f"Извлечено файлов: {extracted_count}")
+                    time.sleep(1)  # Обновляем раз в секунду
+            
+            # Ждем завершения
+            while process.poll() is None:
+                if CANCEL_OPERATION:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except:
+                        process.kill()
+                    os.umask(old_umask)
+                    result['error'] = "Операция отменена"
+                    return result
+                time.sleep(0.1)
+            
+            os.umask(old_umask)
+            
+            # Проверяем результат
+            if process.returncode != 0:
+                stderr = process.stderr.read() if process.stderr else ""
+                result['error'] = f"tar завершился с ошибкой: {stderr}"
+                return result
+            
+            # 4. ОБРАБОТКА ВЛОЖЕННЫХ АРХИВОВ
+            if extract_items and extract_items.get('_nested_archives'):
+                # Сначала подсчитываем файлы из основного архива (исключая вложенные архивы)
+                if progress_callback:
+                    # Подсчитываем файлы после распаковки основного архива
+                    final_count_after_main = 0
+                    for root, dirs, files in os.walk(extract_to):
+                        final_count_after_main += len(files)
+                    # Вычитаем количество вложенных архивов (они будут распакованы отдельно)
+                    extracted_count_main = final_count_after_main - initial_count - len(extract_items['_nested_archives'])
+                    result['extracted_count'] = max(0, extracted_count_main)
+                else:
+                    # Приблизительный подсчет: total_items минус количество вложенных архивов
+                    result['extracted_count'] = max(0, total_items - len(extract_items['_nested_archives']))
+                
+                # Обрабатываем вложенные архивы из режима 'files'
+                for nested_info in extract_items['_nested_archives']:
+                    nested_archive_path = os.path.join(extract_to, os.path.basename(nested_info['path_in_archive']))
+                    
+                    if os.path.exists(nested_archive_path):
+                        print(f"[INFO] Найден вложенный архив: {nested_info['filename']}")
+                        
+                        # Распаковываем вложенный архив рекурсивно
+                        nested_extract_items = nested_info.get('extract_from_nested')
+                        nested_result = extract_archive(
+                            archive_path=nested_archive_path,
+                            extract_to=extract_to,
+                            extract_items=nested_extract_items,
+                            progress_callback=progress_callback
+                        )
+                        
+                        if nested_result['success']:
+                            # Удаляем вложенный архив после распаковки
+                            try:
+                                os.remove(nested_archive_path)
+                                print(f"[INFO] Вложенный архив {nested_info['filename']} удален после распаковки")
+                            except Exception as e:
+                                print(f"[WARNING] Не удалось удалить вложенный архив: {e}", level='WARNING')
+                            result['extracted_count'] += nested_result['extracted_count']
+                        else:
+                            print(f"[WARNING] Ошибка распаковки вложенного архива: {nested_result.get('error')}", level='WARNING')
+            else:
+                # Подсчитываем результат (если не обрабатывали вложенные архивы)
+                if progress_callback:
+                    final_count = 0
+                    for root, dirs, files in os.walk(extract_to):
+                        final_count += len(files)
+                    extracted_count = final_count - initial_count
+                else:
+                    extracted_count = total_items
+                result['extracted_count'] = extracted_count
+            
+            result['success'] = True
+            
+            if progress_callback:
+                progress_callback(100, f"Завершено: {result['extracted_count']} файлов")
+            
+            # Устанавливаем права доступа на распакованные файлы и папки
+            try:
+                real_user = os.environ.get('SUDO_USER')
+                
+                # Определяем uid/gid для установки владельца
+                if os.geteuid() == 0 and real_user and real_user != 'root':
+                    uid = pwd.getpwnam(real_user).pw_uid
+                    gid = pwd.getpwnam(real_user).pw_gid
+                else:
+                    uid = os.getuid()
+                    gid = os.getgid()
+                
+                # Устанавливаем владельца на корневую директорию
+                os.chown(extract_to, uid, gid)
+                
+                # Рекурсивно устанавливаем владельца для всех файлов и директорий
+                for root, dirs, files in os.walk(extract_to):
+                    try:
+                        # Устанавливаем владельца для директорий
+                        for d in dirs:
+                            dir_path = os.path.join(root, d)
+                            os.chown(dir_path, uid, gid)
+                            os.chmod(dir_path, 0o755)
+                        
+                        # Устанавливаем владельца для файлов
+                        for f in files:
+                            file_path = os.path.join(root, f)
+                            os.chown(file_path, uid, gid)
+                            os.chmod(file_path, 0o644)
+                    except (OSError, PermissionError):
+                        pass  # Игнорируем ошибки доступа к отдельным файлам/директориям
+            except Exception:
+                pass  # Игнорируем ошибки установки прав (не критично)
+            
+            return result
+            
+        except Exception as e:
+            os.umask(old_umask)
+            result['error'] = f"Ошибка распаковки: {e}"
+            return result
+            
+    except Exception as e:
+        result['error'] = f"Критическая ошибка: {e}"
+        return result
 
 def check_component_status(component_id, wineprefix_path=None):
     """
@@ -1233,10 +1566,10 @@ def track_class_activity(class_name):
         return wrapper
     return decorator
 
+class WineApplicationInstanceManager:
 # ============================================================================
 # МЕНЕДЖЕР ЭКЗЕМПЛЯРОВ WINE ПРИЛОЖЕНИЙ
 # ============================================================================
-class WineApplicationInstanceManager:
     """Управление экземплярами Wine приложений для разных wineprefix"""
     
     def __init__(self):
@@ -1358,10 +1691,10 @@ class WineApplicationInstanceManager:
         if instance_id in self.instances:
             self.instances[instance_id]['status'] = status
 
+class ComponentHandler(ABC):
 # ============================================================================
 # БАЗОВЫЙ КЛАСС ДЛЯ ОБРАБОТЧИКОВ КОМПОНЕНТОВ
 # ============================================================================
-class ComponentHandler(ABC):
     """Базовый класс для обработчиков компонентов с интеграцией всех систем"""
     
     def __init__(self, 
@@ -1655,16 +1988,30 @@ class ComponentHandler(ABC):
                                 temp_dir = tempfile.mkdtemp(prefix='astra_extract_')
                                 temp_dirs.append(temp_dir)
                                 
-                                with tarfile.open(archive_path, 'r:gz') as tar:
-                                    try:
-                                        tar.extract(file_in_archive, temp_dir)
-                                        extracted_path = os.path.join(temp_dir, file_in_archive)
-                                        
-                                        if os.path.exists(extracted_path):
-                                            print(f"[INFO] Файл извлечен из архива: {archive_path} -> {extracted_path}", level='INFO')
-                                            return (extracted_path, temp_dir if not cleanup_temp else None, 'archive')
-                                    except KeyError:
-                                        continue
+                                # Используем универсальную функцию extract_archive()
+                                result = extract_archive(
+                                    archive_path=archive_path,
+                                    extract_to=temp_dir,
+                                    extract_items={'mode': 'files', 'paths': [file_in_archive]},
+                                    progress_callback=None
+                                )
+                                
+                                if result['success']:
+                                    # Ищем извлеченный файл (может быть в подпапке)
+                                    extracted_path = None
+                                    for root, dirs, files in os.walk(temp_dir):
+                                        if file_in_archive in files:
+                                            extracted_path = os.path.join(root, file_in_archive)
+                                            break
+                                        # Также проверяем по базовому имени
+                                        for f in files:
+                                            if os.path.basename(f) == os.path.basename(file_in_archive):
+                                                extracted_path = os.path.join(root, f)
+                                                break
+                                    
+                                    if extracted_path and os.path.exists(extracted_path):
+                                        print(f"[INFO] Файл извлечен из архива: {archive_path} -> {extracted_path}", level='INFO')
+                                        return (extracted_path, temp_dir if not cleanup_temp else None, 'archive')
                             except Exception as e:
                                 print(f"[ERROR] Ошибка извлечения файла из архива {archive_path}: {e}", level='ERROR')
                                 for td in temp_dirs:
@@ -2364,26 +2711,11 @@ class ComponentHandler(ABC):
             bool: True если команда доступна
         """
         return shutil.which(command) is not None
-    
-    def _truncate_path(self, path: str, max_length: int = 60) -> str:
-        """
-        Обрезает путь, оставляя конец, если он слишком длинный
-        
-        Args:
-            path: Полный путь
-            max_length: Максимальная длина (по умолчанию 60)
-        
-        Returns:
-            str: Обрезанный путь с "..." в начале если нужно
-        """
-        if len(path) <= max_length:
-            return path
-        return "..." + path[-(max_length - 3):]
-
+   
+class WinePackageHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК WINE ПАКЕТОВ
 # ============================================================================
-class WinePackageHandler(ComponentHandler):
     """Обработчик Wine пакетов (wine_astraregul, wine_9)"""
     
     def get_category(self) -> str:
@@ -2770,10 +3102,10 @@ class WinePackageHandler(ComponentHandler):
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
 
+class SystemConfigHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК СИСТЕМНЫХ НАСТРОЕК
 # ============================================================================
-class SystemConfigHandler(ComponentHandler):
     """Обработчик системных настроек (ptrace_scope)"""
     
     def get_category(self) -> str:
@@ -2927,46 +3259,58 @@ class SystemConfigHandler(ComponentHandler):
             os.makedirs(cache_dir, exist_ok=True)
             fix_dir_permissions(cache_dir)
             
-            # Извлекаем winetricks из архива
-            with tarfile.open(archive_path, 'r:gz') as tar:
-                # Ищем файл winetricks в корне архива
-                winetricks_member = None
-                for member in tar.getmembers():
-                    if member.name == 'winetricks' and member.isfile():
-                        winetricks_member = member
+            # Извлекаем winetricks из архива через универсальную функцию
+            temp_extract_dir = tempfile.mkdtemp(prefix='astra_winetricks_')
+            try:
+                result = extract_archive(
+                    archive_path=archive_path,
+                    extract_to=temp_extract_dir,
+                    extract_items={'mode': 'files', 'paths': ['winetricks']},
+                    progress_callback=None
+                )
+                
+                if not result['success']:
+                    print(f"Ошибка распаковки winetricks: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
+                    self._update_status(component_id, 'error')
+                    return False
+                
+                # Ищем извлеченный файл winetricks
+                winetricks_extracted = None
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    if 'winetricks' in files:
+                        winetricks_extracted = os.path.join(root, 'winetricks')
                         break
                 
-                if not winetricks_member:
+                if not winetricks_extracted or not os.path.exists(winetricks_extracted):
                     print("Файл winetricks не найден в архиве", level='ERROR')
                     self._update_status(component_id, 'error')
                     return False
                 
-                # Извлекаем файл
-                fileobj = tar.extractfile(winetricks_member)
-                if fileobj:
-                    file_data = fileobj.read()
-                    with open(winetricks_path, 'wb') as f:
-                        f.write(file_data)
-                    
-                    # Устанавливаем права на выполнение
-                    os.chmod(winetricks_path, 0o755)
-                    
-                    # Исправляем владельца файла
-                    try:
-                        current_uid = os.getuid()
-                        if current_uid != 0:  # Не root
-                            user_info = pwd.getpwuid(current_uid)
-                            os.chown(winetricks_path, current_uid, user_info.pw_gid)
-                    except Exception:
-                        pass  # Игнорируем ошибки прав доступа
-                    
-                    print(f"Winetricks инструмент успешно установлен: {winetricks_path}")
-                    self._update_status(component_id, 'ok')
-                    return True
-                else:
-                    print("Не удалось извлечь winetricks из архива", level='ERROR')
-                    self._update_status(component_id, 'error')
-                    return False
+                # Копируем файл в кэш
+                shutil.copy2(winetricks_extracted, winetricks_path)
+                
+                # Устанавливаем права на выполнение
+                os.chmod(winetricks_path, 0o755)
+                
+                # Исправляем владельца файла
+                try:
+                    current_uid = os.getuid()
+                    if current_uid != 0:  # Не root
+                        user_info = pwd.getpwuid(current_uid)
+                        os.chown(winetricks_path, current_uid, user_info.pw_gid)
+                except Exception:
+                    pass  # Игнорируем ошибки прав доступа
+                
+                print(f"Winetricks инструмент успешно установлен: {winetricks_path}")
+                self._update_status(component_id, 'ok')
+                return True
+                
+            finally:
+                # Удаляем временную папку
+                try:
+                    shutil.rmtree(temp_extract_dir)
+                except:
+                    pass
                     
         except Exception as e:
             print(f"Ошибка установки winetricks инструмента: {e}", level='ERROR')
@@ -2976,10 +3320,10 @@ class SystemConfigHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
 
+class WineEnvironmentHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК WINE ОКРУЖЕНИЯ
 # ============================================================================
-class WineEnvironmentHandler(ComponentHandler):
     """Обработчик Wine окружения (WINEPREFIX)"""
     
     def get_category(self) -> str:
@@ -3408,524 +3752,12 @@ class WineEnvironmentHandler(ComponentHandler):
         
         start_time = time.time()
         
-        # 8. Создаем архив через Python tarfile (гарантированно поддерживает длинные пути)
+        # 8. Создаем архив через системный tar с настраиваемым уровнем сжатия
         print(f"Создание архива: {archive_path}")
-        
-        # Всегда используем Python tarfile для гарантированной поддержки длинных путей
-        # total_size и total_files будут рассчитаны внутри функции
-        # Варианты архивации:
-        # use_archive_method = 'hybrid' - гибридный с фильтрацией симлинков (tarfile)
-        # use_archive_method = 'simple' - упрощенный без фильтрации (tarfile)
-        # use_archive_method = 'system_tar_max' - через системный tar с настраиваемым сжатием (КАК СИСТЕМНЫЙ АРХИВАТОР) - РЕКОМЕНДУЕТСЯ
-        use_archive_method = 'system_tar_max'  # Выбор метода архивации
-        
-        if use_archive_method == 'simple':
-            return self._create_archive_simple(wineprefix_path, archive_path, gui_instance, start_time)
-        elif use_archive_method == 'system_tar_max':
-            # Получаем уровень сжатия из параметра функции (если передан)
-            compression_level = getattr(self, '_current_compression_level', 6)  # По умолчанию 6
-            return self._create_archive_system_tar_max_compression(wineprefix_path, archive_path, gui_instance, start_time, compression_level)
-        else:  # 'hybrid' - по умолчанию
-            return self._create_archive_with_tarfile(wineprefix_path, archive_path, gui_instance, start_time)
-    
-    def _create_archive_with_tarfile(self, wineprefix_path, archive_path, gui_instance, start_time):
-        """Создание архива через Python tarfile с поддержкой длинных путей (формат PAX)
-        Использует гибридный подход: директории без симлинков архивируются целиком,
-        директории с симлинками - по одному файлу"""
-        global CANCEL_OPERATION
-        
-        try:
-            processed_size = 0
-            processed_files = 0  # Счетчик обработанных файлов
-            skipped_symlinks = 0
-            last_gui_update = 0  # Время последнего обновления GUI
-            last_archive_size = 0  # Размер архива при последнем обновлении
-            
-            # Получаем абсолютные пути
-            wineprefix_path_abs = os.path.abspath(wineprefix_path)
-            archive_path_abs = os.path.abspath(archive_path)
-            real_wineprefix = os.path.realpath(wineprefix_path_abs)
-            
-            # Структуры данных для гибридного подхода
-            all_dirs = set()  # Множество всех директорий (включая пустые)
-            dirs_without_symlinks = {}  # {dir_path: dir_size} - директории без внешних симлинков
-            dirs_with_symlinks = {}  # {dir_path: [(file_path, file_size, arcname), ...]} - директории с симлинками
-            total_size = 0  # Общий размер всех файлов для архивации
-            total_files = 0  # Общее количество файлов
-            total_dirs = 0  # Общее количество директорий
-            
-            # Вспомогательная функция для проверки внешнего симлинка
-            def is_external_symlink(file_path):
-                """Проверяет, является ли файл внешним симлинком"""
-                try:
-                    if not os.path.islink(file_path):
-                        return False
-                    
-                    link_target = os.readlink(file_path)
-                    if not os.path.isabs(link_target):
-                        link_target = os.path.join(os.path.dirname(file_path), link_target)
-                    link_target = os.path.abspath(link_target)
-                    
-                    try:
-                        real_target = os.path.realpath(link_target)
-                        if not real_target.startswith(real_wineprefix + os.sep):
-                            return True  # Внешний симлинк
-                    except:
-                        # Если не удалось проверить путь - считаем внешним для безопасности
-                        return True
-                except:
-                    # Если ошибка при проверке симлинка - пропускаем
-                    return True
-                return False
-            
-            # Первый проход: собираем информацию о директориях и файлах
-            print("Анализ структуры файлов...")
-            current_dir_files = {}  # {dir_path: [(file_path, file_size, arcname), ...]}
-            current_dir_has_symlinks = {}  # {dir_path: bool}
-            
-            for root, dirs, files in os.walk(wineprefix_path_abs):
-                if CANCEL_OPERATION:
-                    print("Операция отменена пользователем")
-                    return None
-                
-                # Добавляем текущую директорию в множество
-                rel_dir = os.path.relpath(root, wineprefix_path_abs)
-                if rel_dir != '.':
-                    all_dirs.add(rel_dir)
-                total_dirs += len(dirs)
-                
-                dir_path = root
-                current_dir_files[dir_path] = []
-                current_dir_has_symlinks[dir_path] = False
-                
-                # Обрабатываем файлы
-                for file in files:
-                    if CANCEL_OPERATION:
-                        return None
-                    
-                    file_path = os.path.join(root, file)
-                    
-                    # Пропускаем внешние симлинки
-                    if is_external_symlink(file_path):
-                        skipped_symlinks += 1
-                        if skipped_symlinks <= 5:
-                            print(f"Пропущен внешний симлинк: {os.path.relpath(file_path, wineprefix_path_abs)}", level='DEBUG')
-                        current_dir_has_symlinks[dir_path] = True
-                        continue
-                    
-                    # Получаем размер файла
-                    try:
-                        file_size = os.path.getsize(file_path)
-                        arcname = os.path.relpath(file_path, wineprefix_path_abs)
-                        current_dir_files[dir_path].append((file_path, file_size, arcname))
-                        total_size += file_size
-                        total_files += 1
-                    except:
-                        pass
-        
-            # Группируем директории по наличию симлинков
-            for dir_path, files_list in current_dir_files.items():
-                rel_dir = os.path.relpath(dir_path, wineprefix_path_abs)
-                
-                if current_dir_has_symlinks[dir_path] or len(files_list) == 0:
-                    # Директория с симлинками или пустая - обрабатываем по одному файлу
-                    if len(files_list) > 0:
-                        dirs_with_symlinks[rel_dir] = files_list
-                else:
-                    # Директория без симлинков - считаем общий размер и обрабатываем целиком
-                    dir_size = sum(file_size for _, file_size, _ in files_list)
-                    dir_file_count = len(files_list)
-                    dirs_without_symlinks[rel_dir] = (dir_path, dir_size, dir_file_count)
-            
-            # Форматируем размер для вывода
-            if total_size < 1024 * 1024:
-                size_str = f"{total_size / 1024:.1f} КБ"
-            elif total_size < 1024 * 1024 * 1024:
-                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
-            else:
-                size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
-            
-            print(f"Размер архива: {size_str} ({total_files} файлов, {total_dirs} папок)")
-            print(f"Директорий без симлинков: {len(dirs_without_symlinks)}, с симлинками: {len(dirs_with_symlinks)}")
-            
-            # Обновляем GUI сразу после анализа структуры (стартуем таймер)
-            if gui_instance:
-                current_time = time.time()
-                elapsed_time = current_time - start_time
-                elapsed_minutes = int(elapsed_time // 60)
-                elapsed_seconds = int(elapsed_time % 60)
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                    gui_instance.wine_time_label.config(text=t))
-            gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Начало архивации...", fg='blue'
-                ))
-            
-            # Используем формат PAX для гарантированной поддержки длинных путей
-            with tarfile.open(archive_path_abs, 'w:gz', format=tarfile.PAX_FORMAT) as tar:
-                # Второй проход: добавляем все директории (включая пустые)
-                for rel_dir in sorted(all_dirs):
-                    if CANCEL_OPERATION:
-                        return None
-                    
-                    dir_path = os.path.join(wineprefix_path_abs, rel_dir)
-                    try:
-                        tarinfo = tar.gettarinfo(dir_path, arcname=rel_dir)
-                        tarinfo.type = tarfile.DIRTYPE  # Явно указываем тип директории
-                        tar.addfile(tarinfo)
-                    except Exception as e:
-                        print(f"Ошибка при добавлении директории {rel_dir}: {e}", level='DEBUG')
-                
-                # Третий проход: архивируем директории без симлинков целиком
-                dirs_processed = 0
-                for rel_dir, (dir_path, dir_size, dir_file_count) in sorted(dirs_without_symlinks.items()):
-                    if CANCEL_OPERATION:
-                        return None
-                    
-                    try:
-                        tar.add(dir_path, arcname=rel_dir, recursive=True)
-                        processed_size += dir_size
-                        processed_files += dir_file_count
-                        dirs_processed += 1
-                        
-                        # Обновляем GUI периодически (каждые 10 директорий, каждую секунду или после первой директории)
-                        current_time = time.time()
-                        should_update = (
-                            dirs_processed == 1 or  # Сразу после первой директории
-                            dirs_processed % 10 == 0 or  # Каждые 10 директорий
-                            current_time - last_gui_update >= 1.0  # Или каждую секунду
-                        )
-                        
-                        if gui_instance and total_size > 0 and should_update:
-                            progress = min(100, (processed_size / total_size) * 100)
-                            elapsed_time = current_time - start_time
-                            elapsed_minutes = int(elapsed_time // 60)
-                            elapsed_seconds = int(elapsed_time % 60)
-                            
-                            # Проверяем размер архива в реальном времени
-                            current_archive_size = 0
-                            if os.path.exists(archive_path_abs):
-                                try:
-                                    current_archive_size = os.path.getsize(archive_path_abs)
-                                except:
-                                    pass
-                            
-                            # Форматируем размер архива
-                            if current_archive_size < 1024 * 1024:
-                                disk_str = f"{current_archive_size / 1024:.1f} КБ"
-                            elif current_archive_size < 1024 * 1024 * 1024:
-                                disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
-                            else:
-                                disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                            
-                            gui_instance.root.after(0, lambda p=progress: 
-                                gui_instance.wine_progress.config(value=p))
-                            gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                gui_instance.wine_time_label.config(text=t))
-                            gui_instance.root.after(0, lambda d=disk_str: 
-                                gui_instance.wine_size_label.config(text=d))
-                            gui_instance.root.after(0, lambda fp=rel_dir if rel_dir != '.' else os.path.basename(wineprefix_path): gui_instance.wine_stage_label.config(
-                                text=f"Архивация: {self._truncate_path(fp, 60)}", fg='blue'
-                            ))
-                            
-                            last_gui_update = current_time
-                            last_archive_size = current_archive_size
-                    except Exception as e:
-                        print(f"Ошибка при добавлении директории {rel_dir} в архив: {e}", level='DEBUG')
-                
-                # Четвертый проход: архивируем директории с симлинками по одному файлу
-                for rel_dir, files_list in sorted(dirs_with_symlinks.items()):
-                    if CANCEL_OPERATION:
-                        return None
-                    
-                    for file_path, file_size, arcname in files_list:
-                        if CANCEL_OPERATION:
-                            return None
-                        
-                        # Получаем относительный путь к папке (без имени файла)
-                        folder_path = os.path.dirname(arcname) if os.path.dirname(arcname) else '.'
-                        
-                        try:
-                            tar.add(file_path, arcname=arcname, recursive=False)
-                            processed_size += file_size
-                            processed_files += 1
-                            
-                            # Обновляем GUI периодически (каждые 50 файлов или каждую секунду)
-                            current_time = time.time()
-                            should_update = (
-                                processed_files % 50 == 0 or  # Каждые 50 файлов
-                                current_time - last_gui_update >= 1.0  # Или каждую секунду
-                            )
-                            
-                            if gui_instance and total_size > 0 and should_update:
-                                # Прогресс рассчитываем по размеру обработанных файлов (более точно)
-                                progress = min(100, (processed_size / total_size) * 100)
-                                elapsed_time = current_time - start_time
-                                elapsed_minutes = int(elapsed_time // 60)
-                                elapsed_seconds = int(elapsed_time % 60)
-                                
-                                # Проверяем размер архива в реальном времени
-                                current_archive_size = 0
-                                if os.path.exists(archive_path_abs):
-                                    try:
-                                        current_archive_size = os.path.getsize(archive_path_abs)
-                                    except:
-                                        pass
-                                
-                                # Форматируем размер архива
-                                if current_archive_size < 1024 * 1024:
-                                    disk_str = f"{current_archive_size / 1024:.1f} КБ"
-                                elif current_archive_size < 1024 * 1024 * 1024:
-                                    disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
-                                else:
-                                    disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                                
-                                gui_instance.root.after(0, lambda p=progress: 
-                                    gui_instance.wine_progress.config(value=p))
-                                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                    gui_instance.wine_time_label.config(text=t))
-                                gui_instance.root.after(0, lambda d=disk_str: 
-                                    gui_instance.wine_size_label.config(text=d))
-                                gui_instance.root.after(0, lambda fp=folder_path if folder_path != '.' else os.path.basename(wineprefix_path): gui_instance.wine_stage_label.config(
-                                    text=f"Архивация: {self._truncate_path(fp, 60)}", fg='blue'
-                                ))
-                                
-                                last_gui_update = current_time
-                                last_archive_size = current_archive_size
-                        except Exception as e:
-                            print(f"Ошибка при добавлении файла {file_path} в архив: {e}", level='DEBUG')
-                            pass
-            
-            if skipped_symlinks > 0:
-                print(f"Пропущено внешних симлинков: {skipped_symlinks}", level='DEBUG')
-            
-            # Финальное обновление GUI после успешного завершения
-            if gui_instance:
+        # Получаем уровень сжатия из параметра функции (если передан)
+        compression_level = getattr(self, '_current_compression_level', 6)  # По умолчанию 6
+        return self._create_archive_system_tar_max_compression(wineprefix_path, archive_path, gui_instance, start_time, compression_level)
 
-                elapsed_time = time.time() - start_time
-                elapsed_minutes = int(elapsed_time // 60)
-                elapsed_seconds = int(elapsed_time % 60)
-
-            # Устанавливаем 100% прогресс
-
-                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                gui_instance.wine_time_label.config(text=t))
-
-            # Финальный размер архива
-
-                archive_size = os.path.getsize(archive_path_abs)
-                if archive_size < 1024 * 1024:
-                    disk_str = f"{archive_size / 1024:.1f} КБ"
-                elif archive_size < 1024 * 1024 * 1024:
-                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
-                else:
-                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                
-                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архив создан успешно", fg='green'
-                ))
-            
-            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
-            print(f"Обработано файлов: {processed_files} из {total_files}")
-            print(f"Путь: {archive_path_abs}")
-            
-            # Устанавливаем права пользователя на архив и папку
-            try:
-                real_user = os.environ.get('SUDO_USER')
-                if os.geteuid() == 0 and real_user and real_user != 'root':
-                    uid = pwd.getpwnam(real_user).pw_uid
-                    gid = pwd.getpwnam(real_user).pw_gid
-                    # Устанавливаем владельца на архив
-                    os.chown(archive_path_abs, uid, gid)
-                    # Устанавливаем владельца на папку output_dir (получаем из archive_path)
-                    output_dir = os.path.dirname(archive_path_abs)
-                    if os.path.exists(output_dir):
-                        os.chown(output_dir, uid, gid)
-                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
-            except Exception as e:
-                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
-            
-            return archive_path_abs
-        except Exception as e:
-            print(f"Ошибка создания архива через tarfile: {e}", level='ERROR')
-            traceback.print_exc()
-            return None
-    
-    def _create_archive_simple(self, wineprefix_path, archive_path, gui_instance, start_time):
-        """Упрощенное создание архива через Python tarfile без фильтрации симлинков
-        Максимальная скорость - один вызов tar.add() для всей папки
-        tarfile сам обработает симлинки (сохранит как симлинки, не следует по ним)"""
-        global CANCEL_OPERATION
-        
-        try:
-            last_gui_update = 0  # Время последнего обновления GUI
-            last_archive_size = 0  # Размер архива при последнем обновлении
-            
-            # Получаем абсолютные пути
-            wineprefix_path_abs = os.path.abspath(wineprefix_path)
-            archive_path_abs = os.path.abspath(archive_path)
-            
-            # Подсчитываем общий размер для прогресса (опционально, можно пропустить)
-            print("Подсчет размера архива...")
-            total_size = 0
-            total_files = 0
-            for root, dirs, files in os.walk(wineprefix_path_abs):
-                if CANCEL_OPERATION:
-                    print("Операция отменена пользователем")
-                    return None
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    try:
-                        if not os.path.islink(file_path):  # Считаем только реальные файлы
-                            total_size += os.path.getsize(file_path)
-                            total_files += 1
-                    except:
-                        pass
-            
-            # Форматируем размер для вывода
-            if total_size < 1024 * 1024:
-                size_str = f"{total_size / 1024:.1f} КБ"
-            elif total_size < 1024 * 1024 * 1024:
-                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
-            else:
-                size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
-            
-            print(f"Размер архива: {size_str} ({total_files} файлов)")
-            print("Создание архива (упрощенный режим - без фильтрации симлинков)...")
-            
-            # Обновляем GUI сразу (стартуем таймер)
-            if gui_instance:
-                current_time = time.time()
-                elapsed_time = current_time - start_time
-                elapsed_minutes = int(elapsed_time // 60)
-                elapsed_seconds = int(elapsed_time % 60)
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                    gui_instance.wine_time_label.config(text=t))
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архивация...", fg='blue'
-                ))
-            
-            # Используем формат PAX для гарантированной поддержки длинных путей
-            with tarfile.open(archive_path_abs, 'w:gz', format=tarfile.PAX_FORMAT) as tar:
-                # Запускаем мониторинг в отдельном потоке
-                monitoring_active = threading.Event()
-                monitoring_active.set()
-                
-                def monitor_progress():
-                    """Мониторинг прогресса через размер архива"""
-                    nonlocal last_gui_update, last_archive_size
-                    while monitoring_active.is_set():
-                        if CANCEL_OPERATION:
-                            break
-                        
-                        current_time = time.time()
-                        if gui_instance and os.path.exists(archive_path_abs):
-                            try:
-                                current_archive_size = os.path.getsize(archive_path_abs)
-                                
-                                # Обновляем GUI каждую секунду
-                                if current_time - last_gui_update >= 1.0 or current_archive_size != last_archive_size:
-                                    elapsed_time = current_time - start_time
-                                    elapsed_minutes = int(elapsed_time // 60)
-                                    elapsed_seconds = int(elapsed_time % 60)
-                                    
-                                    # Форматируем размер архива
-                                    if current_archive_size < 1024 * 1024:
-                                        disk_str = f"{current_archive_size / 1024:.1f} КБ"
-                                    elif current_archive_size < 1024 * 1024 * 1024:
-                                        disk_str = f"{current_archive_size / (1024 * 1024):.1f} МБ"
-                                    else:
-                                        disk_str = f"{current_archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                                    
-                                    # Прогресс рассчитываем по размеру архива (приблизительно)
-                                    # Точный прогресс сложно рассчитать без знания финального размера
-                                    if total_size > 0:
-                                        # Приблизительный прогресс (с учетом сжатия)
-                                        # Сжатый архив обычно в 2-3 раза меньше исходного
-                                        estimated_compressed_size = total_size / 2.5
-                                        if estimated_compressed_size > 0:
-                                            progress = min(95, (current_archive_size / estimated_compressed_size) * 100)
-                                        else:
-                                            progress = min(95, (current_archive_size / total_size) * 100 * 2.5)
-                                    else:
-                                        progress = 0
-                                    
-                                    gui_instance.root.after(0, lambda p=progress: 
-                                        gui_instance.wine_progress.config(value=p))
-                                    gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                        gui_instance.wine_time_label.config(text=t))
-                                    gui_instance.root.after(0, lambda d=disk_str: 
-                                        gui_instance.wine_size_label.config(text=d))
-                                    
-                                    last_gui_update = current_time
-                                    last_archive_size = current_archive_size
-                            except:
-                                pass
-                        
-                        time.sleep(0.5)  # Проверяем каждые 0.5 секунды
-                
-                # Запускаем мониторинг
-                monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
-                monitor_thread.start()
-                
-                # Один вызов для всей папки - максимальная скорость
-                tar.add(wineprefix_path_abs, arcname='.', recursive=True)
-            
-            # Останавливаем мониторинг
-            monitoring_active.clear()
-            time.sleep(0.6)  # Даем время мониторингу завершиться
-            
-            # Финальное обновление GUI после успешного завершения
-            if gui_instance:
-                elapsed_time = time.time() - start_time
-                elapsed_minutes = int(elapsed_time // 60)
-                elapsed_seconds = int(elapsed_time % 60)
-                
-                # Устанавливаем 100% прогресс
-                gui_instance.root.after(0, lambda: gui_instance.wine_progress.config(value=100))
-                gui_instance.root.after(0, lambda t=f"{elapsed_minutes} мин {elapsed_seconds} сек": 
-                                        gui_instance.wine_time_label.config(text=t))
-                
-                # Финальный размер архива
-                archive_size = os.path.getsize(archive_path_abs)
-                if archive_size < 1024 * 1024:
-                    disk_str = f"{archive_size / 1024:.1f} КБ"
-                elif archive_size < 1024 * 1024 * 1024:
-                    disk_str = f"{archive_size / (1024 * 1024):.1f} МБ"
-                else:
-                    disk_str = f"{archive_size / (1024 * 1024 * 1024):.2f} ГБ"
-                
-                gui_instance.root.after(0, lambda d=disk_str: gui_instance.wine_size_label.config(text=d))
-                gui_instance.root.after(0, lambda: gui_instance.wine_stage_label.config(
-                    text="Архив создан успешно", fg='green'
-                ))
-            
-            print(f"Архив создан успешно за {elapsed_minutes}м {elapsed_seconds}с")
-            print(f"Путь: {archive_path_abs}")
-            
-            # Устанавливаем права пользователя на архив и папку
-            try:
-                real_user = os.environ.get('SUDO_USER')
-                if os.geteuid() == 0 and real_user and real_user != 'root':
-                    uid = pwd.getpwnam(real_user).pw_uid
-                    gid = pwd.getpwnam(real_user).pw_gid
-                    # Устанавливаем владельца на архив
-                    os.chown(archive_path_abs, uid, gid)
-                    # Устанавливаем владельца на папку output_dir (получаем из archive_path)
-                    output_dir = os.path.dirname(archive_path_abs)
-                    if os.path.exists(output_dir):
-                        os.chown(output_dir, uid, gid)
-                    print(f"Установлен владелец архива и папки на пользователя: {real_user}")
-            except Exception as e:
-                print(f"Предупреждение: не удалось установить права доступа: {e}", level='WARNING')
-            
-            return archive_path_abs
-        except Exception as e:
-            print(f"Ошибка создания архива (упрощенный режим): {e}", level='ERROR')
-            traceback.print_exc()
-            return None
-    
     def _create_archive_system_tar_max_compression(self, wineprefix_path, archive_path, 
                                                     gui_instance, start_time, compression_level=6):
         """Создание архива через системный tar с настраиваемым уровнем сжатия gzip
@@ -4389,10 +4221,10 @@ class WineEnvironmentHandler(ComponentHandler):
             traceback.print_exc()
             return None
 
+class WinetricksHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК WINETRICKS КОМПОНЕНТОВ
 # ============================================================================
-class WinetricksHandler(ComponentHandler):
     """Обработчик winetricks компонентов (wine_mono, dotnet48, vcrun2013, и т.д.)"""
     
     def __init__(self, use_minimal=False, **kwargs):
@@ -4548,145 +4380,89 @@ class WinetricksHandler(ComponentHandler):
         fix_dir_permissions(user_cache_dir)
         
         try:
-            archive_size = os.path.getsize(archive_path)
-            print(f"[DEBUG] Размер архива: {archive_size} байт ({archive_size / (1024*1024):.2f} МБ)")
+            # Создаем папку компонента в кэше
+            component_cache_dir = os.path.join(user_cache_dir, component_id)
+            os.makedirs(component_cache_dir, exist_ok=True)
+            fix_dir_permissions(component_cache_dir)
             
-            extracted_count = 0
-            
-            with tarfile.open(archive_path, 'r:gz') as tar:
-                members = tar.getmembers()
-                total_members = len(members)
-                print(f"[DEBUG] Всего элементов в архиве: {total_members}")
-                
-                # Проверяем структуру архива
-                has_winetricks_cache_dir = any(
-                    m.name.startswith('winetricks-cache/') or m.name == 'winetricks-cache' 
-                    for m in members
-                )
-                
-                items_to_extract = []
-                
-                if extract_info['extract_mode'] == 'folder':
-                    # ИЗВЛЕЧЕНИЕ ПАПКИ
-                    folder_name = extract_info['folders'][0]
-                    
-                    # Определяем путь к папке
-                    # Если в конфигурации указан download_path - используем его
-                    try:
-                        full_config = get_component_data(component_id)
-                        if full_config and full_config.get('download_path'):
-                            expected_path = full_config.get('download_path')
-                        else:
-                            expected_path = f'winetricks-cache/{component_id}/{folder_name}'
-                    except Exception:
-                        expected_path = f'winetricks-cache/{component_id}/{folder_name}'
-                    
-                    print(f"[DEBUG] Ищем папку: {expected_path}")
-                    
-                    # Собираем ВСЕ файлы из папки
-                    for member in members:
-                        if member.isfile() and member.name.startswith(expected_path + '/'):
-                            items_to_extract.append(member)
-                    
-                    # Если не найдено - ищем по имени папки во всем архиве
-                    if not items_to_extract:
-                        folder_basename = os.path.basename(expected_path)
-                        print(f"[DEBUG] Папка не найдена по пути, ищем по имени: {folder_basename}")
-                        
-                        for member in members:
-                            if member.isfile() and f'/{folder_basename}/' in member.name:
-                                items_to_extract.append(member)
-                    
-                    print(f"[DEBUG] Найдено файлов в папке: {len(items_to_extract)}")
-                
-                elif extract_info['extract_mode'] == 'files':
-                    # ИЗВЛЕЧЕНИЕ ФАЙЛОВ
-                    component_files = extract_info['files']
-                    found_by_path = []
-                    
-                    print(f"[DEBUG] Ищем {len(component_files)} файлов в архиве...")
-                    
-                    # ШАГ 1: Ищем каждый файл по указанному пути
-                    for filename in component_files:
-                        expected_path = f'winetricks-cache/{component_id}/{filename}'
-                        
-                        for member in members:
-                            if member.isfile() and member.name == expected_path:
-                                items_to_extract.append(member)
-                                found_by_path.append(filename)
-                                print(f"[DEBUG] Найден файл {filename} по пути: {member.name}")
-                                break
-                    
-                    # ШАГ 2: Если не все файлы найдены - ищем по имени во всем архиве
-                    missing_files = [f for f in component_files if f not in found_by_path]
-                    
-                    if missing_files:
-                        print(f"[DEBUG] Не найдены по пути {len(missing_files)} файлов, ищем по имени в архиве...")
-                        
-                        # Читаем список всех файлов в архиве
-                        all_archive_files = {
-                            os.path.basename(m.name): m 
-                            for m in members if m.isfile()
-                        }
-                        print(f"[DEBUG] Всего файлов в архиве: {len(all_archive_files)}")
-                        
-                        for filename in missing_files:
-                            if filename in all_archive_files:
-                                member = all_archive_files[filename]
-                                items_to_extract.append(member)
-                                print(f"[DEBUG] Найден файл {filename} в архиве по пути: {member.name}")
-                            else:
-                                print(f"[DEBUG] Файл {filename} не найден в архиве")
-                
-                # Извлекаем все найденные файлы в папку компонента с сохранением структуры
-                component_cache_dir = os.path.join(user_cache_dir, component_id)
-                os.makedirs(component_cache_dir, exist_ok=True)
-                fix_dir_permissions(component_cache_dir)
-                
-                for member in items_to_extract:
-                    # Определяем относительный путь внутри папки компонента
-                    archive_prefix = f'winetricks-cache/{component_id}/'
-                    if member.name.startswith(archive_prefix):
-                        # Убираем префикс "winetricks-cache/component_id/" для получения относительного пути
-                        relative_path = member.name[len(archive_prefix):]
+            # Определяем что извлекать для extract_archive()
+            if extract_info['extract_mode'] == 'folder':
+                folder_name = extract_info['folders'][0]
+                # Определяем путь к папке в архиве
+                try:
+                    full_config = get_component_data(component_id)
+                    if full_config and full_config.get('download_path'):
+                        folder_path = full_config.get('download_path')
                     else:
-                        # Если файл не в папке компонента (найден по имени), используем только имя
-                        relative_path = os.path.basename(member.name)
-                    
-                    # Создаем полный путь в кэше пользователя с сохранением структуры
-                    target_path = os.path.join(component_cache_dir, relative_path)
-                    
-                    # Создаем родительские папки если нужно
-                    parent_dir = os.path.dirname(target_path)
-                    if parent_dir and parent_dir != component_cache_dir:
-                        os.makedirs(parent_dir, exist_ok=True)
-                        fix_dir_permissions(parent_dir)
-                    
-                    # Извлекаем файл из архива
-                    fileobj = tar.extractfile(member)
-                    if fileobj:
-                        file_data = fileobj.read()
-                        with open(target_path, 'wb') as f:
-                            f.write(file_data)
-                        
-                        # КРИТИЧНО: Устанавливаем права доступа на файл
-                        os.chmod(target_path, 0o644)
-                        
-                        # Если запущено от root - устанавливаем владельца файла на пользователя
-                        if os.geteuid() == 0:
-                            real_user = os.environ.get('SUDO_USER')
-                            if real_user and real_user != 'root':
-                                try:
-                                    user_info = pwd.getpwnam(real_user)
-                                    os.chown(target_path, user_info.pw_uid, user_info.pw_gid)
-                                except (KeyError, ImportError):
-                                    pass  # Игнорируем ошибки
-                        
-                        extracted_count += 1
-                        print(f"[DEBUG] Извлечен файл: {relative_path} -> {target_path}")
+                        folder_path = f'winetricks-cache/{component_id}/{folder_name}'
+                except Exception:
+                    folder_path = f'winetricks-cache/{component_id}/{folder_name}'
                 
-                print(f"[INFO] Извлечено файлов: {extracted_count}")
-                return extracted_count
+                # Извлекаем папку напрямую в component_cache_dir
+                # Используем только имя папки (последний компонент пути)
+                extract_items = {'mode': 'folder', 'path': os.path.basename(folder_path)}
+            elif extract_info['extract_mode'] == 'files':
+                # Проверяем структуру архива - есть ли префикс winetricks-cache/component_id/
+                try:
+                    # Определяем тип архива для чтения метаданных
+                    with open(archive_path, 'rb') as f:
+                        first_bytes = f.read(2)
+                        tar_mode = 'r:gz' if (first_bytes == b'\x1f\x8b') else 'r'
+                    
+                    with tarfile.open(archive_path, tar_mode) as tar:
+                        archive_members = tar.getmembers()
+                        archive_files_by_name = {os.path.basename(m.name): m.name for m in archive_members if m.isfile()}
+                        
+                        # Проверяем, есть ли у файлов префикс winetricks-cache/component_id/
+                        has_prefix = False
+                        archive_prefix = f'winetricks-cache/{component_id}/'
+                        
+                        for filename in extract_info['files']:
+                            # Ищем файл по имени в архиве
+                            if filename in archive_files_by_name:
+                                full_path = archive_files_by_name[filename]
+                                if full_path.startswith(archive_prefix):
+                                    has_prefix = True
+                                    break
+                        
+                        # Если есть префикс - удаляем его, если нет - извлекаем как есть
+                        if has_prefix:
+                            extract_items = {
+                                'mode': 'files', 
+                                'paths': extract_info['files'],
+                                'strip_components': 2  # Удаляем winetricks-cache/component_id/
+                            }
+                        else:
+                            # Файлы без префикса - извлекаем напрямую в component_cache_dir
+                            extract_items = {
+                                'mode': 'files', 
+                                'paths': extract_info['files']
+                                # Без strip_components - файлы попадут в component_cache_dir
+                            }
+                except Exception as e:
+                    # Если не удалось проверить - используем безопасный вариант (без strip)
+                    print(f"[DEBUG] Не удалось проверить структуру архива: {e}", level='DEBUG')
+                    extract_items = {
+                        'mode': 'files', 
+                        'paths': extract_info['files']
+                    }
+            else:
+                extract_items = None  # Извлекать всё
+            
+            # Извлекаем напрямую в кэш пользователя
+            result = extract_archive(
+                archive_path=archive_path,
+                extract_to=component_cache_dir,
+                extract_items=extract_items,
+                progress_callback=None  # Без прогресса для этого метода
+            )
+            
+            if not result['success']:
+                print(f"[ERROR] Ошибка распаковки: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
+                return 0
+            
+            print(f"[INFO] Извлечено файлов: {result['extracted_count']}")
+            return result['extracted_count']
                 
         except Exception as e:
             print(f"[ERROR] Ошибка при извлечении из архива: {e}", level='ERROR')
@@ -5245,10 +5021,10 @@ class WinetricksHandler(ComponentHandler):
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
 
+class AptPackageHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК APT ПАКЕТОВ
 # ============================================================================
-class AptPackageHandler(ComponentHandler):
     """Обработчик APT пакетов Linux (gimp, vlc, libreoffice)"""
     
     def get_category(self) -> str:
@@ -5406,10 +5182,10 @@ class AptPackageHandler(ComponentHandler):
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
 
+class WineApplicationHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК WINE ПРИЛОЖЕНИЙ
 # ============================================================================
-class WineApplicationHandler(ComponentHandler):
     """Обработчик Wine приложений Windows (notepad++, winrar, firefox_wine)"""
     
     def get_category(self) -> str:
@@ -5582,381 +5358,6 @@ class WineApplicationHandler(ComponentHandler):
         print(f"Источник не найден или не сработал: папка {directory_path} и архив {archive_path}", level='ERROR')
         return False
     
-    def _copy_preinstalled_config_old(self, component_id: str, config: dict, install_start_time: float = None) -> bool:
-        """
-        СТАРАЯ РЕАЛИЗАЦИЯ: Копирование предустановленной конфигурации Wine префикса
-        Оставлена для совместимости (fallback если новые методы не работают)
-        """
-        # Если время начала не передано, используем текущее время
-        if install_start_time is None:
-            install_start_time = time.time()
-        source_dir = config.get('source_dir')
-        if not source_dir:
-            print("source_dir не указан в конфигурации", level='ERROR')
-            return False
-        
-        # Сначала проверяем наличие архива .tar.gz
-        archive_path = None
-        temp_extract_dir = None
-        
-        # Определяем возможные пути к архиву
-        # Для CountPack ищем в AstraPack/Cont/CountPack.tar.gz
-        if self.astrapack_dir:
-            # Получаем имя архива из конфигурации (если указано)
-            archive_name = config.get('archive_name')
-            if not archive_name:
-                # Если не указано, используем старое поведение: {source_dir}.tar.gz
-                archive_name = f"{source_dir}.tar.gz"
-            
-            # Определяем группу по component_id (cont -> Cont, astra -> Astra)
-            group_name = None
-            if 'cont' in component_id.lower():
-                group_name = 'Cont'
-            elif 'astra' in component_id.lower():
-                group_name = 'Astra'
-            
-            if group_name:
-                archive_path = os.path.join(self.astrapack_dir, group_name, archive_name)
-            else:
-                # Если группа не определена, ищем в корне AstraPack
-                archive_path = os.path.join(self.astrapack_dir, archive_name)
-        
-        # Определяем путь к целевому префиксу
-        wineprefix_path = config.get('wineprefix_path', self.wineprefix)
-        wineprefix_path = expand_user_path(wineprefix_path)
-        
-        # Проверяем наличие архива
-        if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
-            print(f"Найден архив: {archive_path}")
-            print(f"Распаковка архива напрямую в {wineprefix_path}...")
-            print("Файлы из архива заменят существующие, файлы которых нет в архиве останутся нетронутыми")
-            
-            # Инициализируем переменные для восстановления umask (до try блока)
-            old_umask = None
-            
-            try:
-                # Инициализируем время начала распаковки и размер
-                unpack_start_time = time.time()
-                extracted_size = 0  # Размер распакованных данных в байтах
-                
-                # Определяем uid/gid для установки прав (один раз в начале)
-                real_user = os.environ.get('SUDO_USER')
-                if os.geteuid() == 0 and real_user and real_user != 'root':
-                    # Если запущено от root - используем SUDO_USER
-                    unpack_uid = pwd.getpwnam(real_user).pw_uid
-                    unpack_gid = pwd.getpwnam(real_user).pw_gid
-                else:
-                    # Если запущено от обычного пользователя - используем текущего пользователя
-                    unpack_uid = os.getuid()
-                    unpack_gid = os.getgid()
-                
-                # Устанавливаем umask для правильных прав по умолчанию (644 для файлов, 755 для директорий)
-                old_umask = os.umask(0o022)
-                
-                # Счетчики для пакетной установки прав
-                files_since_last_chown = 0
-                last_chown_time = time.time()
-                CHOWN_BATCH_SIZE = 1000  # Устанавливаем права каждые 1000 файлов
-                CHOWN_TIME_INTERVAL = 10  # Или каждые 10 секунд (что наступит раньше)
-                
-                # Распаковываем архив напрямую в целевую папку
-                # Файлы из архива автоматически заменят существующие при записи (режим 'wb')
-                # Файлы, которых нет в архиве, останутся нетронутыми
-                with tarfile.open(archive_path, 'r:gz') as tar:
-                    # Определяем, содержит ли архив папку с именем source_dir
-                    members = tar.getmembers()
-                    has_source_dir = any(m.name.startswith(f"{source_dir}/") or m.name == source_dir for m in members)
-                    
-                    if has_source_dir:
-                        # Архив содержит папку source_dir - извлекаем только её содержимое
-                        print(f"Архив содержит папку {source_dir}, извлекаем содержимое...")
-                        prefix = f"{source_dir}/"
-                        # Сортируем members для правильного порядка создания папок
-                        sorted_members = sorted(members, key=lambda m: (m.isdir(), m.name))
-                        
-                        # Фильтруем только нужные элементы (с префиксом source_dir/)
-                        items_to_extract = [m for m in sorted_members if m.name.startswith(prefix) and m.name != source_dir]
-                        total_items = len(items_to_extract)
-                        files_count = sum(1 for m in items_to_extract if m.isfile())
-                        dirs_count = sum(1 for m in items_to_extract if m.isdir())
-                        
-                        print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
-                        
-                        # НОВОЕ: Обновляем только global_progress (не stage_progress)
-                        # Время обновляется автоматически через таймер
-                        self._update_progress(
-                            stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=0,  # Не обновляем
-                            global_progress=0,  # Начальный прогресс
-                            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count})"
-                        )
-                        
-                        extracted_count = 0
-                        for member in items_to_extract:
-                            # Проверяем флаг отмены в начале каждой итерации
-                            if CANCEL_OPERATION:
-                                print("Распаковка прервана пользователем")
-                                # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы при отмене
-                                self._set_extracted_files_permissions(wineprefix_path)
-                                os.umask(old_umask)  # Восстанавливаем umask
-                                return False
-                            
-                            # Создаем новый путь, убирая префикс source_dir/
-                            new_name = member.name[len(prefix):]
-                            if not new_name:  # Пропускаем пустые имена
-                                continue
-                            
-                            target_path = os.path.join(wineprefix_path, new_name)
-                            
-                            # Извлекаем файл/папку
-                            if member.isfile():
-                                # Создаем родительские папки если нужно
-                                parent_dir = os.path.dirname(target_path)
-                                if parent_dir:
-                                    os.makedirs(parent_dir, exist_ok=True)
-                                # Извлекаем файл
-                                fileobj = tar.extractfile(member)
-                                if fileobj:
-                                    file_data = fileobj.read()
-                                    with open(target_path, 'wb') as f:
-                                        f.write(file_data)
-                                    # Добавляем размер файла к общему размеру
-                                    extracted_size += len(file_data)
-                                
-                                extracted_count += 1
-                                
-                                # Устанавливаем права пакетно (не на каждый файл!)
-                                files_since_last_chown += 1
-                                current_time = time.time()
-                                
-                                # Устанавливаем права пакетно: каждые 1000 файлов или каждые 10 секунд
-                                if files_since_last_chown >= CHOWN_BATCH_SIZE or (current_time - last_chown_time) >= CHOWN_TIME_INTERVAL:
-                                    try:
-                                        os.chown(target_path, unpack_uid, unpack_gid)
-                                        os.chmod(target_path, 0o644)
-                                    except (OSError, PermissionError):
-                                        pass  # Игнорируем ошибки доступа
-                                    files_since_last_chown = 0
-                                    last_chown_time = current_time
-                                    
-                                    # Проверяем отмену после установки прав
-                                    if CANCEL_OPERATION:
-                                        print("Распаковка прервана пользователем")
-                                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы при отмене
-                                        self._set_extracted_files_permissions(wineprefix_path)
-                                        os.umask(old_umask)
-                                        return False
-                                
-                                if extracted_count % 100 == 0 or extracted_count == total_items:
-                                    # Вычисляем прошедшее время
-                                    elapsed_time = time.time() - unpack_start_time
-                                    elapsed_minutes = int(elapsed_time // 60)
-                                    elapsed_seconds = int(elapsed_time % 60)
-                                    
-                                    # Форматируем размер распакованных данных
-                                    if extracted_size < 1024:
-                                        size_str = f"{extracted_size} Б"
-                                    elif extracted_size < 1024 * 1024:
-                                        size_str = f"{extracted_size / 1024:.1f} КБ"
-                                    elif extracted_size < 1024 * 1024 * 1024:
-                                        size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
-                                    else:
-                                        size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
-                                    
-                                    # НОВОЕ: Обновляем только global_progress на основе количества файлов
-                                    global_progress = int((extracted_count / total_items) * 100) if total_items > 0 else 0
-                                    print(f"Извлечено элементов: {extracted_count}/{total_items} ({global_progress}%) | Время: {elapsed_minutes}м {elapsed_seconds}с | Размер: {size_str}")
-                                    # Время обновляется автоматически через таймер
-                                    self._update_progress(
-                                        stage_name=f"Распаковка архива {source_dir}",
-                                        stage_progress=0,  # Не обновляем
-                                        global_progress=global_progress,  # Только global_progress
-                                        details=f"Извлечено: {extracted_count}/{total_items} ({new_name[:50]}...) | {size_str}"
-                                    )
-                            elif member.isdir():
-                                # Создаем папку
-                                os.makedirs(target_path, exist_ok=True)
-                                # Директорий меньше - устанавливаем права сразу
-                                try:
-                                    os.chown(target_path, unpack_uid, unpack_gid)
-                                    os.chmod(target_path, 0o755)
-                                except (OSError, PermissionError):
-                                    pass  # Игнорируем ошибки доступа
-                                extracted_count += 1
-                            elif member.issym() or member.islnk():
-                                # Для символических ссылок и жестких ссылок
-                                # Создаем родительские папки если нужно
-                                parent_dir = os.path.dirname(target_path)
-                                if parent_dir:
-                                    os.makedirs(parent_dir, exist_ok=True)
-                                # Извлекаем ссылку
-                                tar.extract(member, wineprefix_path)
-                                # Переименовываем после извлечения
-                                old_path = os.path.join(wineprefix_path, member.name)
-                                if os.path.exists(old_path):
-                                    if os.path.exists(target_path):
-                                        if os.path.isdir(target_path):
-                                            shutil.rmtree(target_path)
-                                        else:
-                                            os.remove(target_path)
-                                    os.rename(old_path, target_path)
-                                extracted_count += 1
-                        
-                        # НОВОЕ: Финальное обновление - только global_progress
-                        # Вычисляем итоговое время и размер
-                        elapsed_time = time.time() - unpack_start_time
-                        elapsed_minutes = int(elapsed_time // 60)
-                        elapsed_seconds = int(elapsed_time % 60)
-                        
-                        # Форматируем итоговый размер
-                        if extracted_size < 1024:
-                            size_str = f"{extracted_size} Б"
-                        elif extracted_size < 1024 * 1024:
-                            size_str = f"{extracted_size / 1024:.1f} КБ"
-                        elif extracted_size < 1024 * 1024 * 1024:
-                            size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
-                        else:
-                            size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
-                        
-                        print(f"Распаковка завершена: извлечено {extracted_count}/{total_items} элементов | Время: {elapsed_minutes}м {elapsed_seconds}с | Размер: {size_str}")
-                        self._update_progress(
-                            stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=0,  # Не обновляем
-                            global_progress=100,  # Завершено
-                            details=f"Успешно извлечено {extracted_count} элементов | {size_str}"
-                        )
-                        
-                        # Восстанавливаем umask
-                        os.umask(old_umask)
-                        
-                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы (на случай пропущенных)
-                        self._set_extracted_files_permissions(wineprefix_path)
-                    else:
-                        # Архив содержит файлы в корне - извлекаем всё
-                        print("Архив содержит файлы в корне, извлекаем всё...")
-                        total_items = len([m for m in members if m.isfile()])
-                        print(f"Всего файлов для извлечения: {total_items}")
-                        
-                        self._update_progress(
-                            stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=0,
-                            global_progress=0,
-                            details=f"Найдено файлов: {total_items}"
-                        )
-                        
-                        tar.extractall(wineprefix_path)
-                        
-                        # НОВОЕ: Финальное обновление - только global_progress
-                        # Время обновляется автоматически через таймер
-                        print(f"Распаковка завершена: извлечено {total_items} файлов")
-                        self._update_progress(
-                            stage_name=f"Распаковка архива {source_dir}",
-                            stage_progress=0,  # Не обновляем
-                            global_progress=100,  # Завершено
-                            details=f"Успешно извлечено {total_items} файлов"
-                        )
-                        
-                        # Восстанавливаем umask
-                        os.umask(old_umask)
-                        
-                        # КРИТИЧНО: ВСЕГДА устанавливаем права на все распакованные файлы
-                        self._set_extracted_files_permissions(wineprefix_path)
-                
-                print(f"Архив успешно распакован в {wineprefix_path}")
-                
-            except Exception as e:
-                # Восстанавливаем umask даже при ошибке (если был установлен)
-                if old_umask is not None:
-                    try:
-                        os.umask(old_umask)
-                    except:
-                        pass
-                print(f"Ошибка распаковки архива: {e}", level='ERROR')
-                traceback.print_exc()
-                # При ошибке также устанавливаем права на уже распакованные файлы (если есть)
-                try:
-                    self._set_extracted_files_permissions(wineprefix_path)
-                except:
-                    pass
-                return False
-        else:
-            # Архив не найден - используем существующую логику с папкой
-            full_source_dir = self._get_source_dir(source_dir)
-            
-            if not full_source_dir or not os.path.exists(full_source_dir):
-                print(f"Папка с предустановленной конфигурацией не найдена: {full_source_dir}", level='ERROR')
-                return False
-            
-            print(f"Копирование предустановленной конфигурации из {full_source_dir} в {wineprefix_path}")
-            
-            try:
-                # КРИТИЧНО: Копируем с заменой всех файлов
-                # Копируем dosdevices и drive_c (НЕ копируем Ярлыки - они обрабатываются отдельно)
-                items_to_copy = ['dosdevices', 'drive_c']
-                
-                for item in items_to_copy:
-                    src = os.path.join(full_source_dir, item)
-                    dst = os.path.join(wineprefix_path, item)
-                    
-                    if not os.path.exists(src):
-                        print(f"Предупреждение: {item} не найден в {full_source_dir}", level='WARNING')
-                        continue
-                    
-                    if os.path.isdir(src):
-                        # Копируем директорию с заменой
-                        if os.path.exists(dst):
-                            print(f"Удаление существующей директории: {dst}")
-                            shutil.rmtree(dst)
-                        print(f"Копирование директории: {item}")
-                        shutil.copytree(src, dst)
-                        print(f"  Директория скопирована: {item}")
-                    else:
-                        # Копируем файл с заменой
-                        if os.path.exists(dst):
-                            os.remove(dst)
-                        print(f"Копирование файла: {item}")
-                        shutil.copy2(src, dst)
-                        print(f"  Файл скопирован: {item}")
-                
-                # Копируем файлы реестра (если есть)
-                reg_files = ['system.reg', 'user.reg', 'userdef.reg']
-                for reg_file in reg_files:
-                    src = os.path.join(full_source_dir, reg_file)
-                    dst = os.path.join(wineprefix_path, reg_file)
-                    
-                    if os.path.exists(src):
-                        if os.path.exists(dst):
-                            os.remove(dst)
-                        shutil.copy2(src, dst)
-                        print(f"  Файл реестра скопирован: {reg_file}")
-                
-            except Exception as e:
-                print(f"Ошибка копирования предустановленной конфигурации: {str(e)}", level='ERROR')
-                traceback.print_exc()
-                return False
-        
-        # Устанавливаем правильного владельца
-        try:
-            real_user = os.environ.get('SUDO_USER')
-            if os.geteuid() == 0 and real_user and real_user != 'root':
-                uid = pwd.getpwnam(real_user).pw_uid
-                gid = pwd.getpwnam(real_user).pw_gid
-                
-                # Устанавливаем владельца на всю директорию префикса
-                os.chown(wineprefix_path, uid, gid)
-                for root, dirs, files in os.walk(wineprefix_path):
-                    for d in dirs:
-                        os.chown(os.path.join(root, d), uid, gid)
-                    for f in files:
-                        os.chown(os.path.join(root, f), uid, gid)
-                
-                print(f"Установлен владелец префикса: {real_user}")
-        except Exception as e:
-            print(f"Предупреждение: не удалось установить владельца: {e}", level='WARNING')
-        
-        print("Предустановленная конфигурация успешно установлена")
-        return True
-    
     def _set_extracted_files_permissions(self, wineprefix_path: str) -> None:
         """
         Устанавливает правильные права доступа на распакованные файлы
@@ -6033,88 +5434,6 @@ class WineApplicationHandler(ComponentHandler):
             for file in files:
                 yield os.path.join(root, file)
     
-    def _check_archive_structure(self, archive_path: str, source_dir: str) -> bool:
-        """
-        Проверяет структуру архива: содержит ли он папку source_dir
-        
-        Args:
-            archive_path: Путь к архиву
-            source_dir: Имя директории для проверки
-        
-        Returns:
-            bool: True если архив содержит папку source_dir
-        """
-        try:
-            # Используем tar -tzf для просмотра содержимого без распаковки
-            result = subprocess.run(
-                ['tar', '-tzf', archive_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                return False
-            
-            # Проверяем, есть ли папка source_dir в архиве
-            for line in result.stdout.split('\n'):
-                if line.startswith(f'{source_dir}/') or line == source_dir:
-                    return True
-            
-            return False
-            
-        except Exception as e:
-            print(f"Ошибка проверки структуры архива: {e}", level='DEBUG')
-            return False
-    
-    def _count_files_in_archive(self, archive_path: str, prefix: str = None) -> int:
-        """
-        Подсчитывает количество файлов в архиве (для прогресса)
-        
-        Args:
-            archive_path: Путь к архиву
-            prefix: Префикс для фильтрации (например, 'CountPack/')
-        
-        Returns:
-            int: Количество файлов
-        """
-        try:
-            # Используем tar -tzf для просмотра содержимого
-            result = subprocess.run(
-                ['tar', '-tzf', archive_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                return 0
-            
-            count = 0
-            for line in result.stdout.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # Если указан префикс, считаем только файлы с этим префиксом
-                if prefix:
-                    if line.startswith(f'{prefix}/') and line != prefix:
-                        # Проверяем, что это файл (не директория)
-                        if not line.endswith('/'):
-                            count += 1
-                else:
-                    # Считаем все файлы (не директории)
-                    if not line.endswith('/'):
-                        count += 1
-            
-            return count
-            
-        except Exception as e:
-            print(f"Ошибка подсчета файлов в архиве: {e}", level='DEBUG')
-            return 0
-    
     def _copy_from_directory_fast(self, directory_path: str, component_id: str, 
                                    config: dict, install_start_time: float) -> bool:
         """
@@ -6163,10 +5482,7 @@ class WineApplicationHandler(ComponentHandler):
     def _copy_from_archive_fast(self, archive_path: str, source_dir: str, component_id: str,
                                config: dict, install_start_time: float) -> bool:
         """
-        ГИБРИДНАЯ быстрая распаковка архива:
-        - Python tarfile для быстрого чтения метаданных (без таймаутов)
-        - Системный tar для быстрой распаковки
-        - Мониторинг прогресса на основе метаданных
+        Быстрая распаковка архива через универсальную функцию extract_archive()
         
         Args:
             archive_path: Путь к архиву
@@ -6185,195 +5501,50 @@ class WineApplicationHandler(ComponentHandler):
         print(f"Быстрая распаковка архива напрямую в {wineprefix_path}...")
         print("Файлы из архива заменят существующие, файлы которых нет в архиве останутся нетронутыми")
         
-        # Определяем uid/gid для установки владельца после распаковки
-        real_user = os.environ.get('SUDO_USER')
-        if os.geteuid() == 0 and real_user and real_user != 'root':
-            unpack_uid = pwd.getpwnam(real_user).pw_uid
-            unpack_gid = pwd.getpwnam(real_user).pw_gid
+        # Определяем что извлекать
+        if source_dir:
+            extract_items = {'mode': 'folder', 'path': source_dir}
         else:
-            unpack_uid = os.getuid()
-            unpack_gid = os.getgid()
+            extract_items = None  # Извлекать всё
         
-        # Проверяем доступность tar
-        if not self._check_command_available('tar'):
-            print("Команда tar не найдена, используем Python tarfile (медленнее)", level='WARNING')
-            return self._copy_preinstalled_config_old(component_id, config, install_start_time)
-        
-        # ШАГ 1: Быстрое чтение метаданных через Python tarfile (как в старой версии)
-        # Это читает только заголовки, не весь архив - БЫСТРО и БЕЗ таймаутов!
-        try:
-            with tarfile.open(archive_path, 'r:gz') as tar:
-                members = tar.getmembers()  # ← БЫСТРО! Читает только заголовки
-                
-                # Определяем структуру архива из метаданных
-                has_source_dir = any(m.name.startswith(f"{source_dir}/") or m.name == source_dir for m in members)
-                
-                if has_source_dir:
-                    # Архив содержит папку source_dir - извлекаем только её содержимое (без папки)
-                    prefix = f"{source_dir}/"
-                    items_to_extract = [m for m in members if m.name.startswith(prefix) and m.name != source_dir]
-                    total_items = len(items_to_extract)
-                    files_count = sum(1 for m in items_to_extract if m.isfile())
-                    dirs_count = sum(1 for m in items_to_extract if m.isdir())
-                    total_size = sum(m.size for m in items_to_extract if m.isfile())
-                    
-                    print(f"Архив содержит папку {source_dir}, извлекаем содержимое (без папки)...")
-                    print(f"Всего элементов для извлечения: {total_items} (файлов: {files_count}, папок: {dirs_count})")
-                else:
-                    # Архив содержит файлы в корне - извлекаем всё
-                    items_to_extract = [m for m in members]
-                    total_items = len([m for m in members if m.isfile()])
-                    files_count = total_items
-                    dirs_count = sum(1 for m in members if m.isdir())
-                    total_size = sum(m.size for m in members if m.isfile())
-                    
-                    print("Архив содержит файлы в корне, извлекаем всё...")
-                    print(f"Всего файлов для извлечения: {total_items}")
-                
-                # Форматируем общий размер
-                if total_size < 1024 * 1024:
-                    size_str = f"{total_size / 1024:.1f} КБ"
-                elif total_size < 1024 * 1024 * 1024:
-                    size_str = f"{total_size / (1024 * 1024):.1f} МБ"
-                else:
-                    size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
-                
-                print(f"Общий размер: {size_str}")
-                
-        except Exception as e:
-            # Если не удалось прочитать метаданные - архив поврежден
-            print(f"Ошибка чтения метаданных архива: {e}", level='ERROR')
-            print("Архив поврежден или недоступен, распаковка невозможна", level='ERROR')
-            return False
-        
-        self._update_progress(
-            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
-            stage_progress=0,
-            global_progress=0,
-            details=f"Найдено элементов: {total_items} (файлов: {files_count}, папок: {dirs_count}) | Размер: {size_str if total_size > 0 else 'неизвестно'}"
-        )
-        
-        # ШАГ 2: Распаковка через системный tar (быстрее Python tarfile)
-        tar_cmd = [
-            'tar',
-            '-xzf',  # -x (extract), -z (gzip), -f (file)
-            archive_path,
-            '-C', wineprefix_path,  # Изменить директорию перед извлечением
-        ]
-        
-        # Если архив содержит папку source_dir, нужно извлечь только её содержимое
-        if has_source_dir:
-            # Используем --strip-components=1 чтобы убрать первый уровень (source_dir/)
-            tar_cmd.extend(['--strip-components=1'])
-            # И указываем что извлекать только source_dir/
-            tar_cmd.append(f'{source_dir}/')
-        else:
-            # Извлекаем всё из корня архива
-            tar_cmd.append('.')
-        
-        process = None
-        monitor_thread = None
-        cancel_flag = threading.Event()
-        old_umask = None
-        
-        try:
-            # Устанавливаем umask для правильных прав
-            old_umask = os.umask(0o022)
-            
-            # Запускаем tar в отдельном процессе
-            process = subprocess.Popen(
-                tar_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            
-            # ШАГ 3: Запускаем мониторинг прогресса на основе метаданных
-            monitor_thread = threading.Thread(
-                target=self._monitor_tar_with_metadata,
-                args=(process, wineprefix_path, total_items, total_size, install_start_time, cancel_flag, component_id, items_to_extract),
-                daemon=True
-            )
-            monitor_thread.start()
-            
-            # Ждем завершения процесса с проверкой отмены
-            while process.poll() is None:
-                if CANCEL_OPERATION or cancel_flag.is_set():
-                    print("Распаковка прервана пользователем")
-                    process.terminate()  # Отправляем SIGTERM
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()  # Принудительно завершаем
-                    if old_umask is not None:
-                        os.umask(old_umask)
-                    # Устанавливаем права на уже распакованные файлы
-                    self._set_extracted_files_permissions(wineprefix_path)
-                    return False
-                
-                time.sleep(0.1)  # Небольшая задержка для проверки
-            
-            # Восстанавливаем umask
-            if old_umask is not None:
-                os.umask(old_umask)
-            
-            # Проверяем код возврата
-            return_code = process.returncode
-            
-            if return_code != 0:
-                stderr_output = ""
-                if process.stderr:
-                    try:
-                        stderr_output = process.stderr.read()
-                    except:
-                        pass
-                print(f"tar завершился с ошибкой (код: {return_code})", level='ERROR')
-                if stderr_output:
-                    print(f"Ошибка tar: {stderr_output}", level='ERROR')
-                if old_umask is not None:
-                    os.umask(old_umask)
-                return False
-            
-            # Устанавливаем владельца и права (tar может не сохранить владельца)
-            print("Установка владельца и прав доступа...")
-            self._set_extracted_files_permissions(wineprefix_path)
-            
-            elapsed_time = time.time() - install_start_time
-            elapsed_minutes = int(elapsed_time // 60)
-            elapsed_seconds = int(elapsed_time % 60)
-            
-            print(f"Распаковка завершена за {elapsed_minutes}м {elapsed_seconds}с")
+        # Callback для обновления прогресса
+        def progress_callback(progress, details):
             self._update_progress(
                 stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
                 stage_progress=0,
-                global_progress=100,
-                details=f"Успешно извлечено {total_items} элементов"
+                global_progress=progress,
+                details=details
             )
-            
-            return True
-            
-        except Exception as e:
-            if process and process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=2)
-                except:
-                    process.kill()
-            
-            if old_umask is not None:
-                try:
-                    os.umask(old_umask)
-                except:
-                    pass
-            
-            print(f"Ошибка распаковки архива: {e}", level='ERROR')
-            traceback.print_exc()
-            # Устанавливаем права на уже распакованные файлы (если есть)
-            try:
-                self._set_extracted_files_permissions(wineprefix_path)
-            except:
-                pass
+        
+        # Распаковываем через универсальную функцию
+        result = extract_archive(
+            archive_path=archive_path,
+            extract_to=wineprefix_path,
+            extract_items=extract_items,
+            progress_callback=progress_callback
+        )
+        
+        if not result['success']:
+            print(f"Ошибка распаковки: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
             return False
+        
+        # Устанавливаем владельца и права (tar может не сохранить владельца)
+        print("Установка владельца и прав доступа...")
+        self._set_extracted_files_permissions(wineprefix_path)
+        
+        elapsed_time = time.time() - install_start_time
+        elapsed_minutes = int(elapsed_time // 60)
+        elapsed_seconds = int(elapsed_time % 60)
+        
+        print(f"Распаковка завершена за {elapsed_minutes}м {elapsed_seconds}с")
+        self._update_progress(
+            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_progress=0,
+            global_progress=100,
+            details=f"Успешно извлечено {result['extracted_count']} элементов"
+        )
+        
+        return True
     
     def _copy_with_rsync(self, src_dir: str, dst_dir: str, uid: int, gid: int,
                         component_id: str, config: dict, start_time: float) -> bool:
@@ -6698,252 +5869,6 @@ class WineApplicationHandler(ComponentHandler):
                         
         except Exception as e:
             print(f"Ошибка мониторинга rsync: {e}", level='DEBUG')
-    
-    def _monitor_tar_extract_progress(self, process, dst_dir: str, total_files: int,
-                                     start_time: float, cancel_flag: threading.Event, component_id: str):
-        """
-        Мониторинг прогресса распаковки tar в отдельном потоке
-        Подсчитывает файлы в целевой директории
-        """
-        try:
-            last_count = 0
-            last_update = start_time
-            
-            while process.poll() is None:
-                if CANCEL_OPERATION:
-                    cancel_flag.set()
-                    break
-                
-                current_time = time.time()
-                # Обновляем каждые 0.5 секунды
-                if current_time - last_update >= 0.5:
-                    # Подсчитываем файлы в целевой директории
-                    try:
-                        extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
-                        progress = min(95, int((extracted_files / total_files) * 100) if total_files > 0 else 0)
-                        
-                        # Обновляем только если прогресс изменился
-                        if extracted_files != last_count:
-                            elapsed_time = current_time - start_time
-                            elapsed_minutes = int(elapsed_time // 60)
-                            elapsed_seconds = int(elapsed_time % 60)
-                            
-                            self._update_progress(
-                                stage_name=f"Распаковка архива",
-                                stage_progress=0,
-                                global_progress=progress,
-                                details=f"{progress}% ({extracted_files}/{total_files}) | Время: {elapsed_minutes}м {elapsed_seconds}с"
-                            )
-                            
-                            last_count = extracted_files
-                    except:
-                        pass
-                    
-                    last_update = current_time
-                
-                time.sleep(0.1)
-            
-            # Финальное обновление
-            try:
-                extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
-                self._update_progress(
-                    stage_name=f"Распаковка архива",
-                    stage_progress=0,
-                    global_progress=100,
-                    details=f"Завершено ({extracted_files} файлов)"
-                )
-            except:
-                pass
-            
-        except Exception as e:
-            print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
-    
-    def _monitor_tar_with_metadata(self, process, dst_dir: str, total_items: int, total_size: int,
-                                   start_time: float, cancel_flag: threading.Event, component_id: str, items_to_extract: list = None):
-        """
-        Мониторинг прогресса распаковки на основе метаданных архива
-        Использует подсчет файлов в целевой директории и сравнение с total_items из метаданных
-        Выводит статистику каждые 1000 файлов с временем и объемом
-        
-        Args:
-            process: Процесс tar
-            dst_dir: Целевая директория
-            total_items: Общее количество элементов из метаданных
-            total_size: Общий размер файлов из метаданных
-            start_time: Время начала распаковки
-            cancel_flag: Флаг отмены
-            component_id: ID компонента
-            items_to_extract: Список файлов из метаданных (для статистики, опционально)
-        """
-        try:
-            last_update = start_time
-            last_count = 0
-            initial_disk_usage = 0
-            last_stat_count = 0  # Количество файлов на предыдущей статистике
-            last_stat_time = start_time  # Время предыдущей статистики
-            last_stat_disk = 0  # Размер диска на предыдущей статистике
-            
-            # Получаем начальное дисковое пространство
-            try:
-                disk_usage = shutil.disk_usage(dst_dir)
-                initial_disk_usage = disk_usage.used
-                last_stat_disk = initial_disk_usage
-            except:
-                pass
-            
-            while process.poll() is None:
-                if CANCEL_OPERATION:
-                    cancel_flag.set()
-                    break
-                
-                current_time = time.time()
-                # Обновляем раз в секунду (оптимизация: меньше нагрузка на файловую систему)
-                if current_time - last_update >= 1.0:
-                    try:
-                        # Подсчитываем файлы в целевой директории
-                        extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
-                        
-                        # Проверяем, нужно ли вывести статистику (каждые 1000 файлов)
-                        if extracted_files >= last_stat_count + 1000:
-                            # Вычисляем время от предыдущего сообщения
-                            time_since_last = current_time - last_stat_time
-                            time_minutes = int(time_since_last // 60)
-                            time_seconds = int(time_since_last % 60)
-                            
-                            # Вычисляем объем добавленных файлов
-                            try:
-                                disk_usage = shutil.disk_usage(dst_dir)
-                                current_disk_usage = disk_usage.used
-                                added_size = current_disk_usage - last_stat_disk
-                                
-                                # Форматируем размер
-                                if added_size < 1024 * 1024:
-                                    added_size_str = f"{added_size / 1024:.1f} КБ"
-                                elif added_size < 1024 * 1024 * 1024:
-                                    added_size_str = f"{added_size / (1024 * 1024):.1f} МБ"
-                                else:
-                                    added_size_str = f"{added_size / (1024 * 1024 * 1024):.2f} ГБ"
-                            except:
-                                added_size_str = "неизвестно"
-                            
-                            # Выводим статистику
-                            files_in_batch = extracted_files - last_stat_count
-                            print(f"Извлечено {extracted_files} файлов (+{files_in_batch} за {time_minutes}м {time_seconds}с, +{added_size_str})")
-                            
-                            # Обновляем счетчики для следующей статистики
-                            last_stat_count = (extracted_files // 1000) * 1000
-                            last_stat_time = current_time
-                            last_stat_disk = current_disk_usage if 'current_disk_usage' in locals() else last_stat_disk
-                        
-                        # Вычисляем прогресс по количеству файлов (если известно)
-                        if total_items > 0:
-                            progress = min(95, int((extracted_files / total_items) * 100))
-                        else:
-                            # Если total_items неизвестно, используем приблизительный прогресс по времени
-                            elapsed = current_time - start_time
-                            progress = min(95, int((elapsed / 300) * 100))  # Предполагаем 5 минут максимум
-                        
-                        # Вычисляем извлеченный размер по дисковому пространству
-                        try:
-                            disk_usage = shutil.disk_usage(dst_dir)
-                            current_disk_usage = disk_usage.used
-                            extracted_size = current_disk_usage - initial_disk_usage
-                            
-                            # Форматируем размер
-                            if extracted_size < 1024 * 1024:
-                                size_str = f"{extracted_size / 1024:.1f} КБ"
-                            elif extracted_size < 1024 * 1024 * 1024:
-                                size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
-                            else:
-                                size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
-                        except:
-                            size_str = "неизвестно"
-                        
-                        # Обновляем только если прогресс изменился
-                        if extracted_files != last_count:
-                            elapsed_time = current_time - start_time
-                            elapsed_minutes = int(elapsed_time // 60)
-                            elapsed_seconds = int(elapsed_time % 60)
-                            
-                            details = f"{progress}% ({extracted_files}"
-                            if total_items > 0:
-                                details += f"/{total_items})"
-                            else:
-                                details += " файлов)"
-                            details += f" | {size_str} | Время: {elapsed_minutes}м {elapsed_seconds}с"
-                            
-                            self._update_progress(
-                                stage_name=f"Распаковка архива",
-                                stage_progress=0,
-                                global_progress=progress,
-                                details=details
-                            )
-                            
-                            last_count = extracted_files
-                    except:
-                        pass
-                    
-                    last_update = current_time
-                
-                time.sleep(0.1)
-            
-            # Финальное обновление
-            try:
-                extracted_files = sum(1 for _ in self._count_files_recursive(dst_dir))
-                
-                # Выводим финальную статистику, если не было выведено на последней отметке 1000
-                if extracted_files > last_stat_count:
-                    try:
-                        disk_usage = shutil.disk_usage(dst_dir)
-                        current_disk_usage = disk_usage.used
-                        final_time = time.time()
-                        time_since_last = final_time - last_stat_time
-                        time_minutes = int(time_since_last // 60)
-                        time_seconds = int(time_since_last % 60)
-                        added_size = current_disk_usage - last_stat_disk
-                        
-                        if added_size < 1024 * 1024:
-                            added_size_str = f"{added_size / 1024:.1f} КБ"
-                        elif added_size < 1024 * 1024 * 1024:
-                            added_size_str = f"{added_size / (1024 * 1024):.1f} МБ"
-                        else:
-                            added_size_str = f"{added_size / (1024 * 1024 * 1024):.2f} ГБ"
-                        
-                        files_in_batch = extracted_files - last_stat_count
-                        print(f"Извлечено {extracted_files} файлов (+{files_in_batch} за {time_minutes}м {time_seconds}с, +{added_size_str})")
-                    except:
-                        pass
-                
-                try:
-                    disk_usage = shutil.disk_usage(dst_dir)
-                    current_disk_usage = disk_usage.used
-                    extracted_size = current_disk_usage - initial_disk_usage
-                    
-                    if extracted_size < 1024 * 1024:
-                        size_str = f"{extracted_size / 1024:.1f} КБ"
-                    elif extracted_size < 1024 * 1024 * 1024:
-                        size_str = f"{extracted_size / (1024 * 1024):.1f} МБ"
-                    else:
-                        size_str = f"{extracted_size / (1024 * 1024 * 1024):.2f} ГБ"
-                except:
-                    size_str = "неизвестно"
-                
-                self._update_progress(
-                    stage_name=f"Распаковка архива",
-                    stage_progress=0,
-                    global_progress=100,
-                    details=f"Завершено ({extracted_files} файлов, {size_str})"
-                )
-            except:
-                self._update_progress(
-                    stage_name=f"Распаковка архива",
-                    stage_progress=0,
-                    global_progress=100,
-                    details="Завершено"
-                )
-            
-        except Exception as e:
-            print(f"Ошибка мониторинга tar: {e}", level='DEBUG')
     
     def _monitor_tar_copy_progress(self, process1, process2, dst_dir: str, total_files: int,
                                   start_time: float, cancel_flag: threading.Event):
@@ -7338,10 +6263,10 @@ class WineApplicationHandler(ComponentHandler):
         # из конфигурации компонента (wineprefix_path в COMPONENTS_CONFIG)
         return check_component_status(component_id, wineprefix_path=None)
 
+class ApplicationHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК ПРИЛОЖЕНИЙ
 # ============================================================================
-class ApplicationHandler(ComponentHandler):
     """Обработчик приложений (Astra.IDE, скрипты, ярлыки)"""
     
     def get_category(self) -> str:
@@ -7772,10 +6697,10 @@ class ApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
 
+class DesktopShortcutHandler(ComponentHandler):
 # ============================================================================
 # ОБРАБОТЧИК ЯРЛЫКОВ РАБОЧЕГО СТОЛА
 # ============================================================================
-class DesktopShortcutHandler(ComponentHandler):
     """Обработчик создания ярлыков рабочего стола"""
     
     def get_category(self) -> str:
@@ -8194,10 +7119,10 @@ class DesktopShortcutHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
 
+class DualStreamLogger:
 # ============================================================================
 # DUALSTREAMLOGGER - СИСТЕМА ДВОЙНЫХ ПОТОКОВ ЛОГИРОВАНИЯ
 # ============================================================================
-class DualStreamLogger:
     """
     Класс для управления двумя независимыми потоками логирования.
     
@@ -8676,10 +7601,10 @@ class DualStreamLogger:
         
         return logger
 
+class LogReplaySimulator:
 # ============================================================================
 # LOG REPLAY SIMULATOR
 # ============================================================================
-class LogReplaySimulator:
     """
     Симулятор воспроизведения логов для отладки парсинга на macOS
     
@@ -8817,8 +7742,6 @@ class LogReplaySimulator:
 # ============================================================================
 # ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
 # ============================================================================
-
-# Переопределяем функцию print для перенаправления в GUI
 _original_print = builtins.print
 
 def universal_print(*args, **kwargs):
@@ -10200,33 +9123,6 @@ class SystemStats(object):
             'packages_to_install': self.packages_to_install,
             'updatable_list': self.updatable_list
         }
-
-def test_system_stats(dry_run=False):
-    """Функция для тестирования SystemStats"""
-    stats = SystemStats()
-    
-    # Проверяем права доступа
-    if os.geteuid() != 0:
-        print("[ERROR] Требуются права root для работы с системными пакетами", gui_log=True)
-        print("Запустите: sudo python3 system_stats.py")
-        return False
-    
-    # Анализируем обновления
-    if not stats.get_updatable_packages():
-        print("[WARNING] Предупреждение: не удалось получить список обновлений", gui_log=True)
-    
-    # Анализируем автоудаление
-    if not stats.get_autoremove_packages():
-        print("[WARNING] Предупреждение: не удалось проанализировать автоудаление", gui_log=True)
-    
-    # Подсчитываем пакеты для установки
-    if not stats.calculate_install_stats():
-        print("[WARNING] Предупреждение: не удалось подсчитать пакеты для установки", gui_log=True)
-    
-    # Показываем статистику
-    stats.display_statistics()
-    
-    return True
 
 class WineComponentsChecker(object):
 # ============================================================================
@@ -11879,13 +10775,10 @@ class ComponentStatusManager(object):
             component_id: ID компонента
             status: Новый статус ('pending', 'installing', 'removing', 'ok', 'error', 'missing')
         """
-        print(f"ComponentStatusManager.update_component_status() вызван: component_id={component_id}, status={status}", level='DEBUG')
         if component_id not in COMPONENTS_CONFIG:
-            print(f"ComponentStatusManager.update_component_status() компонент {component_id} не найден в COMPONENTS_CONFIG", level='WARNING')
             return
         
         component_name = get_component_field(component_id, 'name', 'Unknown')
-        print(f"ComponentStatusManager.update_component_status() component_name={component_name}", level='DEBUG')
         
         # Удаляем из всех списков состояний
         self.pending_install.discard(component_name)
@@ -11896,24 +10789,18 @@ class ComponentStatusManager(object):
         # Добавляем в соответствующий список
         if status == 'pending':
             self.pending_install.add(component_name)
-            print(f"ComponentStatusManager.update_component_status() добавлен в pending_install: {component_name}", level='DEBUG')
         elif status == 'installing':
             self.installing.add(component_name)
-            print(f"ComponentStatusManager.update_component_status() добавлен в installing: {component_name}", level='DEBUG')
         elif status == 'removing':
             self.removing.add(component_name)
-            print(f"ComponentStatusManager.update_component_status() добавлен в removing: {component_name}", level='DEBUG')
         elif status == 'error':
             # КРИТИЧНО: Статус 'error' сохраняется в отдельном списке
             # Это гарантирует, что статус 'error' отображается даже если компонент не установлен
             self.error_components.add(component_name)
-            print(f"ComponentStatusManager.update_component_status() добавлен в error_components: {component_name}", level='DEBUG')
         # КЭШ УБРАН - статусы 'ok' и 'missing' определяются через check_component_status()
         
         # Уведомляем GUI
-        print(f"ComponentStatusManager.update_component_status() вызываем callback для обновления GUI: UPDATE_COMPONENT:{component_id}", level='DEBUG')
         self._callback("UPDATE_COMPONENT:%s" % component_id)
-        print(f"ComponentStatusManager.update_component_status() callback вызван", level='DEBUG')
     
     def clear_all_states(self):
         """Очистка всех состояний установки/удаления"""
@@ -12554,7 +11441,6 @@ class ComponentInstaller(object):
         
         print(f"uninstall_components() начинаем цикл удаления компонентов", level='DEBUG')
         for idx, component_id in enumerate(resolved_components):
-            print(f"uninstall_components() обработка компонента {idx+1}/{len(resolved_components)}: {component_id}", level='DEBUG')
             
             # КРИТИЧНО: Если удаляется WINEPREFIX, пропускаем удаление дочерних компонентов
             if component_id in component_ids and component_id == 'wineprefix':
@@ -12767,7 +11653,7 @@ class TerminalRedirector:
 
 class AutomationGUI(object):
 # ============================================================================
-# GUI КЛАСС АВТОМАТИЗАЦИИ
+# КЛАСС АВТОМАТИЗАЦИИ GUI 
 # ============================================================================
     """GUI для мониторинга автоматизации установки Astra.IDE"""
     
@@ -14118,42 +13004,42 @@ class AutomationGUI(object):
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.main_frame, text=" Обновление ОС ")
-        self.main_tab_index = 0  # Сохраняем индекс вкладки
+        self.main_tab_index = 0
         
         # Вкладка Wine & Astra.IDE
         self.wine_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.wine_frame, text=" Установка Программ ")
-        self.wine_tab_index = 1  # Сохраняем индекс вкладки
+        self.wine_tab_index = 1
         
         # Терминальная вкладка
         self.terminal_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.terminal_frame, text=" Терминал ")
-        self.terminal_tab_index = 2  # Сохраняем индекс вкладки
+        self.terminal_tab_index = 2
         
         # Вкладка Мониторинг процессов
         self.processes_monitor_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.processes_monitor_frame, text=" Мониторинг ")
-        self.processes_monitor_tab_index = 3  # Сохраняем индекс вкладки
+        self.processes_monitor_tab_index = 3
         
         # Вкладка Пакеты
         self.packages_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.packages_frame, text=" Пакеты ")
-        self.packages_tab_index = 4  # Сохраняем индекс вкладки
+        self.packages_tab_index = 4
         
         # Вкладка Репозитории
         self.repos_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.repos_frame, text=" Репозитории ")
-        self.repos_tab_index = 5  # Сохраняем индекс вкладки
-        
-        # Вкладка О системе
-        self.system_info_frame = self.tk.Frame(self.notebook)
-        self.notebook.add(self.system_info_frame, text=" О системе ")
-        self.system_info_tab_index = 6  # Сохраняем индекс вкладки
+        self.repos_tab_index = 5
         
         # Вкладка Отслеживание файловой системы
         self.filesystem_monitor_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.filesystem_monitor_frame, text=" Файловая система ")
-        self.filesystem_monitor_tab_index = 7  # Сохраняем индекс вкладки
+        self.filesystem_monitor_tab_index = 6
+        
+        # Вкладка О системе
+        self.system_info_frame = self.tk.Frame(self.notebook)
+        self.notebook.add(self.system_info_frame, text=" О системе ")
+        self.system_info_tab_index = 7
         
         # Добавляем скроллбар для вкладки Информация о Системе
         self.system_info_scrollbar = self.tk.Scrollbar(self.system_info_frame, orient=self.tk.VERTICAL)
@@ -14177,11 +13063,11 @@ class AutomationGUI(object):
         # Создаем элементы вкладки Репозитории
         self.create_repos_tab()
         
-        # Создаем элементы вкладки Информация о Системе
-        self.create_system_info_tab()
-        
         # Создаем вкладку отслеживания файловой системы
         self.create_filesystem_monitor_tab()
+        
+        # Создаем элементы вкладки Информация о Системе
+        self.create_system_info_tab()
         
         # ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ПРОГРЕССА ВНИЗУ ФОРМЫ (ВИДНА ИЗ ВСЕХ ВКЛАДОК)
         # ========================================================================
@@ -22716,6 +21602,9 @@ class InteractiveHandler(object):
             return False
 
 class UniversalProgressManager:
+# ============================================================================
+# КЛАСС - УНИВЕРСАЛЬНЫЙ МЕНЕДЖЕР ПРОГРЕССА ДЛЯ ВСЕХ ПРОЦЕССОВ
+# ============================================================================
     """Универсальный менеджер прогресса для всех процессов проекта"""
     
     def __init__(self, universal_runner=None, gui_callback=None):
@@ -22810,6 +21699,9 @@ class UniversalProgressManager:
             pass
 
 class SystemUpdateParser:
+# ============================================================================
+# КЛАСС - УНИВЕРСАЛЬНЫЙ ПАРСЕР С ТАБЛИЦЕЙ ПАКЕТОВ
+# ============================================================================
     """ПАРСЕР С ТАБЛИЦЕЙ ПАКЕТОВ: ТОЧНЫЙ РАСЧЕТ ГЛОБАЛЬНОГО ПРОГРЕССА БЕЗ СКАЧКОВ"""
     
     def __init__(self, universal_manager=None, system_updater=None):
@@ -25354,7 +24246,6 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
     
     # Защита от повторного вызова
     if hasattr(run_gui_monitor, '_running'):
-        print(f"[DEBUG_RUN_GUI] run_gui_monitor() уже выполняется, пропускаем повторный вызов", level='DEBUG', gui_log=False)
         return False
     
     run_gui_monitor._running = True
@@ -25458,11 +24349,11 @@ def cleanup_temp_files(temp_dir):
         print("[OK] Временные файлы очищены")
     except Exception as e:
         print("[WARNING] Предупреждение: не удалось очистить временные файлы: %s" % str(e))
-# ============================================================================
-# КЛАССЫ МОНИТОРИНГА ДИРЕКТОРИЙ
-# ============================================================================
 
 class FilesystemFilter(object):
+# ============================================================================
+# КЛАСС ДЛЯ ФИЛЬТРАЦИИ ИЗМЕНЕНИЙ ФАЙЛОВОЙ СИСТЕМЫ
+# ============================================================================
     """Класс для фильтрации изменений файловой системы"""
     
     def __init__(self):
