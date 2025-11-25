@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.134 (2025.11.25)
+Версия: V2.6.135 (2025.11.25)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.134 (2025.11.25)"
+APP_VERSION = "V2.6.135 (2025.11.25)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -3007,11 +3007,8 @@ class WinePackageHandler(ComponentHandler):
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         
-        print(f"WinePackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
-        print(f"WinePackageHandler.uninstall() УСТАНАВЛИВАЕМ статус 'removing' для {component_id}", level='DEBUG')
         self._update_status(component_id, 'removing')
-        print(f"WinePackageHandler.uninstall() статус 'removing' установлен для {component_id}", level='DEBUG')
         
         # КРИТИЧНО: Добавляем задержку после установки статуса 'removing' для обновления GUI
         # Это гарантирует, что пользователь увидит статус 'removing' перед началом удаления
@@ -3036,35 +3033,22 @@ class WinePackageHandler(ComponentHandler):
         # Универсальная логика остановки процессов:
         # Для листовых элементов - останавливаем только свои процессы
         # Для родителей - рекурсивно собираем процессы всех дочек
-        print(f"Начало удаления компонента {component_id}", level='DEBUG')
-        print(f"Проверка типа компонента (листовой/родитель)...", level='DEBUG')
-        
         is_leaf = self._is_leaf_component(component_id)
-        print(f"Компонент {component_id} является листовым: {is_leaf}", level='DEBUG')
         
         if is_leaf:
             # ЛИСТОВОЙ ЭЛЕМЕНТ: останавливаем только свои процессы
             own_processes = get_component_field(component_id, 'processes_to_stop', [])
-            print(f"Собственные процессы компонента {component_id}: {own_processes}", level='DEBUG')
             if own_processes:
-                print(f"Остановка своих процессов (листовой элемент): {', '.join(own_processes)}", level='DEBUG')
                 processes_stopped = self._stop_processes(own_processes)
                 if not processes_stopped:
                     print(f"Не все процессы остановлены для {component_id}, продолжаем удаление", level='WARNING')
-            else:
-                print(f"У компонента {component_id} нет процессов для остановки", level='DEBUG')
         else:
             # РОДИТЕЛЬ: рекурсивно собираем процессы всех дочек
-            print(f"Сбор всех процессов для родительского компонента {component_id}...", level='DEBUG')
             all_processes = self._collect_all_processes_for_stop(component_id)
-            print(f"Собрано процессов для остановки: {sorted(all_processes)}", level='DEBUG')
             if all_processes:
-                print(f"Остановка всех процессов (родитель): {', '.join(sorted(all_processes))}", level='DEBUG')
                 processes_stopped = self._stop_processes(list(all_processes))
                 if not processes_stopped:
                     print(f"Не все процессы остановлены для {component_id}, продолжаем удаление", level='WARNING')
-            else:
-                print(f"У родительского компонента {component_id} и его дочек нет процессов для остановки", level='DEBUG')
         
         # Удаляем пакет через apt-get purge
         return_code = self._run_process(
@@ -3561,7 +3545,6 @@ class WineEnvironmentHandler(ComponentHandler):
     @track_class_activity('WineEnvironmentHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Очистка Wine окружения (удаление WINEPREFIX)"""
-        print(f"WineEnvironmentHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         print(f"Очистка Wine окружения: {config['name']}")
         
         # КРИТИЧНО: Устанавливаем статус 'removing' сразу, чтобы он отобразился в GUI
@@ -3792,9 +3775,6 @@ class WineEnvironmentHandler(ComponentHandler):
             wineprefix_path_abs = os.path.abspath(wineprefix_path)
             archive_path_abs = os.path.abspath(archive_path)
             
-            print(f"[DEBUG] Создание архива через системный tar с уровнем сжатия {compression_level}")
-            print(f"[DEBUG] Путь к wineprefix: {wineprefix_path_abs}")
-            print(f"[DEBUG] Путь к архиву: {archive_path_abs}")
             
             # Проверяем наличие tar
             if not shutil.which('tar'):
@@ -3844,7 +3824,6 @@ class WineEnvironmentHandler(ComponentHandler):
                 tar_cmd = ['tar', '-cf', archive_path_abs, '-C', wineprefix_path_abs, '.']
                 env = os.environ.copy()  # Не устанавливаем GZIP
                 initial_ratio = 1.05  # ~105% от исходного размера (без сжатия + метаданные tar)
-                print(f"[DEBUG] Команда tar (без сжатия): {' '.join(tar_cmd)}")
             else:
                 # Со сжатием
                 tar_cmd = ['tar', '-czf', archive_path_abs, '-C', wineprefix_path_abs, '.']
@@ -3852,10 +3831,7 @@ class WineEnvironmentHandler(ComponentHandler):
                 env['GZIP'] = f'-{compression_level}'
                 # Коэффициенты сжатия: от ~55% (уровень 1) до ~32% (уровень 9)
                 initial_ratio = 0.55 - (compression_level - 1) * 0.025
-                print(f"[DEBUG] Команда tar (со сжатием {compression_level}): {' '.join(tar_cmd)}")
-                print(f"[DEBUG] Команда: GZIP=-{compression_level} {' '.join(tar_cmd)}")
             
-            print(f"[DEBUG] Размер исходных файлов: {total_size / (1024**3):.2f} ГБ")
             
             process = subprocess.Popen(
                 tar_cmd,
@@ -3983,18 +3959,15 @@ class WineEnvironmentHandler(ComponentHandler):
                 return None
             
             # КРИТИЧЕСКИ ВАЖНО: Множественная синхронизация файловой системы
-            print(f"[DEBUG] Синхронизация файловой системы (первая попытка)...")
             try:
                 subprocess.run(['sync'], check=False, timeout=15)
             except Exception as e:
                 print(f"[WARNING] Ошибка первой синхронизации: {e}", level='WARNING')
             
             # Дополнительное ожидание для гарантии записи на диск
-            print(f"[DEBUG] Ожидание завершения записи на диск...")
             time.sleep(5)  # Увеличиваем задержку до 5 секунд
             
             # Вторая синхронизация
-            print(f"[DEBUG] Синхронизация файловой системы (вторая попытка)...")
             try:
                 subprocess.run(['sync'], check=False, timeout=15)
             except Exception as e:
@@ -4025,7 +3998,6 @@ class WineEnvironmentHandler(ComponentHandler):
                 except Exception as e:
                     print(f"[WARNING] Ошибка при проверке размера (попытка {attempt+1}): {e}", level='WARNING')
             
-            print(f"[DEBUG] Финальный размер созданного архива: {archive_size} байт ({archive_size / (1024**3):.2f} ГБ)")
             
             if archive_size == 0:
                 error_msg = f"Архив пустой"
@@ -4045,7 +4017,6 @@ class WineEnvironmentHandler(ComponentHandler):
                 return None
             
             # Проверяем целостность
-            print(f"[DEBUG] Проверка целостности архива...")
             file_count = 0  # Инициализируем для использования в дальнейшем
             try:
                 # Определяем команду проверки в зависимости от уровня сжатия
@@ -4065,7 +4036,6 @@ class WineEnvironmentHandler(ComponentHandler):
                         print(f"[ERROR] Детали: {stderr_text}", level='ERROR')
                     return None
                 file_count = len([line for line in test_result.stdout.decode('utf-8', errors='ignore').split('\n') if line.strip()])
-                print(f"[DEBUG] Архив содержит {file_count} элементов")
                 if file_count == 0:
                     error_msg = f"Архив пустой (не содержит файлов)"
                     print(f"[ERROR] {error_msg}", level='ERROR')
@@ -4077,11 +4047,9 @@ class WineEnvironmentHandler(ComponentHandler):
             except Exception as e:
                 print(f"[WARNING] Не удалось проверить целостность: {e}", level='WARNING')
             
-            # Дополнительная проверка: читаем заголовки всех файлов из архива
-            print(f"[DEBUG] Чтение заголовков файлов из архива для проверки...")
+            # Дополнительная проверка: проверяем целостность архива через tarfile
+            # tar.getmembers() уже проверяет целостность - если архив поврежден, выбросится исключение
             try:
-                files_read = 0
-                files_logged = 0
                 # Определяем режим открытия в зависимости от уровня сжатия
                 if compression_level == 0:
                     # Без сжатия - используем 'r' (без gzip)
@@ -4091,43 +4059,36 @@ class WineEnvironmentHandler(ComponentHandler):
                     tar_mode = 'r:gz'
                 
                 with tarfile.open(archive_path_abs, tar_mode) as tar:
+                    # tar.getmembers() проверяет целостность структуры архива
+                    # Если архив поврежден, выбросится tarfile.TarError
                     members = tar.getmembers()
                     total_members = len(members)
-                    print(f"[DEBUG] Всего элементов в архиве: {total_members}")
                     
-                    for member in members:
-                        if CANCEL_OPERATION:
-                            break
-                        
-                        files_read += 1
-                        
-                        # Выводим каждый сотый файл в лог
-                        if files_read % 100 == 0 or files_read == 1 or files_read == total_members:
-                            files_logged += 1
-                            member_type = "DIR" if member.isdir() else ("LINK" if member.issym() or member.islnk() else "FILE")
-                            size_info = f", размер: {member.size} байт" if member.isfile() else ""
-                            print(f"[DEBUG] Файл #{files_read}/{total_members}: {member.name} ({member_type}{size_info})")
-                        
-                        # Пробуем прочитать заголовок файла (для файлов)
-                        if member.isfile() and member.size > 0:
-                            try:
-                                # Читаем только метаданные, не содержимое
-                                tarinfo = tar.getmember(member.name)
-                                if tarinfo is None:
-                                    print(f"[WARNING] Не удалось получить информацию о файле: {member.name}", level='WARNING')
-                            except Exception as e:
-                                print(f"[WARNING] Ошибка при чтении заголовка файла {member.name}: {e}", level='WARNING')
+                    # Быстрый подсчет статистики без дополнительных операций
+                    files_count = sum(1 for m in members if m.isfile())
+                    dirs_count = sum(1 for m in members if m.isdir())
+                    links_count = sum(1 for m in members if m.issym() or m.islnk())
+                    total_size = sum(m.size for m in members if m.isfile())
+                    
+                    # Форматируем размер для вывода
+                    if total_size < 1024:
+                        size_str = f"{total_size} байт"
+                    elif total_size < 1024 * 1024:
+                        size_str = f"{total_size / 1024:.1f} КБ"
+                    elif total_size < 1024 * 1024 * 1024:
+                        size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+                    else:
+                        size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
+                    
                 
-                print(f"[DEBUG] Проверка завершена: прочитано {files_read} элементов, выведено в лог {files_logged} файлов")
+                # Обновляем file_count из проверки через tarfile
+                file_count = total_members
                 
-                # Обновляем file_count из проверки через tarfile (более точное значение)
-                if files_read > 0:
-                    file_count = files_read
-                
-                if files_read == 0:
+                if file_count == 0:
                     error_msg = f"Архив не содержит файлов"
                     print(f"[ERROR] {error_msg}", level='ERROR')
                     return None
+                
                 
             except tarfile.TarError as e:
                 error_msg = f"Ошибка чтения архива через tarfile: {e}"
@@ -4168,7 +4129,6 @@ class WineEnvironmentHandler(ComponentHandler):
             
             # КРИТИЧЕСКИ ВАЖНО: Проверяем и размонтируем архив, если он смонтирован через archivemount
             # Это необходимо, чтобы файл можно было переместить или скопировать
-            print(f"[DEBUG] Проверка монтирования архива через archivemount...")
             try:
                 # Проверяем через mount, смонтирован ли архив
                 mount_result = subprocess.run(['mount'], capture_output=True, text=True, timeout=5)
@@ -4179,15 +4139,11 @@ class WineEnvironmentHandler(ComponentHandler):
                             parts = line.split()
                             if len(parts) >= 3:
                                 mount_point = parts[2]  # Третье поле - точка монтирования
-                                print(f"[DEBUG] Найдена точка монтирования: {mount_point}")
-                                
                                 # Размонтируем архив
-                                print(f"[DEBUG] Размонтирование архива: {mount_point}")
                                 try:
                                     unmount_result = subprocess.run(['fusermount', '-u', mount_point], 
                                                                   capture_output=True, timeout=10)
                                     if unmount_result.returncode == 0:
-                                        print(f"[DEBUG] Архив успешно размонтирован")
                                         time.sleep(1)  # Даем время на размонтирование
                                     else:
                                         error_text = unmount_result.stderr.decode('utf-8', errors='ignore')
@@ -4196,7 +4152,6 @@ class WineEnvironmentHandler(ComponentHandler):
                                         try:
                                             subprocess.run(['fusermount', '-uz', mount_point], 
                                                           capture_output=True, timeout=10)
-                                            print(f"[DEBUG] Принудительное размонтирование выполнено")
                                             time.sleep(1)
                                         except:
                                             pass
@@ -4205,7 +4160,6 @@ class WineEnvironmentHandler(ComponentHandler):
                                     try:
                                         subprocess.run(['umount', mount_point], 
                                                       capture_output=True, timeout=10)
-                                        print(f"[DEBUG] Размонтирование через umount выполнено")
                                         time.sleep(1)
                                     except:
                                         pass
@@ -4215,10 +4169,8 @@ class WineEnvironmentHandler(ComponentHandler):
                 print(f"[DEBUG] Ошибка при проверке монтирования (не критично): {e}", level='DEBUG')
             
             # Финальная синхронизация после размонтирования
-            print(f"[DEBUG] Финальная синхронизация файловой системы...")
             try:
                 subprocess.run(['sync'], check=False, timeout=15)
-                print(f"[DEBUG] Файловая система полностью синхронизирована")
             except Exception as e:
                 print(f"[WARNING] Ошибка финальной синхронизации: {e}", level='WARNING')
             
@@ -4226,7 +4178,6 @@ class WineEnvironmentHandler(ComponentHandler):
             time.sleep(2)
             
             # Устанавливаем права пользователя ПОСЛЕ размонтирования (чтобы гарантировать успешную установку)
-            print(f"[DEBUG] Установка прав пользователя на архив...")
             try:
                 real_user = os.environ.get('SUDO_USER')
                 if os.geteuid() == 0 and real_user and real_user != 'root':
@@ -4240,7 +4191,6 @@ class WineEnvironmentHandler(ComponentHandler):
             except Exception as e:
                 print(f"Предупреждение: не удалось установить права: {e}", level='WARNING')
             
-            print(f"[DEBUG] Архив готов к использованию: {archive_path_abs}")
             
             return archive_path_abs
             
@@ -4517,15 +4467,11 @@ class WinetricksHandler(ComponentHandler):
     @track_class_activity('WinetricksHandler')
     def install(self, component_id: str, config: dict) -> bool:
         """Установка winetricks компонента"""
-        print(f"WinetricksHandler.install() вызван с component_id={component_id}, config={config}", level='DEBUG')
-        
         # КРИТИЧНО: Проверяем, установлен ли компонент ПЕРЕД установкой статуса
         if self.check_status(component_id, config):
-            print(f"Компонент {component_id} уже установлен, пропускаем установку", level='DEBUG')
             return True
         
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'installing'
-        print(f"WinetricksHandler.install() устанавливаем статус installing для {component_id}", level='DEBUG')
         self._update_status(component_id, 'installing')
         
         print(f"Установка winetricks компонента: {config['name']}")
@@ -4588,14 +4534,10 @@ class WinetricksHandler(ComponentHandler):
         try:
             # Получаем имя компонента winetricks из конфигурации через универсальную функцию
             winetricks_component = get_component_field(component_id, 'command_name')
-            print(f"WinetricksHandler.install() command_name из конфигурации: {winetricks_component}", level='DEBUG')
             
             # Если command_name не указан, используем component_id
             if not winetricks_component:
-                print(f"WinetricksHandler.install() command_name не указан, используем component_id: {component_id}", level='DEBUG')
                 winetricks_component = component_id
-            else:
-                print(f"WinetricksHandler.install() используем winetricks_component: {winetricks_component}", level='DEBUG')
             
             # Используем WinetricksManager (который учитывает use_minimal флаг)
             def status_callback(message):
@@ -4618,25 +4560,20 @@ class WinetricksHandler(ComponentHandler):
             # КРИТИЧНО: Winetricks НЕЛЬЗЯ запускать от root!
             # Определяем реального пользователя
             real_user = os.environ.get('SUDO_USER')
-            print(f"WinetricksHandler.install() реальный пользователь: {real_user}, euid={os.geteuid()}", level='DEBUG')
             
             # Если запущено от root - запускаем от имени пользователя
             if os.geteuid() == 0:
-                print(f"WinetricksHandler.install() запущено от root, проверяем пользователя", level='DEBUG')
                 if not real_user or real_user == 'root':
-                    print(f"WinetricksHandler.install() не удалось определить реального пользователя", level='DEBUG')
                     print("Не удалось определить реального пользователя для winetricks", level='ERROR')
                     print("winetricks не может запускаться от root!", level='ERROR')
                     self._update_status(component_id, 'error')
                     return False
                 
-                print(f"WinetricksHandler.install() запуск winetricks от пользователя: {real_user}", level='DEBUG')
                 print(f"Запуск winetricks установки от пользователя: {real_user}")
                 
                 # Для минимального winetricks - используем его напрямую, но от пользователя
                 # Для оригинального winetricks - формируем команду через su
                 if self.use_minimal:
-                    print(f"WinetricksHandler.install() используем MinimalWinetricks (use_minimal=True)", level='DEBUG')
                     # Для минимального winetricks вызываем его напрямую
                     # Но нужно убедиться что он работает от пользователя
                     # Используем WinetricksManager, но через su
@@ -4653,17 +4590,11 @@ class WinetricksHandler(ComponentHandler):
                             m = MinimalWinetricks(astrapack_dir='{self.astrapack_dir}'); \\
                             m.install_components(['{winetricks_component}'], wineprefix='$HOME/.wine-astraregul')"
                     """).strip()
-                    print(f"WinetricksHandler.install() команда для MinimalWinetricks: {cmd_string[:200]}...", level='DEBUG')
                     
                     # КРИТИЧНО: Обертываем команду в bash -c с правильным экранированием
                     # Это гарантирует корректное выполнение многострочной команды и мониторинг вывода
                     bash_cmd = f"bash -c {shlex.quote(cmd_string)}"
                     
-                    print(f"[DEBUG] WinetricksHandler.install() MinimalWinetricks - команда для выполнения:", level='DEBUG')
-                    print(f"[DEBUG]   cmd_string: {cmd_string}", level='DEBUG')
-                    print(f"[DEBUG]   bash_cmd: {bash_cmd}", level='DEBUG')
-                    print(f"[DEBUG]   Полная команда: su - {real_user} -c {shlex.quote(bash_cmd)}", level='DEBUG')
-                    print(f"WinetricksHandler.install() запускаем процесс через su - (login shell)", level='DEBUG')
                     return_code = self._run_process(
                         ['su', '-', real_user, '-c', bash_cmd],
                         process_type="install",
@@ -4671,7 +4602,6 @@ class WinetricksHandler(ComponentHandler):
                         timeout=600  # 10 минут максимум для установки
                     )
                     success = (return_code == 0)
-                    print(f"WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
                 else:
                     # Для оригинального winetricks используем bash-скрипт
                     # КРИТИЧНО: Получаем правильную домашнюю директорию пользователя
@@ -4686,9 +4616,6 @@ class WinetricksHandler(ComponentHandler):
                     
                     winetricks_path = os.path.join(user_home, '.cache', 'winetricks', 'winetricks')
                     winetricks_dir = os.path.dirname(winetricks_path)
-                    print(f"[DEBUG] WinetricksHandler.install() путь к winetricks: {winetricks_path}", level='DEBUG')
-                    print(f"[DEBUG] WinetricksHandler.install() директория winetricks: {winetricks_dir}", level='DEBUG')
-                    print(f"[DEBUG] WinetricksHandler.install() проверка существования: {os.path.exists(winetricks_path)}", level='DEBUG')
                     
                     # КРИТИЧНО: Как в оригинальном скрипте - переходим в директорию winetricks и запускаем ./winetricks
                     # Это важно, так как winetricks может искать файлы относительно своей директории
@@ -4726,17 +4653,10 @@ class WinetricksHandler(ComponentHandler):
                             except (KeyError, ImportError):
                                 pass
                         
-                        print(f"[DEBUG] WinetricksHandler.install() создан временный скрипт: {temp_script.name}", level='DEBUG')
-                        print(f"[DEBUG] WinetricksHandler.install() содержимое скрипта:", level='DEBUG')
-                        with open(temp_script.name, 'r') as f:
-                            script_content = f.read()
-                            print(f"[DEBUG] {script_content}", level='DEBUG')
-                        
                         # КРИТИЧНО: Диагностический запуск winetricks напрямую (без su -) для проверки реальной ошибки
                         # Это поможет увидеть ошибки, которые могут теряться при запуске через su
                         diagnostic_success = False
                         if os.geteuid() == 0 and real_user and real_user != 'root':
-                            print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: пробуем запустить winetricks напрямую от пользователя {real_user}", level='DEBUG')
                             try:
                                 # Запускаем winetricks напрямую через runuser (если доступен) или su без login shell
                                 test_cmd = f"export W_OPT_UNATTENDED=1 && cd {shlex.quote(winetricks_dir)} && ./winetricks -q -f {winetricks_component} 2>&1"
@@ -4746,21 +4666,18 @@ class WinetricksHandler(ComponentHandler):
                                     channels=["file", "terminal"],
                                     timeout=30  # Короткий таймаут для диагностики
                                 )
-                                print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: прямой запуск завершился с кодом: {test_result}", level='DEBUG')
                                 if test_result == 0:
-                                    print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: прямой запуск успешен!", level='DEBUG')
                                     diagnostic_success = True
                                     return_code = 0
                                     success = True
-                            except Exception as diag_e:
-                                print(f"[DEBUG] WinetricksHandler.install() ДИАГНОСТИКА: ошибка прямого запуска: {diag_e}", level='DEBUG')
+                            except Exception:
                                 # Продолжаем с обычным запуском через su -
+                                pass
                         
                         # Если диагностический запуск не удался, используем обычный способ
                         if not diagnostic_success:
                             # Запускаем скрипт через su
                             script_cmd = f"bash {temp_script.name}"
-                            print(f"[DEBUG] WinetricksHandler.install() запускаем через временный скрипт: su - {real_user} -c {shlex.quote(script_cmd)}", level='DEBUG')
                             
                             return_code = self._run_process(
                                 ['su', '-', real_user, '-c', script_cmd],
@@ -4769,19 +4686,10 @@ class WinetricksHandler(ComponentHandler):
                                 timeout=600  # 10 минут максимум для установки
                             )
                             success = (return_code == 0)
-                            print(f"[DEBUG] WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
                         
-                    except Exception as e:
-                        print(f"[DEBUG] WinetricksHandler.install() ошибка при создании временного скрипта: {e}", level='DEBUG')
-                        print(f"[DEBUG] WinetricksHandler.install() пробуем альтернативный вариант через bash -c", level='DEBUG')
-                        
+                    except Exception:
                         # Вариант 2: Через bash -c (fallback)
                         bash_cmd = f"bash -c {shlex.quote(cmd_string)}"
-                        print(f"[DEBUG] WinetricksHandler.install() Оригинальный winetricks - команда для выполнения:", level='DEBUG')
-                        print(f"[DEBUG]   cmd_string: {cmd_string}", level='DEBUG')
-                        print(f"[DEBUG]   bash_cmd: {bash_cmd}", level='DEBUG')
-                        print(f"[DEBUG]   Полная команда: su - {real_user} -c {shlex.quote(bash_cmd)}", level='DEBUG')
-                        print(f"WinetricksHandler.install() запускаем процесс через su - (login shell)", level='DEBUG')
                         
                         return_code = self._run_process(
                             ['su', '-', real_user, '-c', bash_cmd],
@@ -4790,15 +4698,13 @@ class WinetricksHandler(ComponentHandler):
                             timeout=600  # 10 минут максимум для установки
                         )
                         success = (return_code == 0)
-                        print(f"[DEBUG] WinetricksHandler.install() процесс завершился с кодом: {return_code}, success={success}", level='DEBUG')
                     finally:
                         # Удаляем временный скрипт
                         if temp_script and os.path.exists(temp_script.name):
                             try:
                                 os.unlink(temp_script.name)
-                                print(f"[DEBUG] WinetricksHandler.install() временный скрипт удален: {temp_script.name}", level='DEBUG')
-                            except Exception as e:
-                                print(f"[DEBUG] WinetricksHandler.install() ошибка удаления временного скрипта: {e}", level='DEBUG')
+                            except Exception:
+                                pass
             else:
                 # Уже не root - используем WinetricksManager напрямую
                 # WinetricksManager сам решает использовать минимальный или оригинальный winetricks
@@ -4808,11 +4714,9 @@ class WinetricksHandler(ComponentHandler):
                     callback=status_callback
                 )
             
-            print(f"WinetricksHandler.install() проверка результата: success={success}", level='DEBUG')
             if success:
                 # КРИТИЧНО: Проверяем реальный статус компонента перед сообщением об успехе
                 # Winetricks может вернуть код 0, но компонент не установится
-                print(f"WinetricksHandler.install() команда завершилась успешно, проверяем статус компонента", level='DEBUG')
                 os.sync()  # Принудительная синхронизация файловой системы
                 time.sleep(0.2)  # Небольшая задержка для завершения операций winetricks
                 
@@ -4827,22 +4731,18 @@ class WinetricksHandler(ComponentHandler):
                             command_name = config.get('command_name', component_id)
                             pattern = r'\b' + re.escape(command_name) + r'\b'
                             if re.search(pattern, log_content):
-                                print(f"[DEBUG] WinetricksHandler.install() компонент {component_id} ({command_name}) найден в winetricks.log", level='DEBUG')
                                 log_check_passed = True
-                    except Exception as e:
-                        print(f"[DEBUG] WinetricksHandler.install() ошибка чтения winetricks.log: {e}", level='DEBUG')
+                    except Exception:
+                        pass
                 
                 # Проверяем статус компонента через файлы (стандартная проверка)
                 actual_status = self.check_status(component_id, config)
-                print(f"WinetricksHandler.install() проверка статуса вернула: {actual_status}", level='DEBUG')
                 
                 # Если проверка лога прошла успешно, считаем установку успешной даже если файлы еще не появились
                 if log_check_passed:
                     actual_status = True
-                    print(f"[DEBUG] WinetricksHandler.install() установка подтверждена через winetricks.log", level='DEBUG')
                 
                 if actual_status:
-                    print(f"WinetricksHandler.install() компонент {component_id} установлен успешно", level='DEBUG')
                     print(f"Компонент {config['name']} успешно установлен через winetricks")
                     self._update_progress(
                         stage_name=f"Установка {config['name']}",
@@ -4851,30 +4751,23 @@ class WinetricksHandler(ComponentHandler):
                         details=f"{config['name']} установлен успешно"
                     )
                     # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'ok'
-                    print(f"WinetricksHandler.install() устанавливаем статус ok для {component_id}", level='DEBUG')
                     self._update_status(component_id, 'ok')
                     return True
                 else:
-                    print(f"WinetricksHandler.install() команда завершилась успешно, но компонент не установлен", level='DEBUG')
                     print(f"Команда winetricks завершилась успешно, но компонент {config['name']} не установлен", level='ERROR')
                     print(f"Проверка статуса компонента не подтвердила установку", level='ERROR')
                     # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
-                    print(f"WinetricksHandler.install() устанавливаем статус error для {component_id}", level='DEBUG')
                     self._update_status(component_id, 'error')
                     return False
             else:
-                print(f"WinetricksHandler.install() команда завершилась с ошибкой", level='DEBUG')
                 print(f"Установка компонента {config['name']}", level='ERROR')
                 # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
-                print(f"WinetricksHandler.install() устанавливаем статус error для {component_id}", level='DEBUG')
                 self._update_status(component_id, 'error')
                 return False
                     
         except Exception as e:
-            print(f"WinetricksHandler.install() ИСКЛЮЧЕНИЕ: {str(e)}", level='DEBUG')
             print(f"Установка компонента через winetricks: {str(e)}", level='ERROR')
             traceback.print_exc()
-            print(f"WinetricksHandler.install() устанавливаем статус error для {component_id}", level='DEBUG')
             self._update_status(component_id, 'error')
             return False
     
@@ -5138,7 +5031,6 @@ class AptPackageHandler(ComponentHandler):
     @track_class_activity('AptPackageHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление APT пакета"""
-        print(f"AptPackageHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         self._update_status(component_id, 'removing')
         
@@ -5301,7 +5193,6 @@ class WineApplicationHandler(ComponentHandler):
     @track_class_activity('WineApplicationHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление Wine приложения"""
-        print(f"WineApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         self._update_status(component_id, 'removing')
         
@@ -6466,7 +6357,6 @@ class ApplicationHandler(ComponentHandler):
     @track_class_activity('ApplicationHandler')
     def uninstall(self, component_id: str, config: dict) -> bool:
         """Удаление приложения"""
-        print(f"ApplicationHandler.uninstall() НАЧАЛО: component_id={component_id}, config={config.get('name', 'Unknown')}", level='DEBUG')
         # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'removing'
         self._update_status(component_id, 'removing')
         time.sleep(0.1)  # Минимальная задержка для обновления GUI
@@ -10827,11 +10717,8 @@ class ComponentStatusManager(object):
     
     def _callback(self, message):
         """Вызов callback функции"""
-        print(f"ComponentStatusManager._callback() вызван: message={message}", level='DEBUG')
         if self.callback:
-            print(f"ComponentStatusManager._callback() вызываем callback функцию", level='DEBUG')
             self.callback(message)
-            print(f"ComponentStatusManager._callback() callback функция вызвана", level='DEBUG')
         else:
             print(f"ComponentStatusManager._callback() callback функция отсутствует", level='WARNING')
     
@@ -12239,9 +12126,6 @@ class AutomationGUI(object):
         
         # Закрываем родительский терминал после полного запуска GUI
         # УБРАНО - теперь закрываем сразу при получении PID
-        
-        # Запускаем постоянный мониторинг CPU/NET
-        self.start_system_monitoring()
         
         # UniversalProcessRunner готов к работе
         
@@ -21957,10 +21841,11 @@ class UniversalProgressManager:
         # Автономный таймер для обновления CPU и сети каждую секунду
         self.cpu_net_timer_id = None
         
-        print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
-        
-        # Запускаем автономный таймер для CPU и сети
-        self._start_cpu_net_timer()
+        # Защита от повторной инициализации таймера
+        if self.cpu_net_timer_id is None:
+            print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
+            # Запускаем автономный таймер для CPU и сети
+            self._start_cpu_net_timer()
     
     def _get_gui_instance(self):
         """Получить экземпляр GUI"""
@@ -22029,16 +21914,6 @@ class UniversalProgressManager:
             elapsed_time = time.time() - self.start_time
         else:
             elapsed_time = 0
-        
-        # УПРАВЛЕНИЕ ДИСКОМ: Сброс при global_progress=0
-        if global_progress == 0:
-            try:
-                disk_usage = shutil.disk_usage('/')
-                self.initial_disk_space = disk_usage.used
-                print(f"[PROGRESS] Диск сброшен, начальное использование: {self.initial_disk_space / (1024**3):.2f} ГБ")
-            except Exception as e:
-                self.initial_disk_space = None
-                print(f"[WARNING] Не удалось получить начальное использование диска: {e}")
         
         # Вычисляем использование диска
         disk_used_mb = 0
@@ -22960,22 +22835,17 @@ class SystemUpdateParser:
         """Обновление статусной строки в GUI
         
         Args:
-            status_text: Текст для wine_stage_label (глобальный статус/этап). Если пустой - не обновляется
-            detail_text: Текст для detail_label (детали операций). Если пустой - не обновляется
+            status_text: НЕ ИСПОЛЬЗУЕТСЯ (wine_stage_label обновляется через UniversalProgressManager)
+            detail_text: Текст для detail_label (детали операций по пакетам). Если пустой - не обновляется
         """
         try:
-            # Обновляем через глобальный progress_manager
-            if status_text or detail_text:
-                progress_manager = get_global_progress_manager()
-                # Получаем текущий прогресс из менеджера
-                current_progress = getattr(progress_manager, 'global_progress', 0)
-                progress_manager.update_progress(
-                    process_type='system_update',
-                    stage_name=status_text if status_text else progress_manager.stage_name,
-                    stage_progress=current_progress,
-                    global_progress=current_progress,
-                    details=detail_text if detail_text else progress_manager.details
-                )
+            # ПРЯМОЕ ОБНОВЛЕНИЕ detail_label (зеленая строка под "Настройка:")
+            # Показывает информацию по каждому пакету: "Настройка: package_name" или "Настройка: package_name [████████░░░░░░░░░░░░] 40%"
+            if detail_text and hasattr(self, 'system_updater') and self.system_updater:
+                if hasattr(self.system_updater, 'gui_instance') and self.system_updater.gui_instance:
+                    gui = self.system_updater.gui_instance
+                    if hasattr(gui, 'detail_label'):
+                        gui.detail_label.config(text=detail_text)
         except Exception as e:
             pass  # Игнорируем ошибки обновления GUI
     
