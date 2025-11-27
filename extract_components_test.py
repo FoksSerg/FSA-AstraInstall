@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Версия: V2.6.135 (2025.11.13)
+# Версия: V2.6.136 (2025.11.27)
 """
 Тестовый скрипт для извлечения исходников компонентов из всех доступных источников
 Извлекает файлы из архивов, интернета и прямых путей для проверки работы системы
@@ -25,7 +25,6 @@ try:
 except ImportError as e:
     print(f"[ERROR] Не удалось импортировать модули: {e}")
     sys.exit(1)
-
 
 class TestComponentExtractor(ComponentHandler):
     """Класс для извлечения файлов компонентов из всех источников"""
@@ -216,7 +215,6 @@ class TestComponentExtractor(ComponentHandler):
             size_bytes /= 1024.0
         return f"{size_bytes:.2f} TB"
 
-
 def main():
     """Главная функция"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -231,7 +229,6 @@ def main():
     
     extractor = TestComponentExtractor(output_dir)
     extractor.extract_all_components()
-
 
 if __name__ == "__main__":
     main()

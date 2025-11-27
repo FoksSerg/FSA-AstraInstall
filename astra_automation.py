@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.135 (2025.11.25)
+Версия: V2.6.136 (2025.11.27)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.135 (2025.11.25)"
+APP_VERSION = "V2.6.136 (2025.11.27)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -3775,7 +3775,6 @@ class WineEnvironmentHandler(ComponentHandler):
             wineprefix_path_abs = os.path.abspath(wineprefix_path)
             archive_path_abs = os.path.abspath(archive_path)
             
-            
             # Проверяем наличие tar
             if not shutil.which('tar'):
                 error_msg = "Системный tar не найден"
@@ -3831,7 +3830,6 @@ class WineEnvironmentHandler(ComponentHandler):
                 env['GZIP'] = f'-{compression_level}'
                 # Коэффициенты сжатия: от ~55% (уровень 1) до ~32% (уровень 9)
                 initial_ratio = 0.55 - (compression_level - 1) * 0.025
-            
             
             process = subprocess.Popen(
                 tar_cmd,
@@ -3971,7 +3969,7 @@ class WineEnvironmentHandler(ComponentHandler):
             try:
                 subprocess.run(['sync'], check=False, timeout=15)
             except Exception as e:
-                print(f"[WARNING] Ошибка второй синхронизации: {e}", level='WARNING')
+                print(f"[WARNING] Ошибка второй синхронизации: {e}", level='WARNING')  # pyright: ignore[reportCallIssue]
             
             # Проверяем архив
             if not os.path.exists(archive_path_abs):
@@ -3997,7 +3995,6 @@ class WineEnvironmentHandler(ComponentHandler):
                     time.sleep(0.5)
                 except Exception as e:
                     print(f"[WARNING] Ошибка при проверке размера (попытка {attempt+1}): {e}", level='WARNING')
-            
             
             if archive_size == 0:
                 error_msg = f"Архив пустой"
@@ -4080,7 +4077,6 @@ class WineEnvironmentHandler(ComponentHandler):
                     else:
                         size_str = f"{total_size / (1024 * 1024 * 1024):.2f} ГБ"
                     
-                
                 # Обновляем file_count из проверки через tarfile
                 file_count = total_members
                 
@@ -4088,7 +4084,6 @@ class WineEnvironmentHandler(ComponentHandler):
                     error_msg = f"Архив не содержит файлов"
                     print(f"[ERROR] {error_msg}", level='ERROR')
                     return None
-                
                 
             except tarfile.TarError as e:
                 error_msg = f"Ошибка чтения архива через tarfile: {e}"
@@ -4190,7 +4185,6 @@ class WineEnvironmentHandler(ComponentHandler):
                     print(f"Установлен владелец архива на пользователя: {real_user}")
             except Exception as e:
                 print(f"Предупреждение: не удалось установить права: {e}", level='WARNING')
-            
             
             return archive_path_abs
             
@@ -11490,7 +11484,6 @@ class ComponentInstaller(object):
         # Получаем handler для вызова методов управления процессами
         handler = self._get_any_handler()
         
-        
         # НОВОЕ: Предварительный расчет весов компонентов для распределения прогресса
         print(f"[INFO] Расчет весов компонентов для распределения прогресса...")
         component_weights = self._calculate_component_weights(resolved_components)
@@ -11972,7 +11965,6 @@ class AutomationGUI(object):
         if not console_mode:
             if not self._install_gui_dependencies():
                 raise RuntimeError("Не удалось установить зависимости GUI")
-        
         
         # Сохраняем модули как атрибуты класса
         self.tk = tk
@@ -13495,7 +13487,6 @@ class AutomationGUI(object):
         # Запускаем фоновое обновление системных ресурсов
         # (включает периодическое обновление информации о системе)
         self.start_background_resource_update()
-        
         
     def create_main_tab(self):
         """Создание основной вкладки"""
@@ -18013,23 +18004,19 @@ class AutomationGUI(object):
         Args:
             component_id: ID компонента из COMPONENTS_CONFIG
         """
-        print(f"update_single_component_row() вызван: component_id={component_id}", level='DEBUG')
         # Проверяем, что таблица создана
         if not hasattr(self, 'wine_tree') or not self.wine_tree:
-            print(f"update_single_component_row() wine_tree не создан, пропускаем", level='WARNING')
             return
         
         # Находим item_id через словарь соответствия
         item_id = self.wine_tree_item_to_component_id.get(component_id)
         if not item_id:
             # Строка еще не создана (таблица не инициализирована) - игнорируем
-            print(f"update_single_component_row() item_id не найден для {component_id}, пропускаем", level='WARNING')
             return
         
         # Проверяем, что item_id существует в таблице
         if item_id not in self.wine_tree.get_children():
             # Строка была удалена (таблица перестроена) - игнорируем
-            print(f"update_single_component_row() item_id {item_id} не найден в таблице, пропускаем", level='WARNING')
             return
         
         # Получаем статус через ComponentStatusManager (учитывает pending/installing/removing)
@@ -19960,7 +19947,6 @@ class AutomationGUI(object):
         # Обновляем статус компонентов
         self._update_wine_status()
     
-    
     # ========================================================================
     # МЕТОДЫ ДЛЯ ВКЛАДКИ РЕПОЗИТОРИЕВ
     # ========================================================================
@@ -20455,7 +20441,6 @@ class AutomationGUI(object):
         
         self.root.update_idletasks()
         
-        
     def start_terminal_monitoring(self):
         """Запуск мониторинга системного вывода"""
         try:
@@ -20826,7 +20811,6 @@ class AutomationGUI(object):
             # обновляются напрямую через UniversalProgressManager._update_gui_directly()
             # Не обновляем их здесь, чтобы избежать конфликтов
             
-            
             if hasattr(self, 'detail_label'):
                 self.detail_label.config(text=progress_data['details'])
                 # Принудительно обновляем GUI только если открыта вкладка "Управление"
@@ -20858,11 +20842,10 @@ class AutomationGUI(object):
             # Обновляем статус
             if hasattr(self, 'status_label'):
                 self.status_label.config(text=f"Этап: {progress_data['stage_name']} ({progress_data['global_progress']:.1f}%)")
-            
-                
+        
         except Exception as e:
             print(f"[GUI_REAL_TIME] Ошибка обработки прогресса: {e}")
-    
+        
     def process_terminal_queue(self):
         """Обработка очереди специальных сообщений и обновление терминала из буферов"""
         try:
@@ -21420,7 +21403,6 @@ class AutomationGUI(object):
         elif "Запуск обновления системы" in line:
             self.update_status("Обновление системы...", "Обновление")
     
-    
     def _reset_detailed_bars(self):
         """Сброс детальных баров при запуске"""
         if hasattr(self, 'download_progress'):
@@ -21588,7 +21570,6 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[ERROR] Ошибка финального сообщения: {e}")
     
-            
     def run(self):
         """Запуск GUI"""
         # Защита от повторного выполнения finally блока
@@ -21662,8 +21643,7 @@ class InteractiveHandler(object):
     def get_auto_response(self, prompt_type):
         """Получение автоматического ответа для типа запроса"""
         return self.config.get_auto_response(prompt_type)
-    
-    
+        
     def run_command_with_interactive_handling(self, cmd, dry_run=False, gui_terminal=None):
         """Запуск команды с перехватом интерактивных запросов"""
         if dry_run:
@@ -23313,7 +23293,6 @@ class SystemUpdater(object):
         # Связываем парсер с менеджером прогресса
         self.universal_progress_manager.system_update_parser = self.system_update_parser
         
-        
         # Счетчики для расширенной статистики
         self.downloaded_packages = 0
         self.unpacked_packages = 0
@@ -24820,7 +24799,6 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         log_file = GLOBAL_LOG_FILE
         gui.main_log_file = log_file
         
-        
         # Передаем единый logger в GUI
         gui.universal_runner = get_global_universal_runner()
         
@@ -25811,7 +25789,6 @@ def main():
                     print("\n[OK] Репозитории настроены:")
                     print("   - Активных: %d" % stats['activated'])
                     print("   - Деактивированных: %d" % stats['deactivated'])
-                    
                     
                     print("\n" + "="*60)
                     print("[SUCCESS] Настройка репозиториев завершена")

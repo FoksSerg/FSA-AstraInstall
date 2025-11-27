@@ -3,12 +3,12 @@
 """
 Инструмент управления пакетами для FSA-AstraInstall
 GUI инструмент для формирования архивов и структуры компонентов
-Версия: V2.6.135 (2025.11.22)
+Версия: V2.6.136 (2025.11.27)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.135 (2025.11.22)"
+APP_VERSION = "V2.6.136 (2025.11.27)"
 
 import os
 import sys
@@ -72,7 +72,6 @@ def load_components_from_archives(astrapack_dir):
     
     return loaded_configs, archive_metadata
 
-
 def extract_config_from_archive(archive_path):
     """
     Извлечь конфигурацию из архива без полной распаковки
@@ -103,7 +102,6 @@ def extract_config_from_archive(archive_path):
     
     return None
 
-
 def find_archive_for_component(component_id, astrapack_dir):
     """
     Найти архив, содержащий конфигурацию указанного компонента
@@ -127,7 +125,6 @@ def find_archive_for_component(component_id, astrapack_dir):
                     return archive_path
     
     return None
-
 
 def load_components_from_filesystem(components_dir):
     """
@@ -188,7 +185,6 @@ def load_components_from_filesystem(components_dir):
             print(f"Ошибка загрузки компонента {item}: {e}")
     
     return components
-
 
 def load_bundles_from_filesystem(bundles_dir):
     """
@@ -253,7 +249,6 @@ def load_bundles_from_filesystem(bundles_dir):
     
     return bundles
 
-
 def build_file_tree(root_path, max_depth=10, current_depth=0):
     """
     Построить дерево файловой системы
@@ -308,7 +303,6 @@ def build_file_tree(root_path, max_depth=10, current_depth=0):
     
     return tree
 
-
 def auto_detect_wine_templates(components_config):
     """
     Автоматически обнаружить все шаблоны Wine приложений
@@ -338,7 +332,6 @@ def auto_detect_wine_templates(components_config):
     
     return templates, grouped_templates
 
-
 def get_all_wineprefixes(components_config):
     """
     Получить список всех доступных wineprefix из конфигураций
@@ -359,7 +352,6 @@ def get_all_wineprefixes(components_config):
                 wineprefixes.append(component_id)
     
     return wineprefixes
-
 
 def auto_create_wine_template_packages(components_config):
     """
@@ -434,7 +426,6 @@ def auto_create_wine_template_packages(components_config):
         print(f"Создан специализированный пакет: {package_id} ({len(group_templates)} шаблонов)")
     
     return created_packages
-
 
 # Импортируем COMPONENTS_CONFIG из основного скрипта
 # Приоритет: файловая структура > архивы > astra_automation.py
@@ -581,7 +572,6 @@ except Exception as package_error:
     import traceback
     traceback.print_exc()
 
-
 def get_component_field(component_id, field_name, default=None):
     """
     Получает значение поля компонента по ID
@@ -598,7 +588,6 @@ def get_component_field(component_id, field_name, default=None):
         return default
     return COMPONENTS_CONFIG[component_id].get(field_name, default)
 
-
 def get_component_data(component_id):
     """
     Получает всю конфигурацию компонента по ID
@@ -610,7 +599,6 @@ def get_component_data(component_id):
         dict: Конфигурация компонента или None
     """
     return COMPONENTS_CONFIG.get(component_id)
-
 
 # ============================================================================
 # ФУНКЦИИ ВОРКЕРА ДЛЯ СОЗДАНИЯ АРХИВОВ В ОТДЕЛЬНОМ ПРОЦЕССЕ
@@ -878,7 +866,6 @@ def archive_worker_main():
     
     success = archive_worker_create_archive(config_file, progress_file)
     sys.exit(0 if success else 1)
-
 
 class PackageManagerGUI:
     """GUI инструмент для управления пакетами"""
@@ -6291,7 +6278,6 @@ class PackageManagerGUI:
         """Запустить GUI"""
         self.root.mainloop()
 
-
 def main():
     """Главная функция"""
     try:
@@ -6301,7 +6287,6 @@ def main():
         messagebox.showerror("Критическая ошибка", f"Не удалось запустить приложение:\n{e}")
         import traceback
         traceback.print_exc()
-
 
 if __name__ == "__main__":
     # Проверяем, запущен ли в режиме воркера
