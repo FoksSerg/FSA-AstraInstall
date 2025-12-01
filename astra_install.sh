@@ -1,6 +1,6 @@
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.6.140 (2025.11.17)
+# Версия: V2.6.141 (2025.12.01)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -8,7 +8,7 @@
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.6.140 (2025.11.16)"
+SCRIPT_VERSION="V2.6.141 (2025.12.01)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -597,66 +597,72 @@ if [ "$CONSOLE_MODE" = false ]; then
     # Переменная для выбора режима
     START_MODE=""
     
-    # СНАЧАЛА настраиваем репозитории, если их нет
-    echo "   [?] Проверяем доступность репозиториев..."
-    if ! check_repos_available; then
-        echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
-        log_message "Нет рабочих репозиториев - настраиваем через Python"
+    # ✅ ОПТИМИЗАЦИЯ: СНАЧАЛА проверяем tkinter (быстро!)
+    # Если tkinter есть - сразу запускаем GUI, пропуская проверку репозиториев
+    echo "   [?] Быстрая проверка tkinter..."
+    if check_tkinter_available; then
+        echo "   [OK] tkinter найден и работает - БЫСТРЫЙ ЗАПУСК GUI!"
+        START_MODE="gui_ready"
+        log_message "БЫСТРЫЙ ЗАПУСК: tkinter доступен, пропускаем проверку репозиториев"
+        echo "   [i] Проверка репозиториев отложена - GUI проверит при необходимости"
         
-        echo "   [#] Настраиваем репозитории через Python..."
-        log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
+    else
+        # ❌ tkinter НЕТ - теперь нужны репозитории для его установки
+        echo "   [!] tkinter не найден - требуется установка"
+        log_message "tkinter недоступен - начинаем подготовку к установке"
         
-        ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
-        if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
-            log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
-            exit 1
-        fi
-        
-        $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
-        REPOS_EXIT_CODE=${PIPESTATUS[0]}
-        
-        if [ $REPOS_EXIT_CODE -eq 0 ]; then
-            echo "   [OK] Репозитории настроены успешно"
-            log_message "Репозитории настроены через Python"
+        # Теперь проверяем и настраиваем репозитории (они нужны для установки tkinter)
+        echo "   [?] Проверяем доступность репозиториев..."
+        if ! check_repos_available; then
+            echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
+            log_message "Нет рабочих репозиториев - настраиваем через Python"
             
-            # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
-            echo "   [#] Обновляем список пакетов после настройки репозиториев..."
-            log_message "Обновляем список пакетов после настройки репозиториев"
+            echo "   [#] Настраиваем репозитории через Python..."
+            log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
             
-            yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
-            UPDATE_EXIT_CODE=${PIPESTATUS[0]}
+            ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
+            if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
+                log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
+                exit 1
+            fi
             
-            if [ $UPDATE_EXIT_CODE -eq 0 ]; then
-                echo "   [OK] Список пакетов обновлен после настройки репозиториев"
-                log_message "Список пакетов обновлен успешно после настройки репозиториев"
+            $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
+            REPOS_EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ $REPOS_EXIT_CODE -eq 0 ]; then
+                echo "   [OK] Репозитории настроены успешно"
+                log_message "Репозитории настроены через Python"
+                
+                # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
+                echo "   [#] Обновляем список пакетов после настройки репозиториев..."
+                log_message "Обновляем список пакетов после настройки репозиториев"
+                
+                yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
+                UPDATE_EXIT_CODE=${PIPESTATUS[0]}
+                
+                if [ $UPDATE_EXIT_CODE -eq 0 ]; then
+                    echo "   [OK] Список пакетов обновлен после настройки репозиториев"
+                    log_message "Список пакетов обновлен успешно после настройки репозиториев"
+                else
+                    echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                    log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                    echo "   [i] Продолжаем работу - возможно список уже актуален"
+                    log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
+                fi
             else
-                echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                echo "   [i] Продолжаем работу - возможно список уже актуален"
-                log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
+                echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
+                log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
+                echo "   [i] Переключение на консольный режим"
+                log_message "Переключение на консольный режим из-за ошибки настройки репозиториев"
+                START_MODE="console_forced"
+                CONSOLE_MODE=true
             fi
         else
-            echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
-            log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
-            echo "   [i] Переключение на консольный режим"
-            log_message "Переключение на консольный режим из-за ошибки настройки репозиториев"
-            START_MODE="console_forced"
-            CONSOLE_MODE=true
+            echo "   [OK] Рабочие репозитории уже настроены"
         fi
-    else
-        echo "   [OK] Рабочие репозитории уже настроены"
-    fi
-    
-    # Теперь определяем режим на основе доступности tkinter
-    if [ -z "$START_MODE" ]; then  # Если режим еще не определен
-        echo "   [?] Проверяем доступность tkinter..."
-        if check_tkinter_available; then
-            echo "   [OK] tkinter найден и работает"
-            START_MODE="gui_ready"
-        else
-            echo "   [!] tkinter не найден"
-            log_message "tkinter недоступен - требуется установка"
-            
+        
+        # Если режим еще не определен (репозитории настроены успешно)
+        if [ -z "$START_MODE" ]; then
             # Проверяем есть ли пакет tkinter в репозиториях
             echo "   [?] Ищем пакет tkinter в репозиториях..."
             log_message "Поиск пакета tkinter в репозиториях"
@@ -786,21 +792,29 @@ if [ "$CONSOLE_MODE" = false ]; then
     fi
     
     # Финальная проверка перед запуском GUI
-    if [ "$START_MODE" = "gui_ready" ] || [ "$START_MODE" = "gui_install_first" ]; then
+    # ✅ ОПТИМИЗАЦИЯ: Проверяем ТОЛЬКО если мы только что устанавливали tkinter
+    if [ "$START_MODE" = "gui_install_first" ]; then
         echo ""
-        echo "[?] Финальная проверка перед запуском GUI..."
+        echo "[?] Финальная проверка после установки tkinter..."
         
         if ! check_tkinter_available; then
-            echo "   [ERROR] tkinter все еще недоступен!"
+            echo "   [ERROR] tkinter все еще недоступен после установки!"
             echo "   [i] Переключение на консольный режим"
             log_message "КРИТИЧЕСКАЯ ОШИБКА: tkinter недоступен после установки"
             START_MODE="console_forced"
             CONSOLE_MODE=true
         else
             echo "   [OK] tkinter работает - готовы к запуску GUI"
-            echo "   [i] CONSOLE_MODE установлен в: false"
+            echo "   [i] Режим изменен на: gui_ready"
+            START_MODE="gui_ready"
             CONSOLE_MODE=false
+            log_message "tkinter успешно установлен и проверен - режим изменен на gui_ready"
         fi
+    elif [ "$START_MODE" = "gui_ready" ]; then
+        # ✅ Пропускаем проверку - мы уже проверили tkinter в начале!
+        echo ""
+        echo "   [i] tkinter проверен ранее - готовы к запуску GUI"
+        CONSOLE_MODE=false
     fi
 fi
 
@@ -824,19 +838,76 @@ echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
 echo "   [i] START_MODE: $START_MODE"
 
 # Устанавливаем START_MODE для консольного режима
-# Если режим передан через аргумент --mode, используем его
-if [ -n "$START_MODE_ARG" ]; then
+# КРИТИЧНО: В консольном режиме START_MODE определяется ПОСЛЕ проверки репозиториев
+# Если режим передан через --mode, но это консольный режим - игнорируем и проверяем репозитории
+if [ "$CONSOLE_MODE" = true ]; then
+    # Консольный режим - START_MODE будет установлен ПОСЛЕ проверки репозиториев
+    # (проверка выполняется в блоке определения режима ниже)
+    log_message "Консольный режим - START_MODE будет определен после проверки репозиториев"
+elif [ -n "$START_MODE_ARG" ]; then
+    # GUI режим с переданным START_MODE - используем его
     START_MODE="$START_MODE_ARG"
-    log_message "Используем START_MODE из аргумента: $START_MODE"
-elif [ "$CONSOLE_MODE" = true ] && [ -z "$START_MODE" ]; then
-    # Если режим не передан, но включен консольный режим, устанавливаем по умолчанию
-    START_MODE="console_forced"
-    log_message "Установлен START_MODE=console_forced для консольного режима"
+    log_message "Используем START_MODE из аргумента (GUI режим): $START_MODE"
 fi
 
 if [ "$CONSOLE_MODE" = true ]; then
-    echo "[>] Консольный режим - обновление системы..."
+    echo "[>] Консольный режим - проверка системы и обновление..."
     log_message "Запускаем консольный режим"
+    
+    # КРИТИЧНО: Проверяем репозитории ПЕРЕД установкой START_MODE
+    echo ""
+    echo "[?] Проверяем доступность репозиториев..."
+    if ! check_repos_available; then
+        echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
+        log_message "Нет рабочих репозиториев - настраиваем через Python"
+        
+        echo "   [#] Настраиваем репозитории через Python..."
+        log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
+        
+        ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
+        if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
+            log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
+            exit 1
+        fi
+        
+        $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
+        REPOS_EXIT_CODE=${PIPESTATUS[0]}
+        
+        if [ $REPOS_EXIT_CODE -eq 0 ]; then
+            echo "   [OK] Репозитории настроены успешно"
+            log_message "Репозитории настроены через Python"
+            
+            # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
+            echo "   [#] Обновляем список пакетов после настройки репозиториев..."
+            log_message "Обновляем список пакетов после настройки репозиториев"
+            
+            yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
+            UPDATE_EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ $UPDATE_EXIT_CODE -eq 0 ] || [ $UPDATE_EXIT_CODE -eq 141 ]; then
+                echo "   [OK] Список пакетов обновлен после настройки репозиториев"
+                log_message "Список пакетов обновлен успешно после настройки репозиториев"
+            else
+                echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
+                echo "   [i] Продолжаем работу - возможно список уже актуален"
+                log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
+            fi
+        else
+            echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
+            log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
+            echo "   [!] КРИТИЧЕСКАЯ ОШИБКА: Невозможно настроить репозитории в консольном режиме"
+            log_message "КРИТИЧЕСКАЯ ОШИБКА: Невозможно настроить репозитории в консольном режиме"
+            exit 1
+        fi
+    else
+        echo "   [OK] Рабочие репозитории уже настроены"
+        log_message "Репозитории настроены, продолжаем работу"
+    fi
+    
+    # Теперь устанавливаем START_MODE для консольного режима
+    START_MODE="console_forced"
+    log_message "Установлен START_MODE=console_forced для консольного режима после проверки репозиториев"
     
     # Устанавливаем psutil для мониторинга системы в консольном режиме
     echo ""
@@ -854,7 +925,7 @@ if [ "$CONSOLE_MODE" = true ]; then
     
     echo ""
     echo "[*] Запуск Python скрипта в консольном режиме..."
-    log_message "Запускаем Python с флагом --console"
+    log_message "Запускаем Python с флагом --console и START_MODE=$START_MODE"
 else
     echo "[>] Запускаем графический интерфейс..."
 fi

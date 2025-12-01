@@ -1,7 +1,7 @@
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.6.140 (2025.11.17)
+# Версия: V2.6.141 (2025.12.01)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # Пути для Linux
@@ -1288,18 +1288,9 @@ if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
     INSTALL_CMD_ARGS+=("${INSTALL_ARGS[@]}")
 fi
 
-# Проверяем, передан ли --console, и добавляем --mode console_forced
-ADD_MODE=false
-for arg in "${INSTALL_ARGS[@]}"; do
-    if [[ "$arg" == "--console" ]]; then
-        ADD_MODE=true
-        break
-    fi
-done
-
-if [ "$ADD_MODE" = true ]; then
-    INSTALL_CMD_ARGS+=("--mode" "console_forced")
-fi
+# КРИТИЧНО: НЕ добавляем --mode console_forced автоматически!
+# Пусть astra_install.sh сам определяет режим на основе проверок системы
+# Это обеспечивает правильную работу проверки репозиториев и обновлений
 
 # Запускаем с правильными аргументами
 log_message "Запускаем: $ASTRA_INSTALL ${INSTALL_CMD_ARGS[*]}"

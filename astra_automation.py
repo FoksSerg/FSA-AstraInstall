@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.140 (2025.12.01)
+Версия: V2.6.141 (2025.12.01)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.140 (2025.12.01)"
+APP_VERSION = "V2.6.141 (2025.12.01)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -24825,10 +24825,95 @@ class SystemUpdater(object):
         except Exception as e:
             print(f"[ERROR] Ошибка сброса прогресс-баров: {e}")
     
+    def _check_network_repositories(self):
+        """
+        Проверка наличия сетевых (не-cdrom) репозиториев
+        
+        Returns:
+            bool: True если есть сетевые репозитории, False если только cdrom
+        """
+        try:
+            print("[CHECK] Проверка наличия сетевых репозиториев...")
+            
+            # Проверяем /etc/apt/sources.list
+            sources_list_path = '/etc/apt/sources.list'
+            has_network_repos = False
+            
+            if os.path.exists(sources_list_path):
+                with open(sources_list_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        # Пропускаем комментарии и пустые строки
+                        if not line or line.startswith('#'):
+                            continue
+                        # Ищем deb/deb-src строки которые НЕ cdrom
+                        if line.startswith('deb') and 'cdrom:' not in line:
+                            has_network_repos = True
+                            print(f"   [OK] Найден сетевой репозиторий: {line}")
+                            break
+            
+            # Проверяем /etc/apt/sources.list.d/*.list
+            sources_list_d = '/etc/apt/sources.list.d'
+            if not has_network_repos and os.path.exists(sources_list_d):
+                for filename in os.listdir(sources_list_d):
+                    if not filename.endswith('.list'):
+                        continue
+                    filepath = os.path.join(sources_list_d, filename)
+                    try:
+                        with open(filepath, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith('#'):
+                                    continue
+                                if line.startswith('deb') and 'cdrom:' not in line:
+                                    has_network_repos = True
+                                    print(f"   [OK] Найден сетевой репозиторий в {filename}: {line}")
+                                    break
+                        if has_network_repos:
+                            break
+                    except Exception as e:
+                        print(f"   [WARNING] Ошибка чтения {filename}: {e}")
+            
+            if has_network_repos:
+                print("   [OK] Сетевые репозитории настроены")
+                return True
+            else:
+                print("   [WARNING] Сетевые репозитории НЕ найдены - только cdrom или пусто")
+                return False
+                
+        except Exception as e:
+            print(f"[ERROR] Ошибка проверки репозиториев: {e}")
+            return False
+    
     @track_class_activity('SystemUpdater')
     def update_system(self, dry_run=False):
         """Обновление системы"""
         print("[PACKAGE] Обновление системы...")
+        
+        # КРИТИЧНО: Проверка сетевых репозиториев перед обновлением
+        print("\n[CHECK] Шаг 1/3: Проверка наличия сетевых репозиториев...")
+        if not self._check_network_repositories():
+            print("[ERROR] Нет сетевых репозиториев!")
+            print("[ERROR] Обновление системы невозможно без сетевых репозиториев")
+            print("[INFO] Пожалуйста, настройте сетевые репозитории и повторите попытку")
+            return False
+        
+        # КРИТИЧНО: Проверка наличия обновлений перед обновлением
+        print("\n[CHECK] Шаг 2/3: Проверка наличия доступных обновлений...")
+        update_check = self.check_system_update_needed()
+        
+        if update_check['needs_update'] is None:
+            print(f"[WARNING] {update_check['message']}")
+            print("[WARNING] Не удалось проверить наличие обновлений, но продолжаем обновление")
+        elif update_check['needs_update'] is False:
+            print("[INFO] Система уже актуальна - все пакеты обновлены")
+            print("[INFO] Пропускаем обновление системы - оно не требуется")
+            return True  # Возвращаем True - система актуальна
+        else:
+            print(f"[INFO] Обнаружено обновлений: {update_check['upgradable_count']}")
+            print("[INFO] Начинаем обновление системы...")
+        
+        print("\n[CHECK] Шаг 3/3: Начинаем процесс обновления системы...")
         
         # КРИТИЧНО: Сбрасываем состояние парсера перед новым запуском
         if hasattr(self, 'system_update_parser') and self.system_update_parser:
@@ -26569,7 +26654,7 @@ def main():
                     update_success = updater.update_system(dry_run)
             
                 # Устанавливаем компоненты после успешного обновления системы
-                components_install_success = True
+                components_install_success = False
                 if update_success:
                     print("\n[INSTALL] Определение отсутствующих компонентов...")
                     print("[INFO] Создание ComponentStatusManager и ComponentInstaller...", gui_log=True)
@@ -26677,6 +26762,21 @@ def main():
                         print(f"[ERROR] Ошибка при установке компонентов: {e}", gui_log=True)
                         traceback.print_exc()
                         components_install_success = False
+                
+                else:
+                    # Обновление системы не выполнено - пропускаем установку компонентов
+                    print("\n[ERROR] Обновление системы не выполнено!")
+                    print("[WARNING] Установка компонентов пропущена - требуется успешное обновление системы")
+                    print("[INFO] Проверьте следующее:")
+                    print("  1. Доступность сетевых репозиториев")
+                    print("  2. Корректность /etc/apt/sources.list")
+                    print("  3. Подключение к интернету")
+                    if 'GLOBAL_LOG_FILE' in globals():
+                        print("  4. Логи в файле: %s" % GLOBAL_LOG_FILE)
+                    else:
+                        print("  4. Логи в каталоге: logs/")
+                    print("\n[INFO] После исправления проблем повторите запуск: ./astra_install.sh --console")
+                    components_install_success = False
                 
                 # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
                 repo_success = True
