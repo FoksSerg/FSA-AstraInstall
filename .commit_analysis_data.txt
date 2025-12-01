@@ -1,0 +1,206 @@
+=== Файл: astra_automation.py ===
+Статистика:  1 file changed, 33 insertions(+), 415 deletions(-)
+Изменения:
+-        'dependencies': [],
++        'dependencies': ['astra_wine_9'],
+-    'astra_start_script': {
+-        'name': 'Скрипт запуска',
+-        'path': '~/start-astraide.sh',
+-        'category': 'application',
+-        'dependencies': ['astra_ide'],
+-        'check_paths': ['~/start-astraide.sh'],
+-        'install_method': 'script_creation',
+-        'uninstall_method': 'script_removal',
+-        'gui_selectable': True,
+-        'description': 'Скрипт для запуска Astra.IDE',
+-        'sort_order': 13
+-    },
+-        'name': 'Ярлык рабочего стола',
++        'name': 'Ярлык AstraRegul',
+-        'script_path': '~/start-astraide.sh',
+-        'script_args': '',
+-        'working_dir': None,
+-        'terminal': True,
++        'wineprefix_path': '~/.wine-astraregul',
++        'executable_path': 'drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe',
++        'wine_source': 'astrapack',
++        'terminal': False,
+-    
+-    # Wine пакеты системы
+-    'wine_9': {
+-        'name': 'Wine 9.0',
+-        'path': '/opt/wine-9.0/bin/wine',
+-        'category': 'wine_packages',
+-        'dependencies': [],
+-        'check_paths': ['/opt/wine-9.0/bin/wine'],
+-        'install_method': 'package_manager',
+-        'uninstall_method': 'package_manager',
+-        'gui_selectable': True,
+-        'description': 'Wine версии 9.0 для совместимости',
+-        'sort_order': 15,
+-        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+-        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine_9.0-1_amd64.deb',
+-        'package_name': 'wine-9.0',  # Имя пакета для apt/dpkg
+-        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+-        'source_fallback': True  # Использовать fallback на другие источники
+-    },
+-    'wine_astraregul': {
+-        'name': 'Wine Astraregul',
+-        'path': '/opt/wine-astraregul/bin/wine',
+-        'category': 'wine_packages',
+-        'dependencies': [],
+-        'check_paths': ['/opt/wine-astraregul/bin/wine'],
+-        'install_method': 'package_manager',
+-        'uninstall_method': 'package_manager',
+-        'gui_selectable': True,
+-        'description': 'Основной Wine пакет Astraregul',
+-        'sort_order': 16,
+-        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+-        'package_file': 'AstraPack/Wine/wine_packages.tar.gz/wine-astraregul_10.0-rc6-3_amd64.deb',
+-        'package_name': 'wine-astraregul',  # Имя пакета для apt/dpkg
+-        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+-        'source_fallback': True  # Использовать fallback на другие источники
+-    },
+-    
+-    # Winetricks инструмент
+-    'winetricks': {
+-        'name': 'Winetricks',
+-        'path': '~/.cache/winetricks/winetricks',
+-        'category': 'system_config',
+-        'dependencies': ['wineprefix'],
+-        'check_paths': ['~/.cache/winetricks/winetricks'],
+-        'install_method': 'winetricks_tool',
+-        'uninstall_method': 'winetricks_tool',
+-        'gui_selectable': True,
+-        'description': 'Инструмент Winetricks для установки Wine компонентов',
+-        'sort_order': 18,
+-        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
+-    },
+-    
+-    # Wine окружение
+-    'wineprefix': {
+-        'name': 'WINEPREFIX',
+-        'path': '~/.wine-astraregul',
+-        'category': 'wine_environment',
+-        'dependencies': ['wine_astraregul'],
+-        'check_method': 'wineprefix',
+-        'check_paths': ['~/.wine-astraregul'],
+-        'install_method': 'wine_init',
+-        'uninstall_method': 'wine_cleanup',
+-        'gui_selectable': True,
+-        'description': 'Wine префикс для Astra.IDE',
+-        'sort_order': 17,
+-        'processes_to_stop': ['wine', 'wineserver', 'wineboot'],
+-        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива winetricks в папке Winetricks
+-    },
+-    
+-    # Ярлыки на папки кэша Wine
+-    'wine_cache_shortcut': {
+-        'name': 'Wine Кэш',
+-        'shortcut_name': 'Wine Кэш',
+-        'path': 'Wine Кэш.desktop',
+-        'category': 'desktop_shortcut',
+-        'dependencies': ['wine_astraregul'],
+-        'check_paths': ['Wine Кэш.desktop'],
+-        'install_method': 'desktop_shortcut',
+-        'uninstall_method': 'desktop_shortcut',
+-        'desktop_entry_type': 'Link',
+-        'shortcut_type': 'folder',
+-        'folder_path': '~/.cache/wine',
+-        'comment': 'Ярлык для открытия папки кэша Wine',
+-        'gui_selectable': True,
+-        'description': 'Ярлык для открытия папки кэша Wine',
+-        'sort_order': 19
+-    },
+-    'winetricks_cache_shortcut': {
+-        'name': 'Winetricks Кэш',
+-        'shortcut_name': 'Winetricks Кэш',
+-        'path': 'Winetricks Кэш.desktop',
+-        'category': 'desktop_shortcut',
+-        'dependencies': ['wine_astraregul'],
+-        'check_paths': ['Winetricks Кэш.desktop'],
+-        'install_method': 'desktop_shortcut',
+-        'uninstall_method': 'desktop_shortcut',
+-        'desktop_entry_type': 'Link',
+-        'shortcut_type': 'folder',
+-        'folder_path': '~/.cache/winetricks',
+-        'comment': 'Ярлык для открытия папки кэша Winetricks',
+-        'gui_selectable': True,
+-        'description': 'Ярлык для открытия папки кэша Winetricks',
+-        'sort_order': 20
+-    },
+-    
+-    # Winetricks компоненты
+-    'wine_mono': {
+-        'name': 'Wine Mono',
+-        'command_name': 'mono',  # Имя для winetricks команды
+-        'path': 'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
+-        'category': 'winetricks',
+-        'dependencies': ['winetricks', 'wine_9'],
+-        'check_paths': [
+-            'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86.dll',
+-            'drive_c/windows/mono/mono-2.0/bin/libmono-2.0-x86_64.dll'
+-        ],
+-        'install_method': 'winetricks',
+-        'uninstall_method': 'winetricks',
+-        'gui_selectable': True,
+-        'description': 'Mono runtime для Wine',
+-        'sort_order': 21,
+-        # Параметры загрузки wine-mono из интернета (для удобства обновления версии)
+-        'download_url': 'https://dl.winehq.org/wine/wine-mono/8.1.0/wine-mono-8.1.0-x86.msi',
+-        'download_sha256': '0ed3ec533aef79b2f312155931cf7b1080009ac0c5b4c2bcfeb678ac948e0810',
+-        'download_filename': 'wine-mono-8.1.0-x86.msi',
+-        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+-        'source_fallback': True,  # Использовать fallback на другие источники
+-        'source_dir': 'Winetricks',  # Папка, где находится архив winetricks_packages.tar.gz
+-        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
+-    },
+-    'dotnet48': {
+-        'name': '.NET Framework 4.8',
+-        'command_name': 'dotnet48',  # Имя для winetricks команды
+-        'path': 'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
+-        'category': 'winetricks',
+-        'dependencies': ['winetricks', 'wine_9'],
+-        'check_paths': [
+-            'drive_c/windows/Microsoft.NET/Framework/v4.0.30319/mscorlib.dll',
+-            'drive_c/windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll'
+-        ],
+-        'install_method': 'winetricks',
+-        'uninstall_method': 'winetricks',
+-        'gui_selectable': True,
+-        'description': '.NET Framework 4.8',
+-        'sort_order': 22,
+-        # Параметры загрузки .NET Framework 4.8 из интернета (для удобства обновления версии)
+-        'download_url': 'https://download.visualstudio.microsoft.com/download/pr/7afca223-55d2-470a-8edc-6a1739ae3252/abd170b4b0ec15ad0222a809b761a036/ndp48-x86-x64-allos-enu.exe',
+-        'download_sha256': '95889d6de3f2070c07790ad6cf2000d33d9a1bdfc6a381725ab82ab1c314fd53',
+-        'download_filename': 'ndp48-x86-x64-allos-enu.exe',
+-        'source_priority': 'archive',  # Приоритет источника: 'archive', 'url', 'direct' или None
+-        'source_fallback': True,  # Использовать fallback на другие источники
+-        'source_dir': 'Winetricks',  # Папка, где находится архив winetricks_packages.tar.gz
+-        'winetricks_archive_name': 'winetricks_packages.tar.gz'  # Имя архива в папке Winetricks
+-    },
+-    'vcrun2013': {
+-        'name': 'Visual C++ 2013',
+-        'command_name': 'vcrun2013',  # Имя для winetricks команды
+-        'path': 'drive_c/windows/system32/msvcp120.dll',
+-        'category': 'winetricks',
+-        'dependencies': ['winetricks', 'wine_9'],
+-        'check_paths': [
+-            'drive_c/windows/system32/mfc120.dll',  # Основной файл, который проверяет winetricks
+-            'drive_c/windows/system32/msvcp120.dll',  # C++ runtime
+-            'drive_c/windows/system32/msvcr120.dll',  # C runtime
+-            'drive_c/windows/syswow64/msvcp120.dll',  # C++ runtime (64-bit)
+-            'drive_c/windows/syswow64/msvcr120.dll'  # C runtime (64-bit)
+-        ],
+-        'install_method': 'winetricks',
+-        'uninstall_method': 'winetricks',
+-        'gui_selectable': True,
+-        'description': 'Visual C++ 2013 Redistributable',
+-        'sort_order': 23,
+-        # Параметры загрузки Visual C++ 2013 из интернета (для удобства обновления версии)
+-        'download_url_x86': 'https://download.microsoft.com/download/0/5/6/056dcda9-d667-4e27-8001-8a0c6971d6b1/vcredist_x86.exe',
+-        'download_sha256_x86': '89f4e593ea5541d1c53f983923124f9fd061a1c0c967339109e375c661573c17',
+-        'download_filename_x86': 'vcredist_x86.exe',
+
+---
+
