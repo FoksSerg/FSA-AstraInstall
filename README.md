@@ -1,9 +1,16 @@
-# FSA-AstraInstall Automation V2.6.139 (2025.11.13)
+# FSA-AstraInstall Automation V2.6.140 (2025.12.01)
 **Компания: ООО "НПА Вира-Реалтайм"**
 
 ## Описание проекта
 
 Автоматизированная система для обновления Linux систем (различных дистрибутивов) с установкой Wine и прочих компонентов в автоматическом режиме с возможностью проведения переустановки/удаления в процессе эксплуатации системы.
+
+**Текущая версия:** V2.6.140 (коммит #139)  
+**Архитектура:** UniversalProcessRunner v2.0.0  
+**Размер основного файла:** 1.4MB (26,757 строк)  
+**Классов:** 33  
+**Основной скрипт:** 995 строк  
+**GUI менеджер пакетов:** 6,298 строк
 
 ### Основная задача
 
@@ -20,21 +27,58 @@
 
 ### Основные возможности
 
-#### 🏗️ Архитектура системы
+#### 🏗️ Архитектура системы (33 класса)
+
+**Архитектурные классы (3):**
 - **UniversalProcessRunner** - универсальный обработчик процессов для перенаправления всех коммуникационных действий в проекте
-- **ComponentInstaller** - координатор установки/удаления компонентов
+- **DualStreamLogger** - управление двумя потоками логирования (analysis и raw)
+- **TerminalRedirector** - перенаправление sys.stdout/stderr
+
+**Базовые классы и обработчики компонентов (10):**
+- **ActivityTracker** - отслеживание активности классов
+- **ComponentHandler** (ABC) - базовый класс для обработчиков компонентов
+- **WinePackageHandler** - Wine пакеты (wine_astraregul, wine_9)
+- **SystemConfigHandler** - системные настройки (ptrace_scope)
+- **WineEnvironmentHandler** - Wine окружение (WINEPREFIX)
+- **WinetricksHandler** - winetricks компоненты (dotnet48, vcrun2013, vcrun2022, и т.д.)
+- **AptPackageHandler** - APT пакеты Linux (wine_system)
+- **WineApplicationHandler** - Wine приложения Windows (notepad++, winrar)
+- **ApplicationHandler** - приложения (Astra.IDE, CONT-Designer)
+- **DesktopShortcutHandler** - ярлыки рабочего стола
+
+**Классы управления и мониторинга (7):**
 - **ComponentStatusManager** - менеджер статусов компонентов
-- **SystemUpdater** - класс для обновления Linux пакетов
-- **Обработчики компонентов** - специализированные обработчики для разных типов компонентов:
-  - `WinePackageHandler` - Wine пакеты (wine_astraregul, wine_9)
-  - `SystemConfigHandler` - системные настройки (ptrace_scope)
-  - `WineEnvironmentHandler` - Wine окружение (WINEPREFIX)
-  - `WinetricksHandler` - winetricks компоненты (dotnet48, vcrun2013, и т.д.)
-  - `AptPackageHandler` - APT пакеты Linux (gimp, vlc, libreoffice)
-  - `WineApplicationHandler` - Wine приложения Windows (notepad++, winrar)
-  - `ApplicationHandler` - приложения (Astra.IDE, скрипты)
-  - `DesktopShortcutHandler` - ярлыки рабочего стола
-- **Единый лог-файл** - все операции записываются в один файл через DualStreamLogger
+- **ComponentInstaller** - координатор установки/удаления компонентов
+- **SystemUpdater** - обновление Linux пакетов
+- **SystemUpdateParser** - парсер обновлений системы
+- **UniversalProgressManager** - универсальный менеджер прогресса
+- **ProcessMonitor** - мониторинг процессов приложения
+- **InstallationMonitor** - мониторинг установки
+
+**Классы проверки и валидации (4):**
+- **WineComponentsChecker** - проверка Wine компонентов
+- **RepoChecker** - проверка репозиториев
+- **DirectoryMonitor** - мониторинг изменений в директории
+- **DirectorySnapshot** - снимок состояния директории
+
+**Классы работы с Wine (2):**
+- **WinetricksManager** - управление winetricks
+- **WineApplicationInstanceManager** - менеджер экземпляров Wine приложений
+
+**Классы GUI и интерфейса (3):**
+- **AutomationGUI** - графический интерфейс (7 вкладок)
+- **ToolTip** - всплывающие подсказки
+- **InteractiveConfig** - конфигурация интерактивных запросов
+
+**Классы обработки интерактивных запросов (2):**
+- **InteractiveHandler** - обработка интерактивных запросов
+- **LogReplaySimulator** - симулятор воспроизведения логов
+
+**Вспомогательные классы (2):**
+- **SystemStats** - анализ статистики системы
+- **FilesystemFilter** - фильтр файловой системы
+
+**Единый лог-файл** - все операции записываются в один файл через DualStreamLogger
 
 #### 🎮 Улучшенный GUI
 - **Прогресс-бар** - отображение прогресса загрузки пакетов в реальном времени
@@ -143,16 +187,44 @@
 - Права root для установки пакетов
 - Доступ к репозиториям системы
 
+## 📚 Подробное описание классов (33 класса)
+
+### 1. Архитектурные классы (3)
+**UniversalProcessRunner** (строка ~8507), **DualStreamLogger** (строка ~7726), **TerminalRedirector** (строка ~12216)
+
+### 2. Базовые классы и обработчики компонентов (10)
+**ActivityTracker** (строка ~1627), **ComponentHandler (ABC)** (строка ~1830), **WinePackageHandler** (строка ~3149), **SystemConfigHandler** (строка ~3656), **WineEnvironmentHandler** (строка ~3880), **WinetricksHandler** (строка ~4728), **AptPackageHandler** (строка ~5298), **WineApplicationHandler** (строка ~5490), **ApplicationHandler** (строка ~6699), **DesktopShortcutHandler** (строка ~7304)
+
+### 3. Классы управления и мониторинга (7)
+**ComponentStatusManager** (строка ~10860), **ComponentInstaller** (строка ~11194), **SystemUpdater** (строка ~23471), **SystemUpdateParser** (строка ~22492), **UniversalProgressManager** (строка ~22027), **ProcessMonitor** (строка ~10143), **InstallationMonitor** (строка ~10239)
+
+### 4. Классы проверки и валидации (4)
+**WineComponentsChecker** (строка ~9729), **RepoChecker** (строка ~9297), **DirectoryMonitor** (строка ~25442), **DirectorySnapshot** (строка ~25222)
+
+### 5. Классы работы с Wine (2)
+**WinetricksManager** (строка ~10484), **WineApplicationInstanceManager** (строка ~1705)
+
+### 6. Классы GUI и интерфейса (3)
+**AutomationGUI** (строка ~12247), **ToolTip** (строка ~12127), **InteractiveConfig** (строка ~8437)
+
+### 7. Классы обработки интерактивных запросов (2)
+**InteractiveHandler** (строка ~21883), **LogReplaySimulator** (строка ~8208)
+
+### 8. Вспомогательные классы (2)
+**SystemStats** (строка ~9538), **FilesystemFilter** (строка ~25144)
+
+Подробная информация о каждом классе доступна в файле PROJECT_ANALYSIS.md
+
 ### Структура проекта
 
 ```
 FSA-AstraInstall/
 ├── README.md                    # Документация проекта
-├── astra_install.sh             # 🚀 ГЛАВНЫЙ СКРИПТ - запустите его!
-├── astra_automation.py          # Единый файл с GUI и всей автоматизацией
-├── test_complete.py             # Тесты синтаксиса и компиляции (для разработчика)
-└── original_scripts/            # Оригинальные bash скрипты (для будущей интеграции)
-    ├── astra-setup.sh          # Основной скрипт установки
+├── PROJECT_ANALYSIS.md          # Подробный анализ классов и модулей
+├── astra_install.sh             # 🚀 ГЛАВНЫЙ СКРИПТ - запустите его! (995 строк)
+├── astra_automation.py          # Единый файл с GUI и автоматизацией (26,757 строк)
+├── package_manager_gui.py       # GUI менеджер пакетов (6,298 строк)
+└── original_scripts/            # Оригинальные bash скрипты
     ├── install-astraregul.sh   # Установка Astra.IDE
     ├── install-wine.sh         # Установка Wine
     ├── install.sh              # Общий скрипт установки
