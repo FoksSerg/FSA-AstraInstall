@@ -4,7 +4,7 @@
 Скрипт сборки бинарных файлов для Linux
 Работает только на macOS, собирает через Docker
 На Linux нужен только один файл - он подтянет остальное из источников
-Версия: V2.6.141 (2025.11.16)
+Версия: V2.7.142 (2025.11.16)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
@@ -403,8 +403,8 @@ def build_in_docker():
             print(e.stderr)
         return False
     
-    # Проверяем что объединенный файл создан
-    unified_file = BUILD_DIR / "FSA-AstraInstall_unified.py"
+    # Проверяем что объединенный файл создан (в корне проекта)
+    unified_file = SCRIPT_DIR / "FSA-AstraInstall.py"
     if not unified_file.exists():
         print_error(f"Объединенный файл не создан: {unified_file}")
         return False
@@ -412,19 +412,26 @@ def build_in_docker():
     print_success(f"Объединенный файл готов: {unified_file}")
     
     # Dockerfile для сборки
-    dockerfile_content = '''FROM python:3.9-slim
+    # ВАЖНО: Используем bullseye (Debian 11, GLIBC 2.31) для совместимости с Astra Linux
+    # Включаем tkinter и все GUI зависимости для полноценной работы
+    dockerfile_content = '''FROM python:3.9-bullseye
 
-# Устанавливаем инструменты сборки
+# Устанавливаем ВСЕ необходимые пакеты включая GUI
 RUN apt-get update && apt-get install -y \\
     gcc \\
     make \\
     wget \\
     autoconf \\
     binutils \\
+    python3-tk \\
+    tk-dev \\
+    tcl-dev \\
+    libx11-dev \\
+    libxft-dev \\
+    libxss-dev \\
     && rm -rf /var/lib/apt/lists/*
 
-# Компилируем shc из исходников (shc нет в репозиториях Debian)
-# Используем оригинальный репозиторий shc
+# Компилируем shc из исходников
 RUN cd /tmp && \\
     wget -q https://github.com/neurobin/shc/archive/refs/tags/4.0.3.tar.gz -O shc.tar.gz && \\
     tar -xzf shc.tar.gz && \\
@@ -441,6 +448,9 @@ RUN cd /tmp && \\
 
 # Устанавливаем PyInstaller
 RUN pip install pyinstaller
+
+# Проверяем что tkinter работает
+RUN python3 -c "import tkinter; print('tkinter OK')"
 
 WORKDIR /build
 
@@ -485,22 +495,29 @@ Log/
             print_error("Не удалось подключиться к Docker daemon")
             return False
     
-    # Собираем образ
+    # Проверяем существует ли образ
     image_name = "fsa-astrainstall-builder"
-    print_step("Сборка Docker образа (это может занять время)...")
-    try:
-        run_command([
-            "docker", "build",
-            "--platform", "linux/amd64",
-            "--no-cache",
-            "-f", str(dockerfile_path),
-            "-t", image_name,
-            str(SCRIPT_DIR)
-        ])
-        print_success("Docker образ собран")
-    except:
-        print_error("Не удалось собрать Docker образ")
-        return False
+    result = subprocess.run(
+        ["docker", "images", "-q", image_name],
+        capture_output=True, text=True
+    )
+    
+    if result.stdout.strip():
+        print_success(f"Docker образ {image_name} уже существует, используем его")
+    else:
+        print_step("Сборка Docker образа (это может занять время)...")
+        try:
+            run_command([
+                "docker", "build",
+                "--platform", "linux/amd64",
+                "-f", str(dockerfile_path),
+                "-t", image_name,
+                str(SCRIPT_DIR)
+            ])
+            print_success("Docker образ собран")
+        except:
+            print_error("Не удалось собрать Docker образ")
+            return False
     
     # КРИТИЧНО: Принудительно исправляем файл перед сборкой
     print_step("Проверка и исправление объединенного файла...")
@@ -556,7 +573,7 @@ Log/
 import sys
 from pathlib import Path
 
-f = Path('build/FSA-AstraInstall_unified.py')
+f = Path('FSA-AstraInstall.py')
 if f.exists():
     with open(f, 'r', encoding='utf-8') as file:
         lines = [l.rstrip('\\n\\r') for l in file.readlines()]
@@ -601,25 +618,38 @@ export PATH="/usr/local/bin:$PATH"
 cd /build
 mkdir -p bin build
 
+# Проверяем tkinter
+echo "[#] Проверка tkinter..."
+python3 -c "import tkinter; print('[OK] tkinter доступен')"
+
 # КРИТИЧНО: Сначала исправляем __future__ импорты в объединенном файле
 echo "[#] Исправление __future__ импортов (ПЕРВЫМ ДЕЛОМ)..." >&2
 python3 /build/build/fix_future_imports.py
 
-# Компилируем объединенный файл FSA-AstraInstall_unified.py в FSA-AstraInstall
-echo "[#] Компиляция FSA-AstraInstall_unified.py в FSA-AstraInstall..."
+# Компилируем объединенный файл в FSA-AstraInstall (в корень)
+# --collect-all tkinter - включаем все файлы tkinter
+# --hidden-import - явно указываем скрытые импорты
+echo "[#] Компиляция FSA-AstraInstall.py в FSA-AstraInstall (с GUI)..."
 pyinstaller --onefile --console \\
     --name FSA-AstraInstall \\
-    --distpath bin \\
+    --distpath . \\
     --workpath build \\
     --specpath build \\
     --clean \\
-    build/FSA-AstraInstall_unified.py
+    --collect-all tkinter \\
+    --hidden-import tkinter \\
+    --hidden-import tkinter.ttk \\
+    --hidden-import tkinter.messagebox \\
+    --hidden-import tkinter.filedialog \\
+    --hidden-import tkinter.scrolledtext \\
+    --hidden-import _tkinter \\
+    FSA-AstraInstall.py
 
 # Устанавливаем права на выполнение
-chmod +x bin/FSA-AstraInstall 2>/dev/null || true
+chmod +x FSA-AstraInstall 2>/dev/null || true
 
 echo "[OK] Сборка завершена"
-echo "[OK] Создан файл: bin/FSA-AstraInstall"
+echo "[OK] Создан файл: FSA-AstraInstall"
 '''
         
         with open(build_script_path, 'w') as f:
@@ -643,10 +673,10 @@ echo "[OK] Создан файл: bin/FSA-AstraInstall"
             print_info("Проверьте логи контейнера: docker logs fsa-builder-temp")
             raise
         
-        # Копируем результаты
+        # Копируем результаты (бинарник в корень проекта)
         print_step("Копирование результатов...")
         result = subprocess.run([
-            "docker", "cp", f"{container_name}:/build/bin/.", str(BIN_DIR)
+            "docker", "cp", f"{container_name}:/build/FSA-AstraInstall", str(SCRIPT_DIR / "FSA-AstraInstall")
         ], capture_output=True, text=True)
         
         if result.returncode == 0:
@@ -711,14 +741,20 @@ def main():
         print("\n" + "=" * 60)
         print("=== Сборка завершена успешно ===")
         print("=" * 60)
-        print(f"\nБинарные файлы для Linux: {BIN_DIR}")
-        print("\nФайлы:")
-        for file in sorted(BIN_DIR.glob("astra_*")):
-            if file.is_file():
-                size = file.stat().st_size / (1024 * 1024)
-                print(f"  {file.name:30} {size:8.2f} MB")
         
-        print("\n[OK] Готово! На Linux эти файлы подтянут остальное из источников.")
+        # Показываем созданные файлы
+        binary_file = SCRIPT_DIR / "FSA-AstraInstall"
+        python_file = SCRIPT_DIR / "FSA-AstraInstall.py"
+        
+        print("\nСозданные файлы:")
+        if binary_file.exists():
+            size = binary_file.stat().st_size / (1024 * 1024)
+            print(f"  FSA-AstraInstall      (бинарник)  {size:8.2f} MB")
+        if python_file.exists():
+            size = python_file.stat().st_size / (1024 * 1024)
+            print(f"  FSA-AstraInstall.py   (Python)    {size:8.2f} MB")
+        
+        print("\n[OK] Готово! Файлы готовы для копирования на Linux.")
         return 0
         
     except KeyboardInterrupt:

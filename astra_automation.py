@@ -6,12 +6,12 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.141 (2025.12.01)
+Версия: V2.7.142 (2025.12.01)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.141 (2025.12.01)"
+APP_VERSION = "V2.7.142 (2025.12.01)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -12842,22 +12842,17 @@ class AutomationGUI(object):
     def _install_gui_dependencies(self):
         """Установка зависимостей для GUI"""
         try:
-            # Проверяем наличие pystray и Pillow для Linux трея
+            # ОТКЛЮЧЕНО: Автоустановка pystray и Pillow отключена для экономии ресурсов
+            # Системный трей не критичен для работы приложения
+            # Если нужен трей - установите вручную: pip install pystray Pillow
             if platform.system() == "Linux":
                 try:
-                    # Динамический импорт для избежания предупреждений линтера
                     pystray = __import__('pystray')
                     from PIL import Image
                     print("[INFO] pystray и Pillow уже установлены", level='DEBUG')
                 except ImportError:
-                    print("[INFO] Устанавливаем pystray и Pillow для системного трея...")
-                    try:
-                        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pystray', 'Pillow'], 
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        print("[OK] pystray и Pillow успешно установлены")
-                    except Exception as e:
-                        print(f"[WARNING] Не удалось установить pystray и Pillow: {e}", level='WARNING')
-                        print("[INFO] Функция сворачивания в трей будет недоступна", level='INFO')
+                    # НЕ устанавливаем автоматически - просто информируем
+                    print("[INFO] pystray/Pillow не установлены - трей недоступен", level='DEBUG')
             return True
         except ImportError as e:
             print(f"[WARNING] tkinter не найден: {e}")
@@ -26424,6 +26419,7 @@ def main():
         arg = sys.argv[i]
         if arg == '--console':
             console_mode = True
+            start_mode = "console_forced"  # Автоматически устанавливаем режим для бинарника
             print("[INFO] Включен консольный режим", gui_log=True)
         elif arg == '--dry-run':
             dry_run = True
