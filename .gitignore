@@ -124,6 +124,8 @@ Thumbs.db
 
 # Commit message files
 commit_message.txt
+.commit_analysis_data.txt
+.commit_vars.sh
 
 # Installation packages and files
 AstraPack/
