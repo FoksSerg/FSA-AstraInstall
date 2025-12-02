@@ -4,7 +4,7 @@
 Скрипт сборки бинарных файлов для Linux
 Работает только на macOS, собирает через Docker
 На Linux нужен только один файл - он подтянет остальное из источников
-Версия: V2.7.142 (2025.11.16)
+Версия: V2.7.143 (2025.11.16)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
@@ -412,9 +412,10 @@ def build_in_docker():
     print_success(f"Объединенный файл готов: {unified_file}")
     
     # Dockerfile для сборки
-    # ВАЖНО: Используем bullseye (Debian 11, GLIBC 2.31) для совместимости с Astra Linux
+    # ВАЖНО: Используем bookworm (Debian 12) для совместимости с Astra Linux 1.8
+    # Astra Linux 1.8 основан на Debian 12 и использует OpenSSL 3.x
     # Включаем tkinter и все GUI зависимости для полноценной работы
-    dockerfile_content = '''FROM python:3.9-bullseye
+    dockerfile_content = '''FROM python:3.9-bookworm
 
 # Устанавливаем ВСЕ необходимые пакеты включая GUI
 RUN apt-get update && apt-get install -y \\

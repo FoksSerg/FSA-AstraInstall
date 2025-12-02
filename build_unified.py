@@ -9,7 +9,7 @@
 3. Добавляет модуль самообновления (self_updater.py)
 4. Модифицирует точку входа для поддержки самообновления
 
-Версия: V2.7.142 (2025.12.02)
+Версия: V2.7.143 (2025.12.02)
 Компания: ООО "НПА Вира-Реалтайм"
 
 ВАЖНО: Исходные файлы НЕ изменяются!
@@ -204,6 +204,24 @@ if __name__ == '__main__':
     import threading
     
     UNIFIED_VERSION = "{version}"
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
+    # ═══════════════════════════════════════════════════════════════════════
+    if os.geteuid() != 0:
+        print("[INFO] Требуются права root. Перезапуск через sudo...")
+        env = os.environ.copy()
+        # Сохраняем DISPLAY для GUI
+        if 'DISPLAY' in os.environ:
+            env['DISPLAY'] = os.environ['DISPLAY']
+        if 'XAUTHORITY' in os.environ:
+            env['XAUTHORITY'] = os.environ['XAUTHORITY']
+        try:
+            os.execvpe("sudo", ["sudo", "-E"] + sys.argv, env)
+        except Exception as e:
+            print(f"[ERROR] Не удалось получить права root: {{e}}")
+            print("[INFO] Запустите вручную: sudo " + " ".join(sys.argv))
+            sys.exit(1)
     
     # Парсим аргументы
     skip_update = '--skip-update' in sys.argv

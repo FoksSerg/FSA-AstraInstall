@@ -10,7 +10,7 @@ FSA-AstraInstall - Единый исполняемый файл
 - astra_automation.py (основное приложение)
 - self_updater.py (самообновление бинарника)
 
-Версия: V2.7.142 (2025.12.01)
+Версия: V2.7.143 (2025.12.01)
 Дата сборки: 2025.12.02
 Компания: ООО "НПА Вира-Реалтайм"
 
@@ -30,7 +30,7 @@ EMBEDDED_ASTRA_UPDATE_SH = r"""
 #!/bin/bash
 # Скрипт автоматического обновления FSA-AstraInstall для Linux
 # Копирует файлы из сетевой папки и запускает установку
-# Версия: V2.6.141 (2025.12.01)
+# Версия: V2.7.142 (2025.12.01)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # Пути для Linux
@@ -1336,7 +1336,7 @@ debug_log "Лог-файл сохранен: $DEBUG_LOG_FILE"
 EMBEDDED_ASTRA_INSTALL_SH = r"""
 #!/bin/bash
 # ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V2.6.141 (2025.12.01)
+# Версия: V2.7.142 (2025.12.01)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 # ============================================================
@@ -1344,7 +1344,7 @@ EMBEDDED_ASTRA_INSTALL_SH = r"""
 # ============================================================
 
 # Версия скрипта
-SCRIPT_VERSION="V2.6.141 (2025.12.01)"
+SCRIPT_VERSION="V2.7.142 (2025.12.01)"
 
 # Создаем лог файл рядом с запускающим файлом
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -2788,12 +2788,12 @@ class SelfUpdater:
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V2.6.141 (2025.12.01)
+Версия: V2.7.142 (2025.12.01)
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия приложения
-APP_VERSION = "V2.6.141 (2025.12.01)"
+APP_VERSION = "V2.7.142 (2025.12.01)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
@@ -29201,6 +29201,7 @@ def main():
         arg = sys.argv[i]
         if arg == '--console':
             console_mode = True
+            start_mode = "console_forced"  # Автоматически устанавливаем режим для бинарника
             print("[INFO] Включен консольный режим", gui_log=True)
         elif arg == '--dry-run':
             dry_run = True
@@ -29671,7 +29672,25 @@ if __name__ == '__main__':
     import os
     import threading
     
-    UNIFIED_VERSION = "V2.6.141 (2025.12.01)"
+    UNIFIED_VERSION = "V2.7.142 (2025.12.01)"
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
+    # ═══════════════════════════════════════════════════════════════════════
+    if os.geteuid() != 0:
+        print("[INFO] Требуются права root. Перезапуск через sudo...")
+        env = os.environ.copy()
+        # Сохраняем DISPLAY для GUI
+        if 'DISPLAY' in os.environ:
+            env['DISPLAY'] = os.environ['DISPLAY']
+        if 'XAUTHORITY' in os.environ:
+            env['XAUTHORITY'] = os.environ['XAUTHORITY']
+        try:
+            os.execvpe("sudo", ["sudo", "-E"] + sys.argv, env)
+        except Exception as e:
+            print(f"[ERROR] Не удалось получить права root: {e}")
+            print("[INFO] Запустите вручную: sudo " + " ".join(sys.argv))
+            sys.exit(1)
     
     # Парсим аргументы
     skip_update = '--skip-update' in sys.argv

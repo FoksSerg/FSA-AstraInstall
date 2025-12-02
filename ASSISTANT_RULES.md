@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V2.7.142 (2025.11.25)
+# Версия проекта: V2.7.143 (2025.11.25)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -1038,7 +1038,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - ТОЛЬКО если `NEED_HISTORY=yes`:
      - Определить `COMMIT_DATE = $(date +%Y_%m_%d_%H_%M)`
      - Создать директорию: `mkdir -p "History/$COMMIT_DATE"`
-     - Скопировать файлы: `cp astra_automation.py astra_install.sh astra_update.sh "History/$COMMIT_DATE/"`
+     - Скопировать файлы: `cp astra_automation.py astra_install.sh astra_update.sh FSA-AstraInstall FSA-AstraInstall.py "History/$COMMIT_DATE/"`
    - Если `NEED_HISTORY=no` - пропустить этот шаг
 
 19. **Валидация истории (условно):** 
@@ -1592,6 +1592,8 @@ fi
   cp astra_automation.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
   cp astra_install.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
   cp astra_update.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp FSA-AstraInstall "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp FSA-AstraInstall.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
   echo "=== ШАГ 19: Валидация истории ===" && \
   ls -la "History/$COMMIT_DATE/" || \
   echo "История не требуется (ключевые файлы не изменялись)"
