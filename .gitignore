@@ -131,8 +131,6 @@ commit_message.txt
 AstraPack/
 CountPack/
 
-# Test environment (temporary testing files)
-test-environment/
 History/
 
 # Local history snapshots
