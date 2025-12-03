@@ -1,4 +1,4 @@
-# FSA-AstraInstall Automation V3.0.147 (2025.12.03)
+# FSA-AstraInstall Automation V3.0.148 (2025.12.03)
 
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant (@LLM)

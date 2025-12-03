@@ -1,2804 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-FSA-AstraInstall - Единый исполняемый файл
-
-Объединяет функциональность:
-- astra_update.sh (обновление из сетевых источников)
-- astra_install.sh (установка зависимостей)
-- astra_automation.py (основное приложение)
-- self_updater.py (самообновление бинарника)
-
-Версия: V3.0.147 (2025.12.03)
-Дата сборки: 2025.12.03
-Компания: ООО "НПА Вира-Реалтайм"
-
-АВТОМАТИЧЕСКИ СГЕНЕРИРОВАННЫЙ ФАЙЛ
-Не редактируйте вручную - изменения будут потеряны при пересборке!
-Редактируйте исходные файлы и запускайте build_unified.py
-"""
-
-# КРИТИЧНО: __future__ импорты должны быть в самом начале
 from __future__ import print_function
 
-# ============================================================================
-# ВСТРОЕННЫЕ BASH-СКРИПТЫ
-# ============================================================================
-
-# astra_update.sh - обновление из сетевых источников
-EMBEDDED_ASTRA_UPDATE_SH = r"""
-#!/bin/bash
-# Скрипт автоматического обновления FSA-AstraInstall для Linux
-# Копирует файлы из сетевой папки и запускает установку
-# Версия: V3.0.146 (2025.12.03)
-# Компания: ООО "НПА Вира-Реалтайм"
-# Разработчик: @FoksSegr & AI Assistant (@LLM)
-
-# Пути для Linux
-LINUX_ASTRA_PATH="$(dirname "$0")"  # Папка где находится скрипт
-
-# ============================================================================
-# БЛОК 0: ИНИЦИАЛИЗАЦИЯ ЛОГ-ФАЙЛА (САМОЕ НАЧАЛО!) 
-# ============================================================================
-
-# Создаем единый timestamp для всей сессии
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_DIR="$LINUX_ASTRA_PATH/Log"
-mkdir -p "$LOG_DIR"
-
-# Создаем ANALYSIS лог-файл (основной)
-ANALYSIS_LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
-
-# Очищаем логи
-#rm -rf "$LINUX_ASTRA_PATH/Log" 2>/dev/null
-
-# Инициализируем лог-файл (только если не существует - защита от повторного создания)
-if [ ! -f "$ANALYSIS_LOG_FILE" ]; then
-    {
-        echo "============================================================"
-        echo "FSA-AstraInstall - НАЧАЛО СЕССИИ ОБНОВЛЕНИЯ"
-        echo "Время запуска: $(date)"
-        echo "Директория скрипта: $LINUX_ASTRA_PATH"
-        echo "============================================================"
-    } > "$ANALYSIS_LOG_FILE"
-    
-    # Исправляем права доступа для реального пользователя
-    REAL_USER=$(who am i | awk '{print $1}' 2>/dev/null || echo "")
-    if [ -z "$REAL_USER" ]; then
-        REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
-    fi
-    if [ ! -z "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
-        chown "$REAL_USER:$REAL_USER" "$ANALYSIS_LOG_FILE" 2>/dev/null || true
-        chmod 644 "$ANALYSIS_LOG_FILE" 2>/dev/null || true
-    fi
-fi
-
-# Экспортируем для использования в функциях
-export ANALYSIS_LOG_FILE
-export TIMESTAMP
-
-# ============================================================================
-# ОПРЕДЕЛЕНИЕ РЕЖИМА РАБОТЫ (БИНАРНЫЙ ИЛИ СКРИПТОВЫЙ)
-# ============================================================================
-
-# Определяем тип запуска: бинарный или скрипт
-SCRIPT_NAME=$(basename "$0")
-if [[ "$SCRIPT_NAME" == *.sh ]]; then
-    IS_BINARY=false
-else
-    IS_BINARY=true
-fi
-
-# Файлы для копирования в БИНАРНОМ режиме
-FILES_TO_COPY_BINARY=(
-    "astra_automation"      # Бинарный Python файл
-    "astra_install"         # Бинарный bash файл (опционально)
-    "README.md"             # Документация (обязательна)
-    "WINE_INSTALL_GUIDE.md" # Документация (обязательна)
-)
-
-# Файлы для копирования в СКРИПТОВОМ режиме
-FILES_TO_COPY_SCRIPT=(
-    "astra_automation.py"   # Python скрипт
-    "astra_install.sh"      # Bash скрипт
-    "astra_update.sh"       # Bash скрипт
-    "README.md"             # Документация
-    "WINE_INSTALL_GUIDE.md" # Документация
-)
-
-# Выбираем нужный список в зависимости от режима
-if [ "$IS_BINARY" = true ]; then
-    FILES_TO_COPY=("${FILES_TO_COPY_BINARY[@]}")
-else
-    FILES_TO_COPY=("${FILES_TO_COPY_SCRIPT[@]}")
-fi
-
-# ============================================================================
-# ФУНКЦИЯ ПОИСКА ИСПОЛНЯЕМОГО ФАЙЛА
-# ============================================================================
-
-# Функция поиска исполняемого файла (бинарный или скрипт)
-find_executable() {
-    local name="$1"
-    local dir="${2:-$LINUX_ASTRA_PATH}"
-    
-    if [ "$IS_BINARY" = true ]; then
-        # В бинарном режиме ищем только бинарные файлы
-        if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
-            echo "$dir/$name"
-            return 0
-        fi
-    else
-        # В скриптовом режиме ищем скрипты
-        if [ -f "$dir/${name}.sh" ] && [ -x "$dir/${name}.sh" ]; then
-            echo "$dir/${name}.sh"
-            return 0
-        fi
-    fi
-    
-    return 1
-}
-
-# ============================================================================
-# НАСТРОЙКА ИСТОЧНИКОВ ФАЙЛОВ (с приоритетами)
-# ============================================================================
-# Формат: "тип:параметры" - источники пробуются по порядку до первого доступного
-# Если первый доступен - остальные не проверяются (для скорости)
-
-# SMB как основной, Git как резервный
-SOURCES=(
-    "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
-    #"git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
-)
-
-# Пример: Только SMB
-# SOURCES=(
-#     "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
-# )
-# Пример: Git как основной, SMB как резервный
-# SOURCES=(
-#     "git:https://github.com/FoksSerg/FSA-AstraInstall:master:."
-#     "smb:10.10.55.77:Install:ISO/Linux/Astra:FokinSA"
-# )
-# Формат параметров для каждого типа:
-# - smb:  сервер:шара:путь:пользователь
-# - git:  URL_репозитория:ветка:путь_в_репозитории
-# - http: базовый_URL
-# ============================================================================
-
-# ВРЕМЕННО: Лог-файл для аналитики
-DEBUG_LOG_FILE="$(dirname "$0")/astra_update_debug.log"
-
-# Включить/выключить сохранение логов в файл (true/false)
-# Установите false чтобы отключить логирование в файл
-ENABLE_DEBUG_LOG=false
-
-# Функция логирования (обновленная - записывает в единый лог-файл)
-log_message() {
-    local message="$1"
-    local timestamp=$(date +"%H:%M:%S.%3N")
-    local log_entry="[$timestamp] [UPDATE] $message"
-    
-    # Записываем в единый ANALYSIS лог-файл (если создан)
-    if [ -f "$ANALYSIS_LOG_FILE" ]; then
-        echo "$log_entry" >> "$ANALYSIS_LOG_FILE" 2>/dev/null || true
-    fi
-    
-    # Старое поведение: выводим в stderr (сохраняем для обратной совместимости)
-    echo "$message" >&2
-    
-    # Дублируем в старый DEBUG лог-файл (если включено)
-    if [ "$ENABLE_DEBUG_LOG" = "true" ]; then
-        echo "[$(date '+%H:%M:%S')] $message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
-    fi
-}
-
-# Функция логирования только в файл (для отладки)
-debug_log() {
-    # Логируем только если включено
-    if [ "$ENABLE_DEBUG_LOG" != "true" ]; then
-        return 0
-    fi
-    local message="[$(date '+%H:%M:%S')] [DEBUG] $1"
-    echo "$message" >> "$DEBUG_LOG_FILE" 2>/dev/null || true
-}
-
-# Универсальная функция сворачивания окна терминала (работает до и после sudo)
-minimize_terminal_window() {
-    if ! command -v xdotool >/dev/null 2>&1; then
-        return 0  # xdotool недоступен, выходим тихо
-    fi
-    
-    local terminal_pid="$1"
-    
-    # Если передан PID терминала, используем его
-    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowminimize "$window" 2>/dev/null
-            done
-            return 0
-        fi
-    fi
-    
-    # Fallback: пробуем найти терминал через PPID
-    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
-    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowminimize "$window" 2>/dev/null
-            done
-        fi
-    fi
-}
-
-# Универсальная функция разворачивания окна терминала (для запроса пароля)
-restore_terminal_window() {
-    if ! command -v xdotool >/dev/null 2>&1; then
-        return 0  # xdotool недоступен, выходим тихо
-    fi
-    
-    local terminal_pid="$1"
-    
-    # Если передан PID терминала, используем его
-    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowactivate "$window" 2>/dev/null
-                xdotool windowraise "$window" 2>/dev/null
-            done
-            return 0
-        fi
-    fi
-    
-    # Fallback: пробуем найти терминал через PPID
-    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
-    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowactivate "$window" 2>/dev/null
-                xdotool windowraise "$window" 2>/dev/null
-            done
-        fi
-    fi
-}
-
-# ============================================================================
-# ФУНКЦИИ ДЛЯ ПРОВЕРКИ И СРАВНЕНИЯ ФАЙЛОВ
-# ============================================================================
-
-# Функция получения информации о файле на SMB сервере (размер и дата)
-get_smb_file_info() {
-    local file="$1"
-    local server="$2"
-    local share="$3"
-    local path="$4"
-    local user="$5"
-    local smb_path="${path}/${file}"
-    
-    # Используем существующий файл с учетными данными
-    local credentials_file="$HOME/.smbcredentials"
-    
-    # Получаем информацию о файле через smbclient ls
-    debug_log "get_smb_file_info: запрос информации для $file, путь=$smb_path"
-    local ls_output=$(smbclient //${server}/${share} -A "$credentials_file" -c "ls \"$smb_path\"" 2>&1)
-    local ls_result=$?
-    debug_log "get_smb_file_info: ls_result=$ls_result, output_length=${#ls_output}"
-    
-    # Проверяем на ошибки авторизации
-    if echo "$ls_output" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
-        echo ""
-        return 2  # Ошибка авторизации
-    fi
-    
-    if [ $ls_result -ne 0 ]; then
-        echo ""
-        return 1  # Файл не найден или другая ошибка
-    fi
-    
-    # Парсим вывод ls
-    debug_log "get_smb_file_info: парсинг вывода ls"
-    local size=$(echo "$ls_output" | grep -oE '[0-9]{4,}' | head -1)
-    debug_log "get_smb_file_info: размер (первая попытка): $size"
-    
-    if [ -z "$size" ]; then
-        # Пробуем альтернативный способ - ищем размер в другом формате
-        size=$(echo "$ls_output" | grep -oE '[0-9]+' | head -1)
-        debug_log "get_smb_file_info: размер (альтернативная попытка): $size"
-        if [ -z "$size" ]; then
-            debug_log "get_smb_file_info: ОШИБКА - не удалось извлечь размер из вывода: $ls_output"
-            echo ""
-            return 1  # Не удалось извлечь размер
-        fi
-    fi
-    
-    # Возвращаем только размер (дата больше не используется)
-    debug_log "get_smb_file_info: результат: размер=$size"
-    echo "$size"
-    return 0
-}
-
-# Функция сравнения файлов (только по размеру)
-files_are_same() {
-    local file="$1"
-    local local_file="$LINUX_ASTRA_PATH/$file"
-    local remote_size="$2"  # Теперь просто размер, без даты
-    
-    debug_log "files_are_same: проверка файла $file"
-    debug_log "files_are_same: local_file=$local_file, remote_size=$remote_size"
-    
-    if [ ! -f "$local_file" ]; then
-        debug_log "files_are_same: локальный файл не существует"
-        return 1
-    fi
-    
-    debug_log "files_are_same: remote_size=$remote_size"
-    
-    if [ -z "$remote_size" ] || [ "$remote_size" = "0" ]; then
-        debug_log "files_are_same: размер удаленного файла пустой или 0"
-        return 1
-    fi
-    
-    local local_size=$(stat -f%z "$local_file" 2>/dev/null || stat -c%s "$local_file" 2>/dev/null || echo "0")
-    debug_log "files_are_same: local_size=$local_size, remote_size=$remote_size"
-    
-    if [ "$local_size" != "$remote_size" ]; then
-        debug_log "files_are_same: РАЗМЕРЫ НЕ СОВПАДАЮТ: локальный=$local_size, удаленный=$remote_size"
-        return 1
-    fi
-    
-    debug_log "files_are_same: ФАЙЛЫ ОДИНАКОВЫЕ (размеры совпадают) - пропускаем"
-    return 0
-}
-
-# ============================================================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С РАЗНЫМИ ИСТОЧНИКАМИ
-# ============================================================================
-
-# Функция получения информации о файле из Git репозитория
-# Использует HEAD запрос к raw URL для получения размера файла (без использования API)
-get_git_file_info() {
-    local file="$1"
-    local repo_url="$2"
-    local branch="$3"
-    local repo_path="$4"
-    local full_path="${repo_path}/${file}"
-    
-    # Убираем ./ из начала пути, если есть
-    full_path=$(echo "$full_path" | sed 's|^\./||')
-    
-    debug_log "get_git_file_info: file=$file, repo_url=$repo_url, branch=$branch, repo_path=$repo_path, full_path=$full_path"
-    
-    if echo "$repo_url" | grep -qE "(github|gitlab)"; then
-        # Убираем .git из конца URL если есть
-        local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-        
-        # Формируем raw URL для получения размера файла через HEAD запрос
-        if echo "$clean_url" | grep -qE "github\.com"; then
-            local raw_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}|")
-            raw_url="${raw_url}/${full_path}"
-        elif echo "$clean_url" | grep -qE "gitlab\.com"; then
-            local raw_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}|")
-            raw_url="${raw_url}/${full_path}"
-        else
-            debug_log "get_git_file_info: неизвестный хостинг Git"
-            echo ""
-            return 1
-        fi
-        
-        debug_log "get_git_file_info: clean_url=$clean_url, raw_url=$raw_url"
-        
-        # Получаем размер файла через HEAD запрос (не засчитывается в rate limit, работает быстрее)
-        local head_response=$(curl -s -I "$raw_url" 2>&1)
-        local curl_result=$?
-        debug_log "get_git_file_info: curl HEAD result=$curl_result, response_length=${#head_response}"
-        
-        if [ $curl_result -eq 0 ]; then
-            local content_length=$(echo "$head_response" | grep -iE "^content-length:" | awk '{print $2}' | tr -d '\r\n')
-            
-            if [ -n "$content_length" ] && [ "$content_length" != "0" ]; then
-                debug_log "get_git_file_info: Размер файла через HEAD запрос: $content_length байт"
-                echo "$content_length"
-                return 0
-            else
-                debug_log "get_git_file_info: Content-Length не найден или равен 0"
-            fi
-        else
-            debug_log "get_git_file_info: HEAD запрос не удался"
-        fi
-    fi
-    
-    echo ""
-    return 1
-}
-
-# Функция копирования файла из Git репозитория
-copy_git_file() {
-    local file="$1"
-    local dest="$2"
-    local repo_url="$3"
-    local branch="$4"
-    local repo_path="$5"
-    local full_path="${repo_path}/${file}"
-    
-    # Убираем ./ из начала пути, если есть (GitHub/GitLab API не понимают такой формат)
-    full_path=$(echo "$full_path" | sed 's|^\./||')
-    
-    debug_log "copy_git_file: file=$file, dest=$dest, repo_url=$repo_url, branch=$branch, repo_path=$repo_path, full_path=$full_path"
-    
-    if echo "$repo_url" | grep -qE "(github|gitlab)"; then
-        # Убираем .git из конца URL если есть, для работы с raw
-        local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-        # Формат raw URL для GitHub: https://raw.githubusercontent.com/USER/REPO/BRANCH/PATH/TO/FILE
-        # Для GitLab: https://gitlab.com/USER/REPO/-/raw/BRANCH/PATH/TO/FILE
-        if echo "$clean_url" | grep -qE "github\.com"; then
-            local raw_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}|")
-            raw_url="${raw_url}/${full_path}"
-        elif echo "$clean_url" | grep -qE "gitlab\.com"; then
-            local raw_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}|")
-            raw_url="${raw_url}/${full_path}"
-        else
-            debug_log "copy_git_file: неизвестный хостинг Git, используем базовый URL"
-            return 1
-        fi
-        
-        debug_log "copy_git_file: clean_url=$clean_url, raw_url=$raw_url"
-        
-        local curl_output=$(curl -s -f -o "$dest" "$raw_url" 2>&1)
-        local curl_result=$?
-        debug_log "copy_git_file: curl result=$curl_result, output_length=${#curl_output}"
-        if [ $curl_result -ne 0 ]; then
-            debug_log "copy_git_file: curl failed, output: $curl_output"
-        else
-            debug_log "copy_git_file: файл успешно скопирован"
-        fi
-        
-        return $curl_result
-    fi
-    
-    debug_log "copy_git_file: URL не github/gitlab, копирование невозможно"
-    return 1
-}
-
-# Функция получения информации о файле через HTTP/HTTPS
-get_http_file_info() {
-    local file="$1"
-    local base_url="$2"
-    local file_url="${base_url}/${file}"
-    
-    local headers=$(curl -s -I "$file_url" 2>/dev/null)
-    
-    if [ $? -ne 0 ]; then
-        echo ""
-        return 1
-    fi
-    
-    if echo "$headers" | grep -qE "HTTP/[0-9.]+ 200"; then
-        local size=$(echo "$headers" | grep -i "Content-Length:" | awk '{print $2}' | tr -d '\r')
-        
-        if [ -n "$size" ]; then
-            echo "$size"
-            return 0
-        fi
-    fi
-    
-    echo ""
-    return 1
-}
-
-# Функция копирования файла через HTTP/HTTPS
-copy_http_file() {
-    local file="$1"
-    local dest="$2"
-    local base_url="$3"
-    local file_url="${base_url}/${file}"
-    
-    if curl -s -f -o "$dest" "$file_url" 2>/dev/null; then
-        return 0
-    fi
-    
-    return 1
-}
-
-# Функция копирования файла из SMB
-copy_smb_file() {
-    local file="$1"
-    local dest="$2"
-    local server="$3"
-    local share="$4"
-    local path="$5"
-    local user="$6"
-    local smb_path="${path}/${file}"
-    
-    local credentials_file="$HOME/.smbcredentials"
-    
-    # Используем тот же формат команды, что и в старой версии (без кавычек в пути)
-    # Старая версия: get ${SMB_PATH}/$file $LINUX_ASTRA_PATH/$file
-    # Формируем команду точно как в старой версии
-    local smb_cmd="get ${smb_path} ${dest}"
-    debug_log "copy_smb_file: file=$file, smb_path=$smb_path, dest=$dest"
-    debug_log "copy_smb_file: server=$server, share=$share, credentials_file=$credentials_file"
-    debug_log "smbclient command: smbclient //${server}/${share} -A $credentials_file -c \"$smb_cmd\""
-    
-    # Выполняем команду и сохраняем вывод
-    local error_output=$(smbclient //${server}/${share} -A "$credentials_file" -c "$smb_cmd" 2>&1)
-    local copy_result=$?
-    
-    # Логируем результат
-    debug_log "smbclient result: code=$copy_result"
-    if [ -n "$error_output" ]; then
-        debug_log "smbclient output: $error_output"
-    fi
-    
-    # КРИТИЧНО: Проверяем вывод на ошибки авторизации ПЕРЕД проверкой кода возврата
-    # smbclient может вернуть код 0 даже при ошибке авторизации
-    if echo "$error_output" | grep -qiE "(NT_STATUS_LOGON_FAILURE|NT_STATUS_WRONG_PASSWORD|authentication failed|access denied|login failed)"; then
-        debug_log "smbclient ОШИБКА АВТОРИЗАЦИИ в выводе (даже если код=$copy_result)"
-        return 2  # Ошибка авторизации
-    fi
-    
-    # Проверяем код возврата
-    if [ $copy_result -eq 0 ]; then
-        # Дополнительная проверка: файл должен существовать после копирования
-        if [ -f "$dest" ] && [ -s "$dest" ]; then
-            debug_log "smbclient УСПЕХ: файл скопирован и подтвержден"
-            return 0
-        else
-            debug_log "smbclient ПРЕДУПРЕЖДЕНИЕ: код=0, но файл не найден или пуст"
-            return 1  # Файл не скопировался
-        fi
-    else
-        debug_log "smbclient ОШИБКА: код=$copy_result"
-        # Логируем ошибку для отладки
-        if command -v log_message >/dev/null 2>&1; then
-            log_message "ОШИБКА копирования $file: $error_output"
-        else
-            echo "[ERROR] copy_smb_file failed for $file: $error_output" >&2
-        fi
-        return 1
-    fi
-}
-
-# ============================================================================
-# ФУНКЦИИ ПРОВЕРКИ ДОСТУПНОСТИ ИСТОЧНИКОВ
-# ============================================================================
-
-check_source_availability() {
-    local source="$1"
-    local source_type=$(echo "$source" | cut -d: -f1)
-    local source_params=$(echo "$source" | cut -d: -f2-)
-    
-    local result=1
-    
-    case "$source_type" in
-        "git")
-            # Парсим параметры Git: URL:ветка:путь
-            # URL может содержать :, поэтому используем awk для правильного парсинга
-            # Формат: https://github.com/user/repo:master:.
-            # Извлекаем URL (все до последних двух :), ветку (предпоследнее поле) и путь (последнее поле)
-            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
-            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
-            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
-            debug_log "check_source_availability git: repo_url=$repo_url, branch=$branch, path=$repo_path"
-            
-            if command -v git >/dev/null 2>&1; then
-                debug_log "check_source_availability git: git команда найдена"
-                # Для git ls-remote добавляем .git если его нет
-                local git_url="$repo_url"
-                if ! echo "$git_url" | grep -qE '\.git$'; then
-                    git_url="${repo_url}.git"
-                fi
-                debug_log "check_source_availability git: проверяем доступность через git ls-remote: $git_url"
-                # Используем timeout если доступен, иначе без него (для совместимости)
-                # Уменьшен таймаут до 5 секунд для ускорения
-                if command -v timeout >/dev/null 2>&1; then
-                    local git_output=$(timeout 5 git ls-remote --heads "$git_url" 2>&1)
-                    result=$?
-                else
-                    # Альтернатива без timeout (для систем где timeout недоступен)
-                    local git_output=$(git ls-remote --heads "$git_url" 2>&1)
-                    result=$?
-                fi
-                debug_log "check_source_availability git: git ls-remote result=$result, output_length=${#git_output}"
-                if [ $result -ne 0 ]; then
-                    debug_log "check_source_availability git: git ls-remote failed, output: $git_output"
-                fi
-            else
-                debug_log "check_source_availability git: git команда НЕ найдена, пробуем через HEAD запрос к raw URL"
-                if echo "$repo_url" | grep -qE "(github|gitlab)"; then
-                    # Убираем .git из конца URL если есть
-                    local clean_url=$(echo "$repo_url" | sed 's|\.git$||')
-                    debug_log "check_source_availability git: clean_url=$clean_url"
-                    
-                    # Формируем raw URL для проверки доступности (проверяем README.md как тестовый файл)
-                    local test_file="README.md"
-                    if echo "$clean_url" | grep -qE "github\.com"; then
-                        local test_url=$(echo "$clean_url" | sed -E "s|https?://github\.com/([^/]+)/([^/]+)|https://raw.githubusercontent.com/\1/\2/${branch}/${test_file}|")
-                    elif echo "$clean_url" | grep -qE "gitlab\.com"; then
-                        local test_url=$(echo "$clean_url" | sed -E "s|https?://gitlab\.com/([^/]+)/([^/]+)|https://gitlab.com/\1/\2/-/raw/${branch}/${test_file}|")
-                    else
-                        debug_log "check_source_availability git: URL не github/gitlab"
-                        result=1
-                    fi
-                    
-                    if [ -n "$test_url" ]; then
-                        debug_log "check_source_availability git: проверяем доступность через HEAD запрос: $test_url"
-                        # Используем --max-time вместо timeout для совместимости (работает везде)
-                        # Уменьшен таймаут до 5 секунд для ускорения
-                        local curl_output=$(curl -s -I -f --max-time 5 "$test_url" 2>&1)
-                        result=$?
-                        debug_log "check_source_availability git: curl HEAD result=$result, output_length=${#curl_output}"
-                        if [ $result -ne 0 ]; then
-                            debug_log "check_source_availability git: curl HEAD failed, output: $curl_output"
-                        fi
-                    fi
-                else
-                    debug_log "check_source_availability git: URL не github/gitlab, проверка недоступна"
-                    result=1
-                fi
-            fi
-            ;;
-            
-        "smb")
-            local server=$(echo "$source_params" | cut -d: -f1)
-            # Используем timeout если доступен, иначе ping с ограничением времени
-            if command -v timeout >/dev/null 2>&1; then
-                timeout 1 ping -c 1 -W 0.5 "$server" >/dev/null 2>&1
-                result=$?
-            else
-                # Альтернатива без timeout (для систем где timeout недоступен)
-                ping -c 1 -W 0.5 "$server" >/dev/null 2>&1
-                result=$?
-            fi
-            ;;
-            
-        "http")
-            local base_url="$source_params"
-            # Используем --max-time вместо timeout для совместимости
-            curl -s -I -f --max-time 3 "$base_url" >/dev/null 2>&1
-            result=$?
-            ;;
-    esac
-    
-    return $result
-}
-
-SELECTED_SOURCE=""
-
-determine_available_source() {
-    for source in "${SOURCES[@]}"; do
-        local source_type=$(echo "$source" | cut -d: -f1)
-        log_message "Проверка доступности источника: $source_type..."
-        
-        if check_source_availability "$source"; then
-            log_message "Источник доступен: $source_type"
-            # КРИТИЧНО: Выводим только источник в stdout
-            echo "$source"
-            return 0
-        else
-            log_message "Источник недоступен: $source_type, пробуем следующий..."
-        fi
-    done
-    
-    log_message "ОШИБКА: Все источники недоступны"
-    echo ""
-    return 1
-}
-
-get_file_info_from_selected_source() {
-    local file="$1"
-    
-    if [ -z "$SELECTED_SOURCE" ]; then
-        echo ""
-        return 1
-    fi
-    
-    local source_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
-    local source_params=$(echo "$SELECTED_SOURCE" | cut -d: -f2-)
-    
-    case "$source_type" in
-        "git")
-            # Парсим параметры Git: URL:ветка:путь (URL может содержать :)
-            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
-            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
-            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
-            get_git_file_info "$file" "$repo_url" "$branch" "$repo_path"
-            ;;
-            
-        "smb")
-            local server=$(echo "$source_params" | cut -d: -f1)
-            local share=$(echo "$source_params" | cut -d: -f2)
-            local path=$(echo "$source_params" | cut -d: -f3)
-            local user=$(echo "$source_params" | cut -d: -f4)
-            get_smb_file_info "$file" "$server" "$share" "$path" "$user"
-            ;;
-            
-        "http")
-            local base_url="$source_params"
-            get_http_file_info "$file" "$base_url"
-            ;;
-            
-        *)
-            echo ""
-            return 1
-            ;;
-    esac
-}
-
-copy_file_from_selected_source() {
-    local file="$1"
-    local dest="$2"
-    
-    if [ -z "$SELECTED_SOURCE" ]; then
-        return 1
-    fi
-    
-    local source_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
-    local source_params=$(echo "$SELECTED_SOURCE" | cut -d: -f2-)
-    
-    case "$source_type" in
-        "git")
-            # Парсим параметры Git: URL:ветка:путь (URL может содержать :)
-            local repo_url=$(echo "$source_params" | awk -F: '{url=""; for(i=1;i<=NF-2;i++){if(i>1)url=url":"; url=url$i}; print url}')
-            local branch=$(echo "$source_params" | awk -F: '{print $(NF-1)}')
-            local repo_path=$(echo "$source_params" | awk -F: '{print $NF}')
-            copy_git_file "$file" "$dest" "$repo_url" "$branch" "$repo_path"
-            ;;
-            
-        "smb")
-            local server=$(echo "$source_params" | cut -d: -f1)
-            local share=$(echo "$source_params" | cut -d: -f2)
-            local path=$(echo "$source_params" | cut -d: -f3)
-            local user=$(echo "$source_params" | cut -d: -f4)
-            debug_log "copy_file_from_selected_source: file=$file, dest=$dest"
-            debug_log "SMB params: server=$server, share=$share, path=$path, user=$user"
-            copy_smb_file "$file" "$dest" "$server" "$share" "$path" "$user"
-            ;;
-            
-        "http")
-            local base_url="$source_params"
-            copy_http_file "$file" "$dest" "$base_url"
-            ;;
-            
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# Функция попытки копирования всех файлов из одного источника
-try_copy_all_files_from_source() {
-    local source="$1"
-    local source_type=$(echo "$source" | cut -d: -f1)
-    
-    
-    # Проверяем доступность источника
-    if ! check_source_availability "$source"; then
-        log_message "Источник $source_type недоступен"
-        return 1
-    fi
-    
-    # Устанавливаем источник
-    local old_selected_source="$SELECTED_SOURCE"
-    SELECTED_SOURCE="$source"
-    
-    # Для SMB: проверяем/создаем учетные данные
-    local credentials_file=""
-    local smb_user=""
-    if [ "$source_type" = "smb" ]; then
-        source_params=$(echo "$source" | cut -d: -f2-)
-        smb_user=$(echo "$source_params" | cut -d: -f4)
-        credentials_file="$HOME/.smbcredentials"
-        
-        if [ ! -f "$credentials_file" ]; then
-            log_message "Файл учетных данных не найден. Создаем..."
-            echo "username=${smb_user}" > "$credentials_file"
-            echo "password=" >> "$credentials_file"
-            chmod 600 "$credentials_file"
-            
-            # КРИТИЧНО: Разворачиваем окно терминала для запроса пароля
-            # (окно уже должно быть свернуто при запуске скрипта)
-            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-                restore_terminal_window "$TERMINAL_PID"
-                # Небольшая задержка для гарантии что окно развернулось
-                sleep 0.2
-            fi
-            
-            log_message "Введите пароль для пользователя ${smb_user}:"
-            read -s password
-            echo "password=$password" > "$credentials_file"
-            echo "username=${smb_user}" >> "$credentials_file"
-            chmod 600 "$credentials_file"
-            log_message "Учетные данные сохранены"
-            
-            # КРИТИЧНО: Сворачиваем окно терминала после ввода пароля
-            if [ "$SKIP_TERMINAL" != "true" ]; then
-                minimize_terminal_window "$TERMINAL_PID"
-            fi
-        fi
-    fi
-    
-    # Статистика для этого источника
-    local copied=0
-    local skipped=0
-    local failed=0
-    local auth_error_occurred=false
-    local max_auth_attempts=2  # Максимум 2 попытки с запросом пароля
-    
-    # Цикл копирования файлов (может быть повторен при ошибке авторизации)
-    local auth_attempt=0
-    while [ $auth_attempt -lt $max_auth_attempts ]; do
-        auth_attempt=$((auth_attempt + 1))
-        
-        if [ $auth_attempt -gt 1 ]; then
-            log_message "Повторная попытка копирования после обновления пароля (попытка $auth_attempt из $max_auth_attempts)..."
-            # Сбрасываем счетчики для повторной попытки
-            copied=0
-            skipped=0
-            failed=0
-        fi
-        
-        auth_error_occurred=false
-        
-        # Пробуем скопировать все файлы
-        MISSING_DOCS=()
-        for file in "${FILES_TO_COPY[@]}"; do
-            local file_path="$LINUX_ASTRA_PATH/$file"
-            
-            
-            # Проверяем, нужно ли обновлять файл
-            local need_update=true
-            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                # Получаем информацию о файле для сравнения
-                local remote_info=$(get_file_info_from_selected_source "$file")
-                local info_result=$?
-                
-                # Если ошибка авторизации при получении информации - запоминаем и прерываем
-                if [ $info_result -eq 2 ]; then
-                    log_message "ОШИБКА: Ошибка авторизации при получении информации о файле $file"
-                    auth_error_occurred=true
-                    failed=$((failed + 1))
-                    break  # Прерываем цикл по файлам
-                fi
-                
-                if [ $info_result -eq 0 ] && [ -n "$remote_info" ]; then
-                    # Сравниваем размеры
-                    local local_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "0")
-                    if [ "$local_size" = "$remote_info" ]; then
-                        log_message "Пропущен: $file (не изменился)"
-                        skipped=$((skipped + 1))
-                        need_update=false
-                    fi
-                fi
-            fi
-            
-            # Если файл не нужно обновлять - пропускаем
-            if [ "$need_update" = false ]; then
-                continue
-            fi
-            
-            # Пробуем скопировать файл
-            copy_file_from_selected_source "$file" "$file_path"
-            local copy_result=$?
-            
-            if [ $copy_result -eq 0 ]; then
-                # Проверяем что файл действительно скопировался
-                if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                    log_message "Скопирован: $file"
-                    copied=$((copied + 1))
-                else
-                    if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
-                        MISSING_DOCS+=("$file")
-                    else
-                        log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
-                    fi
-                    failed=$((failed + 1))
-                fi
-            elif [ $copy_result -eq 2 ]; then
-                # Ошибка авторизации
-                log_message "ОШИБКА: Ошибка авторизации при копировании $file"
-                auth_error_occurred=true
-                failed=$((failed + 1))
-                break  # Прерываем цикл по файлам
-            else
-                # Файл не найден на этом источнике
-                if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
-                    MISSING_DOCS+=("$file")
-                else
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден на источнике $source_type"
-                fi
-                failed=$((failed + 1))
-            fi
-        done
-        
-        # Объединяем предупреждения о документации
-        if [ ${#MISSING_DOCS[@]} -gt 0 ]; then
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файлы ${MISSING_DOCS[*]} не найдены на источнике $source_type"
-        fi
-        
-        # Если была ошибка авторизации и это первая попытка - запрашиваем пароль
-        if [ "$auth_error_occurred" = true ] && [ $auth_attempt -eq 1 ] && [ "$source_type" = "smb" ]; then
-            log_message "Ошибка авторизации обнаружена. Запрашиваем пароль заново..."
-            
-            # КРИТИЧНО: Разворачиваем окно терминала для запроса пароля
-            # (окно должно быть свернуто с момента запуска скрипта)
-            if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-                restore_terminal_window "$TERMINAL_PID"
-                # Небольшая задержка для гарантии что окно развернулось
-                sleep 0.2
-            fi
-            
-            log_message "Введите пароль для пользователя ${smb_user}:"
-            read -s password
-            echo "password=$password" > "$credentials_file"
-            echo "username=${smb_user}" >> "$credentials_file"
-            chmod 600 "$credentials_file"
-            log_message "Учетные данные обновлены"
-            
-            # КРИТИЧНО: Сворачиваем окно терминала после ввода пароля
-            if [ "$SKIP_TERMINAL" != "true" ]; then
-                minimize_terminal_window "$TERMINAL_PID"
-            fi
-            
-            # Продолжаем цикл - попробуем еще раз
-            continue
-        elif [ "$auth_error_occurred" = true ]; then
-            # Ошибка авторизации после запроса пароля или не SMB источник
-            log_message "ОШИБКА: Ошибка авторизации сохраняется. Источник $source_type недоступен."
-            break  # Выходим из цикла попыток
-        else
-            # Нет ошибки авторизации - выходим из цикла попыток
-            break
-        fi
-    done
-    
-    # Восстанавливаем старый источник
-    SELECTED_SOURCE="$old_selected_source"
-    
-    # Возвращаем результат
-    local total_processed=$((copied + skipped))
-    log_message "Статистика для источника $source_type: скопировано=$copied, пропущено=$skipped, не найдено=$failed из ${#FILES_TO_COPY[@]} файлов"
-    
-    # Если была ошибка авторизации после всех попыток - источник не подходит
-    if [ "$auth_error_occurred" = true ]; then
-        log_message "Источник $source_type не подходит: ошибка авторизации не устранена"
-        return 1
-    fi
-    
-    # Если все файлы обработаны (скопированы или пропущены) - источник подходит
-    if [ $total_processed -eq ${#FILES_TO_COPY[@]} ] && [ $failed -eq 0 ]; then
-        log_message "УСПЕХ: Все файлы найдены на источнике $source_type"
-        return 0
-    else
-        log_message "Источник $source_type не подходит: не все файлы найдены (найдено: $total_processed из ${#FILES_TO_COPY[@]})"
-        return 1
-    fi
-}
-
-# Определяем PID терминала ДО запуска с sudo
-TERMINAL_PID=""
-
-# Список методов определения PID (по приоритету)
-methods=(
-    "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
-    "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
-    "\$PPID"                                                             # Метод 3 - простой fallback
-    "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
-    "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
-    "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
-)
-
-# Проверяем каждый метод по очереди
-for i in "${!methods[@]}"; do
-    method="${methods[$i]}"
-    candidate_pid=$(eval "$method" 2>/dev/null)
-    
-    # Проверяем существование и тип процесса
-    if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
-        process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
-        
-        # Проверяем что это терминал
-        if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
-            TERMINAL_PID="$candidate_pid"
-            break  # ВЫХОДИМ ИЗ ЦИКЛА!
-        fi
-    fi
-done
-
-# Fallback если ничего не найдено
-if [ -z "$TERMINAL_PID" ]; then
-    TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
-fi
-
-export TERMINAL_PID
-
-# Проверяем, не в консольном режиме ли мы
-SKIP_TERMINAL=false
-for arg in "$@"; do
-    if [[ "$arg" == "--console" ]]; then
-        SKIP_TERMINAL=true
-        break
-    fi
-done
-
-# Сворачиваем окно терминала (если доступен xdotool)
-# НЕ сворачиваем в консольном режиме
-if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-    minimize_terminal_window "$TERMINAL_PID"  # Сворачиваем терминал по PID
-fi
-
-# Если передан --terminal-pid извне, используем его
-if [ ! -z "$1" ] && [[ "$1" == "--terminal-pid" ]]; then
-    TERMINAL_PID="$2"
-    log_message "Используем переданный PID терминала: $TERMINAL_PID"
-    shift 2  # Убираем --terminal-pid и значение из аргументов
-fi
-
-# Сохраняем оставшиеся аргументы для передачи в astra_install.sh
-INSTALL_ARGS=("$@")
-
-# КРИТИЧНО: Финальное сворачивание окна после всех проверок
-# Это гарантирует, что окно будет свернуто даже если оно не было свернуто ранее
-if command -v xdotool >/dev/null 2>&1 && [ "$SKIP_TERMINAL" != "true" ]; then
-    minimize_terminal_window "$TERMINAL_PID"
-fi
-
-# ============================================================================
-# ПОПЫТКА КОПИРОВАНИЯ ВСЕХ ФАЙЛОВ ИЗ ИСТОЧНИКОВ (по очереди, все файлы из одного)
-# ============================================================================
-log_message "Поиск источника со всеми необходимыми файлами..."
-
-SELECTED_SOURCE=""
-BEST_SOURCE=""
-BEST_COUNT=0
-UPDATE_SUCCESSFUL=false
-COPIED_COUNT=0
-SKIPPED_COUNT=0
-
-# Пробуем каждый источник по очереди
-for source in "${SOURCES[@]}"; do
-    source_type=$(echo "$source" | cut -d: -f1)
-    log_message "Проверка источника: $source_type"
-    
-    # Пробуем скопировать все файлы из этого источника
-    if try_copy_all_files_from_source "$source"; then
-        # Все файлы найдены на этом источнике - используем его
-        SELECTED_SOURCE="$source"
-        log_message "Используется источник: $source_type (все файлы найдены)"
-        UPDATE_SUCCESSFUL=true
-        break
-    else
-        # Не все файлы найдены - запоминаем лучший результат
-        # Подсчитываем сколько файлов было скопировано/пропущено
-        old_selected_source="$SELECTED_SOURCE"
-        SELECTED_SOURCE="$source"
-        
-        found_count=0
-        for file in "${FILES_TO_COPY[@]}"; do
-            file_path="$LINUX_ASTRA_PATH/$file"
-            # Проверяем есть ли файл локально (после попытки копирования)
-            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                found_count=$((found_count + 1))
-            fi
-        done
-        
-        SELECTED_SOURCE="$old_selected_source"
-        
-        if [ $found_count -gt $BEST_COUNT ]; then
-            BEST_COUNT=$found_count
-            BEST_SOURCE="$source"
-            log_message "Источник $source_type: найдено $found_count из ${#FILES_TO_COPY[@]} файлов (лучший результат пока)"
-        fi
-    fi
-done
-
-# Если не нашли источник со всеми файлами - используем лучший
-if [ -z "$SELECTED_SOURCE" ] && [ -n "$BEST_SOURCE" ]; then
-    log_message "Не найден источник со всеми файлами. Используем лучший: $(echo "$BEST_SOURCE" | cut -d: -f1) ($BEST_COUNT из ${#FILES_TO_COPY[@]} файлов)"
-    SELECTED_SOURCE="$BEST_SOURCE"
-    # Пробуем еще раз скопировать из лучшего источника
-    try_copy_all_files_from_source "$BEST_SOURCE"
-fi
-
-# Если все источники недоступны или не подходят
-if [ -z "$SELECTED_SOURCE" ]; then
-    log_message "ПРЕДУПРЕЖДЕНИЕ: Не удалось найти подходящий источник. Продолжаем с локальными файлами (если есть)"
-    SERVER_AVAILABLE=false
-else
-    SERVER_AVAILABLE=true
-    selected_type=$(echo "$SELECTED_SOURCE" | cut -d: -f1)
-    log_message "Выбранный источник: $selected_type"
-fi
-
-# ============================================================================
-# ЭТАП ПРОВЕРКИ СКОПИРОВАННЫХ ФАЙЛОВ
-# ============================================================================
-if [ "$SERVER_AVAILABLE" = true ]; then
-    sync
-    sleep 0.1
-    
-    ALL_FILES_OK=true
-    MISSING_FILES=()
-    EMPTY_FILES=()
-    
-    for file in "${FILES_TO_COPY[@]}"; do
-        file_path="$LINUX_ASTRA_PATH/$file"
-        
-        if [ ! -f "$file_path" ]; then
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
-            MISSING_FILES+=("$file")
-            ALL_FILES_OK=false
-            continue
-        fi
-        
-        if [ ! -s "$file_path" ]; then
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file пустой (размер 0 байт)"
-            EMPTY_FILES+=("$file")
-            ALL_FILES_OK=false
-            continue
-        fi
-        
-        if [ ! -r "$file_path" ]; then
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file недоступен для чтения"
-            ALL_FILES_OK=false
-            continue
-        fi
-        
-    done
-    
-    if [ "$ALL_FILES_OK" = false ]; then
-        sync
-        sleep 0.2
-        
-        for file in "${MISSING_FILES[@]}"; do
-            file_path="$LINUX_ASTRA_PATH/$file"
-            if [ -f "$file_path" ] && [ -s "$file_path" ]; then
-                ALL_FILES_OK=true
-            fi
-        done
-        
-        for file in "${EMPTY_FILES[@]}"; do
-            file_path="$LINUX_ASTRA_PATH/$file"
-            if [ -s "$file_path" ]; then
-                ALL_FILES_OK=true
-            fi
-        done
-    fi
-    
-    # КРИТИЧНО: Устанавливаем права на выполнение сразу после проверки файлов
-    if [ "$IS_BINARY" = true ]; then
-        chmod +x "$LINUX_ASTRA_PATH/astra_install" 2>/dev/null
-        chmod +x "$LINUX_ASTRA_PATH/astra_update" 2>/dev/null
-        chmod +x "$LINUX_ASTRA_PATH/astra_automation" 2>/dev/null
-    else
-        chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
-        chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
-        chmod +x "$LINUX_ASTRA_PATH/astra_automation.py" 2>/dev/null
-    fi
-    
-    # Объединяем предупреждения о недостающих файлах
-    MISSING_DOCS=()
-    for file in "${MISSING_FILES[@]}"; do
-        if [[ "$file" == "README.md" ]] || [[ "$file" == "WINE_INSTALL_GUIDE.md" ]]; then
-            MISSING_DOCS+=("$file")
-        else
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден после копирования"
-        fi
-    done
-    
-    if [ ${#MISSING_DOCS[@]} -gt 0 ]; then
-        log_message "ПРЕДУПРЕЖДЕНИЕ: Файлы ${MISSING_DOCS[*]} не найдены"
-    fi
-    
-    if [ "$ALL_FILES_OK" = false ] && [ ${#MISSING_DOCS[@]} -lt ${#MISSING_FILES[@]} ]; then
-        log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые файлы имеют проблемы, но продолжаем работу"
-    fi
-    
-    sync
-    sleep 0.2
-    
-    if [ "$SKIP_TERMINAL" != "true" ]; then
-        minimize_terminal_window "$TERMINAL_PID"
-    fi
-fi
-
-# Обработка результата обновления
-if [ "$UPDATE_SUCCESSFUL" = true ]; then
-    log_message "Обновление завершено успешно"
-else
-    log_message "ПРЕДУПРЕЖДЕНИЕ: Обновление не выполнено, но продолжаем с локальными файлами (если есть)"
-fi
-
-# Проверяем наличие критических файлов (локально или после копирования)
-if [ "$IS_BINARY" = true ]; then
-    CRITICAL_FILES=("astra_install" "astra_automation")
-else
-    CRITICAL_FILES=("astra_install.sh" "astra_automation.py")
-fi
-CRITICAL_OK=true
-MISSING_CRITICAL=()
-
-for file in "${CRITICAL_FILES[@]}"; do
-    file_path="$LINUX_ASTRA_PATH/$file"
-    if [ ! -f "$file_path" ] || [ ! -s "$file_path" ]; then
-        log_message "КРИТИЧЕСКАЯ ОШИБКА: Критический файл $file недоступен или пуст"
-        CRITICAL_OK=false
-        MISSING_CRITICAL+=("$file")
-    fi
-done
-
-if [ "$CRITICAL_OK" = false ]; then
-    log_message "ОШИБКА: Критические файлы не готовы. Запуск невозможен."
-    echo "Ошибка Обновления"
-    exit 1
-fi
-
-# КРИТИЧНО: Повторная установка прав перед запуском (на случай если они не были установлены ранее)
-if [ "$IS_BINARY" = true ]; then
-    chmod +x "$LINUX_ASTRA_PATH/astra_install" 2>/dev/null
-    chmod +x "$LINUX_ASTRA_PATH/astra_update" 2>/dev/null
-    chmod +x "$LINUX_ASTRA_PATH/astra_automation" 2>/dev/null
-else
-    chmod +x "$LINUX_ASTRA_PATH/astra_install.sh" 2>/dev/null
-    chmod +x "$LINUX_ASTRA_PATH/astra_update.sh" 2>/dev/null
-fi
-
-# КРИТИЧНО: Финальная синхронизация перед запуском приложения
-sync
-sleep 0.1
-
-# Запускаем установку
-cd "$LINUX_ASTRA_PATH" 2>/dev/null
-
-ASTRA_INSTALL=$(find_executable "astra_install")
-if [ -z "$ASTRA_INSTALL" ]; then
-    log_message "ОШИБКА: astra_install не найден"
-    echo "Ошибка Обновления"
-    exit 1
-fi
-
-if [ "$IS_BINARY" = true ]; then
-    # Проверяем бинарный файл
-    if [ ! -f "$ASTRA_INSTALL" ] || [ ! -s "$ASTRA_INSTALL" ]; then
-        log_message "ОШИБКА: Файл astra_install пустой или поврежден"
-        echo "Ошибка Обновления"
-        exit 1
-    fi
-    
-    if [ ! -x "$ASTRA_INSTALL" ]; then
-        log_message "Файл astra_install не исполняемый, устанавливаем права..."
-        chmod +x "$ASTRA_INSTALL" 2>/dev/null
-    fi
-else
-    # Проверяем скрипт
-    if [ ! -f "$ASTRA_INSTALL" ] || [ ! -s "$ASTRA_INSTALL" ]; then
-        log_message "ОШИБКА: Файл astra_install.sh пустой или поврежден"
-        echo "Ошибка Обновления"
-        exit 1
-    fi
-    
-    if [ ! -x "$ASTRA_INSTALL" ]; then
-        log_message "Файл astra_install.sh не исполняемый, устанавливаем права..."
-        chmod +x "$ASTRA_INSTALL" 2>/dev/null
-    fi
-fi
-
-sync
-
-log_message "Файл astra_install готов к запуску"
-
-# КРИТИЧНО: Передаем лог-файл и timestamp в astra_install.sh
-# Это обеспечивает единый лог-файл для всей сессии
-if [ -f "$ANALYSIS_LOG_FILE" ] && [ -n "$TIMESTAMP" ]; then
-    log_message "Передаем лог-файл в astra_install: $ANALYSIS_LOG_FILE"
-    log_message "Передаем timestamp: $TIMESTAMP"
-    
-    # Формируем аргументы с лог-файлом в начале
-    INSTALL_CMD_ARGS=(
-        "--log-file" "$ANALYSIS_LOG_FILE"
-        "--log-timestamp" "$TIMESTAMP"
-        "--terminal-pid" "$TERMINAL_PID"
-        "--windows-minimized"
-    )
-else
-    # Fallback: работаем как раньше (без передачи лог-файла)
-    log_message "Лог-файл не создан, работаем в старом режиме"
-    INSTALL_CMD_ARGS=(
-        "--terminal-pid" "$TERMINAL_PID"
-        "--windows-minimized"
-    )
-fi
-
-# Добавляем остальные аргументы
-if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
-    INSTALL_CMD_ARGS+=("${INSTALL_ARGS[@]}")
-fi
-
-# КРИТИЧНО: НЕ добавляем --mode console_forced автоматически!
-# Пусть astra_install.sh сам определяет режим на основе проверок системы
-# Это обеспечивает правильную работу проверки репозиториев и обновлений
-
-# Запускаем с правильными аргументами
-log_message "Запускаем: $ASTRA_INSTALL ${INSTALL_CMD_ARGS[*]}"
-"$ASTRA_INSTALL" "${INSTALL_CMD_ARGS[@]}"
-
-# ВРЕМЕННО: Завершение логирования
-debug_log "=== КОНЕЦ СЕАНСА ОБНОВЛЕНИЯ ==="
-debug_log "Статистика: скопировано=$COPIED_COUNT, пропущено=$SKIPPED_COUNT"
-debug_log "Лог-файл сохранен: $DEBUG_LOG_FILE"
-
-"""
-
-# astra_install.sh - установка зависимостей
-EMBEDDED_ASTRA_INSTALL_SH = r"""
-#!/bin/bash
-# ГЛАВНЫЙ СКРИПТ: Автоматическая установка и запуск GUI
-# Версия: V3.0.146 (2025.12.03)
-# Компания: ООО "НПА Вира-Реалтайм"
-# Разработчик: @FoksSegr & AI Assistant (@LLM)
-
-# ============================================================
-# БЛОК 1: ИНИЦИАЛИЗАЦИЯ ЛОГОВ И ФУНКЦИЙ
-# ============================================================
-
-# Версия скрипта
-SCRIPT_VERSION="V3.0.146 (2025.12.03)"
-
-# Создаем лог файл рядом с запускающим файлом
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ============================================================================
-# ОПРЕДЕЛЕНИЕ РЕЖИМА РАБОТЫ (БИНАРНЫЙ ИЛИ СКРИПТОВЫЙ)
-# ============================================================================
-
-# Определяем тип запуска: бинарный или скрипт
-SCRIPT_NAME=$(basename "$0")
-if [[ "$SCRIPT_NAME" == *.sh ]]; then
-    IS_BINARY=false
-else
-    IS_BINARY=true
-fi
-
-# ============================================================================
-# ФУНКЦИЯ ПОИСКА PYTHON ФАЙЛА
-# ============================================================================
-
-# Функция поиска Python скрипта или бинарного файла
-find_python_executable() {
-    local name="$1"
-    local dir="${2:-$SCRIPT_DIR}"
-    
-    if [ "$IS_BINARY" = true ]; then
-        # В бинарном режиме ищем только бинарный файл
-        if [ -f "$dir/$name" ] && [ -x "$dir/$name" ]; then
-            echo "$dir/$name"
-            return 0
-        fi
-    else
-        # В скриптовом режиме ищем Python скрипт
-        if [ -f "$dir/${name}.py" ] && command -v python3 >/dev/null 2>&1; then
-            echo "python3 $dir/${name}.py"
-            return 0
-        fi
-    fi
-    
-    return 1
-}
-
-# Универсальная функция сворачивания окна терминала (работает до и после sudo)
-minimize_terminal_window() {
-    if ! command -v xdotool >/dev/null 2>&1; then
-        return 0  # xdotool недоступен, выходим тихо
-    fi
-    
-    local terminal_pid="$1"
-    
-    # Если передан PID терминала, используем его
-    if [ ! -z "$terminal_pid" ] && [ "$terminal_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$terminal_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowminimize "$window" 2>/dev/null
-            done
-            return 0
-        fi
-    fi
-    
-    # Fallback: пробуем найти терминал через PPID
-    local term_pid=$(ps -o ppid= -p $$ | tr -d ' ' 2>/dev/null)
-    if [ ! -z "$term_pid" ] && [ "$term_pid" != "0" ]; then
-        WINDOW_IDS=$(xdotool search --pid "$term_pid" 2>/dev/null)
-        if [ -n "$WINDOW_IDS" ]; then
-            for window in $WINDOW_IDS; do
-                xdotool windowminimize "$window" 2>/dev/null
-            done
-        fi
-    fi
-}
-
-# КРИТИЧНО: Сворачиваем окно терминала МГНОВЕННО (до всех выводов)
-# Выполняем только при первом запуске (до перезапуска через sudo)
-if [ "$EUID" -ne 0 ] && command -v xdotool >/dev/null 2>&1; then
-    # Проверяем аргументы - не сворачиваем в консольном режиме
-    SKIP_TERMINAL=false
-    for arg in "$@"; do
-        if [[ "$arg" == "--console" ]]; then
-            SKIP_TERMINAL=true
-            break
-        fi
-    done
-    
-    # Сворачиваем окно терминала (всегда, кроме консольного режима)
-    if [ "$SKIP_TERMINAL" != "true" ]; then
-        minimize_terminal_window ""  # Пробуем найти автоматически
-    fi
-fi
-
-# КРИТИЧНО: Принудительно переходим в каталог скрипта
-# Это решает проблему запуска из ярлыка на рабочем столе
-echo "FSA-AstraInstall Automation $SCRIPT_VERSION"
-echo "Переходим в каталог скрипта: $SCRIPT_DIR"
-cd "$SCRIPT_DIR" || {
-    echo "ОШИБКА: Не удалось перейти в каталог скрипта: $SCRIPT_DIR"
-    exit 1
-}
-echo "Текущий каталог: $(pwd)"
-
-# Проверяем наличие основных файлов
-if [ "$IS_BINARY" = true ]; then
-    if [ ! -f "$SCRIPT_DIR/astra_automation" ] || [ ! -x "$SCRIPT_DIR/astra_automation" ]; then
-        echo "ОШИБКА: Файл astra_automation не найден в каталоге: $SCRIPT_DIR"
-        echo "Список файлов в каталоге:"
-        ls -la
-        exit 1
-    fi
-else
-    if [ ! -f "$SCRIPT_DIR/astra_automation.py" ]; then
-        echo "ОШИБКА: Файл astra_automation.py не найден в каталоге: $SCRIPT_DIR"
-        echo "Список файлов в каталоге:"
-        ls -la
-        exit 1
-    fi
-fi
-
-# ============================================================================
-# БЛОК 0: ИНИЦИАЛИЗАЦИЯ ЛОГ-ФАЙЛА (ПЕРЕД ВСЕМ!)
-# ============================================================================
-
-# КРИТИЧНО: Проверяем передан ли --log-file ПЕРЕД созданием нового
-LOG_FILE_PASSED=""
-LOG_TIMESTAMP_PASSED=""
-TERMINAL_PID_ARG=""
-
-# КРИТИЧНО: Проверяем переменные окружения (если перезапустились через sudo)
-if [ -n "$FSA_LOG_FILE" ]; then
-    LOG_FILE_PASSED="$FSA_LOG_FILE"
-fi
-if [ -n "$FSA_LOG_TIMESTAMP" ]; then
-    LOG_TIMESTAMP_PASSED="$FSA_LOG_TIMESTAMP"
-fi
-if [ -n "$FSA_TERMINAL_PID" ]; then
-    TERMINAL_PID_ARG="$FSA_TERMINAL_PID"
-fi
-
-# Обрабатываем аргументы (--log-file, --log-timestamp, --terminal-pid)
-# КРИТИЧНО: Если уже восстановлены из переменных окружения, пропускаем обработку
-if [ -z "$LOG_FILE_PASSED" ] && [ -z "$LOG_TIMESTAMP_PASSED" ] && [ -z "$TERMINAL_PID_ARG" ]; then
-    i=1
-    while [ $i -le $# ]; do
-        # КРИТИЧНО: Используем eval для косвенной подстановки аргументов
-        eval "arg=\${$i}"
-        if [[ "$arg" == "--log-file" ]] && [ $((i+1)) -le $# ]; then
-            next_idx=$((i+1))
-            eval "LOG_FILE_PASSED=\${$next_idx}"
-            i=$((i+2))
-            continue
-        elif [[ "$arg" == "--log-timestamp" ]] && [ $((i+1)) -le $# ]; then
-            next_idx=$((i+1))
-            eval "LOG_TIMESTAMP_PASSED=\${$next_idx}"
-            i=$((i+2))
-            continue
-        elif [[ "$arg" == "--terminal-pid" ]] && [ $((i+1)) -le $# ]; then
-            next_idx=$((i+1))
-            eval "TERMINAL_PID_ARG=\${$next_idx}"
-            i=$((i+2))
-            continue
-        elif [[ "$arg" == --terminal-pid=* ]]; then
-            TERMINAL_PID_ARG="${arg#*=}"
-            i=$((i+1))
-            continue
-        fi
-        i=$((i+1))
-    done
-fi
-
-# Если передан --log-file - используем его
-if [ -n "$LOG_FILE_PASSED" ]; then
-    # КРИТИЧНО: Преобразуем относительный путь в абсолютный
-    if [[ "$LOG_FILE_PASSED" != /* ]]; then
-        # Относительный путь - делаем абсолютным относительно SCRIPT_DIR
-        LOG_FILE_PASSED="$SCRIPT_DIR/$LOG_FILE_PASSED"
-        # Убираем двойные слеши и ./ в начале
-        LOG_FILE_PASSED=$(echo "$LOG_FILE_PASSED" | sed 's|/\./|/|g' | sed 's|^\./||' | sed 's|//|/|g')
-    fi
-    
-    if [ -f "$LOG_FILE_PASSED" ]; then
-        LOG_FILE="$LOG_FILE_PASSED"
-        LOG_DIR="$(dirname "$LOG_FILE")"
-        
-        # Извлекаем timestamp из имени файла, если не передан
-        if [ -z "$LOG_TIMESTAMP_PASSED" ]; then
-            TIMESTAMP=$(echo "$LOG_FILE" | grep -oE '[0-9]{8}_[0-9]{6}' | head -1)
-        else
-            TIMESTAMP="$LOG_TIMESTAMP_PASSED"
-        fi
-        
-        # КРИТИЧНО: Проверяем, не был ли уже добавлен разделитель (при перезапуске через sudo)
-        # Проверяем переменную окружения или последние строки файла
-        if [ -z "$FSA_LOG_INITIALIZED" ]; then
-            # Проверяем последние строки файла на наличие разделителя
-            if ! tail -n 10 "$LOG_FILE" | grep -q "ASTRA INSTALL - НАЧАЛО УСТАНОВКИ"; then
-                # Добавляем разделитель (НЕ пересоздаем файл!)
-                {
-                    echo ""
-                    echo "============================================================"
-                    echo "ASTRA INSTALL - НАЧАЛО УСТАНОВКИ"
-                    echo "Время запуска: $(date)"
-                    echo "Директория скрипта: $SCRIPT_DIR"
-                    echo "============================================================"
-                } >> "$LOG_FILE"
-                
-                # Устанавливаем флаг в переменной окружения для предотвращения повторного добавления
-                export FSA_LOG_INITIALIZED="1"
-            fi
-        fi
-        
-        # Исправляем права доступа
-        REAL_USER=$(who am i | awk '{print $1}' 2>/dev/null || echo "")
-        if [ -z "$REAL_USER" ]; then
-            REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
-        fi
-        if [ ! -z "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
-            chown "$REAL_USER:$REAL_USER" "$LOG_FILE" 2>/dev/null || true
-            chmod 644 "$LOG_FILE" 2>/dev/null || true
-        fi
-    else
-        # Файл не найден - создаем новый (fallback)
-        echo "[WARNING] Переданный лог-файл не найден: $LOG_FILE_PASSED, создаем новый" >&2
-        LOG_FILE_PASSED=""
-    fi
-fi
-
-# Если LOG_FILE_PASSED пуст или файл не найден - создаем новый
-if [ -z "$LOG_FILE_PASSED" ] || [ ! -f "$LOG_FILE" ]; then
-    # СТАРОЕ ПОВЕДЕНИЕ: создаем новый лог-файл (как было раньше)
-    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    LOG_DIR="$SCRIPT_DIR/Log"
-    mkdir -p "$LOG_DIR"
-    LOG_FILE="$LOG_DIR/astra_automation_$TIMESTAMP.log"
-    
-    # Инициализируем лог-файл (как было раньше)
-    echo "============================================================" > "$LOG_FILE"
-    echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
-    echo "Время запуска: $(date)" >> "$LOG_FILE"
-    echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
-    echo "============================================================" >> "$LOG_FILE"
-    
-    # Исправляем права доступа (как было раньше)
-    if [ -d "$LOG_DIR" ]; then
-        REAL_USER=$(who am i | awk '{print $1}')
-        if [ -z "$REAL_USER" ]; then
-            REAL_USER=$(logname 2>/dev/null || echo "$SUDO_USER")
-        fi
-        
-        if [ ! -z "$REAL_USER" ]; then
-            chown -R "$REAL_USER:$REAL_USER" "$LOG_DIR" 2>/dev/null
-            chmod -R 755 "$LOG_DIR" 2>/dev/null
-            echo "[i] Установлены права доступа для пользователя: $REAL_USER"
-        fi
-    fi
-fi
-
-# Экспортируем для использования в функциях
-export LOG_FILE
-export TIMESTAMP
-
-# Функция логирования
-log_message() {
-    local message="$1"
-    local timestamp=$(date +"%H:%M:%S.%3N")
-    echo "[$timestamp] [BASH] $message" >> "$LOG_FILE"
-    echo "$message"  # Также выводим в консоль
-}
-
-# Функция проверки одного репозитория
-check_single_repo() {
-    local repo_line="$1"
-    local test_file=$(mktemp)
-    echo "$repo_line" > "$test_file"
-
-    # Автоматически отключаем компакт-диск репозитории
-    if [[ "$repo_line" =~ cdrom: ]]; then
-        echo "   [!] Компакт-диск: $(echo "$repo_line" | awk '{print $2}') - отключаем"
-        log_message "Компакт-диск репозиторий отключен: $(echo "$repo_line" | awk '{print $2}')"
-        rm -f "$test_file"
-        return 1  # Возвращаем 1 чтобы репозиторий был отключен
-    fi
-
-    if apt-get update -o Dir::Etc::sourcelist="$test_file" -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" &>/dev/null; then
-        echo "   [OK] Рабочий: $(echo "$repo_line" | awk '{print $2}')"
-        log_message "Репозиторий рабочий: $(echo "$repo_line" | awk '{print $2}')"
-        rm -f "$test_file"
-        return 0
-    else
-        echo "   [ERR] Не доступен: $(echo "$repo_line" | awk '{print $2}')"
-        log_message "Репозиторий не доступен: $(echo "$repo_line" | awk '{print $2}')"
-        rm -f "$test_file"
-        return 1
-    fi
-}
-
-# Функция проверки доступности tkinter
-check_tkinter_available() {
-    if python3 -c "import tkinter" 2>/dev/null; then
-        return 0  # tkinter доступен
-    else
-        return 1  # tkinter недоступен
-    fi
-}
-
-# Функция проверки доступности репозиториев (не-cdrom)
-check_repos_available() {
-    # Проверяем есть ли хоть один НЕ-cdrom и НЕ-закомментированный репозиторий
-    if grep -v "^#" /etc/apt/sources.list 2>/dev/null | grep -v "cdrom:" | grep "^deb" >/dev/null 2>&1; then
-        return 0  # Репозитории есть
-    else
-        return 1  # Только cdrom или пусто
-    fi
-}
-
-# Функция поиска пакета tkinter в репозиториях
-find_tkinter_package() {
-    # Список возможных названий пакетов tkinter
-    local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
-    
-    log_message "Поиск пакетов tkinter в репозиториях"
-    
-    for pkg in "${TKINTER_PACKAGES[@]}"; do
-        if apt-cache show "$pkg" >/dev/null 2>&1; then
-            log_message "Пакет $pkg найден в репозиториях"
-            echo "$pkg"  # Возвращаем первый найденный пакет
-            return 0
-        else
-            log_message "Пакет $pkg не найден в репозиториях"
-        fi
-    done
-    
-    log_message "Ни один пакет tkinter не найден в репозиториях"
-    return 1  # Ни один пакет не найден в репозиториях
-}
-
-# Функция установки tkinter с проверкой
-install_tkinter_with_verification() {
-    local TKINTER_PACKAGES=("python3-tk" "python3-tkinter" "tk")
-    local INSTALLED=false
-    
-    echo ""
-    echo "[#] Установка tkinter..."
-    log_message "Начинаем установку tkinter с проверкой"
-    
-    for pkg in "${TKINTER_PACKAGES[@]}"; do
-        echo "   [TRY] Пробуем установить: $pkg"
-        log_message "Пробуем установить пакет: $pkg"
-        
-        # Проверяем что пакет существует в репозиториях
-        if ! apt-cache show "$pkg" >/dev/null 2>&1; then
-            echo "   [SKIP] Пакет $pkg не найден в репозиториях"
-            log_message "Пакет $pkg не найден в репозиториях"
-            continue
-        fi
-        
-        echo "   [INSTALL] Устанавливаем $pkg..."
-        log_message "Устанавливаем пакет $pkg"
-        
-        # Устанавливаем с максимально агрессивными опциями автоматического подтверждения
-        # Используем yes "Y" для автоматического ответа "Y" на все запросы dpkg (обновляем конфигурации)
-        yes "Y" | apt-get install -y $DPKG_OPTS "$pkg" 2>&1 | tee -a "$LOG_FILE"
-        local EXIT_CODE=${PIPESTATUS[0]}
-        
-        # Игнорируем код 141 (SIGPIPE) от yes команды - это нормально
-        if [ $EXIT_CODE -eq 0 ] || [ $EXIT_CODE -eq 141 ]; then
-            echo "   [OK] Пакет $pkg установлен (код возврата: 0)"
-            log_message "Пакет $pkg установлен успешно (код: 0)"
-            
-            # КРИТИЧНО: Проверяем что tkinter теперь импортируется
-            if python3 -c "import tkinter" 2>/dev/null; then
-                echo "   [OK] tkinter успешно импортируется!"
-                log_message "tkinter успешно импортируется после установки $pkg"
-                INSTALLED=true
-                break
-            else
-                echo "   [WARNING] Пакет $pkg установлен, но tkinter не импортируется"
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Пакет $pkg установлен, но tkinter не работает"
-            fi
-        else
-            echo "   [ERROR] Не удалось установить $pkg (код возврата: $EXIT_CODE)"
-            log_message "ОШИБКА: Не удалось установить $pkg (код: $EXIT_CODE)"
-        fi
-    done
-    
-    if [ "$INSTALLED" = true ]; then
-        echo "   [OK] tkinter успешно установлен и работает"
-        log_message "tkinter успешно установлен и работает"
-        return 0
-    else
-        echo "   [ERROR] Не удалось установить рабочий tkinter"
-        log_message "ОШИБКА: Не удалось установить рабочий tkinter"
-        return 1
-    fi
-}
-
-# Инициализируем лог файл (если еще не инициализирован)
-if [ -z "$LOG_FILE" ] || [ ! -f "$LOG_FILE" ]; then
-    echo "============================================================" > "$LOG_FILE"
-    echo "ASTRA AUTOMATION - НАЧАЛО СЕССИИ" >> "$LOG_FILE"
-    echo "Время запуска: $(date)" >> "$LOG_FILE"
-    echo "Директория скрипта: $SCRIPT_DIR" >> "$LOG_FILE"
-    echo "============================================================" >> "$LOG_FILE"
-fi
-
-echo "============================================================"
-echo "ASTRA AUTOMATION - АВТОМАТИЧЕСКАЯ УСТАНОВКА И ЗАПУСК"
-echo "============================================================"
-
-# ============================================================
-# БЛОК 2: ОБРАБОТКА АРГУМЕНТОВ И ПРОВЕРКИ
-# ============================================================
-
-# Обрабатываем аргументы командной строки
-CONSOLE_MODE=false
-DRY_RUN=false
-# КРИТИЧНО: НЕ сбрасываем TERMINAL_PID_ARG, если он уже установлен выше!
-# TERMINAL_PID_ARG уже может быть установлен из переменной окружения или из аргументов
-START_MODE_ARG=""
-SKIP_NEXT_ARG=false  # Флаг для пропуска следующего аргумента (значение --log-file, --log-timestamp или --terminal-pid)
-
-for arg in "$@"; do
-    # КРИТИЧНО: Пропускаем значение --log-file, --log-timestamp или --terminal-pid
-    if [ "$SKIP_NEXT_ARG" = true ]; then
-        SKIP_NEXT_ARG=false
-        continue
-    fi
-    
-    case $arg in
-        --log-file|--log-timestamp|--terminal-pid)
-            # КРИТИЧНО: Пропускаем эти аргументы - они уже обработаны выше
-            # Следующий аргумент - значение, пропускаем его тоже
-            SKIP_NEXT_ARG=true
-            ;;
-        --windows-minimized)
-            # Окна уже свернуты, пропускаем сворачивание
-            ;;
-        --console)
-            CONSOLE_MODE=true
-            echo "[i] Режим: КОНСОЛЬНЫЙ (без GUI)"
-            ;;
-        --dry-run)
-            DRY_RUN=true
-            echo "[i] Режим: ТЕСТИРОВАНИЕ (dry-run)"
-            ;;
-        --mode)
-            # Следующий аргумент - режим запуска
-            shift
-            START_MODE_ARG="$1"
-            ;;
-        --terminal-pid=*)
-            # Обрабатываем --terminal-pid=value
-            TERMINAL_PID_ARG="${arg#*=}"
-            ;;
-        *)
-            # Игнорируем неизвестные аргументы (уже обработаны выше)
-            ;;
-    esac
-done
-
-# КРИТИЧНО: Если получен PID терминала через аргумент, используем его
-if [ ! -z "$TERMINAL_PID_ARG" ]; then
-    TERMINAL_PID="$TERMINAL_PID_ARG"
-    
-    # Сворачиваем терминал ПОСЛЕ sudo (если передан TERMINAL_PID)
-    if [ "$EUID" -eq 0 ] && command -v xdotool >/dev/null 2>&1; then
-        SKIP_TERMINAL=false
-        for arg in "$@"; do
-            if [[ "$arg" == "--console" ]]; then
-                SKIP_TERMINAL=true
-                break
-            fi
-        done
-        
-        if [ "$SKIP_TERMINAL" != "true" ]; then
-            minimize_terminal_window "$TERMINAL_PID"  # Используем переданный PID
-        fi
-    fi
-fi
-
-# Проверяем права root и автоматически перезапускаемся через sudo если нужно
-if [ "$EUID" -ne 0 ]; then
-    echo "[i] Требуются права root. Перезапуск через sudo..."
-    log_message "Перезапуск скрипта с правами root через sudo"
-    
-    # КРИТИЧНО: Сохраняем --log-file, --log-timestamp и --terminal-pid в переменных окружения
-    # чтобы они не потерялись при перезапуске через sudo
-    if [ -n "$LOG_FILE_PASSED" ]; then
-        export FSA_LOG_FILE="$LOG_FILE_PASSED"
-    fi
-    if [ -n "$LOG_TIMESTAMP_PASSED" ]; then
-        export FSA_LOG_TIMESTAMP="$LOG_TIMESTAMP_PASSED"
-    fi
-    if [ -n "$TERMINAL_PID_ARG" ]; then
-        export FSA_TERMINAL_PID="$TERMINAL_PID_ARG"
-    fi
-    # КРИТИЧНО: Передаем флаг инициализации лог-файла
-    if [ -n "$FSA_LOG_INITIALIZED" ]; then
-        export FSA_LOG_INITIALIZED="$FSA_LOG_INITIALIZED"
-    fi
-    
-    # Перезапускаем себя с sudo, передавая все аргументы и переменные окружения
-    if [ ! -z "$DISPLAY" ]; then
-        exec sudo -E env DISPLAY="$DISPLAY" XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" FSA_LOG_FILE="${FSA_LOG_FILE:-}" FSA_LOG_TIMESTAMP="${FSA_LOG_TIMESTAMP:-}" FSA_TERMINAL_PID="${FSA_TERMINAL_PID:-}" FSA_LOG_INITIALIZED="${FSA_LOG_INITIALIZED:-}" bash "$0" "$@"
-    else
-        exec sudo -E env FSA_WINDOWS_MINIMIZED="$FSA_WINDOWS_MINIMIZED" FSA_LOG_FILE="${FSA_LOG_FILE:-}" FSA_LOG_TIMESTAMP="${FSA_LOG_TIMESTAMP:-}" FSA_TERMINAL_PID="${FSA_TERMINAL_PID:-}" FSA_LOG_INITIALIZED="${FSA_LOG_INITIALIZED:-}" bash "$0" "$@"
-    fi
-    exit $?
-fi
-
-log_message "Проверка прав root: OK (запущено с правами root)"
-
-# Синхронизация системного времени (один раз за сеанс)
-TIME_SYNC_FLAG="/tmp/fsa-time-synced"
-
-if [ -f "$TIME_SYNC_FLAG" ]; then
-    echo "[i] Время уже синхронизировано в этом сеансе"
-else
-    echo "[~] Синхронизация системного времени..."
-    log_message "Выполняется синхронизация времени (первый запуск после загрузки)"
-    
-    # Пробуем разные методы синхронизации времени
-    TIME_SYNCED=false
-    
-    # Метод 1: timedatectl (systemd)
-    if command -v timedatectl >/dev/null 2>&1; then
-        if timedatectl set-ntp true 2>/dev/null; then
-            echo "   [OK] Время синхронизировано через NTP (timedatectl)"
-            log_message "Время синхронизировано через timedatectl"
-            TIME_SYNCED=true
-        fi
-    fi
-    
-    # Метод 2: ntpdate (если первый не сработал)
-    if [ "$TIME_SYNCED" = false ] && command -v ntpdate >/dev/null 2>&1; then
-        if ntpdate -s time.nist.gov 2>/dev/null || ntpdate -s pool.ntp.org 2>/dev/null; then
-            echo "   [OK] Время синхронизировано через NTP (ntpdate)"
-            log_message "Время синхронизировано через ntpdate"
-            TIME_SYNCED=true
-        fi
-    fi
-    
-    # Создаем флаг успешной синхронизации
-    if [ "$TIME_SYNCED" = true ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$TIME_SYNC_FLAG"
-        log_message "Флаг синхронизации создан: $TIME_SYNC_FLAG"
-    else
-        echo "   [!] Не удалось синхронизировать время (продолжаем работу)"
-        log_message "Предупреждение: синхронизация времени не выполнена"
-    fi
-fi
-
-# Настраиваем переменные окружения для автоматических ответов
-export DEBIAN_FRONTEND=noninteractive
-export DEBIAN_PRIORITY=critical
-export APT_LISTCHANGES_FRONTEND=none
-
-# Опции dpkg для автоматического обновления конфигураций
-DPKG_OPTS="-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-confmiss"
-
-
-echo "[?] Проверяем систему..."
-
-# Проверяем версию Astra Linux
-if [ -f /etc/astra_version ]; then
-    ASTRA_VERSION=$(cat /etc/astra_version)
-    echo "   [i] Версия Astra Linux: $ASTRA_VERSION"
-    log_message "Версия Astra Linux: $ASTRA_VERSION"
-else
-    echo "   [!] Не удалось определить версию Astra Linux"
-    log_message "Не удалось определить версию Astra Linux"
-fi
-
-# Проверяем Python
-PYTHON3_VERSION=$(python3 --version 2>/dev/null || echo 'не найден')
-echo "   [i] Python 3: $PYTHON3_VERSION"
-log_message "Python 3: $PYTHON3_VERSION"
-
-# ============================================================
-# БЛОК 3: ОПРЕДЕЛЕНИЕ РЕЖИМА ЗАПУСКА (УМНАЯ ЛОГИКА)
-# ============================================================
-
-if [ "$CONSOLE_MODE" = false ]; then
-    echo ""
-    echo "[*] Определяем оптимальный режим запуска..."
-    
-    # Переменная для выбора режима
-    START_MODE=""
-    
-    # ✅ ОПТИМИЗАЦИЯ: СНАЧАЛА проверяем tkinter (быстро!)
-    # Если tkinter есть - сразу запускаем GUI, пропуская проверку репозиториев
-    echo "   [?] Быстрая проверка tkinter..."
-    if check_tkinter_available; then
-        echo "   [OK] tkinter найден и работает - БЫСТРЫЙ ЗАПУСК GUI!"
-        START_MODE="gui_ready"
-        log_message "БЫСТРЫЙ ЗАПУСК: tkinter доступен, пропускаем проверку репозиториев"
-        echo "   [i] Проверка репозиториев отложена - GUI проверит при необходимости"
-        
-    else
-        # ❌ tkinter НЕТ - теперь нужны репозитории для его установки
-        echo "   [!] tkinter не найден - требуется установка"
-        log_message "tkinter недоступен - начинаем подготовку к установке"
-        
-        # Теперь проверяем и настраиваем репозитории (они нужны для установки tkinter)
-        echo "   [?] Проверяем доступность репозиториев..."
-        if ! check_repos_available; then
-            echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
-            log_message "Нет рабочих репозиториев - настраиваем через Python"
-            
-            echo "   [#] Настраиваем репозитории через Python..."
-            log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
-            
-            ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
-            if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
-                log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
-                exit 1
-            fi
-            
-            $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
-            REPOS_EXIT_CODE=${PIPESTATUS[0]}
-            
-            if [ $REPOS_EXIT_CODE -eq 0 ]; then
-                echo "   [OK] Репозитории настроены успешно"
-                log_message "Репозитории настроены через Python"
-                
-                # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
-                echo "   [#] Обновляем список пакетов после настройки репозиториев..."
-                log_message "Обновляем список пакетов после настройки репозиториев"
-                
-                yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
-                UPDATE_EXIT_CODE=${PIPESTATUS[0]}
-                
-                if [ $UPDATE_EXIT_CODE -eq 0 ]; then
-                    echo "   [OK] Список пакетов обновлен после настройки репозиториев"
-                    log_message "Список пакетов обновлен успешно после настройки репозиториев"
-                else
-                    echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                    log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                    echo "   [i] Продолжаем работу - возможно список уже актуален"
-                    log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
-                fi
-            else
-                echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
-                log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
-                echo "   [i] Переключение на консольный режим"
-                log_message "Переключение на консольный режим из-за ошибки настройки репозиториев"
-                START_MODE="console_forced"
-                CONSOLE_MODE=true
-            fi
-        else
-            echo "   [OK] Рабочие репозитории уже настроены"
-        fi
-        
-        # Если режим еще не определен (репозитории настроены успешно)
-        if [ -z "$START_MODE" ]; then
-            # Проверяем есть ли пакет tkinter в репозиториях
-            echo "   [?] Ищем пакет tkinter в репозиториях..."
-            log_message "Поиск пакета tkinter в репозиториях"
-            
-            TKINTER_PKG=$(find_tkinter_package)
-            TKINTER_FOUND=$?
-            
-            log_message "Результат поиска tkinter: код=$TKINTER_FOUND, пакет='$TKINTER_PKG'"
-            
-            if [ $TKINTER_FOUND -eq 0 ]; then
-                echo "   [OK] Найден пакет: $TKINTER_PKG"
-                log_message "Пакет tkinter найден в репозиториях: $TKINTER_PKG"
-                START_MODE="gui_install_first"
-            else
-                echo "   [!] Пакет tkinter не найден в репозиториях"
-                log_message "Пакет tkinter не найден - принудительный консольный режим"
-                START_MODE="console_forced"
-                CONSOLE_MODE=true
-            fi
-        fi
-    fi
-    
-    # Вывод итогового решения
-    echo ""
-    echo "============================================================"
-    case $START_MODE in
-        gui_ready)
-            echo "[MODE] GUI РЕЖИМ - все компоненты готовы"
-            echo "[i] tkinter доступен, запускаем графический интерфейс"
-            log_message "Режим: GUI_READY - немедленный запуск GUI"
-            ;;
-        gui_install_first)
-            echo "[MODE] GUI РЕЖИМ - установка tkinter"
-            echo "[i] Репозитории доступны, установим tkinter и запустим GUI"
-            log_message "Режим: GUI_INSTALL_FIRST - установка tkinter перед запуском"
-            ;;
-        console_forced)
-            echo "[MODE] КОНСОЛЬНЫЙ РЕЖИМ (принудительный)"
-            echo "[!] Причина: нет репозиториев или tkinter недоступен"
-            echo "[i] Система будет обновлена в консольном режиме"
-            echo "[i] GUI компоненты будут установлены ПОСЛЕ обновления"
-            echo "[i] После завершения запустите снова для GUI"
-            log_message "Режим: CONSOLE_FORCED - нет возможности запустить GUI"
-            CONSOLE_MODE=true
-            ;;
-    esac
-    echo "============================================================"
-    echo ""
-    
-    # Если нужно установить tkinter - делаем это
-    if [ "$START_MODE" = "gui_install_first" ]; then
-        echo "[#] Устанавливаем компоненты для GUI..."
-        log_message "Начинаем установку GUI компонентов"
-        
-        echo ""
-        echo "[~] Обновляем список пакетов..."
-        log_message "Начинаем обновление списка пакетов (apt-get update)"
-        
-        yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
-        UPDATE_EXIT_CODE=${PIPESTATUS[0]}
-        
-        # Игнорируем код 141 (SIGPIPE) от yes команды
-        if [ $UPDATE_EXIT_CODE -eq 0 ] || [ $UPDATE_EXIT_CODE -eq 141 ]; then
-            echo "   [OK] Список пакетов обновлен (код: 0)"
-            log_message "Список пакетов обновлен успешно (код: 0)"
-        else
-            echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-            echo "   [i] Продолжаем работу - возможно список уже актуален"
-            log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
-        fi
-        
-        # НЕ переключаемся в консольный режим из-за ошибки apt-get update!
-        # Продолжаем установку GUI компонентов
-        
-        # Устанавливаем tkinter с проверкой
-        if install_tkinter_with_verification; then
-            echo "   [OK] tkinter установлен и работает"
-            log_message "tkinter установлен и проверен"
-            
-            # Устанавливаем дополнительные компоненты для GUI
-            echo ""
-            echo "[#] Установка дополнительных компонентов для GUI..."
-            yes "Y" | apt-get install -y python3-psutil wmctrl xdotool expect $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
-            COMPONENTS_EXIT_CODE=${PIPESTATUS[0]}
-            
-            if [ $COMPONENTS_EXIT_CODE -eq 0 ] || [ $COMPONENTS_EXIT_CODE -eq 141 ]; then
-                echo "   [OK] Дополнительные компоненты установлены (код: $COMPONENTS_EXIT_CODE)"
-                log_message "psutil, wmctrl, xdotool, expect установлены успешно"
-            else
-                echo "   [WARNING] Некоторые компоненты не установлены (код: $COMPONENTS_EXIT_CODE)"
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Некоторые компоненты не установлены, функциональность может быть ограничена"
-            fi
-            
-            # КРИТИЧНО: Меняем режим на gui_ready и СБРАСЫВАЕМ CONSOLE_MODE
-            START_MODE="gui_ready"
-            CONSOLE_MODE=false
-            echo "   [i] Режим изменен на: gui_ready"
-            echo "   [i] CONSOLE_MODE сброшен в: false"
-            log_message "Режим изменен на gui_ready после установки tkinter, CONSOLE_MODE сброшен"
-        else
-            echo "   [ERROR] Не удалось установить рабочий tkinter"
-            echo "   [i] Переключение на консольный режим"
-            log_message "Переключение на консольный режим - tkinter не установлен"
-            START_MODE="console_forced"
-            CONSOLE_MODE=true
-        fi
-        
-        # Пропускаем установку pip3 для экономии места и времени
-        # pip3 не критичен для работы GUI
-        echo "     [SKIP] Пропускаем установку pip3 (не критично для GUI)"
-        log_message "Пропускаем установку pip3 (не критично для GUI)"
-        
-        # Исправляем зависимости
-        echo ""
-        echo "   [*] Исправляем зависимости..."
-        log_message "Исправляем зависимости (apt-get install -f)"
-        apt-get install -f -y $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
-        FIX_EXIT_CODE=${PIPESTATUS[0]}
-        if [ $FIX_EXIT_CODE -eq 0 ]; then
-            echo "   [OK] Зависимости исправлены (код: 0)"
-            log_message "Зависимости исправлены успешно (код: 0)"
-        else
-            echo "   [WARNING] Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
-            log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка исправления зависимостей (код: $FIX_EXIT_CODE)"
-        fi
-    fi
-    
-    # Финальная проверка перед запуском GUI
-    # ✅ ОПТИМИЗАЦИЯ: Проверяем ТОЛЬКО если мы только что устанавливали tkinter
-    if [ "$START_MODE" = "gui_install_first" ]; then
-        echo ""
-        echo "[?] Финальная проверка после установки tkinter..."
-        
-        if ! check_tkinter_available; then
-            echo "   [ERROR] tkinter все еще недоступен после установки!"
-            echo "   [i] Переключение на консольный режим"
-            log_message "КРИТИЧЕСКАЯ ОШИБКА: tkinter недоступен после установки"
-            START_MODE="console_forced"
-            CONSOLE_MODE=true
-        else
-            echo "   [OK] tkinter работает - готовы к запуску GUI"
-            echo "   [i] Режим изменен на: gui_ready"
-            START_MODE="gui_ready"
-            CONSOLE_MODE=false
-            log_message "tkinter успешно установлен и проверен - режим изменен на gui_ready"
-        fi
-    elif [ "$START_MODE" = "gui_ready" ]; then
-        # ✅ Пропускаем проверку - мы уже проверили tkinter в начале!
-        echo ""
-        echo "   [i] tkinter проверен ранее - готовы к запуску GUI"
-        CONSOLE_MODE=false
-    fi
-fi
-
-echo ""
-echo "[?] Статус компонентов:"
-echo "   [i] Python 3: $(python3 --version 2>/dev/null || echo 'не работает')"
-echo "   [i] Tkinter: $(python3 -c 'import tkinter; print("работает")' 2>/dev/null || echo 'не работает')"
-echo "   [i] pip3: $(pip3 --version 2>/dev/null || echo 'не работает')"
-log_message "Статус: Python=$(python3 --version 2>/dev/null || echo 'N/A'), Tkinter=$(python3 -c 'import tkinter; print("OK")' 2>/dev/null || echo 'N/A'), pip3=$(pip3 --version 2>/dev/null || echo 'N/A')"
-
-echo ""
-echo "[+] Подготовка завершена!"
-
-# ============================================================
-# БЛОК 4: ЗАПУСК PYTHON СКРИПТА
-# ============================================================
-
-echo ""
-echo "[INFO] Финальные параметры запуска:"
-echo "   [i] CONSOLE_MODE: $CONSOLE_MODE"
-echo "   [i] START_MODE: $START_MODE"
-
-# Устанавливаем START_MODE для консольного режима
-# КРИТИЧНО: В консольном режиме START_MODE определяется ПОСЛЕ проверки репозиториев
-# Если режим передан через --mode, но это консольный режим - игнорируем и проверяем репозитории
-if [ "$CONSOLE_MODE" = true ]; then
-    # Консольный режим - START_MODE будет установлен ПОСЛЕ проверки репозиториев
-    # (проверка выполняется в блоке определения режима ниже)
-    log_message "Консольный режим - START_MODE будет определен после проверки репозиториев"
-elif [ -n "$START_MODE_ARG" ]; then
-    # GUI режим с переданным START_MODE - используем его
-    START_MODE="$START_MODE_ARG"
-    log_message "Используем START_MODE из аргумента (GUI режим): $START_MODE"
-fi
-
-if [ "$CONSOLE_MODE" = true ]; then
-    echo "[>] Консольный режим - проверка системы и обновление..."
-    log_message "Запускаем консольный режим"
-    
-    # КРИТИЧНО: Проверяем репозитории ПЕРЕД установкой START_MODE
-    echo ""
-    echo "[?] Проверяем доступность репозиториев..."
-    if ! check_repos_available; then
-        echo "   [!] Нет рабочих репозиториев (только cdrom или пусто)"
-        log_message "Нет рабочих репозиториев - настраиваем через Python"
-        
-        echo "   [#] Настраиваем репозитории через Python..."
-        log_message "Вызываем Python для настройки репозиториев с лог-файлом: $LOG_FILE"
-        
-        ASTRA_AUTOMATION_REPOS=$(find_python_executable "astra_automation")
-        if [ -z "$ASTRA_AUTOMATION_REPOS" ]; then
-            log_message "ОШИБКА: astra_automation не найден для настройки репозиториев"
-            exit 1
-        fi
-        
-        $ASTRA_AUTOMATION_REPOS --log-file "$LOG_FILE" --setup-repos 2>&1 | tee -a "$LOG_FILE"
-        REPOS_EXIT_CODE=${PIPESTATUS[0]}
-        
-        if [ $REPOS_EXIT_CODE -eq 0 ]; then
-            echo "   [OK] Репозитории настроены успешно"
-            log_message "Репозитории настроены через Python"
-            
-            # КРИТИЧНО: Обновляем список пакетов после настройки репозиториев
-            echo "   [#] Обновляем список пакетов после настройки репозиториев..."
-            log_message "Обновляем список пакетов после настройки репозиториев"
-            
-            yes "Y" | apt-get update -y 2>&1 | tee -a "$LOG_FILE"
-            UPDATE_EXIT_CODE=${PIPESTATUS[0]}
-            
-            if [ $UPDATE_EXIT_CODE -eq 0 ] || [ $UPDATE_EXIT_CODE -eq 141 ]; then
-                echo "   [OK] Список пакетов обновлен после настройки репозиториев"
-                log_message "Список пакетов обновлен успешно после настройки репозиториев"
-            else
-                echo "   [WARNING] Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                log_message "ПРЕДУПРЕЖДЕНИЕ: Ошибка обновления списка пакетов (код: $UPDATE_EXIT_CODE)"
-                echo "   [i] Продолжаем работу - возможно список уже актуален"
-                log_message "Продолжаем работу несмотря на ошибку обновления списка пакетов"
-            fi
-        else
-            echo "   [ERROR] Ошибка настройки репозиториев (код: $REPOS_EXIT_CODE)"
-            log_message "ОШИБКА: Не удалось настроить репозитории (код: $REPOS_EXIT_CODE)"
-            echo "   [!] КРИТИЧЕСКАЯ ОШИБКА: Невозможно настроить репозитории в консольном режиме"
-            log_message "КРИТИЧЕСКАЯ ОШИБКА: Невозможно настроить репозитории в консольном режиме"
-            exit 1
-        fi
-    else
-        echo "   [OK] Рабочие репозитории уже настроены"
-        log_message "Репозитории настроены, продолжаем работу"
-    fi
-    
-    # Теперь устанавливаем START_MODE для консольного режима
-    START_MODE="console_forced"
-    log_message "Установлен START_MODE=console_forced для консольного режима после проверки репозиториев"
-    
-    # Устанавливаем psutil для мониторинга системы в консольном режиме
-    echo ""
-    echo "[#] Установка psutil для мониторинга системы..."
-    yes "Y" | apt-get install -y python3-psutil $DPKG_OPTS 2>&1 | tee -a "$LOG_FILE"
-    PSUTIL_EXIT_CODE=${PIPESTATUS[0]}
-    
-    if [ $PSUTIL_EXIT_CODE -eq 0 ] || [ $PSUTIL_EXIT_CODE -eq 141 ]; then
-        echo "   [OK] psutil установлен (код: $PSUTIL_EXIT_CODE)"
-        log_message "psutil установлен успешно в консольном режиме"
-    else
-        echo "   [WARNING] psutil не установлен (код: $PSUTIL_EXIT_CODE)"
-        log_message "ПРЕДУПРЕЖДЕНИЕ: psutil не установлен, мониторинг будет ограничен"
-    fi
-    
-    echo ""
-    echo "[*] Запуск Python скрипта в консольном режиме..."
-    log_message "Запускаем Python с флагом --console и START_MODE=$START_MODE"
-else
-    echo "[>] Запускаем графический интерфейс..."
-fi
-
-log_message "FSA-AstraInstall Automation $SCRIPT_VERSION"
-
-# В бинарном режиме не нужен Python - бинарник уже содержит интерпретатор
-if [ "$IS_BINARY" = true ] || python3 --version >/dev/null 2>&1; then
-    if [ "$IS_BINARY" = false ]; then
-        echo "   [i] Используем Python 3: $(python3 --version)"
-    else
-        echo "   [i] Бинарный режим - Python интерпретатор встроен"
-        log_message "Бинарный режим - Python интерпретатор встроен"
-    fi
-    
-    if [ "$CONSOLE_MODE" = true ]; then
-        # Консольный режим - запускаем в текущем терминале
-        ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
-        if [ -z "$ASTRA_AUTOMATION" ]; then
-            log_message "ОШИБКА: astra_automation не найден"
-            exit 1
-        fi
-        
-        # КРИТИЧНО: Передаем лог-файл и timestamp в astra_automation.py
-        if [ -n "$TIMESTAMP" ]; then
-            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --console --mode "$START_MODE" "$@"
-        else
-            $ASTRA_AUTOMATION --log-file "$LOG_FILE" --console --mode "$START_MODE" "$@"
-        fi
-        PYTHON_EXIT_CODE=$?
-    else
-        # GUI режим - запускаем в фоне и передаем PID терминала для закрытия
-        echo "   [i] GUI запускается в фоновом режиме"
-        echo "   [i] Окно терминала закроется автоматически после запуска GUI"
-        # Получаем PID родительского терминала (процесс окна терминала, не bash скрипта)
-        # $PPID - это PID родителя текущего скрипта, нужен родитель родителя
-        # АЛГОРИТМ ОПРЕДЕЛЕНИЯ PID ТЕРМИНАЛА С ПРОВЕРКОЙ
-        
-        # КРИТИЧНО: Проверяем переданный PID терминала из astra_update.sh
-        if [ -z "$TERMINAL_PID" ]; then
-            log_message "Переданный PID терминала не найден, используем алгоритм поиска"
-            
-            # Список методов определения PID (по приоритету)
-            methods=(
-                "ps -o ppid= -p \$PPID | tr -d ' '"                                  # Метод 1 - РАБОТАЕТ НА 1.7.8
-                "ps -o ppid= -p \$(ps -o ppid= -p \$PPID | tr -d ' ') | tr -d ' '"  # Метод 2 - РАБОТАЕТ НА 1.8.3
-                "\$PPID"                                                             # Метод 3 - простой fallback
-                "ps -o ppid= -p \$\$ | tr -d ' '"                                   # Метод 4 - альтернатива
-                "pstree -p \$\$ | grep -o '([0-9]*)' | tail -1 | tr -d '()'"        # Метод 5 - если pstree доступен
-                "ps -o pid,ppid,comm -p \$\$ | tail -1 | awk '{print \$2}'"         # Метод 6 - awk fallback
-            )
-            
-            # Проверяем каждый метод по очереди
-            for i in "${!methods[@]}"; do
-                method="${methods[$i]}"
-                # Проверяем каждый метод
-                candidate_pid=$(eval "$method" 2>/dev/null)
-                
-                # Проверяем существование и тип процесса
-                if [ ! -z "$candidate_pid" ] && kill -0 "$candidate_pid" 2>/dev/null; then
-                    process_name=$(ps -o comm= -p "$candidate_pid" 2>/dev/null)
-                    
-                    # Проверяем что это терминал
-                    if [[ "$process_name" =~ (fly-term|gnome-terminal|xterm|konsole|terminator) ]]; then
-                        TERMINAL_PID="$candidate_pid"
-                        break  # ВЫХОДИМ ИЗ ЦИКЛА!
-                    fi
-                fi
-            done
-            
-            # Fallback если ничего не найдено
-            if [ -z "$TERMINAL_PID" ]; then
-                TERMINAL_PID=$(ps -o ppid= -p $PPID | tr -d ' ')
-            fi
-        fi  # Закрываем блок if [ -z "$TERMINAL_PID" ]
-        
-        # Запускаем GUI с передачей PID терминала для автозакрытия
-        ASTRA_AUTOMATION=$(find_python_executable "astra_automation")
-        if [ -z "$ASTRA_AUTOMATION" ]; then
-            log_message "ОШИБКА: astra_automation не найден"
-            exit 1
-        fi
-        
-        # КРИТИЧНО: Передаем лог-файл и timestamp в astra_automation.py (GUI режим)
-        # Проверяем что TERMINAL_PID валидный перед передачей
-        if [ -n "$TIMESTAMP" ]; then
-            # Запускаем команду (может быть "python3 file.py" или "./file")
-            if [ "$IS_BINARY" = true ]; then
-                # Бинарный режим - просто путь к файлу
-                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
-                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
-                else
-                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --log-timestamp "$TIMESTAMP" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
-                fi
-            else
-                # Скриптовый режим - команда с python3
-                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
-                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --log-timestamp \"$TIMESTAMP\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
-                else
-                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --log-timestamp \"$TIMESTAMP\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
-                fi
-            fi
-        else
-            # Fallback: без timestamp (старое поведение)
-            if [ "$IS_BINARY" = true ]; then
-                # Бинарный режим - просто путь к файлу
-                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
-                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --close-terminal "$TERMINAL_PID" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
-                else
-                    nohup "$ASTRA_AUTOMATION" --log-file "$LOG_FILE" --mode "$START_MODE" "$@" >/dev/null 2>&1 &
-                fi
-            else
-                # Скриптовый режим - команда с python3
-                if [ -n "$TERMINAL_PID" ] && [[ "$TERMINAL_PID" =~ ^[0-9]+$ ]]; then
-                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --close-terminal \"$TERMINAL_PID\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
-                else
-                    nohup bash -c "$ASTRA_AUTOMATION --log-file \"$LOG_FILE\" --mode \"$START_MODE\" $*" >/dev/null 2>&1 &
-                fi
-            fi
-        fi
-        PYTHON_PID=$!
-        log_message "GUI запущен в фоновом режиме (PID: $PYTHON_PID)"
-        PYTHON_EXIT_CODE=0
-    fi
-else
-    if [ "$IS_BINARY" = false ]; then
-        echo "   [ERR] Python 3 не найден!"
-        log_message "ОШИБКА: Python 3 не найден"
-        exit 1
-    else
-        # В бинарном режиме Python не нужен
-        echo "   [i] Бинарный режим - Python не требуется"
-        log_message "Бинарный режим - Python не требуется"
-    fi
-fi
-
-log_message "Bash скрипт завершен с кодом: $PYTHON_EXIT_CODE"
-exit $PYTHON_EXIT_CODE
-
-"""
-
-# ============================================================================
-# МОДУЛЬ САМООБНОВЛЕНИЯ (из self_updater.py)
-# ============================================================================
-
-
-import os
-import sys
-import shutil
-import tempfile
-import subprocess
-import re
-from typing import Optional, Tuple
-from datetime import datetime
-
-# ============================================================================
-# КОНСТАНТЫ - ИСТОЧНИКИ ОБНОВЛЕНИЙ
-# ============================================================================
-
-# SMB сервер (приоритет - для разработки/тестирования)
-SMB_SERVER = "10.10.55.77"
-SMB_SHARE = "Install"
-SMB_PATH = "ISO/Linux/Astra"
-
-# Git репозиторий (fallback - для клиентов)
-GIT_REPO = "https://github.com/ViRa-Realtime/FSA-AstraInstall"
-GIT_BRANCH = "master"
-GIT_RAW_URL = "https://raw.githubusercontent.com/ViRa-Realtime/FSA-AstraInstall"
-
-# Имена файлов
-BINARY_FILENAME = "FSA-AstraInstall"
-PYTHON_FILENAME = "FSA-AstraInstall.py"
-VERSION_SOURCE_FILE = "astra_automation.py"  # Файл для проверки версии
-
-# Таймауты
-TIMEOUT_CHECK = 10
-TIMEOUT_DOWNLOAD = 300
-
-# ============================================================================
-# КЛАСС САМООБНОВЛЕНИЯ
-# ============================================================================
-
-class SelfUpdater:
-    """Класс для самообновления файла."""
-    
-    def __init__(self, current_version: str):
-        self.current_version = current_version
-        self.is_frozen = getattr(sys, 'frozen', False)
-        
-        # Определяем какой файл обновляем
-        if self.is_frozen:
-            self.update_filename = BINARY_FILENAME
-            self.current_path = sys.executable
-        else:
-            self.update_filename = PYTHON_FILENAME
-            self.current_path = os.path.abspath(sys.argv[0])
-        
-        self.available_version: Optional[str] = None
-        self.selected_source: Optional[str] = None  # 'smb' или 'git'
-    
-    def log(self, message: str, level: str = "INFO"):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] [{level}] {message}")
-    
-    # ========================================================================
-    # ПАРСИНГ ВЕРСИЙ
-    # ========================================================================
-    
-    def parse_version(self, version_str: str) -> Tuple[int, int, int]:
-        """Парсит версию в кортеж (major, minor, patch)."""
-        clean = version_str.strip().upper()
-        if clean.startswith('V'):
-            clean = clean[1:]
-        if '(' in clean:
-            clean = clean.split('(')[0].strip()
-        parts = clean.split('.')
-        try:
-            return (
-                int(parts[0]) if len(parts) > 0 else 0,
-                int(parts[1]) if len(parts) > 1 else 0,
-                int(parts[2]) if len(parts) > 2 else 0
-            )
-        except (ValueError, IndexError):
-            return (0, 0, 0)
-    
-    def compare_versions(self, v1: str, v2: str) -> int:
-        """Сравнивает версии: -1 если v1<v2, 0 если равны, 1 если v1>v2."""
-        p1, p2 = self.parse_version(v1), self.parse_version(v2)
-        return -1 if p1 < p2 else (1 if p1 > p2 else 0)
-    
-    def extract_version_from_content(self, content: str) -> Optional[str]:
-        """Извлекает версию из содержимого файла."""
-        # APP_VERSION = "V2.6.141 (2025.12.02)"
-        match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
-        if match:
-            return match.group(1)
-        # Версия: V2.6.141
-        match = re.search(r'Версия:\s*(V[\d.]+)', content)
-        if match:
-            return match.group(1)
-        return None
-    
-    # ========================================================================
-    # ПРОВЕРКА SMB
-    # ========================================================================
-    
-    def check_smb_available(self) -> bool:
-        """Проверяет доступность SMB сервера."""
-        try:
-            result = subprocess.run(
-                ['ping', '-c', '1', '-W', '2', SMB_SERVER],
-                capture_output=True, timeout=5
-            )
-            return result.returncode == 0
-        except Exception:
-            return False
-    
-    def get_version_from_smb(self) -> Optional[str]:
-        """Получает версию с SMB."""
-        try:
-            remote_file = f"{SMB_PATH}/{VERSION_SOURCE_FILE}"
-            
-            # Читаем первые 5KB файла
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
-                   '-c', f'get {remote_file} -']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
-            
-            if result.returncode == 0:
-                return self.extract_version_from_content(result.stdout[:5000])
-            return None
-        except Exception:
-            return None
-    
-    def download_from_smb(self, dest_path: str) -> bool:
-        """Скачивает файл с SMB."""
-        try:
-            remote_file = f"{SMB_PATH}/{self.update_filename}"
-            self.log(f"Скачивание с SMB: //{SMB_SERVER}/{SMB_SHARE}/{remote_file}")
-            
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
-                   '-c', f'get {remote_file} {dest_path}']
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD)
-            
-            if result.returncode == 0 and os.path.exists(dest_path):
-                size = os.path.getsize(dest_path) / 1024 / 1024
-                self.log(f"Скачано: {size:.2f} MB")
-                return True
-            return False
-        except Exception as e:
-            self.log(f"Ошибка SMB: {e}", "ERROR")
-            return False
-    
-    # ========================================================================
-    # ПРОВЕРКА GIT
-    # ========================================================================
-    
-    def check_git_available(self) -> bool:
-        """Проверяет доступность Git репозитория."""
-        try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/README.md"
-            result = subprocess.run(
-                ['curl', '-s', '-f', '--max-time', '5', '-I', url],
-                capture_output=True, timeout=10
-            )
-            return result.returncode == 0
-        except Exception:
-            return False
-    
-    def get_version_from_git(self) -> Optional[str]:
-        """Получает версию с Git."""
-        try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{VERSION_SOURCE_FILE}"
-            result = subprocess.run(
-                ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
-                capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
-            )
-            
-            if result.returncode == 0:
-                return self.extract_version_from_content(result.stdout[:5000])
-            return None
-        except Exception:
-            return None
-    
-    def download_from_git(self, dest_path: str) -> bool:
-        """Скачивает файл с Git."""
-        try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
-            self.log(f"Скачивание с Git: {url}")
-            
-            result = subprocess.run(
-                ['curl', '-L', '-f', '-o', dest_path, '--max-time', str(TIMEOUT_DOWNLOAD), url],
-                capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD + 30
-            )
-            
-            if result.returncode == 0 and os.path.exists(dest_path):
-                size = os.path.getsize(dest_path) / 1024 / 1024
-                self.log(f"Скачано: {size:.2f} MB")
-                return True
-            return False
-        except Exception as e:
-            self.log(f"Ошибка Git: {e}", "ERROR")
-            return False
-    
-    # ========================================================================
-    # ПРОВЕРКА ОБНОВЛЕНИЙ
-    # ========================================================================
-    
-    def check_for_updates(self) -> Optional[str]:
-        """
-        Проверяет наличие обновлений.
-        Возвращает новую версию или None.
-        """
-        self.log(f"Проверка обновлений (текущая: {self.current_version})")
-        
-        # 1. Пробуем SMB (приоритет)
-        self.log(f"Источник: SMB {SMB_SERVER}...")
-        if self.check_smb_available():
-            version = self.get_version_from_smb()
-            if version:
-                self.log(f"SMB версия: {version}")
-                if self.compare_versions(version, self.current_version) > 0:
-                    self.available_version = version
-                    self.selected_source = 'smb'
-                    return version
-                else:
-                    self.log("✓ Установлена актуальная версия")
-                    return None
-        else:
-            self.log("SMB недоступен", "WARNING")
-        
-        # 2. Пробуем Git (fallback)
-        self.log(f"Источник: Git...")
-        if self.check_git_available():
-            version = self.get_version_from_git()
-            if version:
-                self.log(f"Git версия: {version}")
-                if self.compare_versions(version, self.current_version) > 0:
-                    self.available_version = version
-                    self.selected_source = 'git'
-                    return version
-                else:
-                    self.log("✓ Установлена актуальная версия")
-                    return None
-        else:
-            self.log("Git недоступен", "WARNING")
-        
-        self.log("Не удалось проверить обновления", "WARNING")
-        return None
-    
-    # ========================================================================
-    # ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ
-    # ========================================================================
-    
-    def verify_file(self, file_path: str) -> bool:
-        """Проверяет скачанный файл."""
-        if not os.path.exists(file_path):
-            return False
-        
-        size = os.path.getsize(file_path)
-        if size < 1000:
-            self.log(f"Файл слишком маленький: {size} байт", "ERROR")
-            return False
-        
-        # Для бинарника проверяем ELF
-        if self.is_frozen:
-            with open(file_path, 'rb') as f:
-                if f.read(4) != b'\x7fELF':
-                    self.log("Файл не является ELF", "ERROR")
-                    return False
-        else:
-            # Для Python проверяем shebang
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                first_line = f.readline()
-                if not ('python' in first_line.lower() or first_line.startswith('#!')):
-                    self.log("Файл не является Python скриптом", "ERROR")
-                    return False
-        
-        return True
-    
-    def apply_update(self, new_file_path: str) -> bool:
-        """Заменяет текущий файл новым."""
-        backup_path = self.current_path + ".backup"
-        
-        self.log(f"Применение обновления...")
-        
-        try:
-            # Резервная копия
-            shutil.copy2(self.current_path, backup_path)
-            
-            # Замена
-            shutil.move(new_file_path, self.current_path)
-            os.chmod(self.current_path, 0o755)
-            
-            # Удаляем backup
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-            
-            self.log("✓ Обновление применено!")
-            return True
-            
-        except Exception as e:
-            self.log(f"Ошибка: {e}", "ERROR")
-            if os.path.exists(backup_path):
-                shutil.move(backup_path, self.current_path)
-            return False
-    
-    def restart(self):
-        """Перезапускает приложение."""
-        if self.is_frozen:
-            args = [self.current_path, '--skip-update']
-        else:
-            args = [sys.executable, self.current_path, '--skip-update']
-        
-        # Добавляем оригинальные аргументы
-        for arg in sys.argv[1:]:
-            if arg not in ('--force-update', '--skip-update'):
-                args.append(arg)
-        
-        self.log(f"Перезапуск: {' '.join(args)}")
-        os.execv(args[0], args)
-    
-    # ========================================================================
-    # ГЛАВНЫЕ МЕТОДЫ
-    # ========================================================================
-    
-    def download_and_apply(self) -> bool:
-        """Скачивает и применяет обновление."""
-        # Если источник не выбран — сначала проверяем
-        if not self.selected_source:
-            if not self.check_for_updates():
-                self.log("Нет доступных обновлений")
-                return False
-        
-        # Создаём временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='_update') as tmp:
-            tmp_path = tmp.name
-        
-        try:
-            # Скачиваем
-            if self.selected_source == 'smb':
-                success = self.download_from_smb(tmp_path)
-            else:
-                success = self.download_from_git(tmp_path)
-            
-            if not success:
-                return False
-            
-            # Проверяем
-            if not self.verify_file(tmp_path):
-                os.remove(tmp_path)
-                return False
-            
-            # Применяем
-            return self.apply_update(tmp_path)
-            
-        except Exception as e:
-            self.log(f"Ошибка: {e}", "ERROR")
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            return False
-    
-    def update_and_restart(self) -> bool:
-        """Полный цикл: скачать, применить, перезапустить."""
-        if self.download_and_apply():
-            self.log(f"Обновление до {self.available_version} завершено!")
-            self.restart()
-            return True
-        return False
-
-
-# ============================================================================
-# ТЕСТИРОВАНИЕ
-# ============================================================================
-
-
-# ============================================================================
-# ОСНОВНОЕ ПРИЛОЖЕНИЕ (из astra_automation.py)
-# ============================================================================
-
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """
 FSA-AstraInstall - Единый исполняемый файл
-Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
-Совместимость: Python 3.x
-Версия: V3.0.146 (2025.12.03)
+Версия: V3.0.148 (2025.12.03)
+Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
-Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
 
-# Версия приложения
-APP_VERSION = "V3.0.146 (2025.12.03)"
-# Название приложения
+# Версия и название приложения
+APP_VERSION = "V3.0.148 (2025.12.03)"
 APP_NAME = "FSA-AstraInstall"
+
+# ============================================================================
+# ВСЕ ИМПОРТЫ
+# ============================================================================
+
+# Стандартные библиотеки
 import os
 import sys
 import tempfile
@@ -2812,24 +31,7 @@ import hashlib
 import queue
 import time
 import pwd
-
-from abc import ABC, abstractmethod
-
-# Попытка импорта psutil (может быть не установлен)
-try:
-    import psutil  # pyright: ignore[reportMissingModuleSource]
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    PSUTIL_AVAILABLE = False
-
-# HTTP client (requests preferred)
-try:
-    import requests  # type: ignore
-    REQUESTS_AVAILABLE = True
-except Exception:
-    REQUESTS_AVAILABLE = False
-
-# Дополнительные стандартные модули
+import getpass
 import signal
 import glob
 import platform
@@ -2840,17 +42,33 @@ import ast
 import builtins
 import textwrap
 import ssl
-from collections import deque
-import urllib.request
-import urllib.parse
 import pickle
 import json
 import bisect
 import gzip
 import fnmatch
-import datetime
+import urllib.request
+import urllib.parse
 
-# GUI components (tkinter) - опционально для консольного режима
+# from импорты
+from abc import ABC, abstractmethod
+from collections import deque
+from typing import Optional, Tuple
+from datetime import datetime as dt
+
+# Опциональные библиотеки (с проверкой доступности)
+try:
+    import psutil  # pyright: ignore[reportMissingModuleSource]
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+try:
+    import requests  # type: ignore
+    REQUESTS_AVAILABLE = True
+except Exception:
+    REQUESTS_AVAILABLE = False
+
 try:
     import tkinter
     import tkinter as tk
@@ -2867,6 +85,34 @@ except ImportError:
     filedialog = None
 
 # ============================================================================
+# КОНСТАНТЫ ПРИЛОЖЕНИЯ
+# ============================================================================
+
+# Глобальные флаги и переменные
+CANCEL_OPERATION = False  # Прерывание запущенных операций
+GLOBAL_LOG_FILE = None  # Глобальная переменная для лог-файла (устанавливается в main())
+
+# Константы для самообновления (SelfUpdater)
+# SMB сервер (приоритет - для разработки/тестирования)
+SMB_SERVER = "10.10.55.77"
+SMB_SHARE = "Install"
+SMB_PATH = "ISO/Linux/Astra"
+
+# Git репозиторий (fallback - для клиентов)
+GIT_REPO = "https://github.com/ViRa-Realtime/FSA-AstraInstall"
+GIT_BRANCH = "master"
+GIT_RAW_URL = "https://raw.githubusercontent.com/ViRa-Realtime/FSA-AstraInstall"
+
+# Имена файлов для самообновления
+BINARY_FILENAME = "FSA-AstraInstall"
+PYTHON_FILENAME = "FSA-AstraInstall.py"
+VERSION_SOURCE_FILE = "astra_automation.py"  # Файл для проверки версии
+
+# Таймауты для самообновления
+TIMEOUT_CHECK = 10
+TIMEOUT_DOWNLOAD = 300
+
+# ============================================================================
 # УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
 # ============================================================================
 COMPONENTS_CONFIG = {
@@ -2874,13 +120,13 @@ COMPONENTS_CONFIG = {
     'application_shortcut': {
         'name': 'Ярлык Приложения',
         'shortcut_name': 'Автоустановка',
-        'path': 'astra_update.sh.desktop',
+        'path': 'FSA-AstraInstall.desktop',
         'category': 'desktop_shortcut',
         'dependencies': [],
-        'check_paths': ['astra_update.sh.desktop'],
+        'check_paths': ['FSA-AstraInstall.desktop'],
         'install_method': 'desktop_shortcut',
         'uninstall_method': 'desktop_shortcut',
-        'script_path': 'astra_update.sh',
+        'script_path': 'FSA-AstraInstall',
         'icon': 'fly-astra-update',
         'comment': 'Ярлык для запуска обновления и установки на рабочем столе',
         'gui_selectable': True,
@@ -3109,7 +355,6 @@ COMPONENTS_CONFIG = {
 # ============================================================================
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
 # ============================================================================
-CANCEL_OPERATION = False  # Прерывание запущенных операций
 
 # Глобальные экземпляры менеджеров (объявления, инициализируются после определения классов)
 _global_universal_runner = None  # UniversalProcessRunner
@@ -3119,9 +364,6 @@ _global_activity_tracker = None  # ActivityTracker
 
 # Глобальная ссылка на GUI экземпляр
 sys._gui_instance = None
-
-# Глобальная переменная для лог-файла (устанавливается в main())
-GLOBAL_LOG_FILE = None
 
 # Сохранение оригинального print() для fallback (инициализируется после импорта builtins)
 _original_print = None
@@ -3160,19 +402,22 @@ def expand_user_path(path):
     # Заменяем ~ на реальную домашнюю директорию
     return path.replace('~', home)
 
-def fix_dir_permissions(dir_path):
+def fix_permissions(path, recursive=False):
     """
-    Устанавливает права доступа для папки (владелец - текущий пользователь)
-    Универсальная функция для установки прав пользователя к любой папке в Linux
+    Универсальная функция для установки прав доступа (файл или папка)
+    Автоматически определяет тип и устанавливает соответствующие права
     
     Args:
-        dir_path: Путь к папке
+        path: Путь к файлу или папке
+        recursive: Если True и это папка - рекурсивно устанавливает права (по умолчанию False - быстро)
     """
-    if not os.path.exists(dir_path):
+    if not os.path.exists(path):
         return
     
     try:
         current_uid = os.getuid()
+        uid = None
+        gid = None
         
         # Если запущено от root, определяем реального пользователя
         if current_uid == 0:
@@ -3180,22 +425,88 @@ def fix_dir_permissions(dir_path):
             if real_user and real_user != 'root':
                 try:
                     user_info = pwd.getpwnam(real_user)
-                    os.chown(dir_path, user_info.pw_uid, user_info.pw_gid)
-                    os.chmod(dir_path, 0o755)
-                    return
+                    uid = user_info.pw_uid
+                    gid = user_info.pw_gid
                 except (KeyError, ImportError):
                     pass  # Пользователь не найден или pwd недоступен (macOS)
         
         # Если не root, устанавливаем права для текущего пользователя
-        if current_uid != 0:
+        if uid is None and current_uid != 0:
             try:
                 user_info = pwd.getpwuid(current_uid)
-                os.chown(dir_path, current_uid, user_info.pw_gid)
-                os.chmod(dir_path, 0o755)
+                uid = current_uid
+                gid = user_info.pw_gid
             except (ImportError, OSError):
                 pass  # Игнорируем ошибки на macOS или если нет прав
+        
+        # Если удалось определить uid/gid, устанавливаем права
+        if uid is not None and gid is not None:
+            # Определяем тип: файл или папка
+            if os.path.isfile(path):
+                # Для файла: права 644
+                try:
+                    os.chown(path, uid, gid)
+                    os.chmod(path, 0o644)
+                except (OSError, PermissionError):
+                    pass
+            elif os.path.isdir(path):
+                # Для папки: права 755 (только для самой папки - быстро)
+                try:
+                    os.chown(path, uid, gid)
+                    os.chmod(path, 0o755)
+                except (OSError, PermissionError):
+                    pass
+                
+                # Рекурсивная установка (только если запрошена)
+                if recursive:
+                    try:
+                        for root, dirs, files in os.walk(path):
+                            # Устанавливаем права для всех подпапок
+                            for d in dirs:
+                                dir_path_full = os.path.join(root, d)
+                                try:
+                                    os.chown(dir_path_full, uid, gid)
+                                    os.chmod(dir_path_full, 0o755)
+                                except (OSError, PermissionError):
+                                    pass
+                            
+                            # Устанавливаем права для всех файлов
+                            for f in files:
+                                file_path_full = os.path.join(root, f)
+                                try:
+                                    os.chown(file_path_full, uid, gid)
+                                    os.chmod(file_path_full, 0o644)
+                                except (OSError, PermissionError):
+                                    pass
+                    except (OSError, PermissionError):
+                        pass  # Игнорируем ошибки при обходе
     except Exception:
         pass  # Игнорируем все ошибки прав доступа
+
+def fix_permissions_async(path, recursive=False):
+    """
+    Асинхронная версия fix_permissions - запускает в фоновом потоке
+    Вызвали и забыли - все сделается в фоне
+    
+    Args:
+        path: Путь к файлу или папке
+        recursive: Если True и это папка - рекурсивно устанавливает права
+    """
+    def _fix_permissions_worker():
+        """Рабочая функция для потока"""
+        try:
+            fix_permissions(path, recursive=recursive)
+        except Exception:
+            pass  # Игнорируем все ошибки в фоновом потоке
+    
+    # Запускаем в фоновом потоке (daemon - завершится при выходе программы)
+    thread = threading.Thread(
+        target=_fix_permissions_worker,
+        daemon=True,
+        name=f"FixPermissions-{os.path.basename(path)}"
+    )
+    thread.start()
+    # Не ждем завершения - сразу возвращаемся
 
 def get_component_field(component_id, field_name, default=None):
     """
@@ -4797,7 +2108,7 @@ class ComponentHandler(ABC):
         
         # Создаем целевую директорию
         os.makedirs(final_target_dir, exist_ok=True)
-        fix_dir_permissions(final_target_dir)
+        fix_permissions(final_target_dir)
         
         files_prepared = False
         source_priority = config.get('source_priority', 'archive')
@@ -4945,7 +2256,7 @@ class ComponentHandler(ABC):
                         
                         try:
                             shutil.copy2(file_path, dest_path)
-                            fix_dir_permissions(dest_path)
+                            fix_permissions(dest_path)
                             file_size = os.path.getsize(dest_path)
                             print(f"[PREPARE FILES] ✓ Скопирован {dest_name} ({file_size} байт) из {files_result.get('sources', {}).get(file_key, files_result.get('source', 'unknown'))}", level='INFO')
                             copied_count += 1
@@ -5679,13 +2990,13 @@ class ComponentHandler(ABC):
             int: Количество извлеченных файлов
         """
         os.makedirs(user_cache_dir, exist_ok=True)
-        fix_dir_permissions(user_cache_dir)
+        fix_permissions(user_cache_dir)
         
         try:
             # Создаем папку компонента в кэше
             component_cache_dir = os.path.join(user_cache_dir, component_id)
             os.makedirs(component_cache_dir, exist_ok=True)
-            fix_dir_permissions(component_cache_dir)
+            fix_permissions(component_cache_dir)
             
             # Определяем что извлекать для extract_archive()
             if extract_info['extract_mode'] == 'folder':
@@ -6710,7 +4021,7 @@ class SystemConfigHandler(ComponentHandler):
             # Создаем папку кэша если нужно
             cache_dir = os.path.dirname(winetricks_path)
             os.makedirs(cache_dir, exist_ok=True)
-            fix_dir_permissions(cache_dir)
+            fix_permissions(cache_dir)
             
             # Извлекаем winetricks из архива через универсальную функцию
             temp_extract_dir = tempfile.mkdtemp(prefix='astra_winetricks_')
@@ -6812,8 +4123,8 @@ class WineEnvironmentHandler(ComponentHandler):
             
             os.makedirs(cache_wine, exist_ok=True)
             os.makedirs(cache_winetricks, exist_ok=True)
-            fix_dir_permissions(cache_wine)
-            fix_dir_permissions(cache_winetricks)
+            fix_permissions(cache_wine)
+            fix_permissions(cache_winetricks)
             print(f"Созданы директории кэша: {cache_wine}, {cache_winetricks}")
             
             # Определяем uid/gid для установки владельца (если запущено от root)
@@ -9204,7 +6515,7 @@ class WineApplicationHandler(ComponentHandler):
             # Определяем путь для сохранения установщика
             cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
             os.makedirs(cache_dir, exist_ok=True)
-            fix_dir_permissions(cache_dir)
+            fix_permissions(cache_dir)
             installer_path = os.path.join(cache_dir, download_filename)
             
             # Скачиваем установщик
@@ -9680,9 +6991,9 @@ class ApplicationHandler(ComponentHandler):
                         
                         # Копируем в кэш
                         os.makedirs(component_cache_dir, exist_ok=True)
-                        fix_dir_permissions(component_cache_dir)
+                        fix_permissions(component_cache_dir)
                         shutil.copy2(directory_installer_path, cache_installer_path)
-                        fix_dir_permissions(cache_installer_path)
+                        fix_permissions(cache_installer_path)
                         
                         print(f"[INFO] Установщик скопирован в кэш: {cache_installer_path}")
                         return cache_installer_path
@@ -9703,7 +7014,7 @@ class ApplicationHandler(ComponentHandler):
                 
                 # Создаем кэш директорию
                 os.makedirs(component_cache_dir, exist_ok=True)
-                fix_dir_permissions(component_cache_dir)
+                fix_permissions(component_cache_dir)
                 
                 try:
                     winetricks_manager._download(
@@ -10168,7 +7479,7 @@ class DesktopShortcutHandler(ComponentHandler):
                 # Если есть url или folder_path - это Link
                 if config.get('url') or config.get('folder_path'):
                     desktop_entry_type = 'Link'
-                # Если есть script_path - это Link (как в образце astra_update.sh.desktop)
+                # Если есть script_path - это Link
                 elif config.get('script_path'):
                     desktop_entry_type = 'Link'
                 # Если есть executable_path или command - это Application
@@ -10194,7 +7505,6 @@ class DesktopShortcutHandler(ComponentHandler):
                     link_url = url
                 elif script_path:
                     # КРИТИЧНО: Для скриптов используем Type=Link с URL на абсолютный путь (без file://)
-                    # Как в образце: URL=/home/fsa/Astra/astra_update.sh
                     if '~' in script_path:
                         # Путь с ~ - используем expand_user_path
                         link_url = expand_user_path(script_path)
@@ -10410,7 +7720,7 @@ class DesktopShortcutHandler(ComponentHandler):
                 
                 # Формируем содержимое .desktop файла (ТОЧНО как в рабочем файле - многострочная строка с отступами)
                 # Используем textwrap.dedent с многострочной строкой f-string
-                # Порядок полей ТОЧНО как в рабочем файле astra_update.desktop
+                # Порядок полей ТОЧНО как в рабочем файле .desktop
                 desktop_content = textwrap.dedent(f"""
                     [Desktop Entry]
                     Version=1.0
@@ -10899,9 +8209,13 @@ class DualStreamLogger:
             
             if self._raw_log_path:
                 self._raw_file = open(self._raw_log_path, 'a', encoding='utf-8')
+                # Устанавливаем права доступа для файла лога
+                fix_permissions(self._raw_log_path)
             
             if self._analysis_log_path:
                 self._analysis_file = open(self._analysis_log_path, 'a', encoding='utf-8')
+                # Устанавливаем права доступа для файла лога
+                fix_permissions(self._analysis_log_path)
             
             self._file_writer_running = True
             self._file_writer_thread = threading.Thread(
@@ -10985,6 +8299,10 @@ class DualStreamLogger:
         
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir, exist_ok=True)
+        
+        # ВСЕГДА устанавливаем права доступа (даже если папка уже существовала)
+        if log_dir and os.path.exists(log_dir):
+            fix_permissions(log_dir)
         
         logger = DualStreamLogger(
             max_buffer_size=max_buffer_size,
@@ -13293,7 +10611,7 @@ class WinetricksManager(object):
         self.cache_dir = os.path.join(os.path.expanduser('~'), '.cache', 'winetricks')
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
-            fix_dir_permissions(self.cache_dir)
+            fix_permissions(self.cache_dir)
         except Exception:
             pass
         
@@ -13358,7 +10676,7 @@ class WinetricksManager(object):
                     # Создаем папку с правильными правами
                     cache_parent = os.path.dirname(dest_path)
                     os.makedirs(cache_parent, exist_ok=True)
-                    fix_dir_permissions(cache_parent)
+                    fix_permissions(cache_parent)
                     with open(tmp_path, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=1024 * 256):
                             if chunk:
@@ -13389,7 +10707,7 @@ class WinetricksManager(object):
             # Создаем папку с правильными правами
             cache_parent = os.path.dirname(dest_path)
             os.makedirs(cache_parent, exist_ok=True)
-            fix_dir_permissions(cache_parent)
+            fix_permissions(cache_parent)
             
             # Обработка SSL ошибок
             try:
@@ -13487,7 +10805,6 @@ class WinetricksManager(object):
         real_user = os.environ.get('SUDO_USER')
         if not real_user or real_user == 'root':
             # Если нет SUDO_USER, значит код запущен не через sudo - используем текущего пользователя
-            import getpass
             real_user = getpass.getuser()
         print(f"[WINETRICKS MANAGER DEBUG] Реальный пользователь: {real_user}", level='DEBUG')
         
@@ -23752,7 +21069,7 @@ class AutomationGUI(object):
                         break
             
             # Ищем ярлык
-            shortcut_name = "astra_install.desktop"
+            shortcut_name = "FSA-AstraInstall.desktop"
             shortcut_path = os.path.join(desktop_path, shortcut_name)
             
             if os.path.exists(shortcut_path):
@@ -23779,13 +21096,20 @@ class AutomationGUI(object):
                 print("[ERROR] Не удалось найти папку рабочего стола", gui_log=True)
                 return
             
-            # Получаем путь к скрипту
-            script_path = os.path.abspath("astra_install.sh")
+            # Получаем путь к исполняемому файлу
+            is_frozen = getattr(sys, 'frozen', False)
+            if is_frozen:
+                # Для бинарника используем sys.executable
+                script_path = sys.executable
+            else:
+                # Для Python скрипта используем sys.argv[0]
+                script_path = os.path.abspath(sys.argv[0])
+            
             if not os.path.exists(script_path):
-                print(f"[ERROR] Скрипт не найден: {script_path}", gui_log=True)
+                print(f"[ERROR] Исполняемый файл не найден: {script_path}", gui_log=True)
                 return
             
-            shortcut_name = "astra_install.desktop"
+            shortcut_name = "FSA-AstraInstall.desktop"
             shortcut_path = os.path.join(desktop_path, shortcut_name)
             
             if os.path.exists(shortcut_path):
@@ -23801,7 +21125,7 @@ class AutomationGUI(object):
                     Type=Application
                     Name=Автоустановка {APP_VERSION}
                     Comment=Автоматическое обновление Linux, установка Wine и Astra.IDE
-                    Exec=bash "{script_path}"
+                    Exec={script_path}
                     Icon=system-software-install
                     Terminal=true
                     Categories=Development;
@@ -28485,6 +25809,9 @@ class FilesystemFilter(object):
         return filtered
 
 class DirectorySnapshot(object):
+# ============================================================================
+# КЛАСС СОХРАНЕНИЯ СНИМКА СОСТОЯНИЯ ДИРЕКТОРИИ
+# ============================================================================    
     """Класс для хранения снимка состояния директории"""
     
     def __init__(self, directory_path, exclude_paths=None, max_depth=None, max_files=50000, calculate_hashes=False):
@@ -29149,6 +26476,10 @@ def main():
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
     
+    # ВСЕГДА устанавливаем права доступа (даже если папка уже существовала)
+    if os.path.exists(log_dir):
+        fix_permissions(log_dir)
+    
     # НОВОЕ: Инициализируем DualStreamLogger для разделения потоков
     print("[DUAL_STREAM] Инициализация системы двойных потоков логирования...")
     dual_logger = None
@@ -29369,7 +26700,11 @@ def main():
                 # Принудительный консольный режим - но мы в GUI режиме!
                 print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", gui_log=True)
                 print("[INFO] Перезапустите с флагом --console:")
-                print("       bash astra_install.sh --console")
+                is_frozen = getattr(sys, 'frozen', False)
+                if is_frozen:
+                    print(f"       {sys.executable} --console")
+                else:
+                    print(f"       python3 {sys.argv[0]} --console")
                 sys.exit(1)
                 
             else:
@@ -29556,7 +26891,11 @@ def main():
                         print("  4. Логи в файле: %s" % GLOBAL_LOG_FILE)
                     else:
                         print("  4. Логи в каталоге: logs/")
-                    print("\n[INFO] После исправления проблем повторите запуск: ./astra_install.sh --console")
+                    is_frozen = getattr(sys, 'frozen', False)
+                    if is_frozen:
+                        print(f"\n[INFO] После исправления проблем повторите запуск: {sys.executable} --console")
+                    else:
+                        print(f"\n[INFO] После исправления проблем повторите запуск: python3 {sys.argv[0]} --console")
                     components_install_success = False
                 
                 # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
@@ -29631,55 +26970,548 @@ def main():
         except:
             pass
 
+class SelfUpdater:
 # ============================================================================
-# ТОЧКА ВХОДА
-# ============================================================================
-
-
-# ============================================================================
-# ВСТРОЕННЫЕ BASH-СКРИПТЫ (для выполнения через subprocess)
-# ============================================================================
-
-def run_embedded_bash(script_name):
-    """Выполняет встроенный bash-скрипт"""
-    import subprocess
-    import tempfile
-    import os
+# КЛАСС САМООБНОВЛЕНИЯ
+# ============================================================================    
+    """Класс для самообновления файла."""
     
-    scripts = {
-        'astra_update': EMBEDDED_ASTRA_UPDATE_SH,
-        'astra_install': EMBEDDED_ASTRA_INSTALL_SH,
-    }
+    def __init__(self, current_version: str):
+        self.current_version = current_version
+        self.is_frozen = getattr(sys, 'frozen', False)
+        
+        # Определяем какой файл обновляем
+        if self.is_frozen:
+            self.update_filename = BINARY_FILENAME
+            self.current_path = sys.executable
+        else:
+            self.update_filename = PYTHON_FILENAME
+            self.current_path = os.path.abspath(sys.argv[0])
+        
+        self.available_version: Optional[str] = None
+        self.selected_source: Optional[str] = None  # 'smb' или 'git'
     
-    if script_name not in scripts:
-        print(f"[ERROR] Неизвестный скрипт: {script_name}")
+    def log(self, message: str, level: str = "INFO"):
+        timestamp = dt.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] [{level}] {message}")
+    
+    # ========================================================================
+    # ПАРСИНГ ВЕРСИЙ
+    # ========================================================================
+    
+    def parse_version(self, version_str: str) -> Tuple[int, int, int]:
+        """Парсит версию в кортеж (major, minor, patch)."""
+        clean = version_str.strip().upper()
+        if clean.startswith('V'):
+            clean = clean[1:]
+        if '(' in clean:
+            clean = clean.split('(')[0].strip()
+        parts = clean.split('.')
+        try:
+            return (
+                int(parts[0]) if len(parts) > 0 else 0,
+                int(parts[1]) if len(parts) > 1 else 0,
+                int(parts[2]) if len(parts) > 2 else 0
+            )
+        except (ValueError, IndexError):
+            return (0, 0, 0)
+    
+    def compare_versions(self, v1: str, v2: str) -> int:
+        """Сравнивает версии: -1 если v1<v2, 0 если равны, 1 если v1>v2."""
+        p1, p2 = self.parse_version(v1), self.parse_version(v2)
+        return -1 if p1 < p2 else (1 if p1 > p2 else 0)
+    
+    def extract_version_from_content(self, content: str) -> Optional[str]:
+        """Извлекает версию из содержимого файла."""
+        # APP_VERSION = "V2.6.141 (2025.12.02)"
+        match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
+        if match:
+            return match.group(1)
+        # Версия: V2.6.141
+        match = re.search(r'Версия:\s*(V[\d.]+)', content)
+        if match:
+            return match.group(1)
+        return None
+    
+    # ========================================================================
+    # ПРОВЕРКА SMB
+    # ========================================================================
+    
+    def check_smb_available(self) -> bool:
+        """Проверяет доступность SMB сервера."""
+        try:
+            result = subprocess.run(
+                ['ping', '-c', '1', '-W', '2', SMB_SERVER],
+                capture_output=True, timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def get_version_from_smb(self) -> Optional[str]:
+        """Получает версию с SMB."""
+        try:
+            remote_file = f"{SMB_PATH}/{VERSION_SOURCE_FILE}"
+            
+            # Читаем первые 5KB файла
+            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
+                   '-c', f'get {remote_file} -']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
+            
+            if result.returncode == 0:
+                return self.extract_version_from_content(result.stdout[:5000])
+            return None
+        except Exception:
+            return None
+    
+    def download_from_smb(self, dest_path: str) -> bool:
+        """Скачивает файл с SMB."""
+        try:
+            remote_file = f"{SMB_PATH}/{self.update_filename}"
+            self.log(f"Скачивание с SMB: //{SMB_SERVER}/{SMB_SHARE}/{remote_file}")
+            
+            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
+                   '-c', f'get {remote_file} {dest_path}']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD)
+            
+            if result.returncode == 0 and os.path.exists(dest_path):
+                size = os.path.getsize(dest_path) / 1024 / 1024
+                self.log(f"Скачано: {size:.2f} MB")
+                return True
+            return False
+        except Exception as e:
+            self.log(f"Ошибка SMB: {e}", "ERROR")
+            return False
+    
+    # ========================================================================
+    # ПРОВЕРКА GIT
+    # ========================================================================
+    
+    def check_git_available(self) -> bool:
+        """Проверяет доступность Git репозитория."""
+        try:
+            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/README.md"
+            result = subprocess.run(
+                ['curl', '-s', '-f', '--max-time', '5', '-I', url],
+                capture_output=True, timeout=10
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def get_version_from_git(self) -> Optional[str]:
+        """Получает версию с Git."""
+        try:
+            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{VERSION_SOURCE_FILE}"
+            result = subprocess.run(
+                ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
+                capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
+            )
+            
+            if result.returncode == 0:
+                return self.extract_version_from_content(result.stdout[:5000])
+            return None
+        except Exception:
+            return None
+    
+    def download_from_git(self, dest_path: str) -> bool:
+        """Скачивает файл с Git."""
+        try:
+            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
+            self.log(f"Скачивание с Git: {url}")
+            
+            result = subprocess.run(
+                ['curl', '-L', '-f', '-o', dest_path, '--max-time', str(TIMEOUT_DOWNLOAD), url],
+                capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD + 30
+            )
+            
+            if result.returncode == 0 and os.path.exists(dest_path):
+                size = os.path.getsize(dest_path) / 1024 / 1024
+                self.log(f"Скачано: {size:.2f} MB")
+                return True
+            return False
+        except Exception as e:
+            self.log(f"Ошибка Git: {e}", "ERROR")
+            return False
+    
+    # ========================================================================
+    # ПРОВЕРКА ОБНОВЛЕНИЙ
+    # ========================================================================
+    
+    def check_for_updates(self) -> Optional[str]:
+        """
+        Проверяет наличие обновлений.
+        Возвращает новую версию или None.
+        """
+        self.log(f"Проверка обновлений (текущая: {self.current_version})")
+        
+        # 1. Пробуем SMB (приоритет)
+        self.log(f"Источник: SMB {SMB_SERVER}...")
+        if self.check_smb_available():
+            version = self.get_version_from_smb()
+            if version:
+                self.log(f"SMB версия: {version}")
+                if self.compare_versions(version, self.current_version) > 0:
+                    self.available_version = version
+                    self.selected_source = 'smb'
+                    return version
+                else:
+                    self.log("✓ Установлена актуальная версия")
+                    return None
+        else:
+            self.log("SMB недоступен", "WARNING")
+        
+        # 2. Пробуем Git (fallback)
+        self.log(f"Источник: Git...")
+        if self.check_git_available():
+            version = self.get_version_from_git()
+            if version:
+                self.log(f"Git версия: {version}")
+                if self.compare_versions(version, self.current_version) > 0:
+                    self.available_version = version
+                    self.selected_source = 'git'
+                    return version
+                else:
+                    self.log("✓ Установлена актуальная версия")
+                    return None
+        else:
+            self.log("Git недоступен", "WARNING")
+        
+        self.log("Не удалось проверить обновления", "WARNING")
+        return None
+    
+    # ========================================================================
+    # ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ
+    # ========================================================================
+    
+    def verify_file(self, file_path: str) -> bool:
+        """Проверяет скачанный файл."""
+        if not os.path.exists(file_path):
+            return False
+        
+        size = os.path.getsize(file_path)
+        if size < 1000:
+            self.log(f"Файл слишком маленький: {size} байт", "ERROR")
+            return False
+        
+        # Для бинарника проверяем ELF
+        if self.is_frozen:
+            with open(file_path, 'rb') as f:
+                if f.read(4) != b'\x7fELF':
+                    self.log("Файл не является ELF", "ERROR")
+                    return False
+        else:
+            # Для Python проверяем shebang
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                first_line = f.readline()
+                if not ('python' in first_line.lower() or first_line.startswith('#!')):
+                    self.log("Файл не является Python скриптом", "ERROR")
+                    return False
+        
+        return True
+    
+    def apply_update(self, new_file_path: str) -> bool:
+        """Заменяет текущий файл новым."""
+        backup_path = self.current_path + ".backup"
+        
+        self.log(f"Применение обновления...")
+        
+        try:
+            # Резервная копия
+            shutil.copy2(self.current_path, backup_path)
+            
+            # Замена
+            shutil.move(new_file_path, self.current_path)
+            os.chmod(self.current_path, 0o755)
+            
+            # Удаляем backup
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            
+            self.log("✓ Обновление применено!")
+            return True
+            
+        except Exception as e:
+            self.log(f"Ошибка: {e}", "ERROR")
+            if os.path.exists(backup_path):
+                shutil.move(backup_path, self.current_path)
+            return False
+    
+    def restart(self):
+        """Перезапускает приложение."""
+        if self.is_frozen:
+            args = [self.current_path, '--skip-update']
+        else:
+            args = [sys.executable, self.current_path, '--skip-update']
+        
+        # Добавляем оригинальные аргументы
+        for arg in sys.argv[1:]:
+            if arg not in ('--force-update', '--skip-update'):
+                args.append(arg)
+        
+        self.log(f"Перезапуск: {' '.join(args)}")
+        os.execv(args[0], args)
+    
+    # ========================================================================
+    # ГЛАВНЫЕ МЕТОДЫ
+    # ========================================================================
+    
+    def download_and_apply(self) -> bool:
+        """Скачивает и применяет обновление."""
+        # Если источник не выбран — сначала проверяем
+        if not self.selected_source:
+            if not self.check_for_updates():
+                self.log("Нет доступных обновлений")
+                return False
+        
+        # Создаём временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix='_update') as tmp:
+            tmp_path = tmp.name
+        
+        try:
+            # Скачиваем
+            if self.selected_source == 'smb':
+                success = self.download_from_smb(tmp_path)
+            else:
+                success = self.download_from_git(tmp_path)
+            
+            if not success:
+                return False
+            
+            # Проверяем
+            if not self.verify_file(tmp_path):
+                os.remove(tmp_path)
+                return False
+            
+            # Применяем
+            return self.apply_update(tmp_path)
+            
+        except Exception as e:
+            self.log(f"Ошибка: {e}", "ERROR")
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return False
+    
+    def update_and_restart(self) -> bool:
+        """Полный цикл: скачать, применить, перезапустить."""
+        if self.download_and_apply():
+            self.log(f"Обновление до {self.available_version} завершено!")
+            self.restart()
+            return True
+        return False
+
+# ============================================================================
+# ФУНКЦИИ ДЛЯ РАБОТЫ С СЕТЕВЫМИ ИСТОЧНИКАМИ И УСТАНОВКОЙ
+# ============================================================================
+
+def update_from_network():
+    """
+    Обновление файлов из сетевых источников (SMB/Git)
+    """
+    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    
+    # Определяем файлы для копирования (в unified-режиме только бинарник/скрипт)
+    is_frozen = getattr(sys, 'frozen', False)
+    if is_frozen:
+        files_to_copy = [
+            "FSA-AstraInstall",  # Бинарный файл
+            "README.md",
+        ]
+    else:
+        files_to_copy = [
+            "FSA-AstraInstall.py",  # Python скрипт
+            "README.md",
+        ]
+    
+    # Пробуем источники по порядку
+    sources = [
+        {
+            'type': 'smb',
+            'server': SMB_SERVER,
+            'share': SMB_SHARE,
+            'path': SMB_PATH,
+            'user': 'FokinSA'
+        },
+        {
+            'type': 'git',
+            'repo': GIT_REPO,
+            'branch': GIT_BRANCH,
+            'path': '.'
+        }
+    ]
+    
+    copied_count = 0
+    
+    for source in sources:
+        if source['type'] == 'smb':
+            # Копирование из SMB
+            try:
+                credentials_file = os.path.expanduser("~/.smbcredentials")
+                if not os.path.exists(credentials_file):
+                    print("[INFO] Создаём файл учётных данных SMB...")
+                    with open(credentials_file, 'w') as f:
+                        f.write(f"username={source['user']}\n")
+                        f.write("password=\n")  # Пароль будет запрошен при первом подключении
+                    os.chmod(credentials_file, 0o600)
+                
+                for file_name in files_to_copy:
+                    local_file = os.path.join(script_dir, file_name)
+                    
+                    # Копируем через smbclient
+                    smb_file_path = f"{source['path']}/{file_name}"
+                    cmd = [
+                        'smbclient',
+                        f"//{source['server']}/{source['share']}",
+                        '-A', credentials_file,
+                        '-c', f'get "{smb_file_path}" "{local_file}"'
+                    ]
+                    
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        os.chmod(local_file, 0o755)
+                        print(f"[OK] Скопирован из SMB: {file_name}")
+                        copied_count += 1
+                    else:
+                        print(f"[WARNING] Не удалось скопировать из SMB: {file_name}")
+                        continue
+                
+                if copied_count > 0:
+                    print(f"[OK] Обновлено файлов из SMB: {copied_count}")
+                    return True
+                    
+            except Exception as e:
+                print(f"[WARNING] Ошибка при работе с SMB: {e}")
+                continue
+        
+        elif source['type'] == 'git':
+            # Копирование из Git
+            try:
+                if 'github.com' in source['repo']:
+                    clean_url = source['repo'].replace('.git', '')
+                    parts = clean_url.replace('https://github.com/', '').split('/')
+                    if len(parts) >= 2:
+                        user, repo = parts[0], parts[1]
+                        base_url = f"https://raw.githubusercontent.com/{user}/{repo}/{source['branch']}"
+                        
+                        for file_name in files_to_copy:
+                            file_url = f"{base_url}/{file_name}"
+                            local_file = os.path.join(script_dir, file_name)
+                            
+                            try:
+                                response = urllib.request.urlopen(file_url, timeout=10)
+                                if response.status == 200:
+                                    with open(local_file, 'wb') as f:
+                                        f.write(response.read())
+                                    os.chmod(local_file, 0o755)
+                                    print(f"[OK] Скопирован из Git: {file_name}")
+                                    copied_count += 1
+                                else:
+                                    print(f"[WARNING] HTTP {response.status} для {file_name}")
+                            except Exception as e:
+                                print(f"[WARNING] Не удалось скачать из Git: {file_name} - {e}")
+                                continue
+                        
+                        if copied_count > 0:
+                            print(f"[OK] Обновлено файлов из Git: {copied_count}")
+                            return True
+                            
+            except Exception as e:
+                print(f"[WARNING] Ошибка при работе с Git: {e}")
+                continue
+    
+    if copied_count == 0:
+        print("[ERROR] Не удалось обновить файлы ни из одного источника")
         return False
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
-        f.write(scripts[script_name])
-        temp_script = f.name
+    return True
+
+
+def install_dependencies():
+    """
+    Установка зависимостей и проверка репозиториев
+    """
+    # Проверяем репозитории
+    print("[INFO] Проверка доступности репозиториев...")
     
     try:
-        os.chmod(temp_script, 0o755)
-        result = subprocess.run(['bash', temp_script], check=False)
-        return result.returncode == 0
-    finally:
-        os.unlink(temp_script)
-
-# ============================================================================
-# ГЛАВНАЯ ТОЧКА ВХОДА (UNIFIED VERSION)
-# ============================================================================
+        # Проверяем наличие не-cdrom репозиториев
+        result = subprocess.run(
+            ['grep', '-v', '^#', '/etc/apt/sources.list'],
+            capture_output=True,
+            text=True
+        )
+        
+        has_network_repos = False
+        if result.returncode == 0:
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                if line and line.startswith('deb ') and 'cdrom:' not in line:
+                    has_network_repos = True
+                    break
+        
+        if not has_network_repos:
+            print("[INFO] Сетевые репозитории не найдены, настраиваем...")
+            # Здесь можно добавить автоматическую настройку репозиториев для Astra Linux
+            # Пока просто предупреждаем
+            print("[WARNING] Требуется настройка репозиториев вручную")
+        
+        # Обновляем список пакетов
+        print("[INFO] Обновление списка пакетов...")
+        result = subprocess.run(
+            ['apt-get', 'update'],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            print(f"[WARNING] Ошибка обновления списка пакетов: {result.stderr}")
+            return False
+        
+        # Проверяем и устанавливаем tkinter если нужно
+        if not TKINTER_AVAILABLE:
+            print("[INFO] tkinter недоступен, проверяем возможность установки...")
+            
+            # Ищем пакет tkinter
+            tkinter_packages = ['python3-tk', 'python3-tkinter', 'tk']
+            found_package = None
+            
+            for pkg in tkinter_packages:
+                result = subprocess.run(
+                    ['apt-cache', 'show', pkg],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    found_package = pkg
+                    break
+            
+            if found_package:
+                print(f"[INFO] Устанавливаем {found_package}...")
+                result = subprocess.run(
+                    ['apt-get', 'install', '-y', found_package],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    print(f"[OK] {found_package} установлен")
+                else:
+                    print(f"[WARNING] Не удалось установить {found_package}")
+            else:
+                print("[WARNING] Пакет tkinter не найден в репозиториях")
+        
+        print("[OK] Зависимости проверены и установлены")
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] Ошибка при установке зависимостей: {e}")
+        traceback.print_exc()
+        return False
 
 if __name__ == '__main__':
-    import sys
-    import os
-    import threading
-    
-    UNIFIED_VERSION = "V3.0.146 (2025.12.03)"
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
-    # ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# ГЛАВНАЯ ТОЧКА ВХОДА 
+# АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
+# ═══════════════════════════════════════════════════════════════════════
     if os.geteuid() != 0:
         print("[INFO] Требуются права root. Перезапуск через sudo...")
         env = os.environ.copy()
@@ -29706,10 +27538,10 @@ if __name__ == '__main__':
     # Сначала обновляется, потом продолжает работу
     # ═══════════════════════════════════════════════════════════════════════
     if force_update and not skip_update:
-        print(f"[INFO] FSA-AstraInstall {UNIFIED_VERSION}")
+        print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
         print("[INFO] Принудительное обновление...")
         try:
-            updater = SelfUpdater(UNIFIED_VERSION)
+            updater = SelfUpdater(APP_VERSION)
             new_ver = updater.check_for_updates()
             if new_ver:
                 print(f"[INFO] Найдена версия: {new_ver}")
@@ -29727,10 +27559,10 @@ if __name__ == '__main__':
     # Только выводим информацию о наличии обновления в лог
     # ═══════════════════════════════════════════════════════════════════════
     elif console_mode and not skip_update:
-        print(f"[INFO] FSA-AstraInstall {UNIFIED_VERSION}")
+        print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
         print("[INFO] Проверка обновлений...")
         try:
-            updater = SelfUpdater(UNIFIED_VERSION)
+            updater = SelfUpdater(APP_VERSION)
             new_ver = updater.check_for_updates()
             if new_ver:
                 print("[INFO] " + "=" * 50)
@@ -29749,11 +27581,10 @@ if __name__ == '__main__':
     elif not console_mode and not skip_update:
         def delayed_update_check():
             """Отложенная проверка обновлений для GUI"""
-            import time
             time.sleep(3)  # Ждём 3 секунды после запуска GUI
             
             try:
-                updater = SelfUpdater(UNIFIED_VERSION)
+                updater = SelfUpdater(APP_VERSION)
                 new_ver = updater.check_for_updates()
                 if new_ver:
                     # Показываем диалог в главном потоке
@@ -29773,12 +27604,12 @@ if __name__ == '__main__':
     # ═══════════════════════════════════════════════════════════════════════
     if '--update-only' in sys.argv:
         print("[INFO] Режим: только обновление из сети")
-        run_embedded_bash('astra_update')
+        update_from_network()
         sys.exit(0)
     
     if '--install-deps-only' in sys.argv:
         print("[INFO] Режим: только установка зависимостей")
-        run_embedded_bash('astra_install')
+        install_dependencies()
         sys.exit(0)
     
     # ═══════════════════════════════════════════════════════════════════════
