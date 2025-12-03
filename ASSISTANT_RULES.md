@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V3.0.148 (2025.12.03)
+# Версия проекта: V3.0.150 (2025.12.03)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -872,9 +872,10 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 1. **Определение измененных файлов:** 
    - Выполнить `git diff --name-only HEAD` → сохранить в `CHANGED_FILES`
-   - Выполнить `git status --short | grep "^??"` → извлечь новые файлы → сохранить в `NEW_FILES`
+   - Выполнить `git status --short | grep "^??"` → извлечь новые файлы и директории
+   - Разделить на `NEW_FILES` (файлы) и `NEW_DIRS` (директории) - проверкой `[ -f "$path" ]` и `[ -d "$path" ]`
    - Выполнить `git diff --name-only --diff-filter=D HEAD` → сохранить в `DELETED_FILES`
-   - Если все три переменные пусты - остановиться с ошибкой "Нет изменений для коммита"
+   - Если все переменные пусты - остановиться с ошибкой "Нет изменений для коммита"
 
 2. **Проверка реальных изменений (внутренняя):** 
    - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
@@ -953,7 +954,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 8.5. **ОБЯЗАТЕЛЬНАЯ ПАУЗА:** 
    - Вывести: "=== Описание коммита готово ==="
    - Вывести содержимое файла `commit_message.txt` через `cat commit_message.txt`
-   - Сохранить все переменные в файл `.commit_vars.sh`: `CHANGED_FILES`, `NEW_FILES`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
+   - Сохранить все переменные в файл `.commit_vars.sh`: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Вывести маркер "🚨 КРИТИЧНО: ОБЯЗАТЕЛЬНАЯ ПАУЗА ДЛЯ АССИСТЕНТА 🚨"
    - Ассистент ОБЯЗАН остановиться и НЕ продолжать автоматически
    - Ассистент ДОЛЖЕН спросить пользователя через чат: "Файл commit_message.txt готов. Нужно что-то изменить?"
@@ -984,6 +985,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 11. **Обновление версий проекта:** 
    - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh` (КРИТИЧНО: без переменных продолжать нельзя)
+   - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `version.txt`
    - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения)
@@ -1008,6 +1010,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 13. **Добавление файлов в индекс:** 
    - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
+   - Для каждой директории из `NEW_DIRS` (использовать `echo "$NEW_DIRS" | tr ' ' '\n' | while read dir`): выполнить `git add "$dir"` (рекурсивно добавит все файлы)
    - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждого файла `*.py`, `*.sh`, `*.md` (если он был изменен версией/датой): выполнить `git add "$file"`
    - ЗАПРЕЩЕНО использовать `git add .`
@@ -1151,18 +1154,33 @@ CHANGED_FILES=$(git diff --name-only HEAD)
 GIT_STATUS_OUTPUT=$(git status --short)
 GIT_STATUS_FILTERED=$(mktemp)
 echo "$GIT_STATUS_OUTPUT" | grep "^??" > "$GIT_STATUS_FILTERED" 2>/dev/null || true
-NEW_FILES=$(awk '{print $2}' "$GIT_STATUS_FILTERED")
+# КРИТИЧНО: Извлекаем новые файлы и директории отдельно
+NEW_FILES=""
+NEW_DIRS=""
+while IFS= read -r line; do
+    [ ! -z "$line" ] || continue
+    file_path=$(echo "$line" | awk '{print $2}')
+    [ ! -z "$file_path" ] || continue
+    if [ -d "$file_path" ]; then
+        # Если это директория - добавляем в NEW_DIRS
+        NEW_DIRS="$NEW_DIRS $file_path"
+    elif [ -f "$file_path" ]; then
+        # Если это файл - добавляем в NEW_FILES
+        NEW_FILES="$NEW_FILES $file_path"
+    fi
+done < "$GIT_STATUS_FILTERED"
 rm -f "$GIT_STATUS_FILTERED"
 DELETED_FILES=$(git diff --name-only --diff-filter=D HEAD)
 echo "Измененные файлы: $CHANGED_FILES"
 echo "Новые файлы: $NEW_FILES"
+echo "Новые директории: $NEW_DIRS"
 echo "Удаленные файлы: $DELETED_FILES"
 # КРИТИЧНО: Проверка успешности шага 1
 if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 1 не выполнен успешно"
 fi
 # КРИТИЧНО: Проверка наличия изменений
-if [ -z "$CHANGED_FILES" ] && [ -z "$NEW_FILES" ] && [ -z "$DELETED_FILES" ]; then
+if [ -z "$CHANGED_FILES" ] && [ -z "$NEW_FILES" ] && [ -z "$NEW_DIRS" ] && [ -z "$DELETED_FILES" ]; then
     stop_on_error "Нет изменений для коммита. Проверьте статус репозитория."
 fi
 
@@ -1350,6 +1368,7 @@ echo "# Переменные для продолжения создания ко
 echo "# Этот файл будет удален после завершения процесса" >> "$VARS_FILE"
 echo 'CHANGED_FILES="'$CHANGED_FILES'"' >> "$VARS_FILE"
 echo 'NEW_FILES="'$NEW_FILES'"' >> "$VARS_FILE"
+echo 'NEW_DIRS="'$NEW_DIRS'"' >> "$VARS_FILE"
 echo 'DELETED_FILES="'$DELETED_FILES'"' >> "$VARS_FILE"
 echo 'CURRENT_VERSION="'$CURRENT_VERSION'"' >> "$VARS_FILE"
 echo 'NEW_VERSION="'$NEW_VERSION'"' >> "$VARS_FILE"
@@ -1521,11 +1540,19 @@ echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен: $file" || (echo "✗ ОШИБКА: Не удалось добавить $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
+# Добавляем новые файлы
 echo "$NEW_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     [ -f "$file" ] && \
         (git add "$file" 2>/dev/null && echo "✓ Добавлен новый: $file" || (echo "✗ ОШИБКА: Не удалось добавить новый файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || \
         (echo "✗ ОШИБКА: Новый файл $file не существует" && echo "ERROR" >> "$ADD_ERROR_FILE")
+done
+# Добавляем новые директории (рекурсивно)
+echo "$NEW_DIRS" | tr ' ' '\n' | while read dir; do
+    [ ! -z "$dir" ] || continue
+    [ -d "$dir" ] && \
+        (git add "$dir" 2>/dev/null && echo "✓ Добавлена директория: $dir" || (echo "✗ ОШИБКА: Не удалось добавить директорию $dir в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || \
+        (echo "✗ ОШИБКА: Новая директория $dir не существует" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
 echo "$DELETED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
