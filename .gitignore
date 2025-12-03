@@ -139,6 +139,10 @@ History/
 # Log directories
 Log/
 LogLinux/
+LogInstall/
+
+# Original scripts (legacy, not used)
+original_scripts/
 
 # shc intermediate files (temporary compilation files)
 *.x.c

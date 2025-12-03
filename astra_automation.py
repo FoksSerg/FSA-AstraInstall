@@ -6,13 +6,13 @@ from __future__ import print_function
 FSA-AstraInstall - Единый исполняемый файл
 Автоматически распаковывает компоненты и запускает автоматизацию astra-setup.sh
 Совместимость: Python 3.x
-Версия: V3.0.146 (2025.12.03)
+Версия: V3.0.147 (2025.12.03)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
 
 # Версия приложения
-APP_VERSION = "V3.0.146 (2025.12.03)"
+APP_VERSION = "V3.0.147 (2025.12.03)"
 # Название приложения
 APP_NAME = "FSA-AstraInstall"
 import os
