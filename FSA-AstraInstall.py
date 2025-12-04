@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.1.155 (2025.12.05)
+Версия: V3.1.156 (2025.12.05)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.1.155 (2025.12.05)"
+APP_VERSION = "V3.1.156 (2025.12.05)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -12715,6 +12715,36 @@ class AutomationGUI(object):
         
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} {APP_VERSION}")
+        
+        # Установка иконки окна
+        try:
+            # Определяем путь к иконке
+            icon_path = None
+            if getattr(sys, 'frozen', False):
+                # Запущено из бинарника PyInstaller
+                base_path = sys._MEIPASS
+            else:
+                # Запущено из скрипта
+                base_path = os.path.dirname(os.path.abspath(__file__))
+            
+            # Пробуем найти иконку в разных местах
+            possible_paths = [
+                os.path.join(base_path, 'Icons', 'fly-astra-update.png'),
+                os.path.join(base_path, 'fly-astra-update.png'),
+                os.path.join(os.path.dirname(base_path), 'Icons', 'fly-astra-update.png'),
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    icon_path = path
+                    break
+            
+            if icon_path:
+                icon_image = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(True, icon_image)
+        except Exception:
+            # Игнорируем ошибки установки иконки
+            pass
         
         # КРИТИЧНО: Скрываем окно сразу после создания
         # Оно будет показано после полной инициализации и центрирования
@@ -26367,9 +26397,14 @@ def find_running_instance():
     """Поиск запущенного экземпляра программы по имени процесса (только для Linux)
     Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя"""
     current_pid = os.getpid()
+    current_ppid = os.getppid()  # Родительский процесс (обычно sudo)
     process_name = "FSA-AstraInstall"
     
     try:
+        # Небольшая задержка после перезапуска, чтобы процесс успел полностью инициализироваться
+        # Особенно важно для Python 3.7 на сборке 1.7
+        time.sleep(0.5)
+        
         # Проходим по всем процессам в /proc
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
@@ -26377,7 +26412,8 @@ def find_running_instance():
             
             try:
                 proc_pid = int(pid_str)
-                if proc_pid == current_pid:
+                # Исключаем текущий процесс и его родителя (sudo)
+                if proc_pid == current_pid or proc_pid == current_ppid:
                     continue
                 
                 # Читаем UID и имя процесса из /proc/PID/status
@@ -26385,24 +26421,36 @@ def find_running_instance():
                     with open(f'/proc/{proc_pid}/status', 'r') as f:
                         proc_uid = None
                         proc_name = None
+                        proc_ppid = None
                         for line in f:
                             if line.startswith('Uid:'):
                                 # Uid: реальный_uid эффективный_uid сохраненный_uid файловая_система_uid
-                                proc_uid = int(line.split()[1])
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    proc_uid = int(parts[1])
                             elif line.startswith('Name:'):
                                 proc_name = line.split(':', 1)[1].strip()
-                                if proc_uid is not None:
-                                    break
+                            elif line.startswith('PPid:'):
+                                proc_ppid = int(line.split()[1])
+                            
+                            # Если собрали все нужные данные, выходим
+                            if proc_uid is not None and proc_name and proc_ppid is not None:
+                                break
                         
                         # Проверяем ТОЛЬКО процессы от root (UID=0)
-                        if proc_uid == 0:
+                        # И исключаем процессы, которые являются родителями текущего процесса
+                        if proc_uid == 0 and proc_name:
                             if proc_name == process_name or proc_name == process_name[:15]:
-                                return proc_pid
-                except (IOError, OSError, ValueError, IndexError):
+                                # Дополнительная проверка: не является ли это родительским процессом
+                                if proc_ppid != current_pid:
+                                    return proc_pid
+                except (IOError, OSError, ValueError, IndexError, FileNotFoundError):
+                    # Игнорируем ошибки чтения (процесс мог завершиться)
                     continue
-            except ValueError:
+            except (ValueError, OSError):
                 continue
     except Exception:
+        # Игнорируем ошибки (процесс мог завершиться во время проверки)
         pass
     
     return None
@@ -27523,9 +27571,24 @@ if __name__ == '__main__':
         if 'XAUTHORITY' in os.environ:
             env['XAUTHORITY'] = os.environ['XAUTHORITY']
         try:
-            os.execvpe("sudo", ["sudo", "-E"] + sys.argv, env)
+            # Для бинарника PyInstaller используем sys.executable, для скрипта - полный путь к sys.argv[0]
+            is_frozen = getattr(sys, 'frozen', False)
+            if is_frozen:
+                # Бинарник: используем sys.executable (полный путь к бинарнику)
+                executable_path = sys.executable
+            else:
+                # Python скрипт: используем полный путь к sys.argv[0]
+                if os.path.isabs(sys.argv[0]):
+                    executable_path = sys.argv[0]
+                else:
+                    executable_path = os.path.abspath(sys.argv[0])
+            
+            # Формируем команду: sudo -E <путь_к_бинарнику> <аргументы>
+            sudo_args = ["sudo", "-E", executable_path] + sys.argv[1:]
+            os.execvpe("sudo", sudo_args, env)
         except Exception as e:
             print(f"[ERROR] Не удалось получить права root: {e}")
+            traceback.print_exc()
             print("[INFO] Запустите вручную: sudo " + " ".join(sys.argv))
             sys.exit(1)
     
