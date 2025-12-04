@@ -26536,6 +26536,28 @@ def main():
     if os.path.exists(log_dir):
         fix_permissions(log_dir)
     
+    # Создаём файлы логов сразу, чтобы они были доступны с самого начала
+    # Определяем путь к RAW лог-файлу
+    if log_timestamp is None:
+        log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % log_timestamp)
+    
+    # Создаём файлы логов (только если их ещё нет)
+    try:
+        # Создаём ANALYSIS лог-файл
+        if not os.path.exists(log_file):
+            with open(log_file, 'w', encoding='utf-8') as f:
+                f.write('')  # Создаём пустой файл
+            fix_permissions(log_file)
+        
+        # Создаём RAW лог-файл
+        if not os.path.exists(raw_log_path):
+            with open(raw_log_path, 'w', encoding='utf-8') as f:
+                f.write('')  # Создаём пустой файл
+            fix_permissions(raw_log_path)
+    except Exception as e:
+        print(f"[WARNING] Не удалось создать файлы логов: {e}")
+    
     # НОВОЕ: Инициализируем DualStreamLogger для разделения потоков
     print("[DUAL_STREAM] Инициализация системы двойных потоков логирования...")
     dual_logger = None
@@ -27562,7 +27584,10 @@ if __name__ == '__main__':
 # ГЛАВНАЯ ТОЧКА ВХОДА 
 # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
 # ═══════════════════════════════════════════════════════════════════════
-    if os.geteuid() != 0:
+    # На macOS не требуются права root, пропускаем проверку
+    is_macos = platform.system() == 'Darwin'
+    
+    if not is_macos and os.geteuid() != 0:
         print("[INFO] Требуются права root. Перезапуск через sudo...")
         env = os.environ.copy()
         # Сохраняем DISPLAY для GUI
@@ -27594,17 +27619,31 @@ if __name__ == '__main__':
     
     # КРИТИЧНО: Проверка single instance ПОСЛЕ перезапуска через sudo
     # Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
+    # На macOS пропускаем проверку single instance (не требуется)
     if platform.system() == 'Linux' and os.geteuid() == 0:
         existing_pid = find_running_instance()
         if existing_pid is not None:
             activate_existing_window()
             sys.exit(0)
     
+    # Создаём папку Log заранее (до вызова main())
+    # Это гарантирует, что папка будет создана независимо от способа запуска
+    is_frozen = getattr(sys, 'frozen', False)
+    if is_frozen:
+        script_dir = os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(script_dir, "Log")
+    if not os.path.exists(log_dir):
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except Exception as e:
+            print(f"[WARNING] Не удалось создать папку Log: {e}")
+    
     # Парсим аргументы
     skip_update = '--skip-update' in sys.argv
     force_update = '--force-update' in sys.argv
     console_mode = '--console' in sys.argv
-    is_frozen = getattr(sys, 'frozen', False)
     
     # ═══════════════════════════════════════════════════════════════════════
     # РЕЖИМ 1: Принудительное обновление (--force-update)

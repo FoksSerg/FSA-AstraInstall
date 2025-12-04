@@ -30,29 +30,26 @@ def main():
         print(f"[WARNING] Этот скрипт предназначен для macOS, обнаружена система: {platform.system()}")
         print("[WARNING] На Linux используйте прямой запуск FSA-AstraInstall.py")
     
-    # Создаем папку Log если её нет
+    # Создаем папку Log если её нет (для логов с префиксом macos_)
     log_dir = os.path.join(script_dir, 'Log')
     os.makedirs(log_dir, exist_ok=True)
     
-    # Создаем лог файл с временной меткой
+    # Создаем лог файл с временной меткой и префиксом macos_
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(log_dir, f"FSA-AstraInstall_macos_{timestamp}.log")
     
     print(f"Запуск FSA-AstraInstall.py на macOS...")
     print(f"Лог файл: {log_file}")
     
-    # На macOS не нужны права root, передаём переменную окружения для отключения проверки
-    env = os.environ.copy()
-    env['FSA_SKIP_ROOT_CHECK'] = '1'  # Флаг для отключения проверки root на macOS
-    
     # ПРОСТО ЗАПУСКАЕМ СКРИПТ С ПАРАМЕТРАМИ (без sudo)
+    # На macOS проверка root пропускается автоматически по платформе
     try:
         result = subprocess.run([
             sys.executable, 
             main_script_path, 
             '--log-file', 
             log_file
-        ], env=env, check=True)
+        ], check=True)
         return result.returncode == 0
     except subprocess.CalledProcessError as e:
         print(f"Ошибка запуска: {e}")
