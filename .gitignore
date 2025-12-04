@@ -143,6 +143,10 @@ LogInstall/
 # Original scripts (legacy, not used)
 original_scripts/
 
+# Archive directory (legacy build scripts and source files)
+# Файлы сохранены в Git истории, не нужны в рабочем репозитории
+Archive/
+
 # shc intermediate files (temporary compilation files)
 *.x.c
 *.x

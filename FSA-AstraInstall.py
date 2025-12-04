@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.1.153 (2025.12.04)
+Версия: V3.1.155 (2025.12.05)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.1.153 (2025.12.04)"
+APP_VERSION = "V3.1.155 (2025.12.05)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -106,7 +106,7 @@ GIT_RAW_URL = "https://raw.githubusercontent.com/ViRa-Realtime/FSA-AstraInstall"
 # Имена файлов для самообновления
 BINARY_FILENAME = "FSA-AstraInstall"
 PYTHON_FILENAME = "FSA-AstraInstall.py"
-VERSION_SOURCE_FILE = "astra_automation.py"  # Файл для проверки версии
+VERSION_SOURCE_FILE = "FSA-AstraInstall.py"  # Файл для проверки версии
 
 # Таймауты для самообновления
 TIMEOUT_CHECK = 10
@@ -10290,14 +10290,14 @@ class ProcessMonitor(object):
                     if main_process.cmdline():
                         # Берем первые 2 элемента команды (python3 и скрипт)
                         cmdline = ' '.join(main_process.cmdline()[:2])
-                        # Если в cmdline есть astra_automation.py, добавляем это в имя для отображения
-                        if 'astra_automation.py' in cmdline:
-                            display_name = f"{process_name} (astra_automation.py)"
+                        # Если в cmdline есть FSA-AstraInstall, добавляем это в имя для отображения
+                        if 'FSA-AstraInstall' in cmdline:
+                            display_name = f"{process_name} (FSA-AstraInstall)"
                         else:
                             display_name = process_name
                     else:
-                        cmdline = f"{process_name} astra_automation.py"
-                        display_name = f"{process_name} (astra_automation.py)"
+                        cmdline = f"{process_name} FSA-AstraInstall.py"
+                        display_name = f"{process_name} (FSA-AstraInstall)"
                     
                     app_processes.append({
                         'pid': current_pid,
@@ -10821,7 +10821,7 @@ class WinetricksManager(object):
         
         # КРИТИЧНО: Создаем временный bash-скрипт для надежного запуска winetricks
         # Это более надежно, чем передача длинной команды через su -c
-        # Определяем директорию, где находится astra_automation.py
+        # Определяем директорию, где находится FSA-AstraInstall.py
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
         # Создаем путь для лог-файла вывода
@@ -11131,7 +11131,7 @@ class WinetricksManager(object):
         script_content += "echo ''\n"
         script_content += "exit $EXIT_CODE\n"
         
-        # Создаем временный файл рядом с astra_automation.py
+        # Создаем временный файл рядом с FSA-AstraInstall.py
         script_filename = f"winetricks_install_{real_user}_{int(time.time())}.sh"
         script_path = os.path.join(script_dir, script_filename)
         
@@ -25369,7 +25369,7 @@ def check_system_requirements():
     try:
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с системными файлами")
-            print("   Запустите: sudo python astra_automation.py")
+            print("   Запустите: sudo python3 FSA-AstraInstall.py")
             return False
     except AttributeError:
         # os.geteuid() не существует на macOS/Windows
@@ -25480,7 +25480,7 @@ def run_repo_checker(gui_terminal=None, dry_run=False):
         # Проверяем права доступа
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с /etc/apt/sources.list")
-            print("Запустите: sudo python3 astra_automation.py")
+            print("Запустите: sudo python3 FSA-AstraInstall.py")
             return False
         
         # Создаем backup
@@ -25533,7 +25533,7 @@ def run_system_stats(temp_dir, dry_run=False):
         # Проверяем права доступа
         if os.geteuid() != 0:
             print("[ERROR] Требуются права root для работы с системными пакетами", gui_log=True)
-            print("Запустите: sudo python3 astra_automation.py")
+            print("Запустите: sudo python3 FSA-AstraInstall.py")
             return False
         
         # Анализируем обновления
@@ -26364,21 +26364,13 @@ class DirectoryMonitor(object):
         return "\n".join(output) if output else "Изменений не обнаружено"
 
 def find_running_instance():
-    """Поиск запущенного экземпляра программы по inode файла (только Linux)"""
+    """Поиск запущенного экземпляра программы по имени процесса (только для Linux)
+    Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя"""
     current_pid = os.getpid()
+    process_name = "FSA-AstraInstall"
     
-    # Получаем inode текущего исполняемого файла
     try:
-        # Для бинарника используем /proc/self/exe
-        current_exe = os.readlink('/proc/self/exe')
-        current_exe = os.path.realpath(current_exe)
-        current_inode = os.stat(current_exe).st_ino
-    except (OSError, IOError):
-        # Если не получилось - выходим
-        return None
-    
-    # Проходим по всем процессам в /proc
-    try:
+        # Проходим по всем процессам в /proc
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
                 continue
@@ -26388,17 +26380,25 @@ def find_running_instance():
                 if proc_pid == current_pid:
                     continue
                 
-                # Проверяем exe через /proc/PID/exe
+                # Читаем UID и имя процесса из /proc/PID/status
                 try:
-                    proc_exe = os.readlink(f'/proc/{proc_pid}/exe')
-                    proc_exe = os.path.realpath(proc_exe)
-                    
-                    if os.path.exists(proc_exe):
-                        proc_inode = os.stat(proc_exe).st_ino
-                        if proc_inode == current_inode:
-                            return proc_pid
-                except (OSError, IOError):
-                    # Процесс завершился или нет доступа - пропускаем
+                    with open(f'/proc/{proc_pid}/status', 'r') as f:
+                        proc_uid = None
+                        proc_name = None
+                        for line in f:
+                            if line.startswith('Uid:'):
+                                # Uid: реальный_uid эффективный_uid сохраненный_uid файловая_система_uid
+                                proc_uid = int(line.split()[1])
+                            elif line.startswith('Name:'):
+                                proc_name = line.split(':', 1)[1].strip()
+                                if proc_uid is not None:
+                                    break
+                        
+                        # Проверяем ТОЛЬКО процессы от root (UID=0)
+                        if proc_uid == 0:
+                            if proc_name == process_name or proc_name == process_name[:15]:
+                                return proc_pid
+                except (IOError, OSError, ValueError, IndexError):
                     continue
             except ValueError:
                 continue
@@ -26463,7 +26463,7 @@ def main():
         if log_timestamp is None:
             log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "astra_automation_%s.log" % log_timestamp)
+        log_file = os.path.join(script_dir, "Log", "FSA-AstraInstall_%s.log" % log_timestamp)
     else:
         # Если передан log_file, но не передан timestamp - извлекаем из имени файла
         if log_timestamp is None:
@@ -26605,12 +26605,6 @@ def main():
                 start_mode = sys.argv[i + 1]
                 i += 1  # Пропускаем следующий аргумент
         i += 1
-    
-    # КРИТИЧНО: Проверка single instance ПОСЛЕ обработки аргументов (чтобы терминал закрылся)
-    existing_pid = find_running_instance()
-    if existing_pid is not None:
-        activate_existing_window()
-        sys.exit(0)
     
     try:
         # Проверяем права root (без логирования)
@@ -27534,6 +27528,14 @@ if __name__ == '__main__':
             print(f"[ERROR] Не удалось получить права root: {e}")
             print("[INFO] Запустите вручную: sudo " + " ".join(sys.argv))
             sys.exit(1)
+    
+    # КРИТИЧНО: Проверка single instance ПОСЛЕ перезапуска через sudo
+    # Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
+    if platform.system() == 'Linux' and os.geteuid() == 0:
+        existing_pid = find_running_instance()
+        if existing_pid is not None:
+            activate_existing_window()
+            sys.exit(0)
     
     # Парсим аргументы
     skip_update = '--skip-update' in sys.argv

@@ -1,9 +1,9 @@
 {
   "server_host": "fsa@10.10.55.77",
   "server_path": "/mnt/v/UbuMount",
-  "window_geometry": "870x540+946+339",
-  "window_x": 946,
-  "window_y": 339,
+  "window_geometry": "870x540+688+214",
+  "window_x": 688,
+  "window_y": 214,
   "window_width": 870,
   "window_height": 540
 }

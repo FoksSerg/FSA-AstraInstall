@@ -1,6 +1,6 @@
 #!/bin/bash
 # Скрипт сборки бинарного файла в Docker контейнере
-# Версия: V3.1.153 (2025.12.03)
+# Версия: V3.1.155 (2025.12.05)
 # Компания: ООО "НПА Вира-Реалтайм"
 # Разработчик: @FoksSegr & AI Assistant (@LLM)
 
@@ -28,10 +28,26 @@ if [ ! -f "${INPUT_FILE}" ]; then
     exit 1
 fi
 
+# Проверка иконки (ВРЕМЕННО ОТКЛЮЧЕНО)
+# ICON_FILE="/build/Icons/fly-astra-update.png"
+# ICON_PARAM=""
+# 
+# if [ -f "$ICON_FILE" ]; then
+#     ICON_PARAM="--icon $ICON_FILE"
+#     echo "[#] Использование иконки: $ICON_FILE" >&2
+#     # Проверяем размер файла для информации
+#     ICON_SIZE=$(stat -f%z "$ICON_FILE" 2>/dev/null || stat -c%s "$ICON_FILE" 2>/dev/null || echo "unknown")
+#     echo "[#] Размер файла иконки: $ICON_SIZE байт" >&2
+# else
+#     echo "[WARNING] Иконка не найдена: $ICON_FILE, сборка без иконки" >&2
+# fi
+ICON_PARAM=""
+
 # Компилируем объединенный файл
 # Включаем все необходимые модули для полной функциональности
 echo "[#] Компиляция ${INPUT_FILE} в ${OUTPUT_NAME}..."
 pyinstaller --onefile --console \
+    $ICON_PARAM \
     --name "${OUTPUT_NAME}" \
     --distpath . \
     --workpath build \
