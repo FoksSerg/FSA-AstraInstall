@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V3.0.152 (2025.12.04)
+# Версия проекта: V3.1.153 (2025.12.04)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -885,7 +885,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Пользователь НЕ видит этот вывод
 
 3. **Определение текущей версии:** 
-   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find` во всех поддиректориях):
+   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
+   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
      - Выполнить `head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+"` → сохранить в временный файл
    - Из временного файла извлечь все уникальные версии → сохранить в `ALL_VERSIONS` (строка через пробел)
    - Взять первую версию из `ALL_VERSIONS` → сохранить в `CURRENT_VERSION`
@@ -988,21 +989,21 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `version.txt`
-   - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения, рекурсивно через `find`)
-   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find`):
-     - Для каждой версии из `ALL_VERSIONS` (использовать `echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version`, НЕ использовать массивы `read -a` - не работает в zsh):
-       - Экранировать точку: `ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')`
-       - Выполнить `sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
-     - Дополнительно обновить все версии формата `V${MAJOR}.${MINOR}.[0-9]+` в первых 20 строках: `sed -i '' "1,20s/V${MAJOR}\\.${MINOR}\\.[0-9]\\+/$NEW_VERSION/g" "$file"` (с подавлением ошибок)
+   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
+   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
+     - Заменить **ЛЮБУЮ** версию формата `V[0-9]+.[0-9]+.[0-9]+` на `NEW_VERSION` в первых 20 строках: `sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/$NEW_VERSION/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
+     - **КРИТИЧНО:** В macOS sed не поддерживает `\+`, используем `[0-9][0-9]*` для одного или более цифр
+     - Выводить прогресс обработки: `[N/Total] Обработка: $file`
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
 12. **Проверка обновления версий:** 
-   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find`):
+   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
+   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
      - Выполнить `head -20 "$file" | grep -q "$NEW_VERSION"`
      - Если найдено - вывести "✓ Версия обновлена в $file"
      - Если не найдено:
-       - Выполнить `head -20 "$file" | grep -q "V${MAJOR}\\.${MINOR}"`
-       - Если найдено - зафиксировать ошибку с указанием найденной старой версии
+       - Выполнить `head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"` (проверка наличия любой версии)
+       - Если найдена версия - зафиксировать ошибку с указанием найденной старой версии (извлечь через `grep -o "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"`)
        - Если не найдено - вывести "ℹ Файл $file не содержит версию в начале файла (пропускаем)"
    - Если есть ошибки - остановиться с ошибкой "Версия не обновлена в N файл(ах)"
    - Если все версии обновлены - продолжить
@@ -1012,7 +1013,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждой директории из `NEW_DIRS` (использовать `echo "$NEW_DIRS" | tr ' ' '\n' | while read dir`): выполнить `git add "$dir"` (рекурсивно добавит все файлы)
    - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
-   - Для каждого файла `*.py`, `*.sh`, `*.md` (если он был изменен версией/датой): выполнить `git add "$file"`
+   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** для поиска измененных файлов с версиями
+   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"`
    - ЗАПРЕЩЕНО использовать `git add .`
    - Выполнить `git status --short` для проверки
    - Если нет файлов в индексе - остановиться с ошибкой
@@ -1120,14 +1122,22 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 ```bash
 # ШАГ 0: КРИТИЧНО: Проверка и переход в директорию проекта
 echo "=== ШАГ 0: Проверка директории ==="
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
 if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
-    cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || {
+    cd "$PROJECT_DIR" || {
+        echo "❌ ОШИБКА: Не удалось перейти в директорию проекта"
+        exit 1
+    }
+fi
+# КРИТИЧНО: Дополнительная проверка через абсолютный путь
+if [ "$(pwd)" != "$PROJECT_DIR" ]; then
+    cd "$PROJECT_DIR" || {
         echo "❌ ОШИБКА: Не удалось перейти в директорию проекта"
         exit 1
     }
 fi
 echo "✓ Рабочая директория: $(pwd)"
-if [ "$(basename $(pwd))" != "FSA-AstraInstall" ]; then
+if [ "$(basename $(pwd))" != "FSA-AstraInstall" ] || [ "$(pwd)" != "$PROJECT_DIR" ]; then
     echo "❌ ОШИБКА: Проверка директории не прошла"
     exit 1
 fi
@@ -1210,9 +1220,15 @@ fi
 
 # ШАГ 3: Определяем текущую версию в файлах
 echo "=== ШАГ 3: Определение текущей версии ==="
-[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
+# КРИТИЧНО: Проверка директории проекта
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
+echo "✓ Рабочая директория: $(pwd)"
+
 VERSION_TEMP=$(mktemp)
-find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
+# КРИТИЧНО: Используем git ls-files вместо find - это исключает .gitignore и гарантирует работу только в проекте
+git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
   [ -f "$f" ] && head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
 done
 ALL_VERSIONS=$(grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" "$VERSION_TEMP" | sort -u | tr '\n' ' ')
@@ -1462,7 +1478,12 @@ fi
 
 # ШАГ 11: Обновляем версию проекта во ВСЕХ файлах
 echo "=== ШАГ 11: Обновление версий проекта ==="
-[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
+# КРИТИЧНО: Проверка директории проекта
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
+echo "✓ Рабочая директория: $(pwd)"
+
 # КРИТИЧНО: Загружаем переменные из .commit_vars.sh
 [ -f ".commit_vars.sh" ] && source .commit_vars.sh || stop_on_error "Файл .commit_vars.sh не найден. Невозможно продолжить без переменных."
 [ -z "$NEW_VERSION" ] && stop_on_error "Переменная NEW_VERSION не загружена" || true
@@ -1470,29 +1491,24 @@ echo "=== ШАГ 11: Обновление версий проекта ==="
 MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
 MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
 [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
-[ -z "$ALL_VERSIONS" ] && \
-    echo "⚠️ ALL_VERSIONS не загружена, пересобираем список версий..." && \
-    VERSION_TEMP=$(mktemp) && \
-    find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
-      [ -f "$f" ] && head -20 "$f" | grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
-    done && \
-    ALL_VERSIONS=$(sort -u "$VERSION_TEMP" | tr '\n' ' ' | sed 's/ $//') && \
-    rm -f "$VERSION_TEMP" && \
-    [ -z "$ALL_VERSIONS" ] && stop_on_error "Не удалось найти версии в файлах проекта" || true && \
-    echo "Найдены версии: $ALL_VERSIONS" || true
-echo "Обновление версий: $ALL_VERSIONS -> $NEW_VERSION"
-# Итерируемся по версиям из ALL_VERSIONS (используем echo | tr | while read, НЕ массивы - не работают в zsh)
-find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
+
+echo "Обновление версий на: $NEW_VERSION"
+# КРИТИЧНО: Используем git ls-files вместо find
+# Обрабатываем каждый файл отдельно с выводом прогресса
+FILE_COUNT=$(git ls-files | grep -E '\.(py|sh|md)$' | wc -l | xargs)
+CURRENT_FILE=0
+
+git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
   [ ! -f "$f" ] && continue
-  # Обновляем каждую версию из ALL_VERSIONS
-  echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version; do
-    [ -z "$version" ] && continue
-    ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')
-    sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$f" 2>/dev/null || true
-  done
-  # Дополнительно обновляем все версии формата V{MAJOR}.{MINOR}.XXX
-  NEW_PATTERN="V${MAJOR}\\.${MINOR}\\.[0-9]\\+"
+  CURRENT_FILE=$((CURRENT_FILE + 1))
+  echo "[$CURRENT_FILE/$FILE_COUNT] Обработка: $f"
+  
+  # Заменяем ЛЮБУЮ версию формата VX.Y.Z на NEW_VERSION
+  # КРИТИЧНО: В macOS sed не поддерживает \+, используем [0-9][0-9]*
+  NEW_PATTERN="V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"
   sed -i '' "1,20s/$NEW_PATTERN/$NEW_VERSION/g" "$f" 2>/dev/null || true
+  
+  echo "  ✓ Обработан: $f"
 done
 echo "✓ Версии обновлены во всех файлах"
 # КРИТИЧНО: Проверка успешности шага 11
@@ -1502,23 +1518,30 @@ fi
 
 # ШАГ 12: Проверяем обновление версий
 echo "=== ШАГ 12: Проверка обновления версий ==="
-[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
+# КРИТИЧНО: Проверка директории проекта
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
+
 [ -z "$MAJOR" ] || [ -z "$MINOR" ] && \
     [ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true && \
     MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2) && \
     MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2) && \
     [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true || true
+
 VERSION_ERRORS=0
 VERSION_ERROR_FILES=""
 VERSION_ERROR_TEMP=$(mktemp)
-find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
+# КРИТИЧНО: Используем git ls-files вместо find
+git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
   [ -f "$f" ] && \
     if head -20 "$f" | grep -q "$NEW_VERSION"; then
         echo "✓ Версия обновлена в $f"
     else
-        VERSION_PATTERN="V${MAJOR}\\.${MINOR}"
-        if head -20 "$f" | grep -q "$VERSION_PATTERN"; then
-            OLD_VER=$(head -20 "$f" | grep -o "V${MAJOR}\\.${MINOR}\\.[0-9]\+" | head -1)
+        # Проверяем наличие любой версии формата VX.Y.Z
+        # КРИТИЧНО: В macOS grep/sed не поддерживают \+, используем [0-9][0-9]*
+        if head -20 "$f" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"; then
+            OLD_VER=$(head -20 "$f" | grep -o "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*" | head -1)
             echo "✗ ОШИБКА: Версия НЕ обновлена в $f (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
             echo "$f" >> "$VERSION_ERROR_TEMP"
         else
@@ -1542,6 +1565,11 @@ fi
 
 # ШАГ 13: Добавляем измененные файлы явно (НЕ используем git add .)
 echo "=== ШАГ 13: Добавление файлов в индекс ==="
+# КРИТИЧНО: Проверка директории проекта
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
+
 ADD_ERROR_FILE=$(mktemp)
 echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
@@ -1565,7 +1593,8 @@ echo "$DELETED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен удаленный: $file" || (echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
+# КРИТИЧНО: Используем git ls-files вместо find для поиска измененных файлов с версиями
+git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
     [ -f "$f" ] && \
     ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
         (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
