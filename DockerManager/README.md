@@ -2,7 +2,7 @@
 
 Модуль управления Docker сборками для проектов FSA.
 
-**Версия:** V2.7.143 (2025.12.03)  
+**Версия:** V2.7.143 (2025.12.04)  
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant (@LLM)
 
@@ -37,7 +37,6 @@ DockerManager/
 ├── dockerfiles/             # Dockerfile для разных платформ
 │   ├── Dockerfile.astra-1.7
 │   └── Dockerfile.astra-1.8
-├── run_gui.sh              # Запуск GUI (bash)
 ├── run_gui.py              # Запуск GUI (Python)
 └── README.md               # Эта документация
 ```
@@ -50,10 +49,7 @@ DockerManager/
 # Способ 1: Через Python модуль
 python3 -m DockerManager.cli --gui
 
-# Способ 2: Через скрипт
-./DockerManager/run_gui.sh
-
-# Способ 3: Через Python скрипт
+# Способ 2: Через Python скрипт
 python3 DockerManager/run_gui.py
 ```
 

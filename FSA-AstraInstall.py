@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.0.150 (2025.12.03)
+Версия: V3.0.151 (2025.12.04)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.0.150 (2025.12.03)"
+APP_VERSION = "V3.0.151 (2025.12.04)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -26364,36 +26364,44 @@ class DirectoryMonitor(object):
         return "\n".join(output) if output else "Изменений не обнаружено"
 
 def find_running_instance():
-    """Поиск запущенного экземпляра программы (только для Linux)"""
+    """Поиск запущенного экземпляра программы по inode файла (только Linux)"""
     current_pid = os.getpid()
     
+    # Получаем inode текущего исполняемого файла
     try:
-        result = subprocess.run(
-            ['pgrep', '-f', 'astra_automation.py'],
-            capture_output=True,
-            text=True,
-            timeout=1
-        )
-        
-        if result.returncode == 0:
-            for pid_str in result.stdout.strip().split('\n'):
-                if not pid_str:
+        # Для бинарника используем /proc/self/exe
+        current_exe = os.readlink('/proc/self/exe')
+        current_exe = os.path.realpath(current_exe)
+        current_inode = os.stat(current_exe).st_ino
+    except (OSError, IOError):
+        # Если не получилось - выходим
+        return None
+    
+    # Проходим по всем процессам в /proc
+    try:
+        for pid_str in os.listdir('/proc'):
+            if not pid_str.isdigit():
+                continue
+            
+            try:
+                proc_pid = int(pid_str)
+                if proc_pid == current_pid:
                     continue
                 
+                # Проверяем exe через /proc/PID/exe
                 try:
-                    proc_pid = int(pid_str.strip())
-                    if proc_pid == current_pid:
-                        continue
+                    proc_exe = os.readlink(f'/proc/{proc_pid}/exe')
+                    proc_exe = os.path.realpath(proc_exe)
                     
-                    try:
-                        with open(f'/proc/{proc_pid}/cmdline', 'r') as f:
-                            cmdline = f.read().replace('\x00', ' ')
-                            if 'astra_automation.py' in cmdline:
-                                return proc_pid
-                    except (IOError, OSError):
-                        continue
-                except ValueError:
+                    if os.path.exists(proc_exe):
+                        proc_inode = os.stat(proc_exe).st_ino
+                        if proc_inode == current_inode:
+                            return proc_pid
+                except (OSError, IOError):
+                    # Процесс завершился или нет доступа - пропускаем
                     continue
+            except ValueError:
+                continue
     except Exception:
         pass
     

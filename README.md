@@ -1,4 +1,4 @@
-# FSA-AstraInstall Automation V3.0.150 (2025.12.03)
+# FSA-AstraInstall Automation V3.0.151 (2025.12.04)
 
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant (@LLM)
@@ -246,7 +246,6 @@ DockerManager/
 ├── dockerfiles/             # Dockerfile для разных платформ
 │   ├── Dockerfile.astra-1.7
 │   └── Dockerfile.astra-1.8
-├── run_gui.sh              # Запуск GUI (bash)
 ├── run_gui.py              # Запуск GUI (Python)
 └── README.md               # Документация модуля
 ```

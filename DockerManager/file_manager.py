@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для работы с файлами (загрузка/скачивание)
-Версия: V2.7.143 (2025.12.03)
+Версия: V2.7.143 (2025.12.04)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -213,6 +213,17 @@ def download_build(project, platform, local_path=None):
         # Устанавливаем права на выполнение
         import os
         os.chmod(local_path, 0o755)
+        
+        # Получаем и устанавливаем время модификации с сервера
+        try:
+            from .server_connection import execute_ssh_command
+            result = execute_ssh_command(f"stat -c %Y {remote_path}", check=False)
+            if result.returncode == 0 and result.stdout.strip():
+                remote_mtime = float(result.stdout.strip())
+                os.utime(local_path, (remote_mtime, remote_mtime))
+        except Exception:
+            pass  # Игнорируем ошибки, файл уже скачан
+        
         size = local_path.stat().st_size / (1024 * 1024)  # MB
         _logger.info(f"Сборка успешно скачана: {local_path} ({size:.2f} MB)")
         print_success(f"Сборка скачана: {local_path}")
@@ -238,20 +249,21 @@ def list_builds(project, platform=None):
 # ============================================================================
 
 def check_unified_file(project):
-    """Проверяет наличие готового объединенного файла"""
+    """Проверяет наличие готового входного файла"""
     if project not in PROJECTS:
         print_error(f"Неизвестный проект: {project}")
         return False
     
     project_config = PROJECTS[project]
     project_dir = get_project_dir()
-    output_file = project_dir / f"{project_config['output_name']}.py"
+    input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
+    output_file = project_dir / input_file
     
     if output_file.exists():
-        print_success(f"Объединенный файл найден: {output_file.name}")
+        print_success(f"Входной файл найден: {output_file.name}")
         return True
     else:
-        print_error(f"Объединенный файл не найден: {output_file}")
-        print_info(f"Создайте его командой: python3 Build/generate_unified.py")
+        print_error(f"Входной файл не найден: {output_file}")
+        print_info(f"Убедитесь, что файл {input_file} существует в корне проекта")
         return False
 

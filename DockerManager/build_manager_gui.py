@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GUI приложение для управления Docker сборками
-Версия: V2.7.143 (2025.12.03)
+Версия: V2.7.143 (2025.12.04)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -14,6 +14,8 @@ import subprocess
 import os
 import sys
 import json
+import time
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -21,9 +23,9 @@ from .config import (
     REMOTE_SERVER, BUILD_PLATFORMS, PROJECTS, GUI_CONFIG,
     get_project_dir, get_dockmanager_dir
 )
-from .server_connection import test_connection, print_step, print_success, print_error
+from .server_connection import test_connection, print_step, print_success, print_error, get_ssh_command
 from .docker_manager import get_remote_images, check_remote_image_exists, remove_remote_image
-from .file_manager import list_builds, download_build, check_unified_file
+from .file_manager import list_builds, download_build
 from .build_runner import build
 from .logger import get_logger, setup_logger, get_log_file
 import logging
@@ -42,12 +44,23 @@ class BuildManagerGUI:
         self.build_process = None
         self.log_buffer = []
         
+        # Простые переменные состояния для UI
+        self.docker_available = False
+        self.server_available = False
+        self.build_mode = "local"  # "local" или "remote"
+        self.platform_selected = False
+        self.build_in_progress = False
+        self._build_tab_active = False  # Флаг активности вкладки сборки
+        
         # Файл настроек
         self.settings_file = get_dockmanager_dir() / ".build_manager_settings.json"
         
         # Лог файл
         self.log_file = None
         self.log_handler = None
+        
+        # Таймер для периодической проверки
+        self._periodic_check_timer = None
         
         # Создаем интерфейс
         self.create_widgets()
@@ -57,6 +70,12 @@ class BuildManagerGUI:
         
         # Загружаем настройки
         self.load_settings()
+        
+        # Поднимаем окно поверх других на несколько секунд
+        self.show_window_on_top()
+        
+        # Привязываем обработчик закрытия окна для сохранения позиции
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Загружаем начальные данные
         self.refresh_server_status()
@@ -69,25 +88,25 @@ class BuildManagerGUI:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Вкладка 1: Настройки сервера
+        # Привязываем обработчик переключения вкладок
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # Вкладка 1: Сборка (первая)
+        self.create_build_tab()
+        
+        # Вкладка 2: Настройки сервера
         self.create_settings_tab()
         
-        # Вкладка 2: Docker образы
+        # Вкладка 3: Docker образы
         self.create_images_tab()
         
-        # Вкладка 3: Исходники
+        # Вкладка 4: Исходники
         self.create_sources_tab()
-        
-        # Вкладка 4: Сборка
-        self.create_build_tab()
         
         # Вкладка 5: Результаты
         self.create_results_tab()
         
-        # Вкладка 6: Лог сборки
-        self.create_log_tab()
-        
-        # Вкладка 7: Лог работы
+        # Вкладка 6: Лог работы
         self.create_work_log_tab()
     
     def create_settings_tab(self):
@@ -157,7 +176,7 @@ class BuildManagerGUI:
         info_frame = ttk.LabelFrame(frame, text="Информация")
         info_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        self.sources_info = tk.StringVar(value="Проверка наличия объединенного файла...")
+        self.sources_info = tk.StringVar(value="Проверка наличия входного файла...")
         ttk.Label(info_frame, textvariable=self.sources_info).pack(padx=10, pady=5)
         
         # Кнопки
@@ -165,7 +184,6 @@ class BuildManagerGUI:
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
         ttk.Button(btn_frame, text="Проверить файл", command=self.check_unified_file).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Создать объединенный файл", command=self.generate_unified).pack(side=tk.LEFT, padx=5)
     
     def create_build_tab(self):
         """Вкладка сборки"""
@@ -187,15 +205,47 @@ class BuildManagerGUI:
                                       values=list(BUILD_PLATFORMS.keys()), state="readonly", width=30)
         platform_combo.grid(row=1, column=1, padx=10, pady=5)
         
-        # Режим сборки
-        self.build_remote = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frame, text="Удаленная сборка (на сервере)", 
-                        variable=self.build_remote).grid(row=2, column=0, columnspan=2, padx=10, pady=5)
+        # Режим сборки - радиокнопки с отображением статуса
+        build_mode_frame = ttk.LabelFrame(frame, text="Режим сборки")
+        build_mode_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=5)
+        
+        self.build_mode_var = tk.StringVar(value="local")  # "local" или "remote"
+        
+        # Радиокнопка локальной сборки
+        local_frame = ttk.Frame(build_mode_frame)
+        local_frame.pack(fill=tk.X, padx=5, pady=3)
+        
+        self.local_radio = ttk.Radiobutton(
+            local_frame, 
+            text="Локальная сборка (Docker)",
+            variable=self.build_mode_var,
+            value="local",
+            command=self._on_build_mode_changed
+        )
+        self.local_radio.pack(side=tk.LEFT)
+        
+        self.local_status_label = ttk.Label(local_frame, text="Проверка...", foreground="gray")
+        self.local_status_label.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Радиокнопка удаленной сборки
+        remote_frame = ttk.Frame(build_mode_frame)
+        remote_frame.pack(fill=tk.X, padx=5, pady=3)
+        
+        self.remote_radio = ttk.Radiobutton(
+            remote_frame,
+            text="Удаленная сборка (на сервере)",
+            variable=self.build_mode_var,
+            value="remote",
+            command=self._on_build_mode_changed
+        )
+        self.remote_radio.pack(side=tk.LEFT)
+        
+        self.remote_status_label = ttk.Label(remote_frame, text="Проверка...", foreground="gray")
+        self.remote_status_label.pack(side=tk.LEFT, padx=(10, 0))
         
         # Кнопка запуска
-        ttk.Button(frame, text="Запустить сборку", command=self.start_build).grid(
-            row=3, column=0, columnspan=2, pady=10
-        )
+        self.build_button = ttk.Button(frame, text="Запустить сборку", command=self.start_build, state="disabled")
+        self.build_button.grid(row=3, column=0, columnspan=2, pady=10)
         
         # Прогресс
         self.build_progress = ttk.Progressbar(frame, mode='indeterminate')
@@ -204,6 +254,26 @@ class BuildManagerGUI:
         # Статус
         self.build_status = tk.StringVar(value="Готов к сборке")
         ttk.Label(frame, textvariable=self.build_status).grid(row=5, column=0, columnspan=2, pady=5)
+        
+        # Лог сборки
+        log_frame = ttk.LabelFrame(frame, text="Лог сборки")
+        log_frame.grid(row=6, column=0, columnspan=2, sticky=tk.NSEW, padx=10, pady=10)
+        frame.grid_rowconfigure(6, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        
+        # Текстовое поле для лога
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=15, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Кнопки для лога
+        log_btn_frame = ttk.Frame(log_frame)
+        log_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(log_btn_frame, text="Очистить", command=self.clear_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(log_btn_frame, text="Сохранить лог", command=self.save_log).pack(side=tk.LEFT, padx=5)
+        
+        # Привязываем обновление при выборе платформы
+        platform_combo.bind("<<ComboboxSelected>>", lambda e: self._on_platform_changed())
     
     def create_results_tab(self):
         """Вкладка результатов"""
@@ -216,14 +286,18 @@ class BuildManagerGUI:
         
         ttk.Label(filter_frame, text="Проект:").grid(row=0, column=0, padx=5, pady=5)
         self.results_project = tk.StringVar(value=self.current_project)
-        ttk.Combobox(filter_frame, textvariable=self.results_project,
-                    values=list(PROJECTS.keys()), state="readonly", width=20).grid(row=0, column=1, padx=5, pady=5)
+        project_combo = ttk.Combobox(filter_frame, textvariable=self.results_project,
+                    values=list(PROJECTS.keys()), state="readonly", width=20)
+        project_combo.grid(row=0, column=1, padx=5, pady=5)
+        project_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_builds())
         
         ttk.Label(filter_frame, text="Платформа:").grid(row=0, column=2, padx=5, pady=5)
         self.results_platform = tk.StringVar(value="Все")
         platform_values = ["Все"] + list(BUILD_PLATFORMS.keys())
-        ttk.Combobox(filter_frame, textvariable=self.results_platform,
-                    values=platform_values, state="readonly", width=20).grid(row=0, column=3, padx=5, pady=5)
+        platform_combo = ttk.Combobox(filter_frame, textvariable=self.results_platform,
+                    values=platform_values, state="readonly", width=20)
+        platform_combo.grid(row=0, column=3, padx=5, pady=5)
+        platform_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_builds())
         
         ttk.Button(filter_frame, text="Обновить", command=self.refresh_builds).grid(row=0, column=4, padx=5, pady=5)
         
@@ -231,13 +305,18 @@ class BuildManagerGUI:
         results_frame = ttk.Frame(frame)
         results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        self.results_tree = ttk.Treeview(results_frame, columns=("size", "date"), show="tree headings", height=15)
+        self.results_tree = ttk.Treeview(results_frame, columns=("size", "date", "platform", "type", "path"), show="tree headings", height=15)
         self.results_tree.heading("#0", text="Файл")
         self.results_tree.heading("size", text="Размер")
         self.results_tree.heading("date", text="Дата")
-        self.results_tree.column("#0", width=400)
+        self.results_tree.heading("platform", text="Платформа")
+        self.results_tree.column("#0", width=300)
         self.results_tree.column("size", width=100)
         self.results_tree.column("date", width=150)
+        self.results_tree.column("platform", width=120)
+        # Скрываем служебные колонки
+        self.results_tree.column("type", width=0, stretch=False)
+        self.results_tree.column("path", width=0, stretch=False)
         
         scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scrollbar.set)
@@ -251,21 +330,6 @@ class BuildManagerGUI:
         
         ttk.Button(btn_frame, text="Скачать", command=self.download_result).pack(side=tk.LEFT, padx=5)
     
-    def create_log_tab(self):
-        """Вкладка лога сборки"""
-        frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="Лог сборки")
-        
-        # Текстовое поле для лога
-        self.log_text = scrolledtext.ScrolledText(frame, height=30, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Кнопки
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        ttk.Button(btn_frame, text="Очистить", command=self.clear_log).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Сохранить лог", command=self.save_log).pack(side=tk.LEFT, padx=5)
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С СЕРВЕРОМ
@@ -284,6 +348,14 @@ class BuildManagerGUI:
                 if 'server_path' in settings:
                     self.server_path.set(settings['server_path'])
                 
+                # Восстанавливаем позицию и размер окна
+                if 'window_geometry' in settings:
+                    try:
+                        self.root.geometry(settings['window_geometry'])
+                    except:
+                        # Если не удалось восстановить, используем значения по умолчанию
+                        pass
+                
                 # Обновляем REMOTE_SERVER в config
                 if 'server_host' in settings:
                     host_user = settings['server_host'].split('@')
@@ -300,10 +372,35 @@ class BuildManagerGUI:
     def save_settings(self):
         """Сохраняет настройки в файл"""
         try:
-            settings = {
-                'server_host': self.server_host.get(),
-                'server_path': self.server_path.get()
-            }
+            # Загружаем существующие настройки (включая геометрию)
+            settings = {}
+            if self.settings_file.exists():
+                try:
+                    with open(self.settings_file, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                except:
+                    pass
+            
+            # Обновляем настройки сервера
+            settings['server_host'] = self.server_host.get()
+            settings['server_path'] = self.server_path.get()
+            
+            # Сохраняем текущую геометрию окна
+            self.save_window_geometry()
+            
+            # Загружаем сохраненную геометрию обратно в settings
+            if self.settings_file.exists():
+                try:
+                    with open(self.settings_file, 'r', encoding='utf-8') as f:
+                        geometry_settings = json.load(f)
+                        if 'window_geometry' in geometry_settings:
+                            settings['window_geometry'] = geometry_settings['window_geometry']
+                            settings['window_x'] = geometry_settings.get('window_x')
+                            settings['window_y'] = geometry_settings.get('window_y')
+                            settings['window_width'] = geometry_settings.get('window_width')
+                            settings['window_height'] = geometry_settings.get('window_height')
+                except:
+                    pass
             
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
@@ -321,6 +418,62 @@ class BuildManagerGUI:
             self.log(f"[ERROR] Ошибка сохранения настроек: {e}")
             messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {e}")
     
+    def show_window_on_top(self):
+        """Показать окно поверх других окон на 5 секунд"""
+        # Поднимаем окно наверх
+        self.root.lift()
+        self.root.attributes('-topmost', True)
+        self.root.update()
+        
+        # Через 5 секунд убираем флаг topmost
+        self.root.after(5000, lambda: self.root.attributes('-topmost', False))
+    
+    def on_closing(self):
+        """Обработчик закрытия окна - сохраняет позицию и размер"""
+        # Останавливаем периодическую проверку
+        self.stop_periodic_check()
+        
+        self.save_window_geometry()
+        self.root.destroy()
+    
+    def save_window_geometry(self):
+        """Сохраняет позицию и размер окна"""
+        try:
+            # Обновляем информацию о размерах окна
+            self.root.update_idletasks()
+            
+            # Получаем текущую позицию и размер
+            geometry = self.root.geometry()
+            # Формат: "widthxheight+x+y"
+            if '+' in geometry:
+                size_pos = geometry.split('+')
+                size = size_pos[0]
+                x = int(size_pos[1])
+                y = int(size_pos[2])
+                
+                # Загружаем существующие настройки
+                settings = {}
+                if self.settings_file.exists():
+                    try:
+                        with open(self.settings_file, 'r', encoding='utf-8') as f:
+                            settings = json.load(f)
+                    except:
+                        pass
+                
+                # Сохраняем геометрию
+                settings['window_geometry'] = geometry
+                settings['window_x'] = x
+                settings['window_y'] = y
+                settings['window_width'] = int(size.split('x')[0])
+                settings['window_height'] = int(size.split('x')[1])
+                
+                # Сохраняем в файл
+                with open(self.settings_file, 'w', encoding='utf-8') as f:
+                    json.dump(settings, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            # Игнорируем ошибки сохранения геометрии
+            pass
+    
     def test_server_connection(self):
         """Тестирует подключение к серверу"""
         # Сначала обновляем настройки из полей
@@ -335,7 +488,9 @@ class BuildManagerGUI:
         
         def test():
             try:
-                if test_connection():
+                connection_result = test_connection()
+                
+                if connection_result:
                     self.server_status.set("✅ Подключено")
                     self.log("[OK] Подключение к серверу установлено")
                 else:
@@ -346,12 +501,16 @@ class BuildManagerGUI:
                 self.log(f"[ERROR] Ошибка подключения: {e}")
             finally:
                 self.root.after(0, lambda: self.root.update())
+                # Обновляем статусы на вкладке сборки (если вкладка активна)
+                if self._build_tab_active:
+                    self.root.after(100, lambda: self.check_availability(show_checking=False))
         
         threading.Thread(target=test, daemon=True).start()
     
     def refresh_server_status(self):
         """Обновляет статус сервера"""
         self.test_server_connection()
+        # Обновление доступности сборки происходит внутри test_server_connection()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С ОБРАЗАМИ
@@ -401,41 +560,187 @@ class BuildManagerGUI:
     # ============================================================================
     
     def check_unified_file(self):
-        """Проверяет наличие объединенного файла"""
-        if check_unified_file(self.current_project):
-            self.sources_info.set("✅ Объединенный файл найден")
+        """Проверяет наличие входного файла"""
+        from .file_manager import check_unified_file
+        from .config import PROJECTS
+        
+        project_config = PROJECTS.get(self.current_project)
+        if project_config:
+            input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
+            if check_unified_file(self.current_project):
+                self.sources_info.set(f"✅ Входной файл найден: {input_file}")
+            else:
+                self.sources_info.set(f"❌ Входной файл не найден: {input_file}")
         else:
-            self.sources_info.set("❌ Объединенный файл не найден")
+            self.sources_info.set("❌ Неизвестный проект")
     
-    def generate_unified(self):
-        """Генерирует объединенный файл"""
-        self.log("[#] Генерация объединенного файла...")
+    # ============================================================================
+    # ПРОВЕРКА ДОСТУПНОСТИ РЕСУРСОВ И ОБНОВЛЕНИЕ UI
+    # ============================================================================
+    
+    def _check_docker(self):
+        """Проверяет доступность локального Docker"""
+        if self.build_in_progress:
+            return False
         
-        def generate():
-            try:
-                project_dir = get_project_dir()
-                generate_script = project_dir / "Build" / "generate_unified.py"
-                
-                if not generate_script.exists():
-                    self.log("[ERROR] Скрипт generate_unified.py не найден")
-                    return
-                
-                result = subprocess.run(
-                    [sys.executable, str(generate_script)],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(project_dir)
-                )
-                
-                if result.returncode == 0:
-                    self.log("[OK] Объединенный файл создан")
-                    self.check_unified_file()
-                else:
-                    self.log(f"[ERROR] Ошибка: {result.stderr}")
-            except Exception as e:
-                self.log(f"[ERROR] Ошибка генерации: {e}")
+        if not shutil.which("docker"):
+            return False
         
-        threading.Thread(target=generate, daemon=True).start()
+        try:
+            result = subprocess.run(
+                ["docker", "ps"], 
+                capture_output=True, 
+                text=True, 
+                timeout=2
+            )
+            return (result.returncode == 0 and "Cannot connect" not in result.stderr)
+        except:
+            return False
+    
+    def _check_server(self):
+        """Проверяет доступность удаленного сервера"""
+        if self.build_in_progress:
+            return False
+        
+        try:
+            result = subprocess.run(
+                get_ssh_command("echo 'OK'"),
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            return (result.returncode == 0 and result.stdout.strip() == "OK")
+        except:
+            return False
+    
+    def update_ui(self):
+        """Обновляет все элементы UI на основе текущего состояния"""
+        # Обновляем статусы радиокнопок
+        if self.docker_available:
+            self.local_status_label.config(text="✅ Доступен", foreground="green")
+            self.local_radio.config(state="normal")
+        else:
+            self.local_status_label.config(text="❌ Недоступен", foreground="red")
+            self.local_radio.config(state="disabled")
+        
+        if self.server_available:
+            self.remote_status_label.config(text="✅ Доступен", foreground="green")
+            self.remote_radio.config(state="normal")
+        else:
+            self.remote_status_label.config(text="❌ Недоступен", foreground="red")
+            self.remote_radio.config(state="disabled")
+        
+        # Обновляем состояние кнопки запуска сборки
+        if self.build_mode == "remote":
+            can_build = self.server_available and self.platform_selected and not self.build_in_progress
+        elif self.build_mode == "local":
+            can_build = self.docker_available and self.platform_selected and not self.build_in_progress
+        else:
+            can_build = False
+        
+        if hasattr(self, 'build_button'):
+            self.build_button.config(state="normal" if can_build else "disabled")
+    
+    def check_availability(self, show_checking=False):
+        """Проверяет доступность ресурсов и обновляет состояние"""
+        if not self._build_tab_active or self.build_in_progress:
+            return
+        
+        # Показываем "Проверка..." только при первой проверке
+        if show_checking:
+            if hasattr(self, 'local_status_label'):
+                self.local_status_label.config(text="Проверка...", foreground="gray")
+            if hasattr(self, 'remote_status_label'):
+                self.remote_status_label.config(text="Проверка...", foreground="gray")
+        
+        def check_async():
+            """Асинхронная проверка в отдельном потоке"""
+            # Проверяем доступность
+            docker_available = self._check_docker()
+            server_available = self._check_server()
+            
+            # Обновляем состояние
+            old_mode = self.build_mode
+            self.docker_available = docker_available
+            self.server_available = server_available
+            
+            # Автоматически выбираем режим если текущий недоступен
+            if self.build_mode == "remote" and not server_available and docker_available:
+                self.build_mode = "local"
+                self.build_mode_var.set("local")
+                if old_mode != "local":
+                    self.log("[INFO] Сервер недоступен, автоматически переключен на локальный режим")
+            elif self.build_mode == "local" and not docker_available and server_available:
+                self.build_mode = "remote"
+                self.build_mode_var.set("remote")
+                if old_mode != "remote":
+                    self.log("[INFO] Docker недоступен, автоматически выбран удаленный режим")
+            elif self.build_mode not in ["local", "remote"]:
+                # Если режим не выбран, выбираем доступный
+                if docker_available and not server_available:
+                    self.build_mode = "local"
+                    self.build_mode_var.set("local")
+                elif not docker_available and server_available:
+                    self.build_mode = "remote"
+                    self.build_mode_var.set("remote")
+                elif docker_available and server_available:
+                    self.build_mode = "local"
+                    self.build_mode_var.set("local")
+            
+            # Обновляем UI в главном потоке
+            self.root.after(0, self.update_ui)
+        
+        threading.Thread(target=check_async, daemon=True).start()
+    
+    def _on_build_mode_changed(self):
+        """Обработчик изменения режима сборки"""
+        self.build_mode = self.build_mode_var.get()
+        self.update_ui()
+    
+    def _on_platform_changed(self):
+        """Обработчик изменения платформы"""
+        self.platform_selected = bool(self.build_platform.get())
+        self.update_ui()
+    
+    def on_tab_changed(self, event=None):
+        """Обработчик переключения вкладок"""
+        selected_tab = self.notebook.index(self.notebook.select())
+        tab_text = self.notebook.tab(selected_tab, "text")
+        
+        if tab_text == "Сборка":
+            # Активируем вкладку сборки
+            self._build_tab_active = True
+            # Запускаем проверку сразу
+            self.check_availability(show_checking=True)
+            # Запускаем периодическую проверку
+            self.start_periodic_check()
+        elif tab_text == "Результаты":
+            # Обновляем список результатов при открытии вкладки
+            self.refresh_builds()
+        else:
+            # Деактивируем вкладку сборки
+            self._build_tab_active = False
+            # Останавливаем периодическую проверку
+            self.stop_periodic_check()
+    
+    def start_periodic_check(self):
+        """Запускает периодическую проверку доступности (каждые 3 секунды)"""
+        if not self._build_tab_active or self.build_in_progress:
+            self.stop_periodic_check()
+            return
+        
+        # Выполняем проверку без показа "Проверка..."
+        self.check_availability(show_checking=False)
+        
+        # Планируем следующую проверку через 3 секунды
+        self._periodic_check_timer = self.root.after(3000, self.start_periodic_check)
+    
+    def stop_periodic_check(self):
+        """Останавливает периодическую проверку"""
+        if self._periodic_check_timer:
+            self.root.after_cancel(self._periodic_check_timer)
+            self._periodic_check_timer = None
+    
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ СО СБОРКОЙ
@@ -445,21 +750,48 @@ class BuildManagerGUI:
         """Запускает сборку"""
         project = self.build_project.get()
         platform = self.build_platform.get()
-        remote = self.build_remote.get()
+        remote = (self.build_mode == "remote")
         
         if not platform:
-            messagebox.showwarning("Предупреждение", "Выберите платформу для сборки")
+            self.build_status.set("⚠️ Выберите платформу для сборки")
             return
         
-        if not check_unified_file(project):
-            if not messagebox.askyesno("Вопрос", 
-                "Объединенный файл не найден. Создать его сейчас?"):
-                return
-            self.generate_unified()
-            # Ждем немного
-            import time
-            time.sleep(2)
+        if not self.build_mode:
+            self.build_status.set("⚠️ Выберите режим сборки")
+            return
         
+        # Дополнительная проверка доступности перед запуском
+        if remote:
+            if not self.server_available:
+                error_msg = ("❌ Удаленный сервер недоступен!\n"
+                           "Проверьте: подключение к сети, настройки сервера, SSH доступ")
+                self.build_status.set(error_msg)
+                return
+        else:
+            if not self.docker_available:
+                error_msg = ("❌ Docker недоступен!\n"
+                           "Проверьте: установлен ли Docker Desktop, запущен ли он")
+                self.build_status.set(error_msg)
+                return
+        
+        from .file_manager import check_unified_file
+        from .config import PROJECTS
+        if not check_unified_file(project):
+            project_config = PROJECTS[project]
+            input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
+            error_msg = f"❌ Входной файл {input_file} не найден!\nУбедитесь, что файл существует в корне проекта."
+            self.build_status.set(error_msg)
+            return
+        
+        # Устанавливаем флаг активной сборки
+        self.build_in_progress = True
+        self.update_ui()  # Обновляем UI (кнопка станет неактивной)
+        
+        # Останавливаем периодическую проверку во время сборки
+        self.stop_periodic_check()
+        
+        # Блокируем кнопку и элементы управления во время сборки
+        self.build_button.config(state="disabled")
         self.build_status.set("Сборка запущена...")
         self.build_progress.start()
         self.log(f"[#] Запуск сборки: {project} для {platform} ({'удаленно' if remote else 'локально'})")
@@ -469,16 +801,21 @@ class BuildManagerGUI:
                 success = build(project, platform, remote=remote)
                 if success:
                     self.log("[OK] Сборка завершена успешно")
-                    self.build_status.set("✅ Сборка завершена успешно")
+                    self.root.after(0, lambda: self.build_status.set("✅ Сборка завершена успешно"))
                     self.refresh_builds()
                 else:
                     self.log("[ERROR] Сборка завершена с ошибками")
-                    self.build_status.set("❌ Сборка завершена с ошибками")
+                    self.root.after(0, lambda: self.build_status.set("❌ Сборка завершена с ошибками"))
             except Exception as e:
                 self.log(f"[ERROR] Ошибка сборки: {e}")
-                self.build_status.set(f"❌ Ошибка: {e}")
+                self.root.after(0, lambda: self.build_status.set(f"❌ Ошибка: {e}"))
             finally:
+                # Сбрасываем флаг активной сборки
+                self.build_in_progress = False
                 self.root.after(0, self.build_progress.stop)
+                # Возобновляем периодическую проверку (если вкладка активна)
+                if self._build_tab_active:
+                    self.root.after(500, self.start_periodic_check)
         
         threading.Thread(target=run_build, daemon=True).start()
     
@@ -488,12 +825,188 @@ class BuildManagerGUI:
     
     def refresh_builds(self):
         """Обновляет список результатов"""
+        # Защита от одновременного выполнения
+        if hasattr(self, '_refresh_in_progress') and self._refresh_in_progress:
+            return
+        self._refresh_in_progress = True
+        
         # Очищаем дерево
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
         
-        # TODO: Реализовать получение списка результатов с сервера
+        project = self.results_project.get()
+        platform_filter = self.results_platform.get()
+        
+        if platform_filter == "Все":
+            platform_filter = None
+        else:
+            platform_filter = platform_filter
+        
         self.log("[i] Обновление списка результатов...")
+        
+        def refresh_async():
+            """Асинхронное обновление списка результатов"""
+            try:
+                from .file_manager import list_builds
+                from .config import get_project_dir, PROJECTS, BUILD_PLATFORMS
+                import os
+                from datetime import datetime
+                
+                results = []
+                seen_keys = set()  # Для удаления дубликатов
+                
+                # Получаем локальные результаты
+                project_dir = get_project_dir()
+                if project in PROJECTS:
+                    project_config = PROJECTS[project]
+                    output_name = project_config["output_name"]
+                    local_file = project_dir / output_name
+                    
+                    if local_file.exists():
+                        size = local_file.stat().st_size / (1024 * 1024)  # MB
+                        mtime = datetime.fromtimestamp(local_file.stat().st_mtime)
+                        key = (output_name, "Локальный")
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            results.append({
+                                "name": output_name,
+                                "platform": "Локальный",
+                                "size": f"{size:.2f} MB",
+                                "date": mtime.strftime("%Y-%m-%d %H:%M:%S"),
+                                "type": "local",
+                                "path": str(local_file)
+                            })
+                
+                # Получаем удаленные результаты
+                try:
+                    from .server_connection import list_remote_directory, execute_ssh_command
+                    from .config import get_outgoing_path
+                    
+                    if platform_filter:
+                        # Если выбрана конкретная платформа, получаем файлы из её директории
+                        remote_path = get_outgoing_path(project, platform_filter)
+                        remote_list = list_remote_directory(remote_path)
+                        if remote_list:
+                            parsed_files = self._parse_remote_files(remote_list, platform_filter, remote_path)
+                            for file_info in parsed_files:
+                                key = (file_info["name"], file_info["platform"])
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    results.append(file_info)
+                    else:
+                        # Если "Все", получаем файлы из всех платформ
+                        for platform_name in BUILD_PLATFORMS.keys():
+                            remote_path = get_outgoing_path(project, platform_name)
+                            remote_list = list_remote_directory(remote_path)
+                            if remote_list:
+                                parsed_files = self._parse_remote_files(remote_list, platform_name, remote_path)
+                                for file_info in parsed_files:
+                                    key = (file_info["name"], file_info["platform"])
+                                    if key not in seen_keys:
+                                        seen_keys.add(key)
+                                        results.append(file_info)
+                except Exception as e:
+                    self.log(f"[ERROR] Ошибка получения удаленных результатов: {e}")
+                
+                # Обновляем дерево в главном потоке
+                def update_tree():
+                    for result in results:
+                        self.results_tree.insert(
+                            "",
+                            tk.END,
+                            text=result["name"],
+                            values=(result["size"], result["date"], result["platform"], result["type"], result["path"])
+                        )
+                    self.log(f"[OK] Найдено результатов: {len(results)}")
+                    self._refresh_in_progress = False
+                
+                self.root.after(0, update_tree)
+                
+            except Exception as e:
+                self.log(f"[ERROR] Ошибка обновления списка результатов: {e}")
+                self.root.after(0, lambda: self.log(f"[ERROR] {e}"))
+                self._refresh_in_progress = False
+        
+        threading.Thread(target=refresh_async, daemon=True).start()
+    
+    def _parse_remote_files(self, ls_output, platform_name, remote_path):
+        """Парсит вывод ls -la и возвращает список файлов (не директорий)"""
+        files = []
+        if not ls_output:
+            return files
+        
+        from .server_connection import execute_ssh_command
+        
+        lines = ls_output.strip().split('\n')
+        for line in lines[3:]:  # Пропускаем заголовки
+            if not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) < 9:
+                continue
+            
+            # Проверяем что это файл (начинается с '-'), а не директория ('d')
+            file_type = parts[0][0]
+            if file_type != '-':
+                continue  # Пропускаем директории
+            
+            filename = ' '.join(parts[8:])  # Имя файла может содержать пробелы
+            if filename in ['.', '..']:
+                continue
+            
+            try:
+                size_bytes = int(parts[4])
+                size_mb = size_bytes / (1024 * 1024)
+                
+                # Получаем точное время модификации через stat
+                file_path = f"{remote_path}/{filename}"
+                date_str = None
+                try:
+                    result = execute_ssh_command(f"stat -c %Y {file_path}", check=False)
+                    if result.returncode == 0 and result.stdout.strip():
+                        timestamp = float(result.stdout.strip())
+                        date_obj = datetime.fromtimestamp(timestamp)
+                        date_str = date_obj.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+                
+                # Если не удалось получить через stat, используем парсинг ls -la
+                if not date_str:
+                    month_str = parts[5]
+                    day_str = parts[6]
+                    time_or_year = parts[7]
+                    
+                    if ':' in time_or_year:
+                        time_str = time_or_year
+                        year = datetime.now().year
+                    else:
+                        year = int(time_or_year)
+                        time_str = "00:00:00"
+                    
+                    month_map = {
+                        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+                    }
+                    month = month_map.get(month_str, 1)
+                    day = int(day_str)
+                    
+                    if len(time_str.split(':')) == 2:
+                        time_str = f"{time_str}:00"
+                    
+                    date_str = f"{year}-{month:02d}-{day:02d} {time_str}"
+                
+                files.append({
+                    "name": filename,
+                    "platform": platform_name,
+                    "size": f"{size_mb:.2f} MB",
+                    "date": date_str,
+                    "type": "remote",
+                    "path": filename
+                })
+            except (ValueError, IndexError, KeyError):
+                continue
+        
+        return files
     
     def download_result(self):
         """Скачивает выбранный результат"""
@@ -502,8 +1015,46 @@ class BuildManagerGUI:
             messagebox.showwarning("Предупреждение", "Выберите результат для скачивания")
             return
         
-        # TODO: Реализовать скачивание
-        self.log("[i] Скачивание результата...")
+        item = self.results_tree.item(selection[0])
+        values = item['values']
+        if len(values) < 5:
+            messagebox.showerror("Ошибка", "Неверный формат данных результата")
+            return
+        
+        result_type = values[3]  # "local" или "remote"
+        result_path = values[4]   # путь к файлу
+        
+        if result_type == "local":
+            messagebox.showinfo("Информация", f"Файл уже находится локально:\n{result_path}")
+            return
+        
+        # Скачиваем удаленный файл
+        project = self.results_project.get()
+        platform = values[2]  # платформа
+        
+        if platform == "Неизвестно" or platform not in BUILD_PLATFORMS:
+            messagebox.showerror("Ошибка", "Не удалось определить платформу для скачивания")
+            return
+        
+        filename = item['text']  # Имя файла
+        self.log(f"[i] Скачивание результата: {filename} для платформы {platform}...")
+        
+        def download_async():
+            try:
+                from .file_manager import download_build
+                if download_build(project, platform):
+                    self.log(f"[OK] Результат {filename} успешно скачан")
+                    self.root.after(0, lambda: messagebox.showinfo("Успех", f"Результат {filename} успешно скачан"))
+                    # Обновляем список после скачивания
+                    self.root.after(500, self.refresh_builds)
+                else:
+                    self.log("[ERROR] Не удалось скачать результат")
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", "Не удалось скачать результат"))
+            except Exception as e:
+                self.log(f"[ERROR] Ошибка скачивания: {e}")
+                self.root.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка скачивания: {e}"))
+        
+        threading.Thread(target=download_async, daemon=True).start()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С ЛОГОМ
@@ -701,6 +1252,14 @@ class BuildManagerGUI:
     
     def run(self):
         """Запускает GUI"""
+        # Активируем вкладку "Сборка" по умолчанию (первая вкладка)
+        # Это запустит периодическую проверку через on_tab_changed
+        self.notebook.select(0)
+        
+        # Синхронизируем состояние с виджетами после их создания
+        self.build_mode = self.build_mode_var.get()
+        self.platform_selected = bool(self.build_platform.get())
+        
         # Обновляем информацию о лог файле после создания виджетов
         if self.log_file:
             self.work_log_info.set(f"Лог файл: {self.log_file.name}")

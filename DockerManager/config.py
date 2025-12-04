@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Конфигурация DockerManager
-Версия: V2.7.143 (2025.12.03)
+Версия: V2.7.143 (2025.12.04)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -59,17 +59,15 @@ PROJECTS = {
     "FSA-AstraInstall": {
         "name": "FSA-AstraInstall",
         "description": "Автоматизация установки Astra Linux",
-               "unified_script": "../Build/build_unified.py",  # Относительно DockerManager/
-        "output_name": "FSA-AstraInstall",
-        "main_file": "astra_automation.py"
+        "input_file": "FSA-AstraInstall.py",  # Входной Python файл для сборки
+        "output_name": "FSA-AstraInstall"     # Имя выходного бинарника (без расширения)
     }
     # В будущем можно добавить:
     # "ДругойПроект": {
     #     "name": "ДругойПроект",
     #     "description": "Описание",
-    #     "unified_script": "../other_build.py",
-    #     "output_name": "OtherProject",
-    #     "main_file": "main.py"
+    #     "input_file": "other_project.py",
+    #     "output_name": "OtherProject"
     # }
 }
 

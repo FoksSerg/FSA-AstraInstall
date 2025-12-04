@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для запуска сборок (локально и удаленно)
-Версия: V2.7.143 (2025.12.03)
+Версия: V2.7.143 (2025.12.04)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -142,7 +142,7 @@ def build_local(project, platform_name):
         print_step("Запуск сборки в Docker...")
         scripts_dir = get_scripts_dir()
         build_script = scripts_dir / "docker_build.sh"
-        input_file = f"{project_config['output_name']}.py"
+        input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
         
         docker_cmd = [
             "docker", "run",
@@ -326,7 +326,7 @@ def build_remote(project, platform_name):
     output_name = project_config["output_name"]
     
     # Команда сборки
-    input_file = f"{project_config['output_name']}.py"
+    input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
     build_cmd = f"""
 cd {incoming_path} && \
 docker run --rm \
