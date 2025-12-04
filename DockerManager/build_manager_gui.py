@@ -24,7 +24,11 @@ from .config import (
     get_project_dir, get_dockmanager_dir
 )
 from .server_connection import test_connection, print_step, print_success, print_error, get_ssh_command
-from .docker_manager import get_remote_images, check_remote_image_exists, remove_remote_image
+from .docker_manager import (
+    get_remote_images, get_remote_images_detailed,
+    check_remote_image_exists, remove_remote_image,
+    build_remote_image
+)
 from .file_manager import list_builds, download_build
 from .build_runner import build
 from .logger import get_logger, setup_logger, get_log_file
@@ -165,6 +169,7 @@ class BuildManagerGUI:
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
         ttk.Button(btn_frame, text="Обновить", command=self.refresh_images).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Создать образ", command=self.create_image).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Удалить", command=self.delete_image).pack(side=tk.LEFT, padx=5)
     
     def create_sources_tab(self):
@@ -524,11 +529,32 @@ class BuildManagerGUI:
         
         def load():
             try:
-                images = get_remote_images()
-                for image in images:
-                    self.images_tree.insert("", tk.END, text=image, values=("", ""))
+                images = get_remote_images_detailed()
+                for img in images:
+                    # Форматируем дату для отображения
+                    date_str = img.get('date', '')
+                    if date_str:
+                        # Пытаемся распарсить дату и показать в более читаемом формате
+                        try:
+                            # Docker возвращает дату в формате "2024-12-04 18:30:45 +0500 MSK"
+                            # Оставляем только дату и время
+                            date_parts = date_str.split()
+                            if len(date_parts) >= 2:
+                                date_str = f"{date_parts[0]} {date_parts[1]}"
+                        except:
+                            pass
+                    
+                    self.images_tree.insert("", tk.END, text=img['name'], 
+                                          values=(img.get('size', ''), date_str))
             except Exception as e:
                 self.log(f"[ERROR] Ошибка загрузки образов: {e}")
+                # Fallback на простой список
+                try:
+                    images = get_remote_images()
+                    for image in images:
+                        self.images_tree.insert("", tk.END, text=image, values=("", ""))
+                except:
+                    pass
         
         threading.Thread(target=load, daemon=True).start()
     
@@ -554,6 +580,15 @@ class BuildManagerGUI:
                     self.log(f"[ERROR] Ошибка удаления: {e}")
             
             threading.Thread(target=delete, daemon=True).start()
+    
+    def create_image(self):
+        """Открывает диалог создания нового образа"""
+        from .image_creator_dialog import CreateImageDialog
+        dialog = CreateImageDialog(self.root, self.log)
+        self.root.wait_window(dialog.dialog)
+        # Обновляем список образов после создания
+        if dialog.image_created:
+            self.refresh_images()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С ИСХОДНИКАМИ

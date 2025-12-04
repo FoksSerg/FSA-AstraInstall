@@ -123,10 +123,41 @@ def build_remote_image(dockerfile_path, image_name, context_path, platform=None)
         return False
 
 def get_remote_images():
-    """Получает список образов на удаленном сервере"""
+    """Получает список образов на удаленном сервере (только имена)"""
     try:
         result = execute_ssh_command("docker images --format '{{.Repository}}:{{.Tag}}'", check=True)
         images = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+        return images
+    except Exception as e:
+        print_error(f"Ошибка получения списка образов: {e}")
+        return []
+
+def get_remote_images_detailed():
+    """Получает список образов на удаленном сервере с размером и датой"""
+    try:
+        # Формат: Repository:Tag\tSize\tCreatedAt
+        result = execute_ssh_command(
+            "docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}'",
+            check=True
+        )
+        images = []
+        for line in result.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+            parts = line.strip().split('\t')
+            if len(parts) >= 3:
+                images.append({
+                    'name': parts[0],
+                    'size': parts[1],
+                    'date': parts[2]
+                })
+            elif len(parts) == 1:
+                # Fallback если формат не сработал
+                images.append({
+                    'name': parts[0],
+                    'size': '',
+                    'date': ''
+                })
         return images
     except Exception as e:
         print_error(f"Ошибка получения списка образов: {e}")
@@ -161,4 +192,93 @@ def get_dockerfile_path(platform):
         return None
     
     return dockerfile_path
+
+# ============================================================================
+# ГЕНЕРАЦИЯ DOCKERFILE ИЗ КОМПОНЕНТОВ
+# ============================================================================
+
+def generate_dockerfile_from_config(config):
+    """Генерирует Dockerfile из конфигурации компонентов"""
+    dockerfile_lines = []
+    
+    # Базовый образ
+    base_image = config.get('base_image', 'debian:bookworm')
+    dockerfile_lines.append(f"FROM {base_image}")
+    dockerfile_lines.append("")
+    
+    # Системные пакеты
+    system_packages = config.get('system_packages', [])
+    if system_packages:
+        # Фильтруем только включенные пакеты
+        enabled_packages = [pkg for pkg in system_packages if pkg.get('enabled', True)]
+        if enabled_packages:
+            package_names = [pkg['name'] for pkg in enabled_packages]
+            packages_str = ' '.join(package_names)
+            dockerfile_lines.append(f"RUN apt-get update && apt-get install -y \\")
+            dockerfile_lines.append(f"    {packages_str} \\")
+            dockerfile_lines.append("    && rm -rf /var/lib/apt/lists/*")
+            dockerfile_lines.append("")
+    
+    # Python пакеты
+    python_packages = config.get('python_packages', [])
+    if python_packages:
+        enabled_packages = [pkg for pkg in python_packages if pkg.get('enabled', True)]
+        if enabled_packages:
+            pip_flags = config.get('pip_flags', '')
+            if pip_flags:
+                pip_flags = f" {pip_flags}"
+            
+            package_list = []
+            for pkg in enabled_packages:
+                name = pkg['name']
+                version = pkg.get('version')
+                if version:
+                    package_list.append(f"{name}=={version}")
+                else:
+                    package_list.append(name)
+            
+            packages_str = ' '.join(package_list)
+            dockerfile_lines.append(f"RUN pip3{pip_flags} install {packages_str}")
+            dockerfile_lines.append("")
+    
+    # Переменные окружения
+    env_vars = config.get('env_vars', [])
+    if env_vars:
+        for env in env_vars:
+            if env.get('enabled', True):
+                key = env.get('key', '')
+                value = env.get('value', '')
+                if key:
+                    dockerfile_lines.append(f"ENV {key}={value}")
+        if any(env.get('enabled', True) for env in env_vars):
+            dockerfile_lines.append("")
+    
+    # Кастомные команды
+    custom_commands = config.get('custom_commands', [])
+    if custom_commands:
+        for cmd in custom_commands:
+            if cmd.get('enabled', True) and cmd.get('command'):
+                dockerfile_lines.append(f"RUN {cmd['command']}")
+        if any(cmd.get('enabled', True) for cmd in custom_commands):
+            dockerfile_lines.append("")
+    
+    # Рабочая директория
+    dockerfile_lines.append("WORKDIR /build")
+    
+    return '\n'.join(dockerfile_lines)
+
+def get_local_base_images():
+    """Получает список локальных базовых образов на сервере"""
+    try:
+        result = execute_ssh_command(
+            "docker images --format '{{.Repository}}:{{.Tag}}' | head -50",
+            check=False
+        )
+        if result.returncode == 0:
+            images = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+            return images
+        return []
+    except Exception as e:
+        print_error(f"Ошибка получения локальных образов: {e}")
+        return []
 

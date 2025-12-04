@@ -191,13 +191,9 @@ def main():
     
     # Файлы для копирования
     files_to_copy = [
-        "astra_automation.py",
-        "astra_install.sh", 
-        "astra_update.sh",
         "FSA-AstraInstall",       # Скомпилированный бинарник для Linux
         "FSA-AstraInstall.py",    # Unified Python файл
         "README.md",
-        "WINE_INSTALL_GUIDE.md"
     ]
     
     try:
