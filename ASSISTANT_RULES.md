@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V3.0.151 (2025.12.03)
+# Версия проекта: V3.0.152 (2025.12.04)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -885,7 +885,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Пользователь НЕ видит этот вывод
 
 3. **Определение текущей версии:** 
-   - Для каждого файла `*.py`, `*.sh`, `*.md`:
+   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find` во всех поддиректориях):
      - Выполнить `head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+"` → сохранить в временный файл
    - Из временного файла извлечь все уникальные версии → сохранить в `ALL_VERSIONS` (строка через пробел)
    - Взять первую версию из `ALL_VERSIONS` → сохранить в `CURRENT_VERSION`
@@ -988,8 +988,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `version.txt`
-   - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения)
-   - Для каждого файла `*.py`, `*.sh`, `*.md`:
+   - Проверить `ALL_VERSIONS` - если пуста, пересобрать список версий (как в шаге 3, только первые 20 строк, использовать `grep -o` для извлечения, рекурсивно через `find`)
+   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find`):
      - Для каждой версии из `ALL_VERSIONS` (использовать `echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version`, НЕ использовать массивы `read -a` - не работает в zsh):
        - Экранировать точку: `ESCAPED_VERSION=$(echo "$version" | sed 's/\./\\./g')`
        - Выполнить `sed -i '' "1,20s/$ESCAPED_VERSION/$NEW_VERSION/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
@@ -997,7 +997,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
 12. **Проверка обновления версий:** 
-   - Для каждого файла `*.py`, `*.sh`, `*.md`:
+   - Для каждого файла `*.py`, `*.sh`, `*.md` (рекурсивно через `find`):
      - Выполнить `head -20 "$file" | grep -q "$NEW_VERSION"`
      - Если найдено - вывести "✓ Версия обновлена в $file"
      - Если не найдено:
@@ -1212,7 +1212,7 @@ fi
 echo "=== ШАГ 3: Определение текущей версии ==="
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
 VERSION_TEMP=$(mktemp)
-for f in *.py *.sh *.md; do
+find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
   [ -f "$f" ] && head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
 done
 ALL_VERSIONS=$(grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" "$VERSION_TEMP" | sort -u | tr '\n' ' ')
@@ -1473,7 +1473,7 @@ MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
 [ -z "$ALL_VERSIONS" ] && \
     echo "⚠️ ALL_VERSIONS не загружена, пересобираем список версий..." && \
     VERSION_TEMP=$(mktemp) && \
-    for f in *.py *.sh *.md; do
+    find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
       [ -f "$f" ] && head -20 "$f" | grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
     done && \
     ALL_VERSIONS=$(sort -u "$VERSION_TEMP" | tr '\n' ' ' | sed 's/ $//') && \
@@ -1482,7 +1482,7 @@ MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
     echo "Найдены версии: $ALL_VERSIONS" || true
 echo "Обновление версий: $ALL_VERSIONS -> $NEW_VERSION"
 # Итерируемся по версиям из ALL_VERSIONS (используем echo | tr | while read, НЕ массивы - не работают в zsh)
-for f in *.py *.sh *.md; do
+find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
   [ ! -f "$f" ] && continue
   # Обновляем каждую версию из ALL_VERSIONS
   echo "$ALL_VERSIONS" | tr ' ' '\n' | while read version; do
@@ -1510,7 +1510,8 @@ echo "=== ШАГ 12: Проверка обновления версий ==="
     [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true || true
 VERSION_ERRORS=0
 VERSION_ERROR_FILES=""
-for f in *.py *.sh *.md; do
+VERSION_ERROR_TEMP=$(mktemp)
+find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
   [ -f "$f" ] && \
     if head -20 "$f" | grep -q "$NEW_VERSION"; then
         echo "✓ Версия обновлена в $f"
@@ -1519,14 +1520,20 @@ for f in *.py *.sh *.md; do
         if head -20 "$f" | grep -q "$VERSION_PATTERN"; then
             OLD_VER=$(head -20 "$f" | grep -o "V${MAJOR}\\.${MINOR}\\.[0-9]\+" | head -1)
             echo "✗ ОШИБКА: Версия НЕ обновлена в $f (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
-            VERSION_ERRORS=$((VERSION_ERRORS + 1))
-            VERSION_ERROR_FILES="$VERSION_ERROR_FILES $f"
+            echo "$f" >> "$VERSION_ERROR_TEMP"
         else
             echo "ℹ Файл $f не содержит версию в начале файла (пропускаем)"
         fi || true
     fi || true
 done
-[ $VERSION_ERRORS -gt 0 ] && stop_on_error "Версия не обновлена в $VERSION_ERRORS файл(ах):$VERSION_ERROR_FILES" || true
+VERSION_ERRORS=$(wc -l < "$VERSION_ERROR_TEMP" 2>/dev/null | xargs || echo "0")
+# xargs удаляет пробелы и переводы строк для безопасности
+VERSION_ERROR_FILES=$(cat "$VERSION_ERROR_TEMP" 2>/dev/null | tr '\n' ' ' || echo "")
+rm -f "$VERSION_ERROR_TEMP"
+# Явная проверка с обработкой ошибок
+if [ "${VERSION_ERRORS:-0}" -gt 0 ] 2>/dev/null; then
+    stop_on_error "Версия не обновлена в $VERSION_ERRORS файл(ах):$VERSION_ERROR_FILES"
+fi
 echo "✓ Все версии успешно обновлены"
 # КРИТИЧНО: Проверка успешности шага 12
 if [ $? -ne 0 ]; then
@@ -1558,7 +1565,7 @@ echo "$DELETED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен удаленный: $file" || (echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
-for f in *.py *.sh *.md; do
+find . -name "*.py" -o -name "*.sh" -o -name "*.md" | while read f; do
     [ -f "$f" ] && \
     ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
         (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
