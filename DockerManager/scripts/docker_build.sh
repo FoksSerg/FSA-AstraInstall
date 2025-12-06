@@ -1,6 +1,6 @@
 #!/bin/bash
 # Скрипт сборки бинарного файла в Docker контейнере
-# Версия: V3.1.159 (2025.12.06)
+# Версия: V3.1.160 (2025.12.07)
 # Компания: ООО "НПА Вира-Реалтайм"
 # Разработчик: @FoksSegr & AI Assistant (@LLM)
 
@@ -143,6 +143,16 @@ if [ -n "$BLT_SO_LIB" ] && [ -f "$BLT_SO_LIB" ]; then
     echo "[#] Включаем в бинарник (.so): $BLT_SO_LIB -> $BLT_SO_NAME" >&2
 fi
 
+# КРИТИЧНО: Включаем wmctrl для активации окон
+WMCTRL_BINARY=""
+WMCTRL_PATH=$(which wmctrl 2>/dev/null || echo "")
+if [ -n "$WMCTRL_PATH" ] && [ -f "$WMCTRL_PATH" ]; then
+    WMCTRL_BINARY="--add-binary \"$WMCTRL_PATH:.\""
+    echo "[#] Включаем в бинарник (wmctrl): $WMCTRL_PATH -> wmctrl" >&2
+else
+    echo "[WARNING] wmctrl не найден, активация окон будет недоступна" >&2
+fi
+
 # КРИТИЧНО: Ищем и включаем C-модуль _tkinter (обязательно для работы tkinter)
 # Пытаемся найти через Python (самый надёжный способ)
 TKINTER_SO=""
@@ -282,6 +292,7 @@ eval pyinstaller --onefile --console \
     $ICON_PARAM \
     $ICON_DATA_PARAM \
     $TCL_TK_BINARY \
+    $WMCTRL_BINARY \
     $RUNTIME_HOOK_PARAM \
     $HOOKS_DIR_PARAM \
     --name "${OUTPUT_NAME}" \
@@ -339,6 +350,13 @@ if command -v pyi-archive_viewer >/dev/null 2>&1; then
         echo "[#] ✓ C-модуль _tkinter*.so найден в бинарнике" >&2
     else
         echo "[#] ❌ C-модуль _tkinter*.so НЕ найден в бинарнике!" >&2
+    fi
+    
+    # Проверяем наличие wmctrl в бинарнике
+    if pyi-archive_viewer "${OUTPUT_NAME}" 2>/dev/null | grep -q "wmctrl"; then
+        echo "[#] ✓ wmctrl найден в бинарнике" >&2
+    else
+        echo "[#] ❌ wmctrl НЕ найден в бинарнике!" >&2
     fi
 else
     echo "[#] pyi-archive_viewer недоступен, пропускаем проверку содержимого" >&2

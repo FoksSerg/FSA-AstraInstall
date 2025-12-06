@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Скрипт автоматической сборки FSA-AstraInstall на удаленном Docker для платформы astra-1.7
-Версия: V3.1.158 (2025.12.06)
+Версия: V3.1.160 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -41,7 +41,8 @@ if __name__ == "__main__":
             sys.argv[0],
             "--project", "FSA-AstraInstall",
             "--platform", "astra-1.7",
-            "--remote"
+            "--remote",
+            "--rebuild"  # Пересобрать образ с wmctrl
         ]
         
         print("=" * 60)

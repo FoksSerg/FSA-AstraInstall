@@ -5,7 +5,7 @@ PyInstaller Runtime Hook для предзагрузки libBLT с RTLD_GLOBAL
 Этот hook выполняется ДО импорта tkinter, что позволяет предзагрузить libBLT
 с флагом RTLD_GLOBAL и настроить переменные окружения TCL_LIBRARY и TK_LIBRARY
 
-Версия: V3.1.158 (2025.12.06)
+Версия: V3.1.160 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -26,19 +26,16 @@ def _setup_tcl_tk_paths():
     if not hasattr(sys, '_MEIPASS'):
         return  # Не frozen приложение, ничего не делаем
     
-    # ВРЕМЕННО ОТКЛЮЧЕНО: На Linux проверяем UID - если не root (не sudo), ничего не делаем
+    # КРИТИЧНО: На Linux проверяем UID - если не root (не sudo), ничего не делаем
     # Процесс пользователя завершится, и runtime hook выполнится в процессе sudo
-    # ВРЕМЕННО: Разрешаем выполнение в процессе пользователя для тестирования GUI
-    # try:
-    #     if os.name == 'posix':  # Unix-подобная система
-    #         current_uid = os.geteuid()
-    #         if current_uid != 0:  # Не root - это процесс пользователя
-    #             # На macOS нет перезапуска через sudo, поэтому там работаем от пользователя
-    #             if platform.system() != 'Darwin':  # Не macOS - значит Linux, пропускаем
-    #                 return  # Пропускаем в процессе пользователя на Linux
-    # except (OSError, ImportError):
-    #     # Если не удалось проверить UID, продолжаем (на всякий случай)
-    #     pass
+    try:
+        if os.name == 'posix':  # Unix-подобная система
+            current_uid = os.geteuid()
+            if current_uid != 0:  # Не root - это процесс пользователя
+                return  # Пропускаем в процессе пользователя на Linux
+    except (OSError, ImportError):
+        # Если не удалось проверить UID, продолжаем (на всякий случай)
+        pass
     
     base_path = sys._MEIPASS
     

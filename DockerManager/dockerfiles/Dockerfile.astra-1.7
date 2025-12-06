@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     tcl-tclreadline \
     blt \
     libx11-dev libxft-dev gcc \
+    wmctrl \
     && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем PyInstaller и psutil

@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.1.159 (2025.12.06)
+Версия: V3.1.160 (2025.12.07)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.1.159 (2025.12.06)"
+APP_VERSION = "V3.1.160 (2025.12.07)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -412,17 +412,16 @@ class DualStreamLogger:
     
     def _flush_buffers_to_files(self, buffer_raw, buffer_analysis):
         """Записать буферы в файлы"""
-        # ВРЕМЕННО: Разрешаем процессу пользователя писать логи для тестирования
         # КРИТИЧНО: Проверка - только процесс sudo (root) имеет право писать на Linux
         # На macOS процесс пользователя может писать (нет перезапуска через sudo)
         current_pid = os.getpid()
         current_uid = os.geteuid()
         is_macos = platform.system() == 'Darwin'
         
-        # ВРЕМЕННО ОТКЛЮЧЕНО: На Linux: только процесс root (sudo) может писать
+        # На Linux: только процесс root (sudo) может писать
         # На macOS: процесс пользователя может писать
-        # if not is_macos and current_uid != 0:
-        #     return  # Не root на Linux - не пишем
+        if not is_macos and current_uid != 0:
+            return  # Не root на Linux - не пишем
         
         # Дополнительная проверка по PID (на случай если несколько процессов root)
         if current_pid != self._writer_pid:
@@ -955,7 +954,6 @@ def _init_logging_early():
     is_macos = platform.system() == 'Darwin'
     writer_pid_env = os.environ.get('FSA_LOG_WRITER_PID')
     
-    # ВРЕМЕННО: Разрешаем процессу пользователя писать логи для тестирования
     # КРИТИЧНО: На Linux только процесс sudo (root) имеет право писать
     # На macOS процесс пользователя может писать (нет перезапуска через sudo)
     if is_macos:
@@ -964,9 +962,7 @@ def _init_logging_early():
     elif current_uid == 0:
         # Linux: процесс sudo (root) - становится главным писателем
         os.environ['FSA_LOG_WRITER_PID'] = str(current_pid)
-    else:
-        # ВРЕМЕННО: Linux: процесс пользователя - разрешаем писать для тестирования
-        os.environ['FSA_LOG_WRITER_PID'] = str(current_pid)
+    # else: процесс пользователя на Linux НЕ устанавливает переменную - не будет писать
     
     # Инициализируем DualStreamLogger (теперь self._writer_pid получит правильное значение из переменной окружения)
     try:
@@ -25632,65 +25628,6 @@ def sync_system_time():
         print("[WARNING] Ошибка синхронизации времени: %s" % str(e))
         return False
 
-def check_system_requirements():
-    """Проверка системных требований"""
-    print("[INFO] Проверка системных требований...")
-    
-    # Проверяем операционную систему
-    system = platform.system()
-    
-    if system == "Darwin":  # macOS
-        print("[INFO] Обнаружена macOS - режим тестирования GUI")
-        print("[INFO] Linux-специфичные проверки пропущены")
-        return True
-    elif system != "Linux":
-        print("[WARNING] Неподдерживаемая ОС: %s" % system)
-        print("[INFO] Запуск в режиме тестирования GUI")
-        return True
-    
-    # Синхронизация времени уже выполнена в bash скрипте
-    print("[INFO] Синхронизация времени пропущена (уже выполнена в bash)")
-    
-    # ВРЕМЕННО ОТКЛЮЧЕНО: Проверка прав root (только для Linux)
-    # Для тестирования GUI от пользователя
-    try:
-        if False and os.geteuid() != 0:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
-            print("[ERROR] Требуются права root для работы с системными файлами")
-            print("   Запустите: sudo python3 FSA-AstraInstall.py")
-            return False
-        else:
-            print("[INFO] ВРЕМЕННО: Проверка прав root отключена для тестирования GUI")
-    except AttributeError:
-        # os.geteuid() не существует на macOS/Windows
-        print("[INFO] Проверка прав root пропущена (не Linux система)")
-    
-    # Проверяем Python версию (требуется Python 3.x)
-    if sys.version_info[0] != 3:
-        print("[ERROR] Требуется Python 3.x")
-        print("   Текущая версия: %s" % sys.version)
-        return False
-    
-    print("[OK] Python версия подходящая: %s" % sys.version.split()[0])
-    
-    # Проверяем наличие apt-get (только для Linux)
-    try:
-        subprocess.check_call(['which', 'apt-get'], 
-                            stdout=subprocess.PIPE, 
-                            stderr=subprocess.PIPE)
-        print("[OK] apt-get найден")
-    except subprocess.CalledProcessError:
-        print("[ERROR] apt-get не найден - возможно не Debian/Ubuntu система")
-        return False
-    
-    # Проверяем наличие sources.list (только для Linux)
-    sources_list = '/etc/apt/sources.list'
-    if not os.path.exists(sources_list):
-        print("[ERROR] Файл %s не найден" % sources_list)
-        return False
-    
-    print("[OK] Все требования выполнены")
-    return True
-
 def run_repo_checker(gui_terminal=None, dry_run=False):
     """Запуск проверки репозиториев через класс RepoChecker"""
     print("\n[START] Запуск автоматизации проверки репозиториев...")
@@ -25869,10 +25806,10 @@ def run_gui_monitor(temp_dir, dry_run=False):
                     break
             else:
                 queue_empty_count = 0
-            time.sleep(0.1)
+            time.sleep(0.05)  # Уменьшено для более быстрой реакции
         
         # 3. Дополнительная пауза для записи буферов потока
-        time.sleep(0.5)
+        time.sleep(0.1)  # Уменьшено с 0.5 до 0.1 для ускорения запуска
         
         # 4. Финальный flush и fsync файлов
         try:
@@ -26637,17 +26574,19 @@ class DirectoryMonitor(object):
 
 def find_running_instance():
     """Поиск запущенного экземпляра программы по имени процесса (только для Linux)
-    Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя"""
+    Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
+    Возвращает список всех найденных процессов [(pid, memory_kb), ...], отсортированный по памяти"""
     current_pid = os.getpid()
     current_ppid = os.getppid()  # Родительский процесс (обычно sudo)
     process_name = "FSA-AstraInstall"
     
     try:
         # Небольшая задержка после перезапуска, чтобы процесс успел полностью инициализироваться
-        # Особенно важно для Python 3.7 на сборке 1.7
-        time.sleep(0.5)
+        time.sleep(0.1)
     
-    # Проходим по всем процессам в /proc
+        found_processes = []  # Список найденных процессов: [(pid, memory_kb), ...]
+    
+        # Проходим по всем процессам в /proc
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
                 continue
@@ -26658,12 +26597,14 @@ def find_running_instance():
                 if proc_pid == current_pid or proc_pid == current_ppid:
                     continue
                 
-                # Читаем UID и имя процесса из /proc/PID/status
+                # Читаем UID, имя процесса и память из /proc/PID/status
                 try:
                     with open(f'/proc/{proc_pid}/status', 'r') as f:
                         proc_uid = None
                         proc_name = None
                         proc_ppid = None
+                        proc_memory = 0  # VmRSS в килобайтах
+                        
                         for line in f:
                             if line.startswith('Uid:'):
                                 # Uid: реальный_uid эффективный_uid сохраненный_uid файловая_система_uid
@@ -26674,61 +26615,121 @@ def find_running_instance():
                                 proc_name = line.split(':', 1)[1].strip()
                             elif line.startswith('PPid:'):
                                 proc_ppid = int(line.split()[1])
+                            elif line.startswith('VmRSS:'):
+                                # VmRSS: размер резидентной памяти в килобайтах
+                                parts = line.split()
+                                if len(parts) >= 2:
+                                    try:
+                                        proc_memory = int(parts[1])
+                                    except ValueError:
+                                        proc_memory = 0
                             
                             # Если собрали все нужные данные, выходим
                             if proc_uid is not None and proc_name and proc_ppid is not None:
-                                break
+                                # Продолжаем читать, чтобы получить VmRSS
+                                if proc_memory > 0:
+                                    break
                         
                         # Проверяем ТОЛЬКО процессы от root (UID=0)
-                        # И исключаем процессы, которые являются родителями текущего процесса
                         if proc_uid == 0 and proc_name:
                             if proc_name == process_name or proc_name == process_name[:15]:
                                 # Дополнительная проверка: не является ли это родительским процессом
                                 if proc_ppid != current_pid:
-                                    return proc_pid
+                                    found_processes.append((proc_pid, proc_memory))
                 except (IOError, OSError, ValueError, IndexError, FileNotFoundError):
                     # Игнорируем ошибки чтения (процесс мог завершиться)
                     continue
             except (ValueError, OSError):
                 continue
+        
+        if found_processes:
+            # Сортируем по использованию памяти (по убыванию)
+            found_processes.sort(key=lambda x: x[1], reverse=True)
+            print(f"[DEBUG] Найдено процессов: {[p[0] for p in found_processes]}, память: {[p[1] for p in found_processes]} KB")
+            return found_processes  # Возвращаем список всех найденных процессов
     except Exception:
-        # Игнорируем ошибки (процесс мог завершиться во время проверки)
         pass
     
-    return None
+    return []
 
-def activate_existing_window():
-    """Активация существующего окна программы"""
-    app_name = "FSA-AstraInstall"
+def activate_existing_window(process_pids=None):
+    """Активация существующего окна программы
+    Активирует все найденные окна приложения по имени (APP_NAME)
+    
+    Примечание: Название окна = "FSA-AstraInstall V3.1.159 (2025.12.06)",
+    но мы ищем по APP_NAME = "FSA-AstraInstall", который содержится в полном названии"""
+    # Используем APP_NAME для поиска, так как полное название включает версию
+    app_name = APP_NAME  # "FSA-AstraInstall"
+    print(f"[DEBUG] Поиск окна по имени: '{app_name}' (полное название окна: '{APP_NAME} {APP_VERSION}')")
+    
+    # Определяем путь к wmctrl: сначала проверяем в бинарнике, потом системный
+    wmctrl_path = None
+    if getattr(sys, 'frozen', False):
+        # Если бинарник - ищем wmctrl в _MEIPASS
+        base_path = sys._MEIPASS
+        wmctrl_binary = os.path.join(base_path, 'wmctrl')
+        if os.path.exists(wmctrl_binary) and os.access(wmctrl_binary, os.X_OK):
+            wmctrl_path = wmctrl_binary
+            print(f"[DEBUG] Используем wmctrl из бинарника: {wmctrl_path}")
+    
+    # Если не нашли в бинарнике, используем системный
+    if wmctrl_path is None:
+        wmctrl_path = shutil.which('wmctrl')
+        if wmctrl_path:
+            print(f"[DEBUG] Используем системный wmctrl: {wmctrl_path}")
     
     # Метод 1: wmctrl
-    try:
-        result = subprocess.run(['wmctrl', '-l'], 
-                               capture_output=True, 
-                               text=True, 
-                               timeout=1)
-        if result.returncode == 0:
-            for line in result.stdout.split('\n'):
-                if app_name in line:
-                    window_id = line.split()[0]
-                    subprocess.run(['wmctrl', '-i', '-a', window_id], 
+    if wmctrl_path:
+        try:
+            result = subprocess.run([wmctrl_path, '-l'], 
+                                   capture_output=True, 
+                                   text=True, 
+                                   timeout=1)
+            if result.returncode == 0:
+                print(f"[DEBUG] wmctrl -l выполнен успешно, найдено строк: {len(result.stdout.split(chr(10)))}")
+                found_windows = []
+                for line in result.stdout.split('\n'):
+                    if app_name in line:
+                        window_id = line.split()[0]
+                        found_windows.append((window_id, line))
+                        print(f"[DEBUG] Найдено окно: window_id={window_id}, строка={line[:80]}")
+                
+                if found_windows:
+                    # Активируем первое найденное окно
+                    window_id = found_windows[0][0]
+                    print(f"[DEBUG] Активируем окно через wmctrl -i -a {window_id}")
+                    # wmctrl -i -a автоматически переключает рабочий стол, если окно на другом
+                    subprocess.run([wmctrl_path, '-i', '-a', window_id], 
                                  timeout=1,
                                  stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
+                    print(f"[DEBUG] Команда wmctrl -i -a выполнена")
                     return True
-    except:
-        pass
+                else:
+                    print(f"[DEBUG] Окна с именем '{app_name}' не найдены в списке wmctrl")
+            else:
+                print(f"[DEBUG] wmctrl -l вернул код ошибки: {result.returncode}")
+        except Exception as e:
+            print(f"[DEBUG] Ошибка wmctrl: {e}")
+    else:
+        print(f"[DEBUG] wmctrl не найден (ни в бинарнике, ни в системе)")
     
     # Метод 2: xdotool
     try:
-        subprocess.run(['xdotool', 'search', '--name', app_name, 'windowactivate'],
-                     timeout=1,
-                     stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL)
-        return True
-    except:
-        pass
+        print(f"[DEBUG] Пробуем xdotool search --name '{app_name}' windowactivate")
+        result = subprocess.run(['xdotool', 'search', '--name', app_name, 'windowactivate'],
+                             timeout=1,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        print(f"[DEBUG] xdotool выполнен, код возврата: {result.returncode}")
+        if result.returncode == 0:
+            return True
+    except FileNotFoundError:
+        print(f"[DEBUG] xdotool не установлен (FileNotFoundError)")
+    except Exception as e:
+        print(f"[DEBUG] Ошибка xdotool: {e}")
     
+    print(f"[DEBUG] Активация окна не удалась")
     return False
 
 class SelfUpdater:
@@ -27096,11 +27097,6 @@ def main():
         
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
-            # Проверяем системные требования
-            if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", gui_log=True)
-                sys.exit(1)
-            
             # Запускаем GUI
             print("[GUI] Запускаем интерфейс...")
             try:
@@ -27123,12 +27119,6 @@ def main():
         temp_dir = None
         
         try:
-            # Проверяем системные требования (БЕЗ установки GUI пакетов)
-            print("[INFO] Проверяем системные требования", gui_log=True)
-            if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", gui_log=True)
-                sys.exit(1)
-        
             # Консольный режим - полное обновление системы
             print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы", gui_log=True)
             print("\n[CONSOLE] Консольный режим - обновление системы...")
@@ -27638,14 +27628,14 @@ if __name__ == '__main__':
     is_macos = platform.system() == 'Darwin'
     
     # КРИТИЧНО: Проверка single instance ДО перезапуска через sudo
-    # ВРЕМЕННО ОТКЛЮЧЕНО для отладки
     # Проверяем, не запущен ли уже процесс от root
-    if False and not is_macos:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
-        existing_pid = find_running_instance()
-        if existing_pid is not None:
-            print(f"[INFO] Обнаружен запущенный процесс (PID: {existing_pid}). Переключаемся на него...")
+    if not is_macos:
+        existing_processes = find_running_instance()
+        if existing_processes:
+            pids = [p[0] for p in existing_processes]
+            print(f"[INFO] Обнаружены запущенные процессы (PIDs: {pids}). Переключаемся на них...")
             try:
-                activate_existing_window()
+                activate_existing_window(existing_processes)
             except Exception as e:
                 print(f"[WARNING] Не удалось активировать окно: {e}")
             print("[INFO] Завершаем повторный запуск...")
@@ -27654,83 +27644,51 @@ if __name__ == '__main__':
     # Продолжаем только если процесс sudo не найден
     if not is_macos and os.geteuid() != 0:
         print("[INFO] Требуются права root. Перезапуск через sudo...")
-        env = os.environ.copy()
-        # Сохраняем DISPLAY для GUI
-        if 'DISPLAY' in os.environ:
-            env['DISPLAY'] = os.environ['DISPLAY']
-        if 'XAUTHORITY' in os.environ:
-            env['XAUTHORITY'] = os.environ['XAUTHORITY']
         try:
-            # Для бинарника PyInstaller используем sys.executable, для скрипта - полный путь к sys.argv[0]
-            is_frozen = getattr(sys, 'frozen', False)
-            if is_frozen:
-                # Бинарник: используем sys.executable (полный путь к бинарнику)
-                executable_path = sys.executable
-            else:
-                # Python скрипт: используем полный путь к sys.argv[0]
-                if os.path.isabs(sys.argv[0]):
-                    executable_path = sys.argv[0]
-                else:
-                    executable_path = os.path.abspath(sys.argv[0])
+            # Определяем реальный путь к бинарнику через /proc/self/exe
+            executable_path = os.readlink('/proc/self/exe')
+            if not os.path.isabs(executable_path):
+                executable_path = os.path.abspath(executable_path)
             
-            # Формируем команду: sudo -E <путь_к_бинарнику> <аргументы>
-            # КРИТИЧНО: Передаём timestamp через переменную окружения FSA_LOG_TIMESTAMP
-            # Переменная окружения автоматически передаётся через sudo -E
-            new_argv = list(sys.argv[1:])  # Копируем аргументы
+            print(f"[INFO] Путь к бинарнику: {executable_path}")
             
-            # Удаляем --log-file из аргументов, если он есть (больше не нужен)
-            i = 0
-            while i < len(new_argv):
-                if new_argv[i] == '--log-file':
-                    # Удаляем --log-file и следующий аргумент (путь к файлу)
-                    new_argv.pop(i)
-                    if i < len(new_argv):
-                        new_argv.pop(i)
-                    break
-                i += 1
+            # Формируем команду: sudo <путь_к_бинарнику> <аргументы>
+            new_argv = list(sys.argv[1:])
             
-            # КРИТИЧНО: Передаём timestamp через переменную окружения (если он уже установлен)
-            if 'FSA_LOG_TIMESTAMP' in os.environ:
-                env['FSA_LOG_TIMESTAMP'] = os.environ['FSA_LOG_TIMESTAMP']
+            sudo_args = ["sudo", executable_path] + new_argv
             
-            # КРИТИЧНО: НЕ передаём FSA_LOG_WRITER_PID при перезапуске через sudo
-            # Процесс sudo сам установит свою переменную и станет главным писателем
+            # Запускаем бинарник через sudo как полностью независимый процесс
+            print(f"[INFO] Запуск бинарника через sudo...")
             
-            sudo_args = ["sudo", "-E", executable_path] + new_argv
+            # Формируем shell команду: nohup sudo <бинарник> <аргументы> &
+            # nohup гарантирует, что процесс продолжит работу после закрытия родителя
+            # & запускает в фоне, sudo сразу завершится после запуска бинарника
+            cmd_parts = [shlex.quote(arg) for arg in sudo_args]
+            cmd = f"nohup {' '.join(cmd_parts)} > /dev/null 2>&1 &"
             
-            # Запускаем бинарник через sudo как полностью независимую программу
-            # Как будто запустили отдельный скрипт, который сам запустил sudo
-            # Процесс sudo НЕ является дочерним процессом - он полностью независим
-            # Запустили и забыли - когда закроем эту программу, тот останется работать
-            print(f"[INFO] Запуск бинарника через sudo как полностью независимой программы...")
-            print(f"[INFO] Команда: {' '.join(sudo_args)}")
+            print(f"[INFO] Команда: {cmd}")
             
             try:
-                # Запускаем sudo как полностью независимый процесс
-                # start_new_session=True создает новую сессию - процесс отсоединяется от родителя
-                # НЕ сохраняем ссылку на процесс - запустили и забыли
+                # Запускаем через shell, чтобы sudo сразу завершился
                 subprocess.Popen(
-                    sudo_args,
-                    env=env,
-                    start_new_session=True,  # Создает новую сессию - процесс полностью независим
-                    stdin=subprocess.DEVNULL,  # Отсоединяем stdin
-                    stdout=subprocess.DEVNULL,  # Отсоединяем stdout (GUI сам управляет выводом)
-                    stderr=subprocess.DEVNULL   # Отсоединяем stderr (GUI сам управляет выводом)
+                    cmd,
+                    shell=True,
+                    start_new_session=True,  # Новая сессия - независима от родителя
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
                 )
                 
-                print(f"[INFO] Бинарник запущен через sudo как полностью независимая программа")
-                print(f"[INFO] Процесс пользователя продолжает работу (PID: {os.getpid()})")
-                print(f"[INFO] Процесс sudo работает независимо - мы про него забыли")
-                print(f"[INFO] Когда закроете эту программу, процесс sudo продолжит работать")
+                print(f"[INFO] Бинарник запущен через sudo")
+                print(f"[INFO] Процесс пользователя завершается (PID: {os.getpid()})")
                 
-                # Процесс пользователя продолжает работу - запустит свой GUI
-                # Процесс sudo тоже запустится и запустит свой GUI
-                # Они полностью независимы друг от друга
+                # Режим самоубийцы: немедленное завершение без cleanup
+                os._exit(0)
                 
             except Exception as e:
                 print(f"[ERROR] Не удалось запустить sudo: {e}")
                 traceback.print_exc()
-                # Процесс пользователя продолжает работу
+                sys.exit(1)
         except Exception as e:
             print(f"[ERROR] Не удалось получить права root: {e}")
             traceback.print_exc()
@@ -27738,18 +27696,18 @@ if __name__ == '__main__':
             sys.exit(1)
     
     # КРИТИЧНО: Проверка single instance ПОСЛЕ перезапуска через sudo
-    # ВРЕМЕННО ОТКЛЮЧЕНО для отладки
     # Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
     # На macOS пропускаем проверку single instance (не требуется)
-    if False and platform.system() == 'Linux' and os.geteuid() == 0:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
+    if platform.system() == 'Linux' and os.geteuid() == 0:
         print("[DEBUG] Проверка single instance после перезапуска через sudo...")
-        existing_pid = find_running_instance()
-        if existing_pid is not None:
-            print(f"[DEBUG] Найден существующий процесс (PID: {existing_pid}), активируем окно...")
-            activate_existing_window()
+        existing_processes = find_running_instance()
+        if existing_processes:
+            pids = [p[0] for p in existing_processes]
+            print(f"[DEBUG] Найдены существующие процессы (PIDs: {pids}), активируем окна...")
+            activate_existing_window(existing_processes)
             sys.exit(0)
         else:
-            print("[DEBUG] Существующий процесс не найден, продолжаем запуск...")
+            print("[DEBUG] Существующие процессы не найдены, продолжаем запуск...")
     
     # КРИТИЧНО: Инициализация логирования ВНУТРИ блока if __name__ == '__main__'
     # Это гарантирует, что логирование инициализируется только один раз - в процессе sudo
