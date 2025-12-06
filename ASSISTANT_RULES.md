@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V3.1.160 (2025.12.05)
+# Версия проекта: V3.1.161 (2025.12.07)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -842,9 +842,8 @@ new_string = "return filtered\n\n# Версия приложения"
 ### Примеры:
 ```
 V2.3.76 (2025.11.20) - текущая версия проекта (76 коммитов)
-├── astra_automation.py: V2.3.76 (2025.11.20) ← изменен сегодня
-├── astra_install.sh: V2.3.76 (2025.11.20) ← изменен вчера
-├── astra_update.sh: V2.3.76 (2025.11.20) ← изменен позавчера
+├── FSA-AstraInstall.py: V2.3.76 (2025.11.20) ← изменен сегодня
+├── FSA-AstraInstall: V2.3.76 (2025.11.20) ← изменен вчера
 ├── ASSISTANT_RULES.md: V2.3.76 (2025.11.20) ← изменен сегодня
 └── README.md: V2.3.76 (2025.11.20) ← обновлен сегодня
 ```
@@ -1041,7 +1040,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 17. **Проверка необходимости истории:** 
    - Выполнить `git log -1 --name-only --format=""` → сохранить список файлов из последнего коммита
-   - Проверить: есть ли в списке файлы `astra_automation.py`, `astra_install.sh` или `astra_update.sh`
+   - Проверить: есть ли в списке файлы `FSA-AstraInstall.py` или `FSA-AstraInstall`
    - Если есть хотя бы один - установить `NEED_HISTORY=yes`
    - Если нет ни одного - установить `NEED_HISTORY=no`
    - **КРИТИЧНО:** Использовать данные из git, а НЕ из переменных (файл `.commit_vars.sh` уже удален на шаге 16)
@@ -1050,7 +1049,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - ТОЛЬКО если `NEED_HISTORY=yes`:
      - Определить `COMMIT_DATE = $(date +%Y_%m_%d_%H_%M)`
      - Создать директорию: `mkdir -p "History/$COMMIT_DATE"`
-     - Скопировать файлы: `cp astra_automation.py astra_install.sh astra_update.sh FSA-AstraInstall FSA-AstraInstall.py "History/$COMMIT_DATE/"`
+     - Скопировать файлы: `cp FSA-AstraInstall FSA-AstraInstall.py "History/$COMMIT_DATE/"`
    - Если `NEED_HISTORY=no` - пропустить этот шаг
 
 19. **Валидация истории (условно):** 
@@ -1663,9 +1662,9 @@ fi
 
 # ШАГ 17: Проверяем, нужна ли локальная история (изменён ли один из ключевых файлов)
 echo "=== ШАГ 17: Проверка необходимости истории ==="
-[ -z "$CHANGED_FILES" ] && stop_on_error "Переменная CHANGED_FILES не загружена. Проверьте выполнение шага 9 (загрузка переменных из .commit_vars.sh)." || true
+CHANGED_FILES_FROM_GIT=$(git log -1 --name-only --format="")
 NEED_HISTORY=no
-echo "$CHANGED_FILES" | grep -qE "(astra_automation\.py|astra_install\.sh|astra_update\.sh)" && NEED_HISTORY=yes || true
+echo "$CHANGED_FILES_FROM_GIT" | grep -qE "(FSA-AstraInstall\.py|FSA-AstraInstall$)" && NEED_HISTORY=yes || true
 echo "NEED_HISTORY=$NEED_HISTORY"
 # КРИТИЧНО: Проверка успешности шага 17
 if [ $? -ne 0 ]; then
@@ -1677,9 +1676,6 @@ fi
   echo "=== ШАГ 18: Создание локальной истории ===" && \
   COMMIT_DATE=$(date +%Y_%m_%d_%H_%M) && \
   mkdir -p "History/$COMMIT_DATE" && \
-  cp astra_automation.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
-  cp astra_install.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
-  cp astra_update.sh "History/$COMMIT_DATE/" 2>/dev/null || true && \
   cp FSA-AstraInstall "History/$COMMIT_DATE/" 2>/dev/null || true && \
   cp FSA-AstraInstall.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
   echo "=== ШАГ 19: Валидация истории ===" && \
