@@ -3,7 +3,7 @@
 """
 Скрипт автоматического обновления FSA-AstraInstall для macOS
 Использует AppleScript для обхода ограничений карантина
-Версия: V3.1.161 (2025.12.05)
+Версия: V3.1.162 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -191,8 +191,8 @@ def main():
     
     # Файлы для копирования
     files_to_copy = [
-        "FSA-AstraInstall",       # Скомпилированный бинарник для Linux
-        "FSA-AstraInstall.py",    # Unified Python файл
+        "FSA-AstraInstall-1-7",
+        "FSA-AstraInstall-1-8",
         "README.md",
     ]
     

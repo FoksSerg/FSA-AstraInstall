@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для запуска сборок (локально и удаленно)
-Версия: V3.1.161 (2025.12.06)
+Версия: V3.1.162 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -163,6 +163,7 @@ def build_local(project, platform_name, rebuild=False):
             "-v", f"{project_dir}:/build",
             "-e", f"INPUT_FILE={input_file}",
             "-e", f"OUTPUT_NAME={project_config['output_name']}",
+            "-e", f"PLATFORM_NAME={platform_name}",
             image_name,
             "bash", f"/build/DockerManager/scripts/docker_build.sh"
         ]
@@ -222,9 +223,13 @@ def build_local(project, platform_name, rebuild=False):
         # Копируем результаты
         _logger.info("Копирование результатов из контейнера...")
         print_step("Копирование результатов...")
-        output_file = project_dir / project_config["output_name"]
+        # Определяем имя файла с суффиксом платформы
+        # Заменяем точку на дефис, чтобы избежать проблем с расширением файла
+        platform_version = platform_name.replace("astra-", "").replace(".", "-")
+        output_name_with_platform = f"{project_config['output_name']}-{platform_version}"
+        output_file = project_dir / output_name_with_platform
         result = subprocess.run([
-            "docker", "cp", f"{container_name}:/build/{project_config['output_name']}", str(output_file)
+            "docker", "cp", f"{container_name}:/build/{output_name_with_platform}", str(output_file)
         ], capture_output=True, text=True)
         
         if result.returncode == 0:
@@ -394,6 +399,11 @@ def build_remote(project, platform_name, rebuild=False):
     container_name = f"fsa-builder-{platform_name}-temp"
     output_name = project_config["output_name"]
     
+    # Определяем имя файла с суффиксом платформы
+    # Заменяем точку на дефис, чтобы избежать проблем с расширением файла
+    platform_version = platform_name.replace("astra-", "").replace(".", "-")
+    output_name_with_platform = f"{output_name}-{platform_version}"
+    
     # Команда сборки
     input_file = project_config.get('input_file', f"{project_config['output_name']}.py")
     build_cmd = f"""
@@ -404,10 +414,11 @@ docker run --rm \
   -v $(pwd):/build \
   -e INPUT_FILE={input_file} \
   -e OUTPUT_NAME={output_name} \
+  -e PLATFORM_NAME={platform_name} \
   {image_name} \
   bash /build/DockerManager/scripts/docker_build.sh && \
-cp {output_name} {outgoing_path}/ && \
-chmod +x {outgoing_path}/{output_name}
+cp {output_name_with_platform} {outgoing_path}/ && \
+chmod +x {outgoing_path}/{output_name_with_platform}
 """
     
     try:

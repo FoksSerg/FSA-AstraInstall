@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для работы с файлами (загрузка/скачивание)
-Версия: V3.1.161 (2025.12.04)
+Версия: V3.1.162 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -86,6 +86,9 @@ def upload_sources(project, exclude_patterns=None):
                 # Проверяем вхождение паттерна в путь
                 if pattern in path_str:
                     return True
+            # Исключаем бинарники с суффиксами платформ (FSA-AstraInstall-1-7, FSA-AstraInstall-1-8)
+            if path.name.startswith(project_config["output_name"] + "-") and not path.name.endswith(".py"):
+                return True
             return False
         
         # Копируем только нужные файлы
@@ -195,13 +198,18 @@ def download_build(project, platform, local_path=None):
     project_config = PROJECTS[project]
     output_name = project_config["output_name"]
     
+    # Определяем имя файла с суффиксом платформы
+    # Заменяем точку на дефис, чтобы избежать проблем с расширением файла
+    platform_version = platform.replace("astra-", "").replace(".", "-")
+    output_name_with_platform = f"{output_name}-{platform_version}"
+    
     # Путь на сервере
-    remote_path = f"{get_outgoing_path(project, platform)}/{output_name}"
+    remote_path = f"{get_outgoing_path(project, platform)}/{output_name_with_platform}"
     _logger.info(f"Удаленный путь: {remote_path}")
     
     # Локальный путь
     if local_path is None:
-        local_path = get_project_dir() / output_name
+        local_path = get_project_dir() / output_name_with_platform
     else:
         local_path = Path(local_path)
     

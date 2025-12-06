@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Конфигурация DockerManager
-Версия: V3.1.161 (2025.12.04)
+Версия: V3.1.162 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -41,14 +41,6 @@ BUILD_PLATFORMS = {
         "description": "Astra Linux 1.8.x (GLIBC 2.36)",
         "dockerfile": "Dockerfile.astra-1.8",
         "image_name": "fsa-astrainstall-builder:astra-1.8"
-    },
-    "windows": {
-        "base_image": "ubuntu:20.04",
-        "glibc": "2.31",
-        "python": "3.8",
-        "description": "Windows (через Wine)",
-        "dockerfile": "Dockerfile.windows",
-        "image_name": "fsa-astrainstall-builder:windows"
     }
 }
 

@@ -1,5 +1,5 @@
 # КРИТИЧЕСКИЕ ПРАВИЛА ДЛЯ АССИСТЕНТА
-# Версия проекта: V3.1.161 (2025.12.07)
+# Версия проекта: V3.1.162 (2025.12.07)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📅 ОБЯЗАТЕЛЬНОЕ НАЧАЛО КАЖДОГО ОТВЕТА:
@@ -1040,7 +1040,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 17. **Проверка необходимости истории:** 
    - Выполнить `git log -1 --name-only --format=""` → сохранить список файлов из последнего коммита
-   - Проверить: есть ли в списке файлы `FSA-AstraInstall.py` или `FSA-AstraInstall`
+   - Проверить: есть ли в списке файлы `FSA-AstraInstall.py`, `FSA-AstraInstall-1-7` или `FSA-AstraInstall-1-8`
    - Если есть хотя бы один - установить `NEED_HISTORY=yes`
    - Если нет ни одного - установить `NEED_HISTORY=no`
    - **КРИТИЧНО:** Использовать данные из git, а НЕ из переменных (файл `.commit_vars.sh` уже удален на шаге 16)
@@ -1049,7 +1049,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - ТОЛЬКО если `NEED_HISTORY=yes`:
      - Определить `COMMIT_DATE = $(date +%Y_%m_%d_%H_%M)`
      - Создать директорию: `mkdir -p "History/$COMMIT_DATE"`
-     - Скопировать файлы: `cp FSA-AstraInstall FSA-AstraInstall.py "History/$COMMIT_DATE/"`
+     - Скопировать файлы: `cp FSA-AstraInstall.py FSA-AstraInstall-1-7 FSA-AstraInstall-1-8 "History/$COMMIT_DATE/" 2>/dev/null || true`
    - Если `NEED_HISTORY=no` - пропустить этот шаг
 
 19. **Валидация истории (условно):** 
@@ -1664,7 +1664,7 @@ fi
 echo "=== ШАГ 17: Проверка необходимости истории ==="
 CHANGED_FILES_FROM_GIT=$(git log -1 --name-only --format="")
 NEED_HISTORY=no
-echo "$CHANGED_FILES_FROM_GIT" | grep -qE "(FSA-AstraInstall\.py|FSA-AstraInstall$)" && NEED_HISTORY=yes || true
+echo "$CHANGED_FILES_FROM_GIT" | grep -qE "(FSA-AstraInstall\.py|FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)" && NEED_HISTORY=yes || true
 echo "NEED_HISTORY=$NEED_HISTORY"
 # КРИТИЧНО: Проверка успешности шага 17
 if [ $? -ne 0 ]; then
@@ -1676,8 +1676,9 @@ fi
   echo "=== ШАГ 18: Создание локальной истории ===" && \
   COMMIT_DATE=$(date +%Y_%m_%d_%H_%M) && \
   mkdir -p "History/$COMMIT_DATE" && \
-  cp FSA-AstraInstall "History/$COMMIT_DATE/" 2>/dev/null || true && \
   cp FSA-AstraInstall.py "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp FSA-AstraInstall-1-7 "History/$COMMIT_DATE/" 2>/dev/null || true && \
+  cp FSA-AstraInstall-1-8 "History/$COMMIT_DATE/" 2>/dev/null || true && \
   echo "=== ШАГ 19: Валидация истории ===" && \
   ls -la "History/$COMMIT_DATE/" || \
   echo "История не требуется (ключевые файлы не изменялись)"

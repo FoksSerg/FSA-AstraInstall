@@ -1,6 +1,6 @@
 #!/bin/bash
 # Скрипт сборки бинарного файла в Docker контейнере
-# Версия: V3.1.161 (2025.12.07)
+# Версия: V3.1.162 (2025.12.07)
 # Компания: ООО "НПА Вира-Реалтайм"
 # Разработчик: @FoksSegr & AI Assistant (@LLM)
 
@@ -21,6 +21,18 @@ python3 /build/DockerManager/scripts/fix_future_imports.py
 # Определяем имя входного и выходного файла из переменной окружения
 INPUT_FILE="${INPUT_FILE:-FSA-AstraInstall.py}"
 OUTPUT_NAME="${OUTPUT_NAME:-FSA-AstraInstall}"
+
+# Добавляем суффикс платформы к имени выходного файла
+PLATFORM_NAME="${PLATFORM_NAME:-}"
+if [ -n "$PLATFORM_NAME" ]; then
+    # Извлекаем номер версии из имени платформы (astra-1.7 -> 1-7, astra-1.8 -> 1-8)
+    # Заменяем точку на дефис, чтобы избежать проблем с расширением файла
+    PLATFORM_VERSION=$(echo "$PLATFORM_NAME" | sed 's/astra-//' | sed 's/\./-/g')
+    if [ -n "$PLATFORM_VERSION" ]; then
+        OUTPUT_NAME="${OUTPUT_NAME}-${PLATFORM_VERSION}"
+        echo "[#] Имя выходного файла с суффиксом платформы: ${OUTPUT_NAME}" >&2
+    fi
+fi
 
 # Проверяем наличие входного файла
 if [ ! -f "${INPUT_FILE}" ]; then
