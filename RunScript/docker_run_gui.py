@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Запускающий скрипт для GUI DockerManager
-Версия: V3.1.156 (2025.12.05)
+Версия: V3.1.159 (2025.12.06)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -34,12 +34,12 @@ os.chdir(PROJECT_DIR)
 # Запускаем GUI
 if __name__ == "__main__":
     try:
-        from DockerManager.cli import main
-        
-        # Устанавливаем флаг GUI
-        sys.argv = [sys.argv[0], "--gui"]
-        
-        sys.exit(main())
+            from DockerManager.cli import main
+            
+            # Устанавливаем флаг GUI
+            sys.argv = [sys.argv[0], "--gui"]
+            
+            sys.exit(main())
     except ImportError as e:
         print(f"❌ ОШИБКА: Не удалось импортировать DockerManager.cli: {e}")
         print(f"Проверьте, что модуль DockerManager находится в {PROJECT_DIR}")
@@ -47,4 +47,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ ОШИБКА при запуске GUI: {e}")
         sys.exit(1)
-

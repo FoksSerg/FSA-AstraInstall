@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 CLI интерфейс для DockerManager
-Версия: V3.1.158 (2025.12.03)
+Версия: V3.1.159 (2025.12.06)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -43,6 +43,12 @@ def main():
         help="Запустить сборку на удаленном сервере"
     )
     
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Принудительно пересобрать Docker образ (удалить старый и создать новый)"
+    )
+    
     args = parser.parse_args()
     
     # Если запрошен GUI - запускаем его
@@ -57,12 +63,41 @@ def main():
         parser.error("--platform обязателен для CLI режима (или используйте --gui)")
     
     # Запускаем сборку
-    success = build(args.project, args.platform, remote=args.remote)
+    success = build(args.project, args.platform, remote=args.remote, rebuild=args.rebuild)
     
     if success:
         print("\n" + "=" * 60)
         print("=== Сборка завершена успешно ===")
         print("=" * 60)
+        
+        # ВРЕМЕННО: Автоматическое обновление на SMB сервере после удалённой сборки
+        if args.remote and args.project == "FSA-AstraInstall":
+            print("\n[INFO] Запуск автоматического обновления на SMB сервере...")
+            try:
+                import subprocess
+                import os
+                from pathlib import Path
+                
+                # Получаем путь к скрипту обновления
+                project_dir = Path(__file__).parent.parent
+                update_script = project_dir / "RunScript" / "astra_update.py"
+                
+                if update_script.exists():
+                    print(f"[INFO] Запуск скрипта: {update_script}")
+                    result = subprocess.run(
+                        [sys.executable, str(update_script)],
+                        capture_output=False,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        print("[OK] Обновление на SMB сервере завершено успешно")
+                    else:
+                        print(f"[WARNING] Скрипт обновления завершился с кодом: {result.returncode}")
+                else:
+                    print(f"[WARNING] Скрипт обновления не найден: {update_script}")
+            except Exception as e:
+                print(f"[WARNING] Ошибка при запуске скрипта обновления: {e}")
+        
         return 0
     else:
         print("\n" + "=" * 60)

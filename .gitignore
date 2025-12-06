@@ -136,9 +136,7 @@ History/
 History/
 
 # Log directories
-Log/
-LogLinux/
-LogInstall/
+Log*/
 
 # Original scripts (legacy, not used)
 original_scripts/

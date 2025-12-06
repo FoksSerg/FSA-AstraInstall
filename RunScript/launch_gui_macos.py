@@ -3,7 +3,7 @@
 """
 Запуск GUI на macOS
 Простой запуск основного скрипта FSA-AstraInstall.py с параметрами
-Версия проекта: V3.1.156 (2025.12.05)
+Версия проекта: V3.1.159 (2025.12.06)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -39,7 +39,7 @@ def main():
     
     # Создаем лог файл с временной меткой и префиксом macos_
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f"FSA-AstraInstall_macos_{timestamp}.log")
+    log_file = os.path.join(log_dir, f"analysis_macos_{timestamp}.log")
     
     print(f"Запуск FSA-AstraInstall.py на macOS...")
     print(f"Лог файл: {log_file}")

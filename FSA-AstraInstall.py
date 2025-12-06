@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.1.158 (2025.12.05)
+Версия: V3.1.159 (2025.12.06)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.1.158 (2025.12.05)"
+APP_VERSION = "V3.1.159 (2025.12.06)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -69,20 +69,926 @@ try:
 except Exception:
     REQUESTS_AVAILABLE = False
 
-try:
-    import tkinter
-    import tkinter as tk
-    from tkinter import ttk, messagebox, scrolledtext
-    import tkinter.messagebox
-    import tkinter.filedialog as filedialog
-    TKINTER_AVAILABLE = True
-except ImportError:
-    TKINTER_AVAILABLE = False
-    tk = None
-    ttk = None
-    messagebox = None
-    scrolledtext = None
-    filedialog = None
+# ============================================================================
+# ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
+# ============================================================================
+
+# Глобальные экземпляры менеджеров (объявления, инициализируются после определения классов)
+_global_dual_logger = None  # DualStreamLogger
+_global_universal_runner = None  # UniversalProcessRunner
+_global_progress_manager = None  # UniversalProgressManager
+_global_activity_tracker = None  # ActivityTracker
+
+# Глобальная ссылка на GUI экземпляр
+sys._gui_instance = None
+
+class DualStreamLogger:
+# ============================================================================
+# DUALSTREAMLOGGER - СИСТЕМА ДВОЙНЫХ ПОТОКОВ ЛОГИРОВАНИЯ
+# ============================================================================
+    """
+    Класс для управления двумя независимыми потоками логирования.
+    
+    Особенности:
+    - Потокобезопасный (thread-safe)
+    - Буферы в памяти с ограничением размера
+    - Независимые потоки для RAW и ANALYSIS данных
+    - Асинхронная запись в файлы (неблокирующая)
+    
+    RAW-поток: необработанный вывод apt-get и системных процессов (без задержек)
+    ANALYSIS-поток: аналитика, парсинг, мониторинг системы
+    """
+    
+    def __init__(self, max_buffer_size=50000, raw_log_path=None, analysis_log_path=None, terminal_update_callback=None):
+        """Инициализация DualStreamLogger"""
+        # Буферы в памяти
+        self._raw_buffer = deque(maxlen=max_buffer_size)
+        self._analysis_buffer = deque(maxlen=max_buffer_size)
+        
+        # Блокировки для потокобезопасности
+        self._raw_lock = threading.Lock()
+        self._analysis_lock = threading.Lock()
+        
+        # Настройки
+        self._max_buffer_size = max_buffer_size
+        
+        # Файловое логирование
+        self._raw_log_path = raw_log_path
+        self._analysis_log_path = analysis_log_path
+        self._file_queue = queue.Queue()
+        self._file_writer_thread = None
+        self._file_writer_running = False
+        self._raw_file = None
+        self._analysis_file = None
+        self._stopping = False  # Флаг защиты от повторного входа в stop_file_logging()
+        
+        # Callback для немедленного обновления терминала при новых данных
+        self.terminal_update_callback = terminal_update_callback
+        
+        # КРИТИЧНО: Размер файла на момент начала текущей сессии (для загрузки данных, записанных до запуска)
+        self._analysis_log_size_before_start = 0
+        
+        # Флаги загрузки файлов в буфер (предотвращают повторную загрузку)
+        self._raw_file_loaded = False
+        self._analysis_file_loaded = False
+        
+        # Размеры буферов на момент загрузки файла (для предотвращения дубликатов)
+        self._raw_buffer_size_at_load = 0
+        self._analysis_buffer_size_at_load = 0
+        
+        # Счетчики для мониторинга
+        self._messages_received_raw = 0  # Количество полученных RAW сообщений
+        self._messages_received_analysis = 0  # Количество полученных ANALYSIS сообщений
+        self._messages_saved_raw = 0  # Количество сохраненных RAW сообщений
+        self._messages_saved_analysis = 0  # Количество сохраненных ANALYSIS сообщений
+        self._stats_lock = threading.Lock()  # Блокировка для потокобезопасности счетчиков
+        
+        # Сохраняем PID процесса, который имеет право писать (предотвращение дубликатов при параллельных процессах)
+        self._writer_pid = int(os.environ.get('FSA_LOG_WRITER_PID', str(os.getpid())))
+    
+    def write_raw(self, message):
+        """Записать сообщение в RAW-поток (всегда с меткой времени)"""
+        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        formatted_message = "[%s] %s" % (timestamp_str, message)
+        
+        with self._raw_lock:
+            self._raw_buffer.append(formatted_message)
+        
+        # Увеличиваем счетчик полученных сообщений
+        with self._stats_lock:
+            self._messages_received_raw += 1
+        
+        # Асинхронная запись в файл (если включено)
+        if self._file_writer_running and self._raw_log_path:
+            self._file_queue.put(('raw', formatted_message))
+        
+        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
+        if self.terminal_update_callback:
+            try:
+                self.terminal_update_callback()
+            except Exception:
+                pass  # Игнорируем ошибки callback
+    
+    def write_analysis(self, message):
+        """Записать сообщение в ANALYSIS-поток (всегда с меткой времени)"""
+        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        formatted_message = "[%s] %s" % (timestamp_str, message)
+        
+        with self._analysis_lock:
+            self._analysis_buffer.append(formatted_message)
+        
+        # Увеличиваем счетчик полученных сообщений
+        with self._stats_lock:
+            self._messages_received_analysis += 1
+        
+        # Асинхронная запись в файл (если включено)
+        if self._file_writer_running and self._analysis_log_path:
+            self._file_queue.put(('analysis', formatted_message))
+        
+        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
+        if self.terminal_update_callback:
+            try:
+                self.terminal_update_callback()
+            except Exception:
+                pass  # Игнорируем ошибки callback
+    
+    def get_raw_buffer(self):
+        """Получить все содержимое RAW-буфера"""
+        with self._raw_lock:
+            return list(self._raw_buffer)
+    
+    def get_analysis_buffer(self):
+        """Получить все содержимое ANALYSIS-буфера"""
+        with self._analysis_lock:
+            return list(self._analysis_buffer)
+    
+    def get_raw_last_n(self, n):
+        """Получить последние N строк из RAW-буфера"""
+        with self._raw_lock:
+            buffer_list = list(self._raw_buffer)
+            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
+    
+    def get_analysis_last_n(self, n):
+        """Получить последние N строк из ANALYSIS-буфера"""
+        with self._analysis_lock:
+            buffer_list = list(self._analysis_buffer)
+            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
+    
+    def clear_raw_buffer(self, flush_before_clear=True):
+        """Очистить RAW-буфер
+        
+        Args:
+            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
+        """
+        if flush_before_clear and self._file_writer_running:
+            # Принудительно записываем все данные из буфера в файл перед очисткой
+            try:
+                with self._raw_lock:
+                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
+                
+                if buffer_raw and self._raw_file:
+                    self._raw_file.writelines(buffer_raw)
+                    self._raw_file.flush()
+                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка flush перед очисткой RAW-буфера: {e}")
+        
+        with self._raw_lock:
+            self._raw_buffer.clear()
+
+    def clear_analysis_buffer(self, flush_before_clear=True):
+        """Очистить ANALYSIS-буфер
+        
+        Args:
+            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
+        """
+        if flush_before_clear and self._file_writer_running:
+            # Принудительно записываем все данные из буфера в файл перед очисткой
+            try:
+                with self._analysis_lock:
+                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
+                
+                if buffer_analysis and self._analysis_file:
+                    self._analysis_file.writelines(buffer_analysis)
+                    self._analysis_file.flush()
+                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка flush перед очисткой ANALYSIS-буфера: {e}")
+        
+        with self._analysis_lock:
+            self._analysis_buffer.clear()
+    
+    def get_raw_buffer_size(self):
+        """Получить текущий размер RAW-буфера"""
+        with self._raw_lock:
+            return len(self._raw_buffer)
+    
+    def get_analysis_buffer_size(self):
+        """Получить текущий размер ANALYSIS-буфера"""
+        with self._analysis_lock:
+            return len(self._analysis_buffer)
+    
+    def _file_writer_worker(self):
+        """Рабочий поток для асинхронной записи в файлы"""
+        thread_name = threading.current_thread().name
+        print(f"Поток {thread_name} начал выполнение (_file_writer_worker)", level='DEBUG')
+        buffer_raw = []
+        buffer_analysis = []
+        last_flush_time = time.time()
+        flush_interval = 1.0
+        flush_count = 50
+        
+        try:
+            while self._file_writer_running:
+                try:
+                    stream_type, message = self._file_queue.get(timeout=0.1)
+                    
+                    if stream_type == 'raw':
+                        buffer_raw.append(message + '\n')
+                    elif stream_type == 'analysis':
+                        buffer_analysis.append(message + '\n')
+                    
+                    current_time = time.time()
+                    should_flush = (
+                        len(buffer_raw) >= flush_count or
+                        len(buffer_analysis) >= flush_count or
+                        (current_time - last_flush_time) >= flush_interval
+                    )
+                    
+                    if should_flush:
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                        last_flush_time = current_time
+                    
+                except queue.Empty:
+                    current_time = time.time()
+                    if (current_time - last_flush_time) >= flush_interval:
+                        if buffer_raw or buffer_analysis:
+                            self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                            buffer_raw.clear()
+                            buffer_analysis.clear()
+                        last_flush_time = current_time
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка в file_writer: {e}")
+            
+            # После завершения основного цикла, дожидаемся опустошения очереди
+            # Это критично для сохранения всех данных при завершении
+            empty_timeout_count = 0
+            max_empty_timeout = 100  # Максимум 10 секунд (100 * 0.1)
+            
+            while not self._file_queue.empty() and empty_timeout_count < max_empty_timeout:
+                try:
+                    stream_type, message = self._file_queue.get(timeout=0.1)
+                    
+                    if stream_type == 'raw':
+                        buffer_raw.append(message + '\n')
+                    elif stream_type == 'analysis':
+                        buffer_analysis.append(message + '\n')
+                    
+                    # Flush при заполнении буфера
+                    if len(buffer_raw) >= flush_count or len(buffer_analysis) >= flush_count:
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                    
+                    empty_timeout_count = 0  # Сброс счетчика при получении данных
+                except queue.Empty:
+                    empty_timeout_count += 1
+                    # Flush периодически даже если очередь пуста
+                    if empty_timeout_count % 10 == 0 and (buffer_raw or buffer_analysis):
+                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                        buffer_raw.clear()
+                        buffer_analysis.clear()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка в file_writer при завершении: {e}")
+                    break
+            
+            # Финальный flush оставшихся данных
+            if buffer_raw or buffer_analysis:
+                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+        
+        except Exception as e:
+            print(f"[DualStreamLogger] Критическая ошибка в file_writer: {e}")
+        finally:
+            # Финальный flush перед закрытием файлов
+            if buffer_raw or buffer_analysis:
+                try:
+                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка финального flush: {e}")
+            
+            # Закрываем файлы с flush
+            if self._raw_file:
+                try:
+                    self._raw_file.flush()
+                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
+                    self._raw_file.close()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка закрытия raw файла: {e}")
+                finally:
+                    self._raw_file = None
+            
+            if self._analysis_file:
+                try:
+                    self._analysis_file.flush()
+                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
+                    self._analysis_file.close()
+                except Exception as e:
+                    print(f"[DualStreamLogger] Ошибка закрытия analysis файла: {e}")
+                finally:
+                    self._analysis_file = None
+    
+    def flush_buffers(self, skip_loaded_from_file=True):
+        """Публичный метод для принудительной записи буферов в файлы
+        
+        Args:
+            skip_loaded_from_file: Если True, не записывает данные, которые были загружены из файла
+                                  (предотвращает дубликаты при загрузке файла в буфер)
+        """
+        try:
+            # Получаем текущие буферы и добавляем переносы строк для записи
+            with self._raw_lock:
+                buffer_raw = [msg + '\n' for msg in self._raw_buffer]
+            
+            with self._analysis_lock:
+                buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
+            
+            # КРИТИЧНО: Если данные были загружены из файла, записываем только новые сообщения
+            # Это предотвращает дубликаты при загрузке файла в буфер через load_existing_file_to_buffer()
+            if skip_loaded_from_file:
+                # Записываем только новые сообщения (после загрузки файла)
+                if self._raw_file_loaded and buffer_raw:
+                    # Берем только сообщения, добавленные после загрузки файла
+                    buffer_raw = buffer_raw[self._raw_buffer_size_at_load:]
+                if self._analysis_file_loaded and buffer_analysis:
+                    # Берем только сообщения, добавленные после загрузки файла
+                    buffer_analysis = buffer_analysis[self._analysis_buffer_size_at_load:]
+            
+            if buffer_raw or buffer_analysis:
+                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+        except Exception as e:
+            print(f"[DualStreamLogger] Ошибка flush_buffers: {e}")
+    
+    def _flush_buffers_to_files(self, buffer_raw, buffer_analysis):
+        """Записать буферы в файлы"""
+        # ВРЕМЕННО: Разрешаем процессу пользователя писать логи для тестирования
+        # КРИТИЧНО: Проверка - только процесс sudo (root) имеет право писать на Linux
+        # На macOS процесс пользователя может писать (нет перезапуска через sudo)
+        current_pid = os.getpid()
+        current_uid = os.geteuid()
+        is_macos = platform.system() == 'Darwin'
+        
+        # ВРЕМЕННО ОТКЛЮЧЕНО: На Linux: только процесс root (sudo) может писать
+        # На macOS: процесс пользователя может писать
+        # if not is_macos and current_uid != 0:
+        #     return  # Не root на Linux - не пишем
+        
+        # Дополнительная проверка по PID (на случай если несколько процессов root)
+        if current_pid != self._writer_pid:
+            return  # Не наш процесс - не пишем (предотвращение дубликатов при параллельных процессах)
+        
+        try:
+            if buffer_raw and self._raw_file:
+                self._raw_file.writelines(buffer_raw)
+                self._raw_file.flush()
+                # Увеличиваем счетчик сохраненных сообщений
+                with self._stats_lock:
+                    self._messages_saved_raw += len(buffer_raw)
+            
+            if buffer_analysis and self._analysis_file:
+                self._analysis_file.writelines(buffer_analysis)
+                self._analysis_file.flush()
+                # Увеличиваем счетчик сохраненных сообщений
+                with self._stats_lock:
+                    self._messages_saved_analysis += len(buffer_analysis)
+        except Exception as e:
+            print("[DualStreamLogger] Ошибка записи в файлы: %s" % str(e))
+    
+    def start_file_logging(self):
+        """Запустить файловое логирование
+        
+        Открывает файлы в режиме 'a' (append) и запускает поток записи.
+        НЕ загружает существующие файлы в буфер - это делается отдельно через load_existing_file_to_buffer()
+        после инициализации GUI.
+        """        
+        # КРИТИЧНО: Проверяем не только флаг, но и активность потока
+        if self._file_writer_running:
+            # Дополнительная проверка: поток действительно работает?
+            if self._file_writer_thread and self._file_writer_thread.is_alive():
+                print(f"[WARNING] start_file_logging() вызван повторно, но поток уже работает. Игнорируем.", level='DEBUG')
+                return False
+            else:
+                # Флаг установлен, но поток не работает - сбрасываем флаг
+                self._file_writer_running = False
+        
+        try:
+            # Файлы открываются в режиме 'a' (append) - дубликаты не нужны
+            # Загрузка файлов в буфер выполняется отдельно через load_existing_file_to_buffer()
+            # после инициализации GUI
+            if self._raw_log_path:
+                self._raw_file = open(self._raw_log_path, 'a', encoding='utf-8')
+                # Устанавливаем права после открытия файла (если функция доступна)
+                try:
+                    if 'fix_permissions' in globals():
+                        fix_permissions(self._raw_log_path)
+                except Exception as e:
+                    # Игнорируем ошибки установки прав, не критично
+                    pass
+            
+            if self._analysis_log_path:
+                self._analysis_file = open(self._analysis_log_path, 'a', encoding='utf-8')
+                # Устанавливаем права после открытия файла (если функция доступна)
+                try:
+                    if 'fix_permissions' in globals():
+                        fix_permissions(self._analysis_log_path)
+                except Exception as e:
+                    # Игнорируем ошибки установки прав, не критично
+                    pass
+            
+            self._file_writer_running = True
+            self._file_writer_thread = threading.Thread(
+                target=self._file_writer_worker,
+                daemon=True,
+                name="DualStreamLogger-FileWriter"
+            )
+            print(f"Создание потока DualStreamLogger-FileWriter (PID потока будет назначен при запуске)", level='DEBUG')
+            self._file_writer_thread.start()
+            print(f"Поток DualStreamLogger-FileWriter запущен (имя: {self._file_writer_thread.name})", level='DEBUG')
+            
+            return True
+        
+        except Exception as e:
+            # КРИТИЧНО: Записываем ошибку НАПРЯМУЮ в файл (если он доступен)
+            error_msg = f"[DualStreamLogger] Ошибка запуска файлового логирования: {str(e)}"
+            print(error_msg)
+            try:
+                if self._analysis_log_path and os.path.exists(self._analysis_log_path):
+                    with open(self._analysis_log_path, 'a', encoding='utf-8') as f:
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        f.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                        import traceback
+                        f.write(f"[{timestamp}] [ERROR] Traceback:\n")
+                        for line in traceback.format_exc().split('\n'):
+                            if line.strip():
+                                f.write(f"[{timestamp}] [ERROR] {line}\n")
+                        f.flush()
+                        os.fsync(f.fileno())
+            except Exception:
+                pass  # Если не удалось записать в файл, игнорируем
+            self._file_writer_running = False
+            return False
+    
+    def stop_file_logging(self, flush=True):
+        """Остановить файловое логирование"""
+        # Защита от повторного входа
+        if self._stopping:
+            return
+        self._stopping = True
+        
+        if not self._file_writer_running:
+            self._stopping = False
+            return
+        
+        self._file_writer_running = False
+        
+        # Если flush=True, дожидаемся опустошения очереди
+        if flush:
+            # Ждем пока очередь не опустеет (максимум 30 секунд)
+            max_wait_time = 30.0
+            start_time = time.time()
+            while not self._file_queue.empty() and (time.time() - start_time) < max_wait_time:
+                time.sleep(0.1)  # Небольшая задержка
+            
+            # Если очередь не опустела, выводим предупреждение
+            if not self._file_queue.empty():
+                remaining = self._file_queue.qsize()
+                print(f"[DualStreamLogger] WARNING: Очередь не опустела при завершении, осталось {remaining} сообщений")
+        
+        # Ждем завершения потока (увеличиваем таймаут до 10 секунд)
+        if self._file_writer_thread and self._file_writer_thread.is_alive():
+            self._file_writer_thread.join(timeout=10.0)
+        
+        # Принудительный flush при завершении (если flush=True)
+        if flush:
+            try:
+                # Записываем оставшиеся данные из буферов в файлы
+                with self._raw_lock:
+                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
+                with self._analysis_lock:
+                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
+                
+                if buffer_raw or buffer_analysis:
+                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
+            except Exception as e:
+                print(f"[DualStreamLogger] Ошибка принудительного flush: {e}")
+        
+        self._file_writer_thread = None
+        self._stopping = False  # Сбрасываем флаг после завершения
+
+    def load_existing_file_to_buffer(self):
+        """Загрузить существующие файлы в буферы (для отображения в GUI)
+        
+        Загружает содержимое analysis и raw лог-файлов в соответствующие буферы.
+        Используется только после инициализации GUI для отображения полного содержимого логов.
+        """
+        # КРИТИЧНО: НЕ загружаем файл в буфер в следующих случаях:
+        # 1. Если FSA_LOG_TIMESTAMP установлен в переменной окружения И файл существует (перезапуск через sudo)
+        # 2. Если --log-file передан в аргументах (внешний скрипт указал файл)
+        # 3. Если файл уже был загружен ранее (флаг _analysis_file_loaded или _raw_file_loaded)
+        
+        should_load_file = True
+        
+        # Проверка 1: FSA_LOG_TIMESTAMP установлен И файл существует - это перезапуск, не загружаем
+        if 'FSA_LOG_TIMESTAMP' in os.environ:
+            if self._analysis_log_path and os.path.exists(self._analysis_log_path):
+                # Файл уже существует - это перезапуск, не загружаем
+                should_load_file = False
+        
+        # Проверка 2: --log-file передан - внешний скрипт, не загружаем
+        if '--log-file' in sys.argv:
+            should_load_file = False
+        
+        # Загрузка analysis файла в буфер
+        if should_load_file and not self._analysis_file_loaded and self._analysis_log_path and os.path.exists(self._analysis_log_path):
+            try:
+                with open(self._analysis_log_path, 'r', encoding='utf-8') as f:
+                    existing_lines = f.readlines()
+                
+                # КРИТИЧНО: Не загружаем файл, если он содержит <= 2 строк (только что создан)
+                file_line_count = len([line for line in existing_lines if line.strip()])
+                if file_line_count > 2:
+                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
+                    if file_line_count > self._max_buffer_size:
+                        old_buffer = list(self._analysis_buffer)
+                        new_max_size = file_line_count + 10000
+                        self._analysis_buffer = deque(old_buffer, maxlen=new_max_size)
+                        self._max_buffer_size = new_max_size
+                        print(f"[LOG_LOAD] Размер буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
+                    
+                    # Загружаем в буфер (убираем переносы строк, они уже есть в файле)
+                    with self._analysis_lock:
+                        # КРИТИЧНО: Запоминаем размер буфера ДО загрузки (для предотвращения дубликатов)
+                        self._analysis_buffer_size_at_load = len(self._analysis_buffer)
+                        for line in existing_lines:
+                            line = line.rstrip('\n\r')
+                            if line:
+                                self._analysis_buffer.append(line)
+                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего файла в буфер")
+                    self._analysis_file_loaded = True
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить существующий файл в буфер: {e}")
+        
+        # Загрузка raw файла в буфер
+        if should_load_file and not self._raw_file_loaded and self._raw_log_path and os.path.exists(self._raw_log_path):
+            try:
+                with open(self._raw_log_path, 'r', encoding='utf-8') as f:
+                    existing_lines = f.readlines()
+                
+                # КРИТИЧНО: Не загружаем файл, если он содержит <= 2 строк (только что создан)
+                file_line_count = len([line for line in existing_lines if line.strip()])
+                if file_line_count > 2:
+                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
+                    if file_line_count > self._max_buffer_size:
+                        old_buffer = list(self._raw_buffer)
+                        new_max_size = file_line_count + 10000
+                        self._raw_buffer = deque(old_buffer, maxlen=new_max_size)
+                        print(f"[LOG_LOAD] Размер raw буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
+                    
+                    with self._raw_lock:
+                        # КРИТИЧНО: Запоминаем размер буфера ДО загрузки (для предотвращения дубликатов)
+                        self._raw_buffer_size_at_load = len(self._raw_buffer)
+                        for line in existing_lines:
+                            line = line.rstrip('\n\r')
+                            if line:
+                                self._raw_buffer.append(line)
+                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего raw файла в буфер")
+                    self._raw_file_loaded = True
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить существующий raw файл в буфер: {e}")
+
+    @staticmethod
+    def create_default_logger(analysis_log_path, max_buffer_size=50000, timestamp=None, terminal_update_callback=None):
+        """Создать DualStreamLogger с дефолтными путями
+        
+        Args:
+            analysis_log_path: Путь к ANALYSIS лог-файлу
+            max_buffer_size: Максимальный размер буфера
+            timestamp: Timestamp для RAW лог-файла (если None - извлекается из analysis_log_path или создается новый)
+            terminal_update_callback: Callback для немедленного обновления терминала при новых данных
+        """
+        # КРИТИЧНО: Защита от повторного создания - если глобальный логгер уже существует
+        # и использует тот же файл, возвращаем существующий экземпляр
+        if '_global_dual_logger' in globals() and globals()['_global_dual_logger'] is not None:
+            existing_logger = globals()['_global_dual_logger']
+            if hasattr(existing_logger, '_analysis_log_path') and existing_logger._analysis_log_path == analysis_log_path:
+                # Логгер уже существует и использует тот же файл - возвращаем его
+                if terminal_update_callback and hasattr(existing_logger, 'terminal_update_callback'):
+                    existing_logger.terminal_update_callback = terminal_update_callback
+                return existing_logger
+        
+        log_dir = os.path.dirname(analysis_log_path)
+        
+        # КРИТИЧНО: Извлекаем timestamp из имени analysis_log_path, если не передан
+        if timestamp is None:
+            match = re.search(r'(\d{8}_\d{6})', analysis_log_path)
+            if match:
+                timestamp = match.group(1)
+            else:
+                # Fallback: создаем новый timestamp
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
+        
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        
+        logger = DualStreamLogger(
+            max_buffer_size=max_buffer_size,
+            raw_log_path=raw_log_path,
+            analysis_log_path=analysis_log_path,
+            terminal_update_callback=terminal_update_callback
+        )
+        
+        return logger
+
+# ============================================================================
+# ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
+# ============================================================================
+_original_print = builtins.print
+
+def universal_print(*args, **kwargs):
+    """
+    Универсальная функция логирования - переопределяет builtins.print
+    
+    Автоматически вызывается при использовании стандартного print():
+    - print("сообщение") → universal_print("сообщение")
+    - print("сообщение", gui_log=True) → universal_print("сообщение", gui_log=True)
+    
+    Прямой вызов с параметрами используется только в специальных местах:
+    - universal_print("сообщение", stream='raw', level='ERROR')
+    
+    Флаги:
+    - stream='analysis'|'raw' - поток (по умолчанию 'analysis')
+    - gui_log=True|False - отображать в GUI логе (по умолчанию False)
+    - level='INFO'|'ERROR'|'WARNING'|'DEBUG' - уровень (по умолчанию 'INFO')
+    
+    ВСЕ сообщения ВСЕГДА с метками времени (через DualStreamLogger)
+    """
+    message = ' '.join(str(arg) for arg in args)
+    
+    # Флаги
+    stream_type = kwargs.pop('stream', 'analysis')  # 'analysis' или 'raw'
+    gui_log = kwargs.pop('gui_log', False)
+    level = kwargs.pop('level', 'INFO')
+    
+    # КРИТИЧНО: ВСЕ сообщения (включая DEBUG) должны попадать в лог через DualStreamLogger
+    # Ни одно сообщение не может пройти мимо!
+    
+    # Получаем dual_logger из universal_runner или глобального
+    dual_logger = None
+    
+    # Сначала пробуем через GUI
+    if hasattr(sys, '_gui_instance') and sys._gui_instance:
+        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
+            dual_logger = getattr(sys._gui_instance.universal_runner, 'dual_logger', None)
+    
+    # Если через GUI не получилось, пробуем глобальный
+    if not dual_logger:
+        dual_logger = _global_dual_logger
+    
+    # ВСЁ через DualStreamLogger (буферы с метками времени)
+    # Буфер всегда = точная копия файла (загружается при старте + дописывается при записи)
+    if dual_logger:
+        formatted_message = f"[{level}] {message}"
+        if stream_type == 'raw':
+            dual_logger.write_raw(formatted_message)  # ВСЕГДА с меткой времени
+        else:
+            dual_logger.write_analysis(formatted_message)  # ВСЕГДА с меткой времени
+        
+        # КРИТИЧНО: В консольном режиме выводим в stdout для видимости
+        # Проверяем, не в GUI режиме ли мы (если нет GUI instance, значит консольный режим)
+        if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
+            # Выводим в консоль через оригинальный print
+            if not hasattr(builtins, '_original_print'):
+                builtins._original_print = builtins.print
+            builtins._original_print(message)
+    else:
+        # Fallback: если dual_logger недоступен, используем оригинальный print
+        # (только для самых ранних этапов инициализации)
+        if not hasattr(builtins, '_original_print'):
+            builtins._original_print = builtins.print
+        builtins._original_print(f"[{level}] {message}")
+    
+    # GUI лог (ТОЛЬКО если gui_log=True)
+    if gui_log and hasattr(sys, '_gui_instance') and sys._gui_instance:
+        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
+            if hasattr(sys._gui_instance.universal_runner, 'gui_log_callback'):
+                try:
+                    sys._gui_instance.universal_runner.gui_log_callback(message)
+                except Exception:
+                    pass  # Игнорируем ошибки
+
+# Сохраняем оригинальный print для fallback (инициализируется после импорта builtins)
+if not hasattr(builtins, '_original_print'):
+    builtins._original_print = builtins.print
+    _original_print = builtins._original_print
+
+# Переопределяем builtins.print - это позволяет использовать стандартный print() везде
+builtins.print = universal_print
+
+# ============================================================================
+# РАННЯЯ ИНИЦИАЛИЗАЦИЯ ЛОГИРОВАНИЯ (ДО ИМПОРТА TKINTER)
+# ============================================================================
+
+def _init_logging_early():
+    """Инициализация логирования ДО всех остальных операций (включая tkinter)"""
+    global GLOBAL_LOG_FILE, _global_dual_logger
+    
+    # КРИТИЧНО: Защита от повторного вызова - если логирование уже инициализировано, не создаём новые файлы
+    if _global_dual_logger is not None:
+        return  # Логирование уже инициализировано
+    
+    # Определяем путь к лог-файлу
+    log_file = None
+    log_timestamp = None
+    
+    # КРИТИЧНО: Проверяем системную переменную окружения для timestamp (приоритет для перезапуска через sudo)
+    log_timestamp = os.environ.get('FSA_LOG_TIMESTAMP')
+    
+    # Если timestamp есть в переменной окружения, используем его
+    if log_timestamp:
+        is_frozen = getattr(sys, 'frozen', False)
+        if is_frozen:
+            script_dir = os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+        log_file = os.path.join(script_dir, "Log", "analysis_%s.log" % log_timestamp)
+        
+        # Если файл существует, используем его
+        if os.path.exists(log_file):
+            GLOBAL_LOG_FILE = log_file
+        else:
+            # Файл не существует, создаём новый timestamp
+            log_timestamp = None
+            log_file = None
+    
+    # Если timestamp не был найден, проверяем --log-file (для внешних скриптов)
+    if log_file is None:
+        # Обрабатываем --log-file из аргументов командной строки
+        if len(sys.argv) > 1:
+            for i, arg in enumerate(sys.argv):
+                if arg == '--log-file' and i + 1 < len(sys.argv):
+                    log_file = sys.argv[i + 1]
+                    # Извлекаем timestamp из имени файла
+                    match = re.search(r'(\d{8}_\d{6})', log_file)
+                    if match:
+                        log_timestamp = match.group(1)
+                    break
+        
+        # Если не передан, создаем автоматически
+        if log_file is None:
+            if log_timestamp is None:
+                log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # КРИТИЧНО: Сохраняем timestamp в переменную окружения
+            os.environ['FSA_LOG_TIMESTAMP'] = log_timestamp
+            
+            is_frozen = getattr(sys, 'frozen', False)
+            if is_frozen:
+                script_dir = os.path.dirname(os.path.abspath(sys.executable))
+            else:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+            log_file = os.path.join(script_dir, "Log", "analysis_%s.log" % log_timestamp)
+    
+    # Устанавливаем глобальную переменную
+    GLOBAL_LOG_FILE = log_file
+    
+    # Создаем директорию Log если нужно
+    log_dir = os.path.dirname(log_file)
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    
+    # Устанавливаем права доступа ВСЕГДА (даже если папка уже существует)
+    # ВАЖНО: fix_permissions() ещё не определена здесь, поэтому используем локальную логику
+    # КРИТИЧНО: Проверяем SUDO_USER для установки прав реальному пользователю
+    uid = None
+    gid = None
+    try:
+        current_uid = os.getuid()
+        # Если запущено от root, определяем реального пользователя через SUDO_USER
+        if current_uid == 0:
+            real_user = os.environ.get('SUDO_USER')
+            if real_user and real_user != 'root':
+                try:
+                    user_info = pwd.getpwnam(real_user)
+                    uid = user_info.pw_uid
+                    gid = user_info.pw_gid
+                except (KeyError, ImportError):
+                    # Пользователь не найден или pwd недоступен (macOS)
+                    pass
+        else:
+            # Если не root, устанавливаем права для текущего пользователя
+            try:
+                user_info = pwd.getpwuid(current_uid)
+                uid = current_uid
+                gid = user_info.pw_gid
+            except (ImportError, OSError, KeyError):
+                # Если не удалось получить gid (например, на macOS), используем только chmod
+                pass
+        
+        # ВСЕГДА устанавливаем владельца и права для директории (даже если она уже существует)
+        if uid is not None and gid is not None:
+            try:
+                os.chown(log_dir, uid, gid)
+                os.chmod(log_dir, 0o755)
+            except (OSError, PermissionError):
+                pass
+        else:
+            # Fallback: только права без владельца
+            try:
+                os.chmod(log_dir, 0o755)
+            except (OSError, PermissionError):
+                pass
+    except Exception:
+        pass  # Игнорируем ошибки
+    
+    # Создаём файлы логов сразу
+    if log_timestamp is None:
+        log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % log_timestamp)
+    
+    try:
+        # Создаём ANALYSIS лог-файл если его нет
+        file_created = False
+        if not os.path.exists(log_file):
+            with open(log_file, 'w', encoding='utf-8') as f:
+                # КРИТИЧНО: Сразу записываем сообщение, чтобы убедиться, что файл создан и в него можно писать
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                f.write(f"[{timestamp}] [INFO] Лог-файл создан: {log_file}\n")
+                f.flush()
+                os.fsync(f.fileno())
+            file_created = True
+        
+        # ВСЕГДА устанавливаем права, даже если файл уже существует
+        # ВАЖНО: fix_permissions() ещё не определена здесь, поэтому используем локальную логику
+        if uid is not None and gid is not None:
+            try:
+                os.chown(log_file, uid, gid)
+                os.chmod(log_file, 0o644)
+            except (OSError, PermissionError):
+                pass
+        else:
+            try:
+                os.chmod(log_file, 0o644)
+            except (OSError, PermissionError):
+                pass
+        
+        # Создаём RAW лог-файл если его нет
+        if not os.path.exists(raw_log_path):
+            with open(raw_log_path, 'w', encoding='utf-8') as f:
+                # КРИТИЧНО: Сразу записываем сообщение, чтобы убедиться, что файл создан и в него можно писать
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                f.write(f"[{timestamp}] [INFO] RAW лог-файл создан: {raw_log_path}\n")
+                f.flush()
+                os.fsync(f.fileno())
+        
+        # ВСЕГДА устанавливаем права, даже если файл уже существует
+        if uid is not None and gid is not None:
+            try:
+                os.chown(raw_log_path, uid, gid)
+                os.chmod(raw_log_path, 0o644)
+            except (OSError, PermissionError):
+                pass
+        else:
+            try:
+                os.chmod(raw_log_path, 0o644)
+            except (OSError, PermissionError):
+                pass
+    except Exception as e:
+        # Игнорируем ошибки создания файлов
+        pass
+    
+    # КРИТИЧНО: Устанавливаем переменную окружения - определяем главного писателя ДО создания логгера
+    # Это нужно, чтобы self._writer_pid в __init__() DualStreamLogger получил правильное значение
+    current_pid = os.getpid()
+    current_uid = os.geteuid()
+    is_macos = platform.system() == 'Darwin'
+    writer_pid_env = os.environ.get('FSA_LOG_WRITER_PID')
+    
+    # ВРЕМЕННО: Разрешаем процессу пользователя писать логи для тестирования
+    # КРИТИЧНО: На Linux только процесс sudo (root) имеет право писать
+    # На macOS процесс пользователя может писать (нет перезапуска через sudo)
+    if is_macos:
+        # macOS: процесс пользователя становится главным писателем
+        os.environ['FSA_LOG_WRITER_PID'] = str(current_pid)
+    elif current_uid == 0:
+        # Linux: процесс sudo (root) - становится главным писателем
+        os.environ['FSA_LOG_WRITER_PID'] = str(current_pid)
+    else:
+        # ВРЕМЕННО: Linux: процесс пользователя - разрешаем писать для тестирования
+        os.environ['FSA_LOG_WRITER_PID'] = str(current_pid)
+    
+    # Инициализируем DualStreamLogger (теперь self._writer_pid получит правильное значение из переменной окружения)
+    try:
+        dual_logger = DualStreamLogger.create_default_logger(
+            analysis_log_path=GLOBAL_LOG_FILE,
+            max_buffer_size=50000,
+            timestamp=log_timestamp
+        )
+        _global_dual_logger = dual_logger
+        
+        # КРИТИЧНО: Запускаем файловое логирование СРАЗУ
+        dual_logger.start_file_logging()
+    except Exception as e:
+        # Логируем ошибку через оригинальный print (dual_logger еще не создан)
+        if not hasattr(builtins, '_original_print'):
+            builtins._original_print = builtins.print
+        builtins._original_print(f"[ERROR] Не удалось инициализировать DualStreamLogger: {e}")
+        _global_dual_logger = None
+
+# КРИТИЧНО: Инициализация логирования, установка переменных окружения Tcl/Tk и импорт tkinter
+# перенесены ВНУТРЬ блока if __name__ == '__main__': чтобы выполняться только в процессе sudo
+# (на Linux) или в процессе пользователя (на macOS)
 
 # ============================================================================
 # КОНСТАНТЫ ПРИЛОЖЕНИЯ
@@ -91,6 +997,14 @@ except ImportError:
 # Глобальные флаги и переменные
 CANCEL_OPERATION = False  # Прерывание запущенных операций
 GLOBAL_LOG_FILE = None  # Глобальная переменная для лог-файла (устанавливается в main())
+
+# Переменные для tkinter (инициализируются в блоке if __name__ == '__main__')
+TKINTER_AVAILABLE = False
+tk = None
+ttk = None
+messagebox = None
+scrolledtext = None
+filedialog = None
 
 # Константы для самообновления (SelfUpdater)
 # SMB сервер (приоритет - для разработки/тестирования)
@@ -352,21 +1266,6 @@ COMPONENTS_CONFIG = {
     },
 }
 
-# ============================================================================
-# ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ПРОЕКТА
-# ============================================================================
-
-# Глобальные экземпляры менеджеров (объявления, инициализируются после определения классов)
-_global_universal_runner = None  # UniversalProcessRunner
-_global_dual_logger = None  # DualStreamLogger
-_global_progress_manager = None  # UniversalProgressManager
-_global_activity_tracker = None  # ActivityTracker
-
-# Глобальная ссылка на GUI экземпляр
-sys._gui_instance = None
-
-# Сохранение оригинального print() для fallback (инициализируется после импорта builtins)
-_original_print = None
 
 # ============================================================================
 # УНИВЕРСАЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С КОМПОНЕНТАМИ
@@ -7822,497 +8721,6 @@ class DesktopShortcutHandler(ComponentHandler):
             traceback.print_exc()
             self._update_status(component_id, 'error')
             return False
-
-class DualStreamLogger:
-# ============================================================================
-# DUALSTREAMLOGGER - СИСТЕМА ДВОЙНЫХ ПОТОКОВ ЛОГИРОВАНИЯ
-# ============================================================================
-    """
-    Класс для управления двумя независимыми потоками логирования.
-    
-    Особенности:
-    - Потокобезопасный (thread-safe)
-    - Буферы в памяти с ограничением размера
-    - Независимые потоки для RAW и ANALYSIS данных
-    - Асинхронная запись в файлы (неблокирующая)
-    
-    RAW-поток: необработанный вывод apt-get и системных процессов (без задержек)
-    ANALYSIS-поток: аналитика, парсинг, мониторинг системы
-    """
-    
-    def __init__(self, max_buffer_size=50000, raw_log_path=None, analysis_log_path=None, terminal_update_callback=None):
-        """Инициализация DualStreamLogger"""
-        # Буферы в памяти
-        self._raw_buffer = deque(maxlen=max_buffer_size)
-        self._analysis_buffer = deque(maxlen=max_buffer_size)
-        
-        # Блокировки для потокобезопасности
-        self._raw_lock = threading.Lock()
-        self._analysis_lock = threading.Lock()
-        
-        # Настройки
-        self._max_buffer_size = max_buffer_size
-        
-        # Файловое логирование
-        self._raw_log_path = raw_log_path
-        self._analysis_log_path = analysis_log_path
-        self._file_queue = queue.Queue()
-        self._file_writer_thread = None
-        self._file_writer_running = False
-        self._raw_file = None
-        self._analysis_file = None
-        
-        # Callback для немедленного обновления терминала при новых данных
-        self.terminal_update_callback = terminal_update_callback
-        
-        # КРИТИЧНО: Размер файла на момент начала текущей сессии (для загрузки данных, записанных до запуска)
-        self._analysis_log_size_before_start = 0
-        
-        # Флаги загрузки файлов в буфер (предотвращают повторную загрузку)
-        self._raw_file_loaded = False
-        self._analysis_file_loaded = False
-        
-        # Счетчики для мониторинга
-        self._messages_received_raw = 0  # Количество полученных RAW сообщений
-        self._messages_received_analysis = 0  # Количество полученных ANALYSIS сообщений
-        self._messages_saved_raw = 0  # Количество сохраненных RAW сообщений
-        self._messages_saved_analysis = 0  # Количество сохраненных ANALYSIS сообщений
-        self._stats_lock = threading.Lock()  # Блокировка для потокобезопасности счетчиков
-    
-    def write_raw(self, message):
-        """Записать сообщение в RAW-поток (всегда с меткой времени)"""
-        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        formatted_message = "[%s] %s" % (timestamp_str, message)
-        
-        with self._raw_lock:
-            self._raw_buffer.append(formatted_message)
-        
-        # Увеличиваем счетчик полученных сообщений
-        with self._stats_lock:
-            self._messages_received_raw += 1
-        
-        # Асинхронная запись в файл (если включено)
-        if self._file_writer_running and self._raw_log_path:
-            self._file_queue.put(('raw', formatted_message))
-        
-        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
-        if self.terminal_update_callback:
-            try:
-                self.terminal_update_callback()
-            except Exception:
-                pass  # Игнорируем ошибки callback
-    
-    def write_analysis(self, message):
-        """Записать сообщение в ANALYSIS-поток (всегда с меткой времени)"""
-        timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        formatted_message = "[%s] %s" % (timestamp_str, message)
-        
-        with self._analysis_lock:
-            self._analysis_buffer.append(formatted_message)
-        
-        # Увеличиваем счетчик полученных сообщений
-        with self._stats_lock:
-            self._messages_received_analysis += 1
-        
-        # Асинхронная запись в файл (если включено)
-        if self._file_writer_running and self._analysis_log_path:
-            self._file_queue.put(('analysis', formatted_message))
-        
-        # НОВОЕ: Немедленное обновление терминала при новых данных (если callback установлен)
-        if self.terminal_update_callback:
-            try:
-                self.terminal_update_callback()
-            except Exception:
-                pass  # Игнорируем ошибки callback
-    
-    def get_raw_buffer(self):
-        """Получить все содержимое RAW-буфера"""
-        with self._raw_lock:
-            return list(self._raw_buffer)
-    
-    def get_analysis_buffer(self):
-        """Получить все содержимое ANALYSIS-буфера"""
-        with self._analysis_lock:
-            return list(self._analysis_buffer)
-    
-    def get_raw_last_n(self, n):
-        """Получить последние N строк из RAW-буфера"""
-        with self._raw_lock:
-            buffer_list = list(self._raw_buffer)
-            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
-    
-    def get_analysis_last_n(self, n):
-        """Получить последние N строк из ANALYSIS-буфера"""
-        with self._analysis_lock:
-            buffer_list = list(self._analysis_buffer)
-            return buffer_list[-n:] if len(buffer_list) >= n else buffer_list
-    
-    def clear_raw_buffer(self, flush_before_clear=True):
-        """Очистить RAW-буфер
-        
-        Args:
-            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
-        """
-        if flush_before_clear and self._file_writer_running:
-            # Принудительно записываем все данные из буфера в файл перед очисткой
-            try:
-                with self._raw_lock:
-                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
-                
-                if buffer_raw and self._raw_file:
-                    self._raw_file.writelines(buffer_raw)
-                    self._raw_file.flush()
-                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
-            except Exception as e:
-                print(f"[DualStreamLogger] Ошибка flush перед очисткой RAW-буфера: {e}")
-        
-        with self._raw_lock:
-            self._raw_buffer.clear()
-    
-    def clear_analysis_buffer(self, flush_before_clear=True):
-        """Очистить ANALYSIS-буфер
-        
-        Args:
-            flush_before_clear: Если True, перед очисткой принудительно записывает данные в файл
-        """
-        if flush_before_clear and self._file_writer_running:
-            # Принудительно записываем все данные из буфера в файл перед очисткой
-            try:
-                with self._analysis_lock:
-                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
-                
-                if buffer_analysis and self._analysis_file:
-                    self._analysis_file.writelines(buffer_analysis)
-                    self._analysis_file.flush()
-                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
-            except Exception as e:
-                print(f"[DualStreamLogger] Ошибка flush перед очисткой ANALYSIS-буфера: {e}")
-        
-        with self._analysis_lock:
-            self._analysis_buffer.clear()
-    
-    def get_raw_buffer_size(self):
-        """Получить текущий размер RAW-буфера"""
-        with self._raw_lock:
-            return len(self._raw_buffer)
-    
-    def get_analysis_buffer_size(self):
-        """Получить текущий размер ANALYSIS-буфера"""
-        with self._analysis_lock:
-            return len(self._analysis_buffer)
-    
-    def _file_writer_worker(self):
-        """Рабочий поток для асинхронной записи в файлы"""
-        thread_name = threading.current_thread().name
-        print(f"Поток {thread_name} начал выполнение (_file_writer_worker)", level='DEBUG')
-        buffer_raw = []
-        buffer_analysis = []
-        last_flush_time = time.time()
-        flush_interval = 1.0
-        flush_count = 50
-        
-        try:
-            while self._file_writer_running:
-                try:
-                    stream_type, message = self._file_queue.get(timeout=0.1)
-                    
-                    if stream_type == 'raw':
-                        buffer_raw.append(message + '\n')
-                    elif stream_type == 'analysis':
-                        buffer_analysis.append(message + '\n')
-                    
-                    current_time = time.time()
-                    should_flush = (
-                        len(buffer_raw) >= flush_count or
-                        len(buffer_analysis) >= flush_count or
-                        (current_time - last_flush_time) >= flush_interval
-                    )
-                    
-                    if should_flush:
-                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-                        buffer_raw.clear()
-                        buffer_analysis.clear()
-                        last_flush_time = current_time
-                    
-                except queue.Empty:
-                    current_time = time.time()
-                    if (current_time - last_flush_time) >= flush_interval:
-                        if buffer_raw or buffer_analysis:
-                            self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-                            buffer_raw.clear()
-                            buffer_analysis.clear()
-                        last_flush_time = current_time
-                except Exception as e:
-                    print(f"[DualStreamLogger] Ошибка в file_writer: {e}")
-            
-            # После завершения основного цикла, дожидаемся опустошения очереди
-            # Это критично для сохранения всех данных при завершении
-            empty_timeout_count = 0
-            max_empty_timeout = 100  # Максимум 10 секунд (100 * 0.1)
-            
-            while not self._file_queue.empty() and empty_timeout_count < max_empty_timeout:
-                try:
-                    stream_type, message = self._file_queue.get(timeout=0.1)
-                    
-                    if stream_type == 'raw':
-                        buffer_raw.append(message + '\n')
-                    elif stream_type == 'analysis':
-                        buffer_analysis.append(message + '\n')
-                    
-                    # Flush при заполнении буфера
-                    if len(buffer_raw) >= flush_count or len(buffer_analysis) >= flush_count:
-                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-                        buffer_raw.clear()
-                        buffer_analysis.clear()
-                    
-                    empty_timeout_count = 0  # Сброс счетчика при получении данных
-                except queue.Empty:
-                    empty_timeout_count += 1
-                    # Flush периодически даже если очередь пуста
-                    if empty_timeout_count % 10 == 0 and (buffer_raw or buffer_analysis):
-                        self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-                        buffer_raw.clear()
-                        buffer_analysis.clear()
-                except Exception as e:
-                    print(f"[DualStreamLogger] Ошибка в file_writer при завершении: {e}")
-                    break
-            
-            # Финальный flush оставшихся данных
-            if buffer_raw or buffer_analysis:
-                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-        
-        except Exception as e:
-            print(f"[DualStreamLogger] Критическая ошибка в file_writer: {e}")
-        finally:
-            # Финальный flush перед закрытием файлов
-            if buffer_raw or buffer_analysis:
-                try:
-                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-                except Exception as e:
-                    print(f"[DualStreamLogger] Ошибка финального flush: {e}")
-            
-            # Закрываем файлы с flush
-            if self._raw_file:
-                try:
-                    self._raw_file.flush()
-                    os.fsync(self._raw_file.fileno())  # Принудительная синхронизация с диском
-                    self._raw_file.close()
-                except Exception as e:
-                    print(f"[DualStreamLogger] Ошибка закрытия raw файла: {e}")
-                finally:
-                    self._raw_file = None
-            
-            if self._analysis_file:
-                try:
-                    self._analysis_file.flush()
-                    os.fsync(self._analysis_file.fileno())  # Принудительная синхронизация с диском
-                    self._analysis_file.close()
-                except Exception as e:
-                    print(f"[DualStreamLogger] Ошибка закрытия analysis файла: {e}")
-                finally:
-                    self._analysis_file = None
-    
-    def flush_buffers(self):
-        """Публичный метод для принудительной записи буферов в файлы"""
-        try:
-            # Получаем текущие буферы и добавляем переносы строк для записи
-            with self._raw_lock:
-                buffer_raw = [msg + '\n' for msg in self._raw_buffer]
-            
-            with self._analysis_lock:
-                buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
-            
-            if buffer_raw or buffer_analysis:
-                self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-        except Exception as e:
-            print(f"[DualStreamLogger] Ошибка flush_buffers: {e}")
-    
-    def _flush_buffers_to_files(self, buffer_raw, buffer_analysis):
-        """Записать буферы в файлы"""
-        try:
-            if buffer_raw and self._raw_file:
-                self._raw_file.writelines(buffer_raw)
-                self._raw_file.flush()
-                # Увеличиваем счетчик сохраненных сообщений
-                with self._stats_lock:
-                    self._messages_saved_raw += len(buffer_raw)
-            
-            if buffer_analysis and self._analysis_file:
-                self._analysis_file.writelines(buffer_analysis)
-                self._analysis_file.flush()
-                # Увеличиваем счетчик сохраненных сообщений
-                with self._stats_lock:
-                    self._messages_saved_analysis += len(buffer_analysis)
-        except Exception as e:
-            print("[DualStreamLogger] Ошибка записи в файлы: %s" % str(e))
-    
-    def start_file_logging(self):
-        """Запустить файловое логирование"""
-        if self._file_writer_running:
-            return False
-        
-        try:
-            # КРИТИЧНО: Загружаем существующий файл в буфер ПЕРЕД открытием в режиме 'a'
-            # Это обеспечивает синхронизацию: буфер = точная копия файла
-            # НО ТОЛЬКО ОДИН РАЗ! (используем флаг _analysis_file_loaded)
-            if not self._analysis_file_loaded and self._analysis_log_path and os.path.exists(self._analysis_log_path):
-                try:
-                    with open(self._analysis_log_path, 'r', encoding='utf-8') as f:
-                        existing_lines = f.readlines()
-                    
-                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
-                    # чтобы все строки поместились в буфер
-                    file_line_count = len([line for line in existing_lines if line.strip()])
-                    if file_line_count > self._max_buffer_size:
-                        # Временно создаем новый deque с увеличенным размером
-                        old_buffer = list(self._analysis_buffer)
-                        new_max_size = file_line_count + 10000  # Запас 10k строк для новых сообщений
-                        self._analysis_buffer = deque(old_buffer, maxlen=new_max_size)
-                        self._max_buffer_size = new_max_size
-                        print(f"[LOG_LOAD] Размер буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
-                    
-                    # Загружаем в буфер (убираем переносы строк, они уже есть в файле)
-                    with self._analysis_lock:
-                        for line in existing_lines:
-                            line = line.rstrip('\n\r')  # Убираем переносы
-                            if line:  # Пропускаем пустые строки
-                                self._analysis_buffer.append(line)
-                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего файла в буфер")
-                    self._analysis_file_loaded = True  # Устанавливаем флаг после успешной загрузки
-                except Exception as e:
-                    print(f"[WARNING] Не удалось загрузить существующий файл в буфер: {e}")
-            
-            # Аналогично для raw файла (используем флаг _raw_file_loaded)
-            if not self._raw_file_loaded and self._raw_log_path and os.path.exists(self._raw_log_path):
-                try:
-                    with open(self._raw_log_path, 'r', encoding='utf-8') as f:
-                        existing_lines = f.readlines()
-                    
-                    # КРИТИЧНО: Если файл больше текущего maxlen буфера, увеличиваем maxlen
-                    file_line_count = len([line for line in existing_lines if line.strip()])
-                    if file_line_count > self._max_buffer_size:
-                        # Временно создаем новый deque с увеличенным размером
-                        old_buffer = list(self._raw_buffer)
-                        new_max_size = file_line_count + 10000  # Запас 10k строк для новых сообщений
-                        self._raw_buffer = deque(old_buffer, maxlen=new_max_size)
-                        print(f"[LOG_LOAD] Размер raw буфера увеличен до {new_max_size} для загрузки {file_line_count} строк из файла")
-                    
-                    with self._raw_lock:
-                        for line in existing_lines:
-                            line = line.rstrip('\n\r')
-                            if line:
-                                self._raw_buffer.append(line)
-                    print(f"[LOG_LOAD] Загружено {file_line_count} строк из существующего raw файла в буфер")
-                    self._raw_file_loaded = True  # Устанавливаем флаг после успешной загрузки
-                except Exception as e:
-                    print(f"[WARNING] Не удалось загрузить существующий raw файл в буфер: {e}")
-            
-            if self._raw_log_path:
-                self._raw_file = open(self._raw_log_path, 'a', encoding='utf-8')
-                # Устанавливаем права доступа для файла лога
-                fix_permissions(self._raw_log_path)
-            
-            if self._analysis_log_path:
-                self._analysis_file = open(self._analysis_log_path, 'a', encoding='utf-8')
-                # Устанавливаем права доступа для файла лога
-                fix_permissions(self._analysis_log_path)
-            
-            self._file_writer_running = True
-            self._file_writer_thread = threading.Thread(
-                target=self._file_writer_worker,
-                daemon=True,
-                name="DualStreamLogger-FileWriter"
-            )
-            print(f"Создание потока DualStreamLogger-FileWriter (PID потока будет назначен при запуске)", level='DEBUG')
-            self._file_writer_thread.start()
-            print(f"Поток DualStreamLogger-FileWriter запущен (имя: {self._file_writer_thread.name})", level='DEBUG')
-            
-            return True
-        
-        except Exception as e:
-            print("[DualStreamLogger] Ошибка запуска файлового логирования: %s" % str(e))
-            self._file_writer_running = False
-            return False
-    
-    def stop_file_logging(self, flush=True):
-        """Остановить файловое логирование"""
-        if not self._file_writer_running:
-            return
-        
-        self._file_writer_running = False
-        
-        # Если flush=True, дожидаемся опустошения очереди
-        if flush:
-            # Ждем пока очередь не опустеет (максимум 30 секунд)
-            max_wait_time = 30.0
-            start_time = time.time()
-            while not self._file_queue.empty() and (time.time() - start_time) < max_wait_time:
-                time.sleep(0.1)  # Небольшая задержка
-            
-            # Если очередь не опустела, выводим предупреждение
-            if not self._file_queue.empty():
-                remaining = self._file_queue.qsize()
-                print(f"[DualStreamLogger] WARNING: Очередь не опустела при завершении, осталось {remaining} сообщений")
-        
-        # Ждем завершения потока (увеличиваем таймаут до 10 секунд)
-        if self._file_writer_thread and self._file_writer_thread.is_alive():
-            self._file_writer_thread.join(timeout=10.0)
-        
-        # Принудительный flush при завершении (если flush=True)
-        if flush:
-            try:
-                # Записываем оставшиеся данные из буферов в файлы
-                with self._raw_lock:
-                    buffer_raw = [msg + '\n' for msg in self._raw_buffer]
-                with self._analysis_lock:
-                    buffer_analysis = [msg + '\n' for msg in self._analysis_buffer]
-                
-                if buffer_raw or buffer_analysis:
-                    self._flush_buffers_to_files(buffer_raw, buffer_analysis)
-            except Exception as e:
-                print(f"[DualStreamLogger] Ошибка принудительного flush: {e}")
-        
-        self._file_writer_thread = None
-    
-    @staticmethod
-    def create_default_logger(analysis_log_path, max_buffer_size=50000, timestamp=None, terminal_update_callback=None):
-        """Создать DualStreamLogger с дефолтными путями
-        
-        Args:
-            analysis_log_path: Путь к ANALYSIS лог-файлу
-            max_buffer_size: Максимальный размер буфера
-            timestamp: Timestamp для RAW лог-файла (если None - извлекается из analysis_log_path или создается новый)
-            terminal_update_callback: Callback для немедленного обновления терминала при новых данных
-        """
-        log_dir = os.path.dirname(analysis_log_path)
-        
-        # КРИТИЧНО: Извлекаем timestamp из имени analysis_log_path, если не передан
-        if timestamp is None:
-            match = re.search(r'(\d{8}_\d{6})', analysis_log_path)
-            if match:
-                timestamp = match.group(1)
-            else:
-                # Fallback: создаем новый timestamp
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % timestamp)
-        
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir, exist_ok=True)
-        
-        # ВСЕГДА устанавливаем права доступа (даже если папка уже существовала)
-        if log_dir and os.path.exists(log_dir):
-            fix_permissions(log_dir)
-        
-        logger = DualStreamLogger(
-            max_buffer_size=max_buffer_size,
-            raw_log_path=raw_log_path,
-            analysis_log_path=analysis_log_path,
-            terminal_update_callback=terminal_update_callback
-        )
-        
-        return logger
-
 class LogReplaySimulator:
 # ============================================================================
 # LOG REPLAY SIMULATOR
@@ -8451,90 +8859,6 @@ class LogReplaySimulator:
         progress = (self.current_line / total) * 100
         return (self.current_line, total, progress)
 
-# ============================================================================
-# ПЕРЕОПРЕДЕЛЕНИЕ PRINT() ДЛЯ ПЕРЕНАПРАВЛЕНИЯ В GUI
-# ============================================================================
-_original_print = builtins.print
-
-def universal_print(*args, **kwargs):
-    """
-    Универсальная функция логирования - переопределяет builtins.print
-    
-    Автоматически вызывается при использовании стандартного print():
-    - print("сообщение") → universal_print("сообщение")
-    - print("сообщение", gui_log=True) → universal_print("сообщение", gui_log=True)
-    
-    Прямой вызов с параметрами используется только в специальных местах:
-    - universal_print("сообщение", stream='raw', level='ERROR')
-    
-    Флаги:
-    - stream='analysis'|'raw' - поток (по умолчанию 'analysis')
-    - gui_log=True|False - отображать в GUI логе (по умолчанию False)
-    - level='INFO'|'ERROR'|'WARNING'|'DEBUG' - уровень (по умолчанию 'INFO')
-    
-    ВСЕ сообщения ВСЕГДА с метками времени (через DualStreamLogger)
-    """
-    message = ' '.join(str(arg) for arg in args)
-    
-    # Флаги
-    stream_type = kwargs.pop('stream', 'analysis')  # 'analysis' или 'raw'
-    gui_log = kwargs.pop('gui_log', False)
-    level = kwargs.pop('level', 'INFO')
-    
-    # КРИТИЧНО: ВСЕ сообщения (включая DEBUG) должны попадать в лог через DualStreamLogger
-    # Ни одно сообщение не может пройти мимо!
-    
-    # Получаем dual_logger из universal_runner или глобального
-    dual_logger = None
-    
-    # Сначала пробуем через GUI
-    if hasattr(sys, '_gui_instance') and sys._gui_instance:
-        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
-            dual_logger = getattr(sys._gui_instance.universal_runner, 'dual_logger', None)
-    
-    # Если через GUI не получилось, пробуем глобальный
-    if not dual_logger:
-        dual_logger = _global_dual_logger
-    
-    # ВСЁ через DualStreamLogger (буферы с метками времени)
-    # Буфер всегда = точная копия файла (загружается при старте + дописывается при записи)
-    if dual_logger:
-        formatted_message = f"[{level}] {message}"
-        if stream_type == 'raw':
-            dual_logger.write_raw(formatted_message)  # ВСЕГДА с меткой времени
-        else:
-            dual_logger.write_analysis(formatted_message)  # ВСЕГДА с меткой времени
-        
-        # КРИТИЧНО: В консольном режиме выводим в stdout для видимости
-        # Проверяем, не в GUI режиме ли мы (если нет GUI instance, значит консольный режим)
-        if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
-            # Выводим в консоль через оригинальный print
-            if not hasattr(builtins, '_original_print'):
-                builtins._original_print = builtins.print
-            builtins._original_print(message)
-    else:
-        # Fallback: если dual_logger недоступен, используем оригинальный print
-        # (только для самых ранних этапов инициализации)
-        if not hasattr(builtins, '_original_print'):
-            builtins._original_print = builtins.print
-        builtins._original_print(f"[{level}] {message}")
-    
-    # GUI лог (ТОЛЬКО если gui_log=True)
-    if gui_log and hasattr(sys, '_gui_instance') and sys._gui_instance:
-        if hasattr(sys._gui_instance, 'universal_runner') and sys._gui_instance.universal_runner:
-            if hasattr(sys._gui_instance.universal_runner, 'gui_log_callback'):
-                try:
-                    sys._gui_instance.universal_runner.gui_log_callback(message)
-                except Exception:
-                    pass  # Игнорируем ошибки
-
-# Сохраняем оригинальный print для fallback (инициализируется после импорта builtins)
-if not hasattr(builtins, '_original_print'):
-    builtins._original_print = builtins.print
-    _original_print = builtins._original_print
-
-# Переопределяем builtins.print - это позволяет использовать стандартный print() везде
-builtins.print = universal_print
 
 # ============================================================================
 # ГЛОБАЛЬНЫЙ UNIVERSALPROCESSRUNNER - ДОСТУПЕН С САМОГО НАЧАЛА
@@ -12702,17 +13026,25 @@ class AutomationGUI(object):
 # ============================================================================
     """GUI для мониторинга автоматизации установки Astra.IDE"""
     
-    def __init__(self, console_mode=False, close_terminal_pid=None):
-      
-        # Проверяем и устанавливаем зависимости для GUI только если не консольный режим
-        if not console_mode:
-            if not self._install_gui_dependencies():
-                raise RuntimeError("Не удалось установить зависимости GUI")
+    def __init__(self, console_mode=False):
+        # Проверяем доступность tkinter
+        if not TKINTER_AVAILABLE or tk is None:
+            error_msg = "tkinter недоступен. GUI режим требует tkinter.\n"
+            if getattr(sys, 'frozen', False):
+                error_msg += f"Бинарник: проверьте включение библиотек Tcl/Tk в сборку.\n"
+                error_msg += f"sys._MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}\n"
+                if 'TKINTER_IMPORT_ERROR' in globals():
+                    error_msg += f"Ошибка импорта: {TKINTER_IMPORT_ERROR}\n"
+            else:
+                error_msg += "Установите: sudo apt-get install python3-tk"
+            raise RuntimeError(error_msg)
         
         # Сохраняем модули как атрибуты класса
         self.tk = tk
         self.ttk = ttk
         
+        # КРИТИЧНО: Библиотеки Tcl/Tk уже загружены перед импортом tkinter
+        # Дополнительная загрузка не требуется
         self.root = tk.Tk()
         self.root.title(f"{APP_NAME} {APP_VERSION}")
         
@@ -12797,9 +13129,6 @@ class AutomationGUI(object):
         self.is_running = False
         self.dry_run = tk.BooleanVar()
         self.process_thread = None
-        
-        # PID терминала для автозакрытия
-        self.close_terminal_pid = close_terminal_pid
         
         # Очередь для потокобезопасного обновления терминала
         self.terminal_queue = queue.Queue()
@@ -12888,9 +13217,6 @@ class AutomationGUI(object):
         # Запускаем обработку очереди терминала с задержкой
         self.root.after(1000, self.process_terminal_queue)
         
-        # Закрываем родительский терминал после полного запуска GUI
-        # УБРАНО - теперь закрываем сразу при получении PID
-        
         # UniversalProcessRunner готов к работе
         
     def _get_script_dir(self):
@@ -12970,50 +13296,6 @@ class AutomationGUI(object):
             universal_runner=self.universal_runner,
             dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None
         )
-    
-    def _install_gui_dependencies(self):
-        """Установка зависимостей для GUI"""
-        try:
-            # ОТКЛЮЧЕНО: Автоустановка pystray и Pillow отключена для экономии ресурсов
-            # Системный трей не критичен для работы приложения
-            # Если нужен трей - установите вручную: pip install pystray Pillow
-            if platform.system() == "Linux":
-                try:
-                    pystray = __import__('pystray')
-                    from PIL import Image
-                    print("[INFO] pystray и Pillow уже установлены", level='DEBUG')
-                except ImportError:
-                    # НЕ устанавливаем автоматически - просто информируем
-                    print("[INFO] pystray/Pillow не установлены - трей недоступен", level='DEBUG')
-            return True
-        except ImportError as e:
-            print(f"[WARNING] tkinter не найден: {e}")
-            
-            # Проверяем операционную систему
-            if platform.system() == "Darwin":  # macOS
-                print("[INFO] macOS: tkinter должен быть установлен с Python")
-                print("[ERROR] tkinter не найден на macOS - переустановите Python")
-                return False
-            elif platform.system() == "Linux":
-                print("[WARNING] Linux: tkinter не найден, устанавливаем python3-tk...")
-                
-                try:
-                    # Устанавливаем python3-tk
-                    result = subprocess.call(['apt-get', 'install', '-y', 'python3-tk'], 
-                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    
-                    if result == 0:
-                        print("[OK] python3-tk успешно установлен")
-                        return True
-                    else:
-                        print("[ERROR] Не удалось установить python3-tk")
-                        return False
-                except Exception as e:
-                    print(f"[ERROR] Ошибка установки python3-tk: {e}")
-                    return False
-            else:
-                print("[ERROR] Неподдерживаемая операционная система: %s" % platform.system())
-                return False
     
     def _get_logger_threads_info(self):
         """Получение информации о фоновых потоках логгера"""
@@ -13386,40 +13668,6 @@ class AutomationGUI(object):
             print(f"[ERROR] Ошибка при убивании процессов: {e}")
             return 0
     
-    def _close_terminal_process(self):
-        """Закрытие родительского терминала"""
-        if not self.close_terminal_pid:
-            return
-        
-        try:
-            pid = int(self.close_terminal_pid)
-            
-            # Проверяем что процесс существует
-            try:
-                os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-                
-                # Сначала мягкое завершение
-                os.kill(pid, signal.SIGTERM)
-                
-                # Даем время на завершение
-                time.sleep(0.5)
-                
-                # Проверяем что процесс завершился
-                try:
-                    os.kill(pid, 0)
-                    # Процесс еще жив - отправляем SIGKILL
-                    os.kill(pid, signal.SIGKILL)
-                except OSError:
-                    # Процесс уже завершился
-                    pass
-                    
-            except OSError as e:
-                # Процесс уже не существует
-                pass
-                
-        except Exception as e:
-            print(f"[ERROR] Ошибка закрытия терминала: {e}")
-    
     def _close_parent_terminal(self):
         """Умная форма подтверждения закрытия с убиванием процессов"""
         try:
@@ -13440,8 +13688,6 @@ class AutomationGUI(object):
                         self.tray_icon.stop()
                     except:
                         pass
-                if self.close_terminal_pid:
-                    self._close_terminal_process()
                 self.root.destroy()
                 return
             
@@ -13720,9 +13966,6 @@ class AutomationGUI(object):
                     dialog.destroy()
                     
                     # Закрываем терминал если есть PID
-                    if self.close_terminal_pid:
-                        self._close_terminal_process()
-                    
                     # Останавливаем трей перед закрытием
                     if self.tray_icon:
                         try:
@@ -13790,8 +14033,6 @@ class AutomationGUI(object):
                     self.tray_icon.stop()
                 except:
                     pass
-            if self.close_terminal_pid:
-                self._close_terminal_process()
             self.root.destroy()
     
     def _on_closing(self):
@@ -22387,8 +22628,13 @@ class AutomationGUI(object):
             # Принудительно записываем все оставшиеся логи перед остановкой DualStreamLogger
             if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
                 try:
-                    # Принудительно записываем буферы перед остановкой
-                    globals()['_global_dual_logger'].flush_buffers()
+                    # Ждём, пока очередь опустеет (все сообщения уже в очереди)
+                    max_wait = 2.0
+                    start_wait = time.time()
+                    while (time.time() - start_wait) < max_wait:
+                        if globals()['_global_dual_logger']._file_queue.empty():
+                            break
+                        time.sleep(0.1)
                     # Даем время на запись
                     time.sleep(0.1)
                 except Exception as e:
@@ -22400,14 +22646,24 @@ class AutomationGUI(object):
             if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
                 try:
                     print("[DUAL_STREAM] Остановка файлового логирования...", gui_log=True)
-                    # Принудительно записываем буферы еще раз перед остановкой
-                    globals()['_global_dual_logger'].flush_buffers()
+                    # Ждём, пока очередь опустеет (все сообщения уже в очереди)
+                    max_wait = 2.0
+                    start_wait = time.time()
+                    while (time.time() - start_wait) < max_wait:
+                        if globals()['_global_dual_logger']._file_queue.empty():
+                            break
+                        time.sleep(0.1)
                     # Даем время на запись сообщения об остановке
                     time.sleep(0.1)
                     # Записываем сообщение об успешной остановке ПЕРЕД остановкой
                     print("[DUAL_STREAM] OK: DualStreamLogger остановлен", gui_log=True)
-                    # Еще раз записываем буферы с финальным сообщением
-                    globals()['_global_dual_logger'].flush_buffers()
+                    # Еще раз ждём, пока очередь опустеет с финальным сообщением
+                    max_wait = 2.0
+                    start_wait = time.time()
+                    while (time.time() - start_wait) < max_wait:
+                        if globals()['_global_dual_logger']._file_queue.empty():
+                            break
+                        time.sleep(0.1)
                     time.sleep(0.1)
                     # Теперь останавливаем логирование
                     globals()['_global_dual_logger'].stop_file_logging(flush=True)
@@ -25395,12 +25651,15 @@ def check_system_requirements():
     # Синхронизация времени уже выполнена в bash скрипте
     print("[INFO] Синхронизация времени пропущена (уже выполнена в bash)")
     
-    # Проверяем права root (только для Linux)
+    # ВРЕМЕННО ОТКЛЮЧЕНО: Проверка прав root (только для Linux)
+    # Для тестирования GUI от пользователя
     try:
-        if os.geteuid() != 0:
+        if False and os.geteuid() != 0:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
             print("[ERROR] Требуются права root для работы с системными файлами")
             print("   Запустите: sudo python3 FSA-AstraInstall.py")
             return False
+        else:
+            print("[INFO] ВРЕМЕННО: Проверка прав root отключена для тестирования GUI")
     except AttributeError:
         # os.geteuid() не существует на macOS/Windows
         print("[INFO] Проверка прав root пропущена (не Linux система)")
@@ -25431,73 +25690,6 @@ def check_system_requirements():
     
     print("[OK] Все требования выполнены")
     return True
-
-def install_gui_components():
-    """Установка GUI компонентов (tkinter, pip3)"""
-    print("[GUI] Установка GUI компонентов...")
-    
-    try:
-        # Обновляем списки пакетов
-        print("[GUI] Обновление списков пакетов...")
-        result = subprocess.call(['apt-get', 'update'], 
-                               stdout=subprocess.PIPE, 
-                               stderr=subprocess.PIPE)
-        
-        if result != 0:
-            print("[ERROR] Ошибка обновления списков пакетов")
-            return False
-        
-        print("[OK] Списки пакетов обновлены")
-        
-        # Устанавливаем GUI компоненты
-        print("[GUI] Установка python3-tk и python3-pip...")
-        
-        # Настраиваем переменные окружения для автоматических ответов
-        env = os.environ.copy()
-        env['DEBIAN_FRONTEND'] = 'noninteractive'
-        env['DEBIAN_PRIORITY'] = 'critical'
-        env['APT_LISTCHANGES_FRONTEND'] = 'none'
-        
-        # Устанавливаем пакеты с автоматическими ответами
-        cmd = ['apt-get', 'install', '-y', 
-               '-o', 'Dpkg::Options::=--force-confdef',
-               '-o', 'Dpkg::Options::=--force-confold', 
-               '-o', 'Dpkg::Options::=--force-confmiss',
-               'python3-tk', 'python3-pip']
-        
-        result = subprocess.call(cmd, env=env,
-                               stdout=subprocess.PIPE, 
-                               stderr=subprocess.PIPE)
-        
-        if result != 0:
-            print("[ERROR] Ошибка установки GUI компонентов")
-            return False
-        
-        print("[OK] GUI компоненты установлены успешно")
-        
-        # Проверяем что tkinter работает
-        try:
-            subprocess.check_call(['python3', '-c', 'import tkinter'], 
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE)
-            print("[OK] tkinter работает корректно")
-        except subprocess.CalledProcessError:
-            print("[WARNING] tkinter установлен, но может не работать корректно")
-        
-        # Проверяем что pip3 работает
-        try:
-            subprocess.check_call(['pip3', '--version'], 
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE)
-            print("[OK] pip3 работает корректно")
-        except subprocess.CalledProcessError:
-            print("[WARNING] pip3 установлен, но может не работать корректно")
-        
-        return True
-        
-    except Exception as e:
-        print("[ERROR] Ошибка установки GUI компонентов: %s" % str(e))
-        return False
 
 def run_repo_checker(gui_terminal=None, dry_run=False):
     """Запуск проверки репозиториев через класс RepoChecker"""
@@ -25649,7 +25841,7 @@ def run_system_updater(temp_dir, dry_run=False):
         print(f"[ERROR] Ошибка обновления системы: {e}", gui_log=True)
         return False
 
-def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
+def run_gui_monitor(temp_dir, dry_run=False):
     """Запуск GUI мониторинга через класс AutomationGUI"""
     # ОТЛАДКА: Отслеживаем вызовы run_gui_monitor
     caller_info = ''.join(traceback.format_stack()[-3:-1]) if len(traceback.format_stack()) > 2 else "unknown"
@@ -25662,10 +25854,52 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
     run_gui_monitor._running = True
     print("\n[GUI] Запуск GUI мониторинга...")
     
+    # КРИТИЧНО: Принудительная синхронизация ВСЕХ логов ПЕРЕД созданием GUI
+    # чтобы гарантированно увидеть все сообщения в логах, даже если GUI упадёт
+    if _global_dual_logger and _global_dual_logger._file_writer_running:
+        # 1. Ждём, пока очередь не опустеет (максимум 5 секунд)
+        # Все сообщения уже в очереди, она сама запишет их в файл
+        max_wait = 5.0
+        start_wait = time.time()
+        queue_empty_count = 0
+        while (time.time() - start_wait) < max_wait:
+            if _global_dual_logger._file_queue.empty():
+                queue_empty_count += 1
+                if queue_empty_count >= 5:
+                    break
+            else:
+                queue_empty_count = 0
+            time.sleep(0.1)
+        
+        # 3. Дополнительная пауза для записи буферов потока
+        time.sleep(0.5)
+        
+        # 4. Финальный flush и fsync файлов
+        try:
+            if _global_dual_logger._analysis_file:
+                _global_dual_logger._analysis_file.flush()
+                os.fsync(_global_dual_logger._analysis_file.fileno())
+            if _global_dual_logger._raw_file:
+                _global_dual_logger._raw_file.flush()
+                os.fsync(_global_dual_logger._raw_file.fileno())
+        except Exception:
+            pass
+        
+        # 5. Записываем сообщение НАПРЯМУЮ в файл перед созданием GUI
+        try:
+            if _global_dual_logger._analysis_file:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                message = f"[{timestamp}] [INFO] Все сообщения до создания GUI записаны. Приступаем к созданию AutomationGUI...\n"
+                _global_dual_logger._analysis_file.write(message)
+                _global_dual_logger._analysis_file.flush()
+                os.fsync(_global_dual_logger._analysis_file.fileno())
+        except Exception:
+            pass
+    
     try:
         # Создаем экземпляр класса AutomationGUI напрямую
         print("   [OK] Создаем экземпляр AutomationGUI...")
-        gui = AutomationGUI(console_mode=False, close_terminal_pid=close_terminal_pid)
+        gui = AutomationGUI(console_mode=False)
         
         # Устанавливаем лог-файл для GUI
         # Получаем путь к лог-файлу из GLOBAL_LOG_FILE (установлен в main())
@@ -25705,8 +25939,16 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
             gui.universal_runner.dual_logger.terminal_update_callback = terminal_update_callback
         
         # Также устанавливаем в глобальный dual_logger, если он есть
+        # И загружаем существующие файлы в буферы ПОСЛЕ создания GUI
         if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
             globals()['_global_dual_logger'].terminal_update_callback = terminal_update_callback
+            
+            # КРИТИЧНО: Загружаем существующие файлы в буферы ПОСЛЕ создания GUI
+            # Это нужно для отображения полного содержимого логов в GUI с самого начала
+            try:
+                globals()['_global_dual_logger'].load_existing_file_to_buffer()
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить существующие файлы в буфер: {e}")
         
         # DualStreamLogger уже инициализирован с GLOBAL_LOG_FILE в main()
         # Не нужно дополнительно устанавливать путь через set_log_file()
@@ -25719,8 +25961,8 @@ def run_gui_monitor(temp_dir, dry_run=False, close_terminal_pid=None):
         # Сохраняем ссылку на universal_runner для использования в функции
         universal_runner = gui.universal_runner
         
-        # Буфер уже содержит все данные из файла (загружены при старте в start_file_logging())
-        # Терминал = точная копия буфера, поэтому дополнительная загрузка не требуется
+        # Буфер загружен из файла через load_existing_file_to_buffer() выше
+        # Терминал = точная копия буфера, поэтому нужно обновить отображение
         
         # КРИТИЧНО: Принудительно обновляем терминал после установки dual_logger
         # чтобы отобразить все сообщения, загруженные из файла в буфер
@@ -26404,8 +26646,8 @@ def find_running_instance():
         # Небольшая задержка после перезапуска, чтобы процесс успел полностью инициализироваться
         # Особенно важно для Python 3.7 на сборке 1.7
         time.sleep(0.5)
-        
-        # Проходим по всем процессам в /proc
+    
+    # Проходим по всем процессам в /proc
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
                 continue
@@ -26488,559 +26730,6 @@ def activate_existing_window():
         pass
     
     return False
-
-def main():
-# ============================================================================
-# ОСНОВНАЯ ФУНКЦИЯ
-# ============================================================================
-    """Основная функция"""
-    # КРИТИЧНО: Устанавливаем GLOBAL_LOG_FILE СРАЗУ в начале main()
-    log_file = None
-    log_timestamp = None  # КРИТИЧНО: timestamp для единого лог-файла
-    
-    # Обрабатываем --log-file и --log-timestamp
-    if len(sys.argv) > 1:
-        for i, arg in enumerate(sys.argv):
-            if arg == '--log-file' and i + 1 < len(sys.argv):
-                log_file = sys.argv[i + 1]
-            elif arg == '--log-timestamp' and i + 1 < len(sys.argv):
-                log_timestamp = sys.argv[i + 1]
-    
-    # Если не передан, создаем автоматически
-    if log_file is None:
-        if log_timestamp is None:
-            log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = os.path.join(script_dir, "Log", "FSA-AstraInstall_%s.log" % log_timestamp)
-    else:
-        # Если передан log_file, но не передан timestamp - извлекаем из имени файла
-        if log_timestamp is None:
-            match = re.search(r'(\d{8}_\d{6})', log_file)
-            if match:
-                log_timestamp = match.group(1)
-                print(f"[GLOBAL_LOG] Извлечен timestamp из имени файла: {log_timestamp}")
-    
-    # Создаем глобальную переменную для лог-файла СРАЗУ
-    global GLOBAL_LOG_FILE
-    GLOBAL_LOG_FILE = log_file
-    print(f"[GLOBAL_LOG] Установлен глобальный лог-файл: {GLOBAL_LOG_FILE}")
-    if log_timestamp:
-        print(f"[GLOBAL_LOG] Используется timestamp: {log_timestamp}")
-    
-    # Создаем директорию Log если нужно
-    log_dir = os.path.dirname(log_file)
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir, exist_ok=True)
-    
-    # ВСЕГДА устанавливаем права доступа (даже если папка уже существовала)
-    if os.path.exists(log_dir):
-        fix_permissions(log_dir)
-    
-    # Создаём файлы логов сразу, чтобы они были доступны с самого начала
-    # Определяем путь к RAW лог-файлу
-    if log_timestamp is None:
-        log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = os.path.join(log_dir, "apt_raw_%s.log" % log_timestamp)
-    
-    # Создаём файлы логов (только если их ещё нет)
-    try:
-        # Создаём ANALYSIS лог-файл
-        if not os.path.exists(log_file):
-            with open(log_file, 'w', encoding='utf-8') as f:
-                f.write('')  # Создаём пустой файл
-            fix_permissions(log_file)
-        
-        # Создаём RAW лог-файл
-        if not os.path.exists(raw_log_path):
-            with open(raw_log_path, 'w', encoding='utf-8') as f:
-                f.write('')  # Создаём пустой файл
-            fix_permissions(raw_log_path)
-    except Exception as e:
-        print(f"[WARNING] Не удалось создать файлы логов: {e}")
-    
-    # НОВОЕ: Инициализируем DualStreamLogger для разделения потоков
-    print("[DUAL_STREAM] Инициализация системы двойных потоков логирования...")
-    dual_logger = None
-    try:
-        # Создаём DualStreamLogger с интеграцией в существующую систему
-        # КРИТИЧНО: Передаем timestamp для единого RAW лог-файла
-        dual_logger = DualStreamLogger.create_default_logger(
-            analysis_log_path=GLOBAL_LOG_FILE,
-            max_buffer_size=50000,
-            timestamp=log_timestamp  # Передаем timestamp для RAW файла
-        )
-        
-        # Запускаем файловое логирование
-        dual_logger.start_file_logging()
-        
-        print("[DUAL_STREAM] OK: DualStreamLogger создан и запущен")
-        print("[DUAL_STREAM]   - RAW-поток (apt): %s" % os.path.basename(dual_logger._raw_log_path))
-        print("[DUAL_STREAM]   - ANALYSIS-поток: %s" % os.path.basename(dual_logger._analysis_log_path))
-        
-        # НОВОЕ: Устанавливаем глобальную переменную для доступа из UniversalProcessRunner
-        global _global_dual_logger
-        _global_dual_logger = dual_logger
-        
-            # Принудительная запись только в исключительных случаях (например, перед завершением)
-        # flush_buffers() не нужен - асинхронная запись через очередь работает автоматически
-    except Exception as e:
-        print("[DUAL_STREAM] WARNING: Ошибка инициализации DualStreamLogger: %s" % str(e))
-        print("[DUAL_STREAM]   Продолжаем без разделения потоков...")
-        dual_logger = None
-        _global_dual_logger = None
-    
-    # Создаем единый universal_runner для всего приложения (dual_logger через глобальную переменную)
-    logger = UniversalProcessRunner()
-    logger.set_log_file(log_file)
-    
-    # КРИТИЧНО: Немедленно обрабатываем очередь для записи в лог файл!
-    logger.process_queue()
-    
-    # Диагностическая информация
-    print(f"[INFO] {APP_NAME} версия: {APP_VERSION}", gui_log=True)
-    print(f"[INFO] Python версия: {sys.version}", gui_log=True)
-    
-    # КРИТИЧНО: Обрабатываем --close-terminal СРАЗУ после создания лог файла
-    close_terminal_pid = None
-    start_mode = None
-    console_mode = False
-    setup_repos = False
-    dry_run = False  # Инициализируем dry_run
-    
-    # Обрабатываем аргументы командной строки
-    i = 0
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-        if arg == '--console':
-            console_mode = True
-            start_mode = "console_forced"  # Автоматически устанавливаем режим для бинарника
-            print("[INFO] Включен консольный режим", gui_log=True)
-        elif arg == '--dry-run':
-            dry_run = True
-            print("[INFO] Включен режим тестирования", gui_log=True)
-        elif arg == '--log-file':
-            # Уже обработан выше
-            i += 1  # Пропускаем следующий аргумент
-        elif arg == '--log-timestamp':
-            # Уже обработан выше
-            i += 1  # Пропускаем следующий аргумент
-        elif arg == '--setup-repos':
-            setup_repos = True
-            print("[INFO] Режим: только настройка репозиториев", gui_log=True)
-        elif arg == '--close-terminal':
-            # Следующий аргумент - PID терминала
-            if i + 1 < len(sys.argv):
-                close_terminal_pid = sys.argv[i + 1]
-                
-                # КРИТИЧНО: Проверяем что это действительно число, а не другой аргумент
-                if close_terminal_pid and close_terminal_pid.isdigit():
-                    # ЗАКРЫВАЕМ ТЕРМИНАЛ СРАЗУ!
-                    try:
-                        pid = int(close_terminal_pid)
-                        
-                        # Проверяем что процесс существует
-                        try:
-                            os.kill(pid, 0)  # Сигнал 0 - только проверка существования
-                            
-                            # Сначала мягкое завершение
-                            os.kill(pid, signal.SIGTERM)
-                            
-                            # Даем время на завершение
-                            time.sleep(0.5)
-                            
-                            # Проверяем что процесс завершился
-                            try:
-                                os.kill(pid, 0)
-                                # Процесс еще жив - отправляем SIGKILL
-                                os.kill(pid, signal.SIGKILL)
-                            except OSError:
-                                # Процесс уже завершился
-                                pass
-                                
-                        except OSError as e:
-                            # Процесс уже не существует
-                            pass
-                            
-                    except (ValueError, TypeError) as e:
-                        print(f"[WARNING] Некорректный PID терминала: {close_terminal_pid}", gui_log=True)
-                else:
-                    # Это не число - возможно это следующий аргумент (например --log-timestamp)
-                    print(f"[WARNING] PID терминала не указан или некорректен: {close_terminal_pid}", gui_log=True)
-                i += 1  # Пропускаем следующий аргумент
-            else:
-                print("[WARNING] Флаг --close-terminal указан без PID", gui_log=True)
-        elif arg == '--mode':
-            # Следующий аргумент - режим запуска
-            if i + 1 < len(sys.argv):
-                start_mode = sys.argv[i + 1]
-                i += 1  # Пропускаем следующий аргумент
-        i += 1
-    
-    try:
-        # Проверяем права root (без логирования)
-        
-        # Режим настройки репозиториев - выполнить и выйти
-        if setup_repos:
-            # В режиме --setup-repos не создаем отдельный лог файл
-            # Все логи будут записаны в основной лог bash скрипта
-            print("")
-            print("="*60)
-            print("[SETUP-REPOS] Настройка репозиториев")
-            print("="*60)
-            
-            repo_checker = RepoChecker()
-            
-            # Создаем backup
-            print("\n[BACKUP] Создаем резервную копию sources.list...")
-            if repo_checker.backup_sources_list(dry_run=False):
-                print("   [OK] Backup создан")
-            else:
-                print("   [ERROR] Не удалось создать backup")
-                sys.exit(1)
-            
-            # Проверяем и настраиваем репозитории
-            print("\n[CHECK] Проверка и настройка репозиториев...")
-            temp_file = repo_checker.process_all_repos()
-            
-            if temp_file:
-                # Применяем изменения
-                try:
-                    shutil.copy2(temp_file, '/etc/apt/sources.list')
-                    os.unlink(temp_file)
-                    
-                    stats = repo_checker.get_statistics()
-                    print("\n[OK] Репозитории настроены:")
-                    print("   - Активных: %d" % stats['activated'])
-                    print("   - Деактивированных: %d" % stats['deactivated'])
-                    
-                    print("\n" + "="*60)
-                    print("[SUCCESS] Настройка репозиториев завершена")
-                    print("="*60)
-                    sys.exit(0)
-                    
-                except Exception as e:
-                    print("\n[ERROR] Ошибка применения настроек: %s" % str(e))
-                    sys.exit(1)
-            else:
-                print("\n[ERROR] Не удалось обработать репозитории")
-                sys.exit(1)
-            
-            print("[INFO] Начинаем выполнение основной программы", gui_log=True)
-        
-        # По умолчанию запускаем GUI, если не указан --console
-        if not console_mode:
-            # Проверяем системные требования
-            if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", gui_log=True)
-                sys.exit(1)
-            
-            # Умная логика выбора режима на основе start_mode от bash
-            if start_mode == "gui_ready":
-                # GUI готов - запускаем сразу
-                print("[GUI] GUI готов - запускаем интерфейс...")
-                print("[INFO] Режим: gui_ready - запускаем GUI", gui_log=True)
-                print(f"[DEBUG_MAIN] Вызов run_gui_monitor() из блока gui_ready", level='DEBUG', gui_log=False)
-                
-                try:
-                    gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
-                    if gui_success:
-                        print("[OK] GUI мониторинг завершен", gui_log=True)
-                    else:
-                        print("[ERROR] Ошибка GUI мониторинга", gui_log=True)
-                except Exception as gui_error:
-                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", gui_log=True)
-                    
-            elif start_mode == "gui_install_first":
-                # Нужно установить GUI компоненты
-                print("[GUI] Установка GUI компонентов...")
-                print("[INFO] Режим: gui_install_first - устанавливаем GUI компоненты", gui_log=True)
-                
-                if dry_run:
-                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка GUI компонентов НЕ выполняется")
-                    print("[OK] Будет выполнено: apt-get install -y python3-tk python3-pip")
-                    gui_install_success = True
-                else:
-                    # Устанавливаем GUI компоненты
-                    gui_install_success = install_gui_components()
-                
-                if gui_install_success:
-                    print("[SUCCESS] GUI компоненты установлены успешно!", gui_log=True)
-                else:
-                    print("[ERROR] Установка GUI компонентов завершена с ошибками", gui_log=True)
-                    
-            elif start_mode == "console_forced":
-                # Принудительный консольный режим - но мы в GUI режиме!
-                print("[ERROR] Противоречие: bash выбрал console_forced, но Python в GUI режиме", gui_log=True)
-                print("[INFO] Перезапустите с флагом --console:")
-                is_frozen = getattr(sys, 'frozen', False)
-                if is_frozen:
-                    print(f"       {sys.executable} --console")
-                else:
-                    print(f"       python3 {sys.argv[0]} --console")
-                sys.exit(1)
-                
-            else:
-                # Неизвестный режим - пытаемся запустить GUI
-                print("[WARNING] Неизвестный режим: %s" % start_mode)
-                print(f"[WARNING] Неизвестный режим: {start_mode} - пытаемся запустить GUI", gui_log=True)
-                print(f"[DEBUG_MAIN] Вызов run_gui_monitor() из блока else (неизвестный режим)", level='DEBUG', gui_log=False)
-                
-                try:
-                    gui_success = run_gui_monitor(None, dry_run, close_terminal_pid)
-                    if gui_success:
-                        print("[OK] GUI мониторинг завершен", gui_log=True)
-                    else:
-                        print("[ERROR] Ошибка GUI мониторинга", gui_log=True)
-                except Exception as gui_error:
-                    print(f"[ERROR] Критическая ошибка GUI: {gui_error}", gui_log=True)
-                    print("[ERROR] Критическая ошибка GUI: %s" % str(gui_error))
-                print("[INFO] Очистка блокировок", gui_log=True)
-            return
-    
-        # Консольный режим (только если указан --console)
-        print("[INFO] Запускаем консольный режим", gui_log=True)
-        print("=" * 60)
-        if dry_run:
-            print(f"{APP_NAME} (РЕЖИМ ТЕСТИРОВАНИЯ)")
-        else:
-            print(APP_NAME)
-        print("Автоматизация установки Astra.IDE")
-        print("=" * 60)
-        
-        temp_dir = None
-        
-        try:
-            # Проверяем системные требования (БЕЗ установки GUI пакетов)
-            print("[INFO] Проверяем системные требования", gui_log=True)
-            if not check_system_requirements():
-                print("[ERROR] Системные требования не выполнены", gui_log=True)
-                sys.exit(1)
-        
-            # Умная логика консольного режима на основе start_mode от bash
-            if start_mode == "console_forced":
-                # Принудительный консольный режим - полное обновление системы
-                print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы (console_forced)", gui_log=True)
-                print("\n[CONSOLE] Консольный режим - обновление системы...")
-                
-                # Обновляем систему
-                print("[INFO] Запускаем обновление системы", gui_log=True)
-                print("\n[UPDATE] Обновление системы...")
-                universal_runner = get_global_universal_runner()
-                updater = SystemUpdater(universal_runner)
-                
-                if dry_run:
-                    print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: обновление НЕ выполняется")
-                    print("[OK] Будет выполнено: apt-get update && apt-get dist-upgrade -y && apt-get autoremove -y")
-                    update_success = True
-                else:
-                    # Проверяем системные ресурсы
-                    if not updater.check_system_resources():
-                        print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", gui_log=True)
-                        sys.exit(1)
-                    
-                    # Запускаем обновление
-                    update_success = updater.update_system(dry_run)
-            
-                # Устанавливаем компоненты после успешного обновления системы
-                components_install_success = False
-                if update_success:
-                    print("\n[INSTALL] Определение отсутствующих компонентов...")
-                    print("[INFO] Создание ComponentStatusManager и ComponentInstaller...", gui_log=True)
-                    
-                    try:
-                        # Создаем ComponentStatusManager (без GUI callback)
-                        component_status_manager = ComponentStatusManager(callback=None)
-                        
-                        # Вспомогательные функции для получения путей
-                        def _get_script_dir():
-                            if os.path.isabs(sys.argv[0]):
-                                script_path = sys.argv[0]
-                            else:
-                                script_path = os.path.join(os.getcwd(), sys.argv[0])
-                            return os.path.dirname(os.path.abspath(script_path))
-                        
-                        def _get_astrapack_dir():
-                            script_dir = _get_script_dir()
-                            return os.path.join(script_dir, "AstraPack")
-                        
-                        # Создаем handlers для всех категорий компонентов
-                        component_handlers = {}
-                        common_params = {
-                            'astrapack_dir': _get_astrapack_dir(),
-                            'logger': None,  # В консоли не используется
-                            'callback': None,  # В консоли нет GUI callback
-                            'universal_runner': get_global_universal_runner(),
-                            'progress_manager': None,  # В консоли может быть None
-                            'dual_logger': globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
-                            'status_manager': component_status_manager
-                        }
-                        
-                        # Регистрируем все handlers
-                        component_handlers['wine_packages'] = WinePackageHandler(**common_params)
-                        component_handlers['wine_environment'] = WineEnvironmentHandler(**common_params)
-                        component_handlers['winetricks'] = WinetricksHandler(**common_params)
-                        component_handlers['system_config'] = SystemConfigHandler(**common_params)
-                        component_handlers['application'] = ApplicationHandler(**common_params)
-                        component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
-                        component_handlers['apt_packages'] = AptPackageHandler(**common_params)
-                        component_handlers['wine_application'] = WineApplicationHandler(**common_params)
-                        
-                        print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
-                        
-                        # Создаем ComponentInstaller
-                        component_installer = ComponentInstaller(
-                            component_handlers=component_handlers,
-                            status_manager=component_status_manager,
-                            progress_manager=None,  # В консоли нет GUI прогресса
-                            universal_runner=get_global_universal_runner(),
-                            dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None
-                        )
-                        
-                        # Определяем отсутствующие компоненты
-                        missing_components = component_status_manager.get_missing_components()
-                        
-                        if missing_components:
-                            print("[INFO] Найдено отсутствующих компонентов: %d" % len(missing_components))
-                            print("[INFO] Компоненты для установки: %s" % ', '.join(missing_components))
-                            
-                            if dry_run:
-                                print("\n[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: установка компонентов НЕ выполняется")
-                                print("[OK] Будет выполнена установка следующих компонентов:")
-                                for idx, comp_id in enumerate(missing_components, 1):
-                                    config = COMPONENTS_CONFIG.get(comp_id, {})
-                                    comp_name = config.get('name', comp_id)
-                                    print("  %d. %s (%s)" % (idx, comp_name, comp_id))
-                                components_install_success = True
-                            else:
-                                print("\n[INSTALL] Установка отсутствующих компонентов...")
-                                print("Начало установки компонентов: %s" % ', '.join(missing_components))
-                                
-                                # Устанавливаем компоненты
-                                install_success = component_installer.install_components(missing_components)
-                                
-                                if install_success:
-                                    print("\n[SUCCESS] Все компоненты установлены успешно!")
-                                    print("[INFO] Установлено компонентов: %d" % len(missing_components))
-                                    components_install_success = True
-                                else:
-                                    # Проверяем, сколько компонентов установлено успешно
-                                    installed_count = 0
-                                    error_count = 0
-                                    skipped_count = 0
-                                    
-                                    for comp_id in missing_components:
-                                        is_installed = component_installer.check_component_status(comp_id)
-                                        if is_installed:
-                                            installed_count += 1
-                                        else:
-                                            # Проверяем, был ли компонент пропущен (уже установлен)
-                                            # или была ошибка
-                                            error_count += 1
-                                    
-                                    print("\n[WARNING] Установка компонентов завершена с ошибками")
-                                    print("[INFO] Установлено компонентов: %d" % installed_count)
-                                    print("[INFO] Пропущено компонентов (уже установлены): %d" % skipped_count)
-                                    print("[INFO] Ошибок при установке: %d" % error_count)
-                                    components_install_success = False
-                        else:
-                            print("[INFO] Все компоненты уже установлены")
-                            components_install_success = True
-                        
-                    except Exception as e:
-                        print(f"[ERROR] Ошибка при установке компонентов: {e}", gui_log=True)
-                        traceback.print_exc()
-                        components_install_success = False
-                
-                else:
-                    # Обновление системы не выполнено - пропускаем установку компонентов
-                    print("\n[ERROR] Обновление системы не выполнено!")
-                    print("[WARNING] Установка компонентов пропущена - требуется успешное обновление системы")
-                    print("[INFO] Проверьте следующее:")
-                    print("  1. Доступность сетевых репозиториев")
-                    print("  2. Корректность /etc/apt/sources.list")
-                    print("  3. Подключение к интернету")
-                    if 'GLOBAL_LOG_FILE' in globals():
-                        print("  4. Логи в файле: %s" % GLOBAL_LOG_FILE)
-                    else:
-                        print("  4. Логи в каталоге: logs/")
-                    is_frozen = getattr(sys, 'frozen', False)
-                    if is_frozen:
-                        print(f"\n[INFO] После исправления проблем повторите запуск: {sys.executable} --console")
-                    else:
-                        print(f"\n[INFO] После исправления проблем повторите запуск: python3 {sys.argv[0]} --console")
-                    components_install_success = False
-                
-                # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
-                repo_success = True
-                stats_success = True
-                interactive_success = True
-                
-                if repo_success and stats_success and interactive_success and update_success and components_install_success:
-                    if dry_run:
-                        print("\n[SUCCESS] Автоматизация завершена успешно! (РЕЖИМ ТЕСТИРОВАНИЯ)")
-                        print("[INFO] Автоматизация завершена успешно в режиме тестирования", gui_log=True)
-                        print("\n[LIST] РЕЗЮМЕ РЕЖИМА ТЕСТИРОВАНИЯ:")
-                        print("=============================")
-                        print("[OK] Все проверки пройдены успешно")
-                        print("[OK] Система готова к автоматизации")
-                        print("[WARNING] Никаких изменений в системе НЕ внесено")
-                        print("[START] Для реальной установки запустите без --dry-run")
-                    else:
-                        print("[INFO] Автоматизация завершена успешно", gui_log=True)
-                else:
-                    print("[ERROR] Автоматизация завершена с ошибками", gui_log=True)
-            else:
-                # Неожиданный режим в консольном режиме
-                print(f"[ERROR] Неожиданный режим в консольном режиме: {start_mode}", gui_log=True)
-                print("[INFO] Ожидался режим: console_forced")
-                sys.exit(1)
-            
-        except KeyboardInterrupt:
-            print("[WARNING] Программа остановлена пользователем (Ctrl+C)", gui_log=True)
-            print("\n[STOP] Остановлено пользователем")
-            # Очищаем блокирующие файлы при прерывании
-            print("[INFO] Очистка блокировок", gui_log=True)
-            sys.exit(1)
-        except Exception as e:
-            print(f"[ERROR] Критическая ошибка в консольном режиме: {e}", gui_log=True)
-            print("\n[ERROR] Критическая ошибка: %s" % str(e))
-            # Очищаем блокирующие файлы при ошибке
-            print("[INFO] Очистка блокировок", gui_log=True)
-            sys.exit(1)
-        finally:
-            # Очищаем временные файлы
-            if temp_dir:
-                cleanup_temp_files(temp_dir)
-            
-            # НОВОЕ: Останавливаем DualStreamLogger перед завершением
-            if dual_logger:
-                try:
-                    print("[DUAL_STREAM] Остановка файлового логирования...")
-                    dual_logger.stop_file_logging(flush=True)
-                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен")
-                except Exception as e:
-                    print(f"[DUAL_STREAM] WARNING: Ошибка остановки: {e}")
-            
-            print("[INFO] Программа завершена", gui_log=True)
-            
-    except Exception as main_error:
-        # Критическая ошибка на уровне main()
-        print(f"[ERROR] Критическая ошибка в main(): {main_error}", gui_log=True)
-        print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
-        print("Проверьте лог файл: %s" % logger.get_log_path())
-        
-        # НОВОЕ: Останавливаем DualStreamLogger при критической ошибке
-        if 'dual_logger' in locals() and dual_logger:
-            try:
-                dual_logger.stop_file_logging(flush=True)
-            except:
-                pass
-        
-        # Очищаем блокирующие файлы при критической ошибке
-        try:
-            print("[INFO] Очистка блокировок", gui_log=True)
-        except:
-            pass
 
 class SelfUpdater:
 # ============================================================================
@@ -27312,13 +27001,12 @@ class SelfUpdater:
     def restart(self):
         """Перезапускает приложение."""
         if self.is_frozen:
-            args = [self.current_path, '--skip-update']
+            args = [self.current_path]
         else:
-            args = [sys.executable, self.current_path, '--skip-update']
+            args = [sys.executable, self.current_path]
         
-        # Добавляем оригинальные аргументы
+        # Добавляем оригинальные аргументы (сохраняем --console если был)
         for arg in sys.argv[1:]:
-            if arg not in ('--force-update', '--skip-update'):
                 args.append(arg)
         
         self.log(f"Перезапуск: {' '.join(args)}")
@@ -27372,212 +27060,574 @@ class SelfUpdater:
             return True
         return False
 
+def main():
 # ============================================================================
-# ФУНКЦИИ ДЛЯ РАБОТЫ С СЕТЕВЫМИ ИСТОЧНИКАМИ И УСТАНОВКОЙ
+# ОСНОВНАЯ ФУНКЦИЯ
 # ============================================================================
-
-def update_from_network():
-    """
-    Обновление файлов из сетевых источников (SMB/Git)
-    """
-    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    """Основная функция"""
     
-    # Определяем файлы для копирования (в unified-режиме только бинарник/скрипт)
-    is_frozen = getattr(sys, 'frozen', False)
-    if is_frozen:
-        files_to_copy = [
-            "FSA-AstraInstall",  # Бинарный файл
-            "README.md",
-        ]
-    else:
-        files_to_copy = [
-            "FSA-AstraInstall.py",  # Python скрипт
-            "README.md",
-        ]
+    # Создаем единый universal_runner для всего приложения (dual_logger через глобальную переменную)
+    logger = UniversalProcessRunner()
+    logger.set_log_file(GLOBAL_LOG_FILE)
     
-    # Пробуем источники по порядку
-    sources = [
-        {
-            'type': 'smb',
-            'server': SMB_SERVER,
-            'share': SMB_SHARE,
-            'path': SMB_PATH,
-            'user': 'FokinSA'
-        },
-        {
-            'type': 'git',
-            'repo': GIT_REPO,
-            'branch': GIT_BRANCH,
-            'path': '.'
-        }
-    ]
+    # КРИТИЧНО: Немедленно обрабатываем очередь для записи в лог файл!
+    logger.process_queue()
     
-    copied_count = 0
+    # Диагностическая информация
+    print(f"[INFO] {APP_NAME} версия: {APP_VERSION}", gui_log=True)
+    print(f"[INFO] Python версия: {sys.version}", gui_log=True)
     
-    for source in sources:
-        if source['type'] == 'smb':
-            # Копирование из SMB
-            try:
-                credentials_file = os.path.expanduser("~/.smbcredentials")
-                if not os.path.exists(credentials_file):
-                    print("[INFO] Создаём файл учётных данных SMB...")
-                    with open(credentials_file, 'w') as f:
-                        f.write(f"username={source['user']}\n")
-                        f.write("password=\n")  # Пароль будет запрошен при первом подключении
-                    os.chmod(credentials_file, 0o600)
-                
-                for file_name in files_to_copy:
-                    local_file = os.path.join(script_dir, file_name)
-                    
-                    # Копируем через smbclient
-                    smb_file_path = f"{source['path']}/{file_name}"
-                    cmd = [
-                        'smbclient',
-                        f"//{source['server']}/{source['share']}",
-                        '-A', credentials_file,
-                        '-c', f'get "{smb_file_path}" "{local_file}"'
-                    ]
-                    
-                    result = subprocess.run(cmd, capture_output=True, text=True)
-                    if result.returncode == 0:
-                        os.chmod(local_file, 0o755)
-                        print(f"[OK] Скопирован из SMB: {file_name}")
-                        copied_count += 1
-                    else:
-                        print(f"[WARNING] Не удалось скопировать из SMB: {file_name}")
-                        continue
-                
-                if copied_count > 0:
-                    print(f"[OK] Обновлено файлов из SMB: {copied_count}")
-                    return True
-                    
-            except Exception as e:
-                print(f"[WARNING] Ошибка при работе с SMB: {e}")
-                continue
-        
-        elif source['type'] == 'git':
-            # Копирование из Git
-            try:
-                if 'github.com' in source['repo']:
-                    clean_url = source['repo'].replace('.git', '')
-                    parts = clean_url.replace('https://github.com/', '').split('/')
-                    if len(parts) >= 2:
-                        user, repo = parts[0], parts[1]
-                        base_url = f"https://raw.githubusercontent.com/{user}/{repo}/{source['branch']}"
-                        
-                        for file_name in files_to_copy:
-                            file_url = f"{base_url}/{file_name}"
-                            local_file = os.path.join(script_dir, file_name)
-                            
-                            try:
-                                response = urllib.request.urlopen(file_url, timeout=10)
-                                if response.status == 200:
-                                    with open(local_file, 'wb') as f:
-                                        f.write(response.read())
-                                    os.chmod(local_file, 0o755)
-                                    print(f"[OK] Скопирован из Git: {file_name}")
-                                    copied_count += 1
-                                else:
-                                    print(f"[WARNING] HTTP {response.status} для {file_name}")
-                            except Exception as e:
-                                print(f"[WARNING] Не удалось скачать из Git: {file_name} - {e}")
-                                continue
-                        
-                        if copied_count > 0:
-                            print(f"[OK] Обновлено файлов из Git: {copied_count}")
-                            return True
-                            
-            except Exception as e:
-                print(f"[WARNING] Ошибка при работе с Git: {e}")
-                continue
+    # Обрабатываем аргументы командной строки
+    console_mode = False
     
-    if copied_count == 0:
-        print("[ERROR] Не удалось обновить файлы ни из одного источника")
-        return False
-    
-    return True
-
-
-def install_dependencies():
-    """
-    Установка зависимостей и проверка репозиториев
-    """
-    # Проверяем репозитории
-    print("[INFO] Проверка доступности репозиториев...")
+    i = 0
+    while i < len(sys.argv):
+        arg = sys.argv[i]
+        if arg == '--console':
+            console_mode = True
+            print("[INFO] Включен консольный режим", gui_log=True)
+        elif arg == '--log-file':
+            # Уже обработан выше
+            i += 1  # Пропускаем следующий аргумент
+        i += 1
     
     try:
-        # Проверяем наличие не-cdrom репозиториев
-        result = subprocess.run(
-            ['grep', '-v', '^#', '/etc/apt/sources.list'],
-            capture_output=True,
-            text=True
-        )
+        # Проверяем права root (без логирования)
         
-        has_network_repos = False
-        if result.returncode == 0:
-            for line in result.stdout.split('\n'):
-                line = line.strip()
-                if line and line.startswith('deb ') and 'cdrom:' not in line:
-                    has_network_repos = True
-                    break
-        
-        if not has_network_repos:
-            print("[INFO] Сетевые репозитории не найдены, настраиваем...")
-            # Здесь можно добавить автоматическую настройку репозиториев для Astra Linux
-            # Пока просто предупреждаем
-            print("[WARNING] Требуется настройка репозиториев вручную")
-        
-        # Обновляем список пакетов
-        print("[INFO] Обновление списка пакетов...")
-        result = subprocess.run(
-            ['apt-get', 'update'],
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode != 0:
-            print(f"[WARNING] Ошибка обновления списка пакетов: {result.stderr}")
-            return False
-        
-        # Проверяем и устанавливаем tkinter если нужно
-        if not TKINTER_AVAILABLE:
-            print("[INFO] tkinter недоступен, проверяем возможность установки...")
+        # По умолчанию запускаем GUI, если не указан --console
+        if not console_mode:
+            # Проверяем системные требования
+            if not check_system_requirements():
+                print("[ERROR] Системные требования не выполнены", gui_log=True)
+                sys.exit(1)
             
-            # Ищем пакет tkinter
-            tkinter_packages = ['python3-tk', 'python3-tkinter', 'tk']
-            found_package = None
-            
-            for pkg in tkinter_packages:
-                result = subprocess.run(
-                    ['apt-cache', 'show', pkg],
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode == 0:
-                    found_package = pkg
-                    break
-            
-            if found_package:
-                print(f"[INFO] Устанавливаем {found_package}...")
-                result = subprocess.run(
-                    ['apt-get', 'install', '-y', found_package],
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode == 0:
-                    print(f"[OK] {found_package} установлен")
+            # Запускаем GUI
+            print("[GUI] Запускаем интерфейс...")
+            try:
+                gui_success = run_gui_monitor(None)
+                if gui_success:
+                    print("[OK] GUI мониторинг завершен", gui_log=True)
                 else:
-                    print(f"[WARNING] Не удалось установить {found_package}")
-            else:
-                print("[WARNING] Пакет tkinter не найден в репозиториях")
+                    print("[ERROR] Ошибка GUI мониторинга", gui_log=True)
+            except Exception as gui_error:
+                print(f"[ERROR] Критическая ошибка GUI: {gui_error}", gui_log=True)
+            return
+    
+        # Консольный режим (только если указан --console)
+        print("[INFO] Запускаем консольный режим", gui_log=True)
+        print("=" * 60)
+        print(APP_NAME)
+        print("Автоматизация установки Astra.IDE")
+        print("=" * 60)
         
-        print("[OK] Зависимости проверены и установлены")
-        return True
+        temp_dir = None
+        
+        try:
+            # Проверяем системные требования (БЕЗ установки GUI пакетов)
+            print("[INFO] Проверяем системные требования", gui_log=True)
+            if not check_system_requirements():
+                print("[ERROR] Системные требования не выполнены", gui_log=True)
+                sys.exit(1)
+        
+            # Консольный режим - полное обновление системы
+            print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы", gui_log=True)
+            print("\n[CONSOLE] Консольный режим - обновление системы...")
+            
+            # Обновляем систему
+            print("[INFO] Запускаем обновление системы", gui_log=True)
+            print("\n[UPDATE] Обновление системы...")
+            universal_runner = get_global_universal_runner()
+            updater = SystemUpdater(universal_runner)
+            
+            # Проверяем системные ресурсы
+            if not updater.check_system_resources():
+                print("[ERROR] Системные ресурсы не соответствуют требованиям для обновления", gui_log=True)
+                sys.exit(1)
+            
+            # Запускаем обновление
+            update_success = updater.update_system()
+            
+            # Устанавливаем компоненты после успешного обновления системы
+            components_install_success = False
+            if update_success:
+                print("\n[INSTALL] Определение отсутствующих компонентов...")
+                print("[INFO] Создание ComponentStatusManager и ComponentInstaller...", gui_log=True)
+                
+                try:
+                    # Создаем ComponentStatusManager (без GUI callback)
+                    component_status_manager = ComponentStatusManager(callback=None)
+                    
+                    # Вспомогательные функции для получения путей
+                    def _get_script_dir():
+                        if os.path.isabs(sys.argv[0]):
+                            script_path = sys.argv[0]
+                        else:
+                            script_path = os.path.join(os.getcwd(), sys.argv[0])
+                        return os.path.dirname(os.path.abspath(script_path))
+                    
+                    def _get_astrapack_dir():
+                        script_dir = _get_script_dir()
+                        return os.path.join(script_dir, "AstraPack")
+                    
+                    # Создаем handlers для всех категорий компонентов
+                    component_handlers = {}
+                    common_params = {
+                        'astrapack_dir': _get_astrapack_dir(),
+                        'logger': None,  # В консоли не используется
+                        'callback': None,  # В консоли нет GUI callback
+                        'universal_runner': get_global_universal_runner(),
+                        'progress_manager': None,  # В консоли может быть None
+                        'dual_logger': globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None,
+                        'status_manager': component_status_manager
+                    }
+                    
+                    # Регистрируем все handlers
+                    component_handlers['wine_packages'] = WinePackageHandler(**common_params)
+                    component_handlers['wine_environment'] = WineEnvironmentHandler(**common_params)
+                    component_handlers['winetricks'] = WinetricksHandler(**common_params)
+                    component_handlers['system_config'] = SystemConfigHandler(**common_params)
+                    component_handlers['application'] = ApplicationHandler(**common_params)
+                    component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
+                    component_handlers['apt_packages'] = AptPackageHandler(**common_params)
+                    component_handlers['wine_application'] = WineApplicationHandler(**common_params)
+                    
+                    print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
+                    
+                    # Создаем ComponentInstaller
+                    component_installer = ComponentInstaller(
+                        component_handlers=component_handlers,
+                        status_manager=component_status_manager,
+                        progress_manager=None,  # В консоли нет GUI прогресса
+                        universal_runner=get_global_universal_runner(),
+                        dual_logger=globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None
+                    )
+                    
+                    # Определяем отсутствующие компоненты
+                    missing_components = component_status_manager.get_missing_components()
+                    
+                    if missing_components:
+                        print("[INFO] Найдено отсутствующих компонентов: %d" % len(missing_components))
+                        print("[INFO] Компоненты для установки: %s" % ', '.join(missing_components))
+                        
+                        print("\n[INSTALL] Установка отсутствующих компонентов...")
+                        print("Начало установки компонентов: %s" % ', '.join(missing_components))
+                        
+                        # Устанавливаем компоненты
+                        install_success = component_installer.install_components(missing_components)
+                        
+                        if install_success:
+                            print("\n[SUCCESS] Все компоненты установлены успешно!")
+                            print("[INFO] Установлено компонентов: %d" % len(missing_components))
+                            components_install_success = True
+                        else:
+                            # Проверяем, сколько компонентов установлено успешно
+                            installed_count = 0
+                            error_count = 0
+                            skipped_count = 0
+                            
+                            for comp_id in missing_components:
+                                is_installed = component_installer.check_component_status(comp_id)
+                                if is_installed:
+                                    installed_count += 1
+                                else:
+                                    # Проверяем, был ли компонент пропущен (уже установлен)
+                                    # или была ошибка
+                                    error_count += 1
+                            
+                            print("\n[WARNING] Установка компонентов завершена с ошибками")
+                            print("[INFO] Установлено компонентов: %d" % installed_count)
+                            print("[INFO] Пропущено компонентов (уже установлены): %d" % skipped_count)
+                            print("[INFO] Ошибок при установке: %d" % error_count)
+                            components_install_success = False
+                    else:
+                        print("[INFO] Все компоненты уже установлены")
+                        components_install_success = True
+                except Exception as e:
+                    print(f"[ERROR] Ошибка при установке компонентов: {e}", gui_log=True)
+                    traceback.print_exc()
+                    components_install_success = False
+            else:
+                # Обновление системы не выполнено - пропускаем установку компонентов
+                print("\n[ERROR] Обновление системы не выполнено!")
+                print("[WARNING] Установка компонентов пропущена - требуется успешное обновление системы")
+                print("[INFO] Проверьте следующее:")
+                print("  1. Доступность сетевых репозиториев")
+                print("  2. Корректность /etc/apt/sources.list")
+                print("  3. Подключение к интернету")
+                if 'GLOBAL_LOG_FILE' in globals():
+                    print("  4. Логи в файле: %s" % GLOBAL_LOG_FILE)
+                else:
+                    print("  4. Логи в каталоге: logs/")
+                is_frozen = getattr(sys, 'frozen', False)
+                if is_frozen:
+                    print(f"\n[INFO] После исправления проблем повторите запуск: {sys.executable} --console")
+                else:
+                    print(f"\n[INFO] После исправления проблем повторите запуск: python3 {sys.argv[0]} --console")
+                components_install_success = False
+            
+            # Устанавливаем успех для всех остальных модулей (они не выполняются в консольном режиме)
+            repo_success = True
+            stats_success = True
+            interactive_success = True
+            
+            if repo_success and stats_success and interactive_success and update_success and components_install_success:
+                print("[INFO] Автоматизация завершена успешно", gui_log=True)
+            else:
+                print("[ERROR] Автоматизация завершена с ошибками", gui_log=True)
+            
+        except KeyboardInterrupt:
+            print("[WARNING] Программа остановлена пользователем (Ctrl+C)", gui_log=True)
+            print("\n[STOP] Остановлено пользователем")
+            # Очищаем блокирующие файлы при прерывании
+            print("[INFO] Очистка блокировок", gui_log=True)
+            sys.exit(1)
+        except Exception as e:
+            print(f"[ERROR] Критическая ошибка в консольном режиме: {e}", gui_log=True)
+            print("\n[ERROR] Критическая ошибка: %s" % str(e))
+            # Очищаем блокирующие файлы при ошибке
+            print("[INFO] Очистка блокировок", gui_log=True)
+            sys.exit(1)
+        finally:
+            # Очищаем временные файлы
+            if temp_dir:
+                cleanup_temp_files(temp_dir)
+            
+            # НОВОЕ: Останавливаем DualStreamLogger перед завершением
+            if _global_dual_logger:
+                try:
+                    print("[DUAL_STREAM] Остановка файлового логирования...")
+                    _global_dual_logger.stop_file_logging(flush=True)
+                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен")
+                except Exception as e:
+                    print(f"[DUAL_STREAM] WARNING: Ошибка остановки: {e}")
+            
+            print("[INFO] Программа завершена", gui_log=True)
+            
+    except Exception as main_error:
+        # Критическая ошибка на уровне main()
+        print(f"[ERROR] Критическая ошибка в main(): {main_error}", gui_log=True)
+        print("\n[FATAL] Критическая ошибка программы: %s" % str(main_error))
+        print("Проверьте лог файл: %s" % logger.get_log_path())
+        
+        # НОВОЕ: Останавливаем DualStreamLogger при критической ошибке
+        if _global_dual_logger:
+            try:
+                _global_dual_logger.stop_file_logging(flush=True)
+            except:
+                pass
+        
+        # Очищаем блокирующие файлы при критической ошибке
+        try:
+            print("[INFO] Очистка блокировок", gui_log=True)
+        except:
+            pass
+
+# КРИТИЧНО: Функция для полного сканирования содержимого бинарника
+def _scan_binary_contents(base_path, output_file):
+    """Полное сканирование содержимого бинарника и сохранение в файл
+    
+    Args:
+        base_path: Путь к sys._MEIPASS
+        output_file: Путь к файлу для сохранения информации
+    """
+    
+    result = {
+        'scan_timestamp': dt.now().isoformat(),
+        'base_path': base_path,
+        'exists': os.path.exists(base_path),
+        'items': []
+    }
+    
+    if not os.path.exists(base_path):
+        result['error'] = f"Директория не существует: {base_path}"
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[DEBUG] Ошибка сохранения информации о бинарнике: {e}")
+        return
+    
+    def scan_directory(path, relative_path=""):
+        """Рекурсивное сканирование директории"""
+        items = []
+        try:
+            for item in sorted(os.listdir(path)):
+                item_path = os.path.join(path, item)
+                item_rel_path = os.path.join(relative_path, item) if relative_path else item
+                
+                item_info = {
+                    'name': item,
+                    'relative_path': item_rel_path,
+                    'absolute_path': item_path,
+                    'type': None,
+                    'size': None,
+                    'permissions': None,
+                    'modified': None,
+                    'children': None
+                }
+                
+                try:
+                    stat_info = os.stat(item_path)
+                    item_info['permissions'] = oct(stat_info.st_mode)[-3:]
+                    item_info['modified'] = dt.fromtimestamp(stat_info.st_mtime).isoformat()
+                    
+                    if os.path.isdir(item_path):
+                        item_info['type'] = 'DIR'
+                        # Рекурсивно сканируем поддиректорию
+                        item_info['children'] = scan_directory(item_path, item_rel_path)
+                    elif os.path.isfile(item_path):
+                        item_info['type'] = 'FILE'
+                        item_info['size'] = stat_info.st_size
+                    elif os.path.islink(item_path):
+                        item_info['type'] = 'LINK'
+                        item_info['link_target'] = os.readlink(item_path)
+                    else:
+                        item_info['type'] = 'OTHER'
+                        
+                except Exception as e:
+                    item_info['error'] = str(e)
+                
+                items.append(item_info)
+        except Exception as e:
+            return [{'error': f"Ошибка сканирования {path}: {e}"}]
+        
+        return items
+    
+    result['items'] = scan_directory(base_path)
+    
+    # Подсчитываем статистику
+    def count_items(items):
+        stats = {'files': 0, 'dirs': 0, 'links': 0, 'total_size': 0}
+        for item in items:
+            if item.get('type') == 'FILE':
+                stats['files'] += 1
+                if item.get('size'):
+                    stats['total_size'] += item['size']
+            elif item.get('type') == 'DIR':
+                stats['dirs'] += 1
+                if item.get('children'):
+                    child_stats = count_items(item['children'])
+                    stats['files'] += child_stats['files']
+                    stats['dirs'] += child_stats['dirs']
+                    stats['links'] += child_stats['links']
+                    stats['total_size'] += child_stats['total_size']
+            elif item.get('type') == 'LINK':
+                stats['links'] += 1
+        return stats
+    
+    stats = count_items(result['items'])
+    result['statistics'] = stats
+    
+    # Сохраняем в JSON
+    try:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+        
+        # Также сохраняем в читаемом текстовом формате
+        txt_file = output_file.replace('.json', '.txt')
+        with open(txt_file, 'w', encoding='utf-8') as f:
+            f.write(f"Полное содержимое бинарника PyInstaller\n")
+            f.write(f"{'='*80}\n")
+            f.write(f"Время сканирования: {result['scan_timestamp']}\n")
+            f.write(f"Базовый путь: {base_path}\n")
+            f.write(f"Существует: {result['exists']}\n")
+            f.write(f"\nСтатистика:\n")
+            f.write(f"  Файлов: {stats['files']}\n")
+            f.write(f"  Директорий: {stats['dirs']}\n")
+            f.write(f"  Символических ссылок: {stats['links']}\n")
+            f.write(f"  Общий размер: {stats['total_size']:,} байт ({stats['total_size'] / 1024 / 1024:.2f} MB)\n")
+            f.write(f"\n{'='*80}\n\n")
+            
+            def write_tree(items, prefix="", f=f):
+                for i, item in enumerate(items):
+                    is_last = i == len(items) - 1
+                    current_prefix = "└── " if is_last else "├── "
+                    f.write(f"{prefix}{current_prefix}{item['name']}")
+                    
+                    if item.get('type') == 'FILE' and item.get('size'):
+                        f.write(f" ({item['size']:,} bytes)")
+                    elif item.get('type') == 'LINK':
+                        f.write(f" -> {item.get('link_target', '?')}")
+                    
+                    f.write(f"\n")
+                    
+                    if item.get('children'):
+                        next_prefix = prefix + ("    " if is_last else "│   ")
+                        write_tree(item['children'], next_prefix, f)
+            
+            write_tree(result['items'])
+        
+        print(f"[DEBUG] ✓ Информация о содержимом бинарника сохранена:")
+        print(f"[DEBUG]   JSON: {output_file}")
+        print(f"[DEBUG]   TXT: {txt_file}")
+    except Exception as e:
+        print(f"[DEBUG] Ошибка сохранения информации о бинарнике: {e}")
+
+# КРИТИЧНО: Функция для явной загрузки библиотек Tcl/Tk из _MEIPASS
+# Вынесена на уровень модуля для доступа из AutomationGUI.__init__
+def _load_tcl_tk_libraries():
+    """Явная загрузка библиотек Tcl/Tk из _MEIPASS перед импортом tkinter
+    Находит все .so библиотеки, загружает их через ctypes с RTLD_GLOBAL,
+    и устанавливает переменные окружения TCL_LIBRARY и TK_LIBRARY
+    """
+    if not getattr(sys, 'frozen', False):
+        return  # Не frozen приложение, ничего не делаем
+    
+    base_path = sys._MEIPASS
+    
+    # КРИТИЧНО: PyInstaller не запускает код до полной распаковки
+    # Но на всякий случай проверяем существование директории
+    print(f"[DEBUG] _load_tcl_tk_libraries: base_path = {base_path}")
+    print(f"[DEBUG] _load_tcl_tk_libraries: PID = {os.getpid()}, UID = {os.geteuid()}")
+    print(f"[DEBUG] _load_tcl_tk_libraries: os.path.exists(base_path) = {os.path.exists(base_path)}")
+    
+    if not os.path.exists(base_path):
+        print(f"[ERROR] КРИТИЧНО: sys._MEIPASS указывает на несуществующую директорию: {base_path}")
+        print(f"[ERROR] PID процесса: {os.getpid()}, UID: {os.geteuid()}")
+        print(f"[ERROR] Это означает, что PyInstaller создал директорию в другом процессе и она была удалена")
+        # Проверяем, есть ли другие директории _MEI* в /tmp
+        try:
+            tmp_dir = '/tmp'
+            if os.path.exists(tmp_dir):
+                mei_dirs = [d for d in os.listdir(tmp_dir) if d.startswith('_MEI') and os.path.isdir(os.path.join(tmp_dir, d))]
+                print(f"[ERROR] Найдено директорий _MEI* в /tmp: {len(mei_dirs)}")
+                if mei_dirs:
+                    print(f"[ERROR] Директории: {mei_dirs}")
+                    # Проверяем последнюю директорию (возможно, это новая)
+                    latest_dir = sorted(mei_dirs)[-1]
+                    latest_path = os.path.join(tmp_dir, latest_dir)
+                    print(f"[ERROR] Последняя директория: {latest_path}")
+                    if os.path.exists(latest_path):
+                        latest_items = os.listdir(latest_path)
+                        print(f"[ERROR] Содержимое последней директории ({len(latest_items)} элементов): {latest_items[:10]}")
+                        # Пробуем использовать эту директорию
+                        base_path = latest_path
+                        print(f"[DEBUG] Пробуем использовать альтернативную директорию: {base_path}")
+                    else:
+                        return
+                else:
+                    return
+            else:
+                return
+        except Exception as e:
+            print(f"[ERROR] Ошибка поиска директорий _MEI*: {e}")
+            return
+    
+    try:
+        import ctypes
+        
+        # КРИТИЧНО: Проверяем, что можем прочитать директорию
+        try:
+            test_items = os.listdir(base_path)
+            print(f"[DEBUG] _load_tcl_tk_libraries: Успешно прочитана директория, элементов: {len(test_items)}")
+        except Exception as e:
+            print(f"[ERROR] Не удалось прочитать директорию {base_path}: {e}")
+            return
+        
+        # 1. Найти все .so библиотеки в _MEIPASS
+        libtcl_path = None
+        libtk_path = None
+        libblt_path = None
+        
+        # Ищем libtcl*.so
+        for item in test_items:
+            if item.startswith('libtcl') and item.endswith('.so'):
+                libtcl_path = os.path.join(base_path, item)
+                break
+        
+        # Ищем libtk*.so
+        for item in test_items:
+            if item.startswith('libtk') and item.endswith('.so'):
+                libtk_path = os.path.join(base_path, item)
+                break
+        
+        # Ищем libBLT*.so
+        for item in test_items:
+            if item.startswith('libBLT') and '.so' in item:
+                libblt_path = os.path.join(base_path, item)
+                break
+        
+        # 2. Загрузить библиотеки через ctypes с RTLD_GLOBAL
+        # RTLD_GLOBAL необходим для того, чтобы символы были доступны другим библиотекам
+        # Используем атрибут ctypes.RTLD_GLOBAL, если доступен, иначе локальную константу
+        if hasattr(ctypes, 'RTLD_GLOBAL'):
+            rtld_global = ctypes.RTLD_GLOBAL
+        else:
+            rtld_global = 0x00100  # Флаг для dlopen (RTLD_GLOBAL)
+        
+        if libtcl_path and os.path.exists(libtcl_path):
+            try:
+                ctypes.CDLL(libtcl_path, mode=rtld_global)
+                print(f"[DEBUG] ✓ Загружена библиотека Tcl: {os.path.basename(libtcl_path)}")
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить {libtcl_path}: {e}")
+        
+        if libtk_path and os.path.exists(libtk_path):
+            try:
+                ctypes.CDLL(libtk_path, mode=rtld_global)
+                print(f"[DEBUG] ✓ Загружена библиотека Tk: {os.path.basename(libtk_path)}")
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить {libtk_path}: {e}")
+        
+        if libblt_path and os.path.exists(libblt_path):
+            try:
+                ctypes.CDLL(libblt_path, mode=rtld_global)
+                print(f"[DEBUG] ✓ Загружена библиотека BLT: {os.path.basename(libblt_path)}")
+            except Exception as e:
+                print(f"[WARNING] Не удалось загрузить {libblt_path}: {e}")
+        
+        # 3. Найти и установить TCL_LIBRARY и TK_LIBRARY
+        tcl_data_path = os.path.join(base_path, '_tcl_data')
+        tk_data_path = os.path.join(base_path, '_tk_data')
+        
+        # КРИТИЧНО: Проверяем существование директорий и выводим явные сообщения
+        if not os.path.exists(tcl_data_path):
+            print(f"[DEBUG] ❌ КРИТИЧНО: Директория _tcl_data НЕ СУЩЕСТВУЕТ: {tcl_data_path}")
+            print(f"[DEBUG] ❌ PyInstaller не включил скрипты Tcl в бинарник!")
+        else:
+            print(f"[DEBUG] ✓ Директория _tcl_data найдена: {tcl_data_path}")
+            tcl_library_found = False
+            for root, dirs, files in os.walk(tcl_data_path):
+                if 'init.tcl' in files:
+                    os.environ['TCL_LIBRARY'] = root
+                    print(f"[DEBUG] ✓ TCL_LIBRARY установлен: {root}")
+                    tcl_library_found = True
+                    break
+            
+            if not tcl_library_found:
+                print(f"[DEBUG] ❌ init.tcl НЕ найден в _tcl_data (директория существует, но файла нет)!")
+        
+        if not os.path.exists(tk_data_path):
+            print(f"[DEBUG] ❌ КРИТИЧНО: Директория _tk_data НЕ СУЩЕСТВУЕТ: {tk_data_path}")
+            print(f"[DEBUG] ❌ PyInstaller не включил скрипты Tk в бинарник!")
+        else:
+            print(f"[DEBUG] ✓ Директория _tk_data найдена: {tk_data_path}")
+            tk_library_found = False
+            for root, dirs, files in os.walk(tk_data_path):
+                if 'tk.tcl' in files:
+                    os.environ['TK_LIBRARY'] = root
+                    print(f"[DEBUG] ✓ TK_LIBRARY установлен: {root}")
+                    tk_library_found = True
+                    break
+            
+            if not tk_library_found:
+                print(f"[DEBUG] ❌ tk.tcl НЕ найден в _tk_data (директория существует, но файла нет)!")
+        
+        # 4. Установить LD_LIBRARY_PATH для поиска .so файлов
+        if 'LD_LIBRARY_PATH' in os.environ:
+            existing_paths = os.environ['LD_LIBRARY_PATH'].split(':')
+            if base_path not in existing_paths:
+                os.environ['LD_LIBRARY_PATH'] = f"{base_path}:{os.environ['LD_LIBRARY_PATH']}"
+        else:
+            os.environ['LD_LIBRARY_PATH'] = base_path
+        
+        print(f"[DEBUG] ✓ LD_LIBRARY_PATH установлен: {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
         
     except Exception as e:
-        print(f"[ERROR] Ошибка при установке зависимостей: {e}")
+        print(f"[WARNING] Ошибка загрузки библиотек Tcl/Tk: {e}")
+        import traceback
         traceback.print_exc()
-        return False
+
 
 if __name__ == '__main__':
 # ═══════════════════════════════════════════════════════════════════════
@@ -27587,6 +27637,21 @@ if __name__ == '__main__':
     # На macOS не требуются права root, пропускаем проверку
     is_macos = platform.system() == 'Darwin'
     
+    # КРИТИЧНО: Проверка single instance ДО перезапуска через sudo
+    # ВРЕМЕННО ОТКЛЮЧЕНО для отладки
+    # Проверяем, не запущен ли уже процесс от root
+    if False and not is_macos:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
+        existing_pid = find_running_instance()
+        if existing_pid is not None:
+            print(f"[INFO] Обнаружен запущенный процесс (PID: {existing_pid}). Переключаемся на него...")
+            try:
+                activate_existing_window()
+            except Exception as e:
+                print(f"[WARNING] Не удалось активировать окно: {e}")
+            print("[INFO] Завершаем повторный запуск...")
+            sys.exit(0)  # Завершаем процесс пользователя
+    
+    # Продолжаем только если процесс sudo не найден
     if not is_macos and os.geteuid() != 0:
         print("[INFO] Требуются права root. Перезапуск через sudo...")
         env = os.environ.copy()
@@ -27609,8 +27674,63 @@ if __name__ == '__main__':
                     executable_path = os.path.abspath(sys.argv[0])
             
             # Формируем команду: sudo -E <путь_к_бинарнику> <аргументы>
-            sudo_args = ["sudo", "-E", executable_path] + sys.argv[1:]
-            os.execvpe("sudo", sudo_args, env)
+            # КРИТИЧНО: Передаём timestamp через переменную окружения FSA_LOG_TIMESTAMP
+            # Переменная окружения автоматически передаётся через sudo -E
+            new_argv = list(sys.argv[1:])  # Копируем аргументы
+            
+            # Удаляем --log-file из аргументов, если он есть (больше не нужен)
+            i = 0
+            while i < len(new_argv):
+                if new_argv[i] == '--log-file':
+                    # Удаляем --log-file и следующий аргумент (путь к файлу)
+                    new_argv.pop(i)
+                    if i < len(new_argv):
+                        new_argv.pop(i)
+                    break
+                i += 1
+            
+            # КРИТИЧНО: Передаём timestamp через переменную окружения (если он уже установлен)
+            if 'FSA_LOG_TIMESTAMP' in os.environ:
+                env['FSA_LOG_TIMESTAMP'] = os.environ['FSA_LOG_TIMESTAMP']
+            
+            # КРИТИЧНО: НЕ передаём FSA_LOG_WRITER_PID при перезапуске через sudo
+            # Процесс sudo сам установит свою переменную и станет главным писателем
+            
+            sudo_args = ["sudo", "-E", executable_path] + new_argv
+            
+            # Запускаем бинарник через sudo как полностью независимую программу
+            # Как будто запустили отдельный скрипт, который сам запустил sudo
+            # Процесс sudo НЕ является дочерним процессом - он полностью независим
+            # Запустили и забыли - когда закроем эту программу, тот останется работать
+            print(f"[INFO] Запуск бинарника через sudo как полностью независимой программы...")
+            print(f"[INFO] Команда: {' '.join(sudo_args)}")
+            
+            try:
+                # Запускаем sudo как полностью независимый процесс
+                # start_new_session=True создает новую сессию - процесс отсоединяется от родителя
+                # НЕ сохраняем ссылку на процесс - запустили и забыли
+                subprocess.Popen(
+                    sudo_args,
+                    env=env,
+                    start_new_session=True,  # Создает новую сессию - процесс полностью независим
+                    stdin=subprocess.DEVNULL,  # Отсоединяем stdin
+                    stdout=subprocess.DEVNULL,  # Отсоединяем stdout (GUI сам управляет выводом)
+                    stderr=subprocess.DEVNULL   # Отсоединяем stderr (GUI сам управляет выводом)
+                )
+                
+                print(f"[INFO] Бинарник запущен через sudo как полностью независимая программа")
+                print(f"[INFO] Процесс пользователя продолжает работу (PID: {os.getpid()})")
+                print(f"[INFO] Процесс sudo работает независимо - мы про него забыли")
+                print(f"[INFO] Когда закроете эту программу, процесс sudo продолжит работать")
+                
+                # Процесс пользователя продолжает работу - запустит свой GUI
+                # Процесс sudo тоже запустится и запустит свой GUI
+                # Они полностью независимы друг от друга
+                
+            except Exception as e:
+                print(f"[ERROR] Не удалось запустить sudo: {e}")
+                traceback.print_exc()
+                # Процесс пользователя продолжает работу
         except Exception as e:
             print(f"[ERROR] Не удалось получить права root: {e}")
             traceback.print_exc()
@@ -27618,79 +27738,439 @@ if __name__ == '__main__':
             sys.exit(1)
     
     # КРИТИЧНО: Проверка single instance ПОСЛЕ перезапуска через sudo
+    # ВРЕМЕННО ОТКЛЮЧЕНО для отладки
     # Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
     # На macOS пропускаем проверку single instance (не требуется)
-    if platform.system() == 'Linux' and os.geteuid() == 0:
+    if False and platform.system() == 'Linux' and os.geteuid() == 0:  # ВРЕМЕННО ОТКЛЮЧЕНО: if False
+        print("[DEBUG] Проверка single instance после перезапуска через sudo...")
         existing_pid = find_running_instance()
         if existing_pid is not None:
+            print(f"[DEBUG] Найден существующий процесс (PID: {existing_pid}), активируем окно...")
             activate_existing_window()
             sys.exit(0)
+        else:
+            print("[DEBUG] Существующий процесс не найден, продолжаем запуск...")
     
-    # Создаём папку Log заранее (до вызова main())
-    # Это гарантирует, что папка будет создана независимо от способа запуска
-    is_frozen = getattr(sys, 'frozen', False)
-    if is_frozen:
-        script_dir = os.path.dirname(os.path.abspath(sys.executable))
+    # КРИТИЧНО: Инициализация логирования ВНУТРИ блока if __name__ == '__main__'
+    # Это гарантирует, что логирование инициализируется только один раз - в процессе sudo
+    print("[DEBUG] Начинаем инициализацию логирования...")
+    print(f"[DEBUG] Текущий UID: {os.geteuid()}, PID: {os.getpid()}")
+    
+    # КРИТИЧНО: На Linux логи пишутся ТОЛЬКО в процессе sudo (root, UID=0)
+    # Процесс пользователя не пишет логи, так как завершается сразу после запуска sudo
+    if platform.system() == 'Linux' and os.geteuid() == 0:
+        print("[DEBUG] Linux: процесс sudo (root) - будет писать логи")
+    elif platform.system() == 'Darwin':
+        print("[DEBUG] macOS: процесс пользователя - будет писать логи")
     else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(script_dir, "Log")
-    if not os.path.exists(log_dir):
+        print(f"[DEBUG] Linux: процесс пользователя (UID={os.geteuid()}) - НЕ будет писать логи")
+    
+    _init_logging_early()
+    print("[DEBUG] Логирование инициализировано")
+    
+    # КРИТИЧНО: Устанавливаем переменные окружения для Tcl/Tk ДО импорта tkinter
+    # ТОЛЬКО для бинарника PyInstaller
+    if getattr(sys, 'frozen', False):
         try:
-            os.makedirs(log_dir, exist_ok=True)
+            base_path = sys._MEIPASS
+            
+            # КРИТИЧНО: Отладочный вывод для понимания проблемы
+            print(f"[DEBUG] ========================================")
+            print(f"[DEBUG] Диагностика sys._MEIPASS:")
+            print(f"[DEBUG]   sys._MEIPASS = {base_path}")
+            print(f"[DEBUG]   PID текущего процесса: {os.getpid()}")
+            print(f"[DEBUG]   UID текущего процесса: {os.geteuid()}")
+            print(f"[DEBUG]   Директория существует: {os.path.exists(base_path)}")
+            
+            # Проверяем, что это действительно директория PyInstaller
+            if os.path.exists(base_path):
+                try:
+                    items = os.listdir(base_path)
+                    print(f"[DEBUG]   Содержимое директории ({len(items)} элементов)")
+                    print(f"[DEBUG]   Первые 10 элементов: {items[:10]}")
+                    # Проверяем наличие критичных директорий
+                    has_tcl_data = os.path.exists(os.path.join(base_path, '_tcl_data'))
+                    has_tk_data = os.path.exists(os.path.join(base_path, '_tk_data'))
+                    print(f"[DEBUG]   _tcl_data существует: {has_tcl_data}")
+                    print(f"[DEBUG]   _tk_data существует: {has_tk_data}")
+                except Exception as e:
+                    print(f"[DEBUG]   Ошибка чтения содержимого: {e}")
+            else:
+                print(f"[DEBUG]   КРИТИЧНО: Директория НЕ существует!")
+                # Проверяем, есть ли другие директории _MEI* в /tmp
+                try:
+                    tmp_dir = '/tmp'
+                    if os.path.exists(tmp_dir):
+                        mei_dirs = [d for d in os.listdir(tmp_dir) if d.startswith('_MEI') and os.path.isdir(os.path.join(tmp_dir, d))]
+                        print(f"[DEBUG]   Найдено директорий _MEI* в /tmp: {len(mei_dirs)}")
+                        if mei_dirs:
+                            print(f"[DEBUG]   Директории: {mei_dirs}")
+                            # Проверяем последнюю директорию (возможно, это новая)
+                            latest_dir = sorted(mei_dirs)[-1]
+                            latest_path = os.path.join(tmp_dir, latest_dir)
+                            print(f"[DEBUG]   Последняя директория: {latest_path}")
+                            if os.path.exists(latest_path):
+                                latest_items = os.listdir(latest_path)
+                                print(f"[DEBUG]   Содержимое последней директории ({len(latest_items)} элементов): {latest_items[:10]}")
+                except Exception as e:
+                    print(f"[DEBUG]   Ошибка поиска директорий _MEI*: {e}")
+            
+            print(f"[DEBUG] ========================================")
+            
+            # КРИТИЧНО: PyInstaller не запускает код до полной распаковки
+            # Но на всякий случай проверяем существование директории
+            if not os.path.exists(base_path):
+                print(f"[ERROR] КРИТИЧНО: sys._MEIPASS указывает на несуществующую директорию: {base_path}")
+                print(f"[ERROR] Это означает, что PyInstaller создал директорию в другом процессе и она была удалена")
+                # Не делаем return - продолжаем выполнение, возможно директория появится
+            
+            # КРИТИЧНО: Сохраняем полную информацию о содержимом бинарника
+            # Вызываем ВСЕГДА, даже если директория не существует - функция сама сохранит ошибку
+            # Сохраняем файл рядом с бинарником (в той же директории, где находится исполняемый файл)
+            try:
+                if getattr(sys, 'frozen', False):
+                    # Для frozen приложения - директория, где находится бинарник
+                    if hasattr(sys, 'executable') and sys.executable:
+                        binary_dir = os.path.dirname(os.path.abspath(sys.executable))
+                    else:
+                        binary_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                else:
+                    # Для скрипта - директория скрипта
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    binary_dir = script_dir
+                
+                if binary_dir and os.path.exists(binary_dir):
+                    binary_info_file = os.path.join(binary_dir, "binary_contents.json")
+                    print(f"[DEBUG] Сохранение информации о бинарнике в: {binary_info_file}")
+                    _scan_binary_contents(base_path, binary_info_file)
+                else:
+                    print(f"[DEBUG] Директория бинарника не существует: {binary_dir}")
+            except Exception as e:
+                print(f"[DEBUG] Ошибка определения пути для сохранения информации о бинарнике: {e}")
+            
+            # ОТЛАДКА: Выводим информацию о содержимом бинарника
+            print(f"[DEBUG] PyInstaller бинарник: sys._MEIPASS = {base_path}")
+            if os.path.exists(base_path):
+                print(f"[DEBUG] Содержимое sys._MEIPASS:")
+                try:
+                    items = os.listdir(base_path)
+                    for item in sorted(items):
+                        item_path = os.path.join(base_path, item)
+                        item_type = "DIR" if os.path.isdir(item_path) else "FILE"
+                        item_size = ""
+                        if os.path.isfile(item_path):
+                            try:
+                                size = os.path.getsize(item_path)
+                                item_size = f" ({size} bytes)"
+                            except:
+                                pass
+                        print(f"[DEBUG]   {item_type}: {item}{item_size}")
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка чтения sys._MEIPASS: {e}")
+            else:
+                print(f"[DEBUG] sys._MEIPASS не существует: {base_path}")
+            
+            # КРИТИЧНО: Проверяем наличие всех необходимых .so библиотек
+            # В frozen приложении ctypes.CDLL не работает, полагаемся на LD_LIBRARY_PATH
+            found_tcl_so = []
+            found_tk_so = []
+            found_blt_so = []
+            found_x11_so = []
+            
+            # Проверяем наличие библиотек (не загружаем через ctypes - не работает в frozen)
+            for item in os.listdir(base_path):
+                item_path = os.path.join(base_path, item)
+                if os.path.isfile(item_path) and (item.endswith('.so') or '.so.' in item):
+                    if item.startswith('libtcl'):
+                        found_tcl_so.append(item_path)
+                        print(f"[DEBUG] ✓ Найдена библиотека Tcl: {item}")
+                    elif item.startswith('libtk'):
+                        found_tk_so.append(item_path)
+                        print(f"[DEBUG] ✓ Найдена библиотека Tk: {item}")
+                    elif item.startswith('libBLT'):
+                        found_blt_so.append(item_path)
+                        print(f"[DEBUG] ✓ Найдена библиотека BLT: {item}")
+                    elif item.startswith('libX'):
+                        found_x11_so.append(item_path)
+            
+            if not found_tcl_so:
+                print(f"[DEBUG] ВНИМАНИЕ: Библиотеки libtcl*.so не найдены в бинарнике!")
+            if not found_tk_so:
+                print(f"[DEBUG] ВНИМАНИЕ: Библиотеки libtk*.so не найдены в бинарнике!")
+            if not found_blt_so:
+                print(f"[DEBUG] ВНИМАНИЕ: Библиотека libBLT*.so не найдена в бинарнике!")
+            else:
+                print(f"[DEBUG] ✓ Найдено {len(found_x11_so)} X11 библиотек, {len(found_blt_so)} BLT библиотек")
+            
+            # КРИТИЧНО: Проверяем наличие всех файлов Tcl/Tk (скрипты .tcl)
+            print(f"[DEBUG] Проверка файлов Tcl/Tk:")
+            
+            # Сначала проверяем _unified_tcl_tk (создается runtime hook)
+            unified_tcl_tk_dir = os.path.join(base_path, '_unified_tcl_tk')
+            tcl_tk_files = []
+            
+            if os.path.exists(unified_tcl_tk_dir):
+                print(f"[DEBUG] ✓ Найдена объединенная директория: _unified_tcl_tk")
+                try:
+                    for root, dirs, files in os.walk(unified_tcl_tk_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(file_path, unified_tcl_tk_dir)
+                            file_size = os.path.getsize(file_path)
+                            tcl_tk_files.append((rel_path, file_size))
+                    
+                    # Сортируем по пути
+                    tcl_tk_files.sort(key=lambda x: x[0])
+                    
+                    # Выводим список файлов
+                    print(f"[DEBUG] Содержимое _unified_tcl_tk ({len(tcl_tk_files)} файлов):")
+                    for rel_path, file_size in tcl_tk_files:
+                        print(f"[DEBUG]   FILE: {rel_path} ({file_size} bytes)")
+                    
+                    # Проверяем критически важные файлы
+                    has_init_tcl = any('init.tcl' in path for path, _ in tcl_tk_files)
+                    has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
+                    
+                    if has_init_tcl:
+                        print(f"[DEBUG] ✓ init.tcl найден")
+                    else:
+                        print(f"[DEBUG] ✗ init.tcl НЕ найден!")
+                    
+                    if has_tk_tcl:
+                        print(f"[DEBUG] ✓ tk.tcl найден")
+                    else:
+                        print(f"[DEBUG] ✗ tk.tcl НЕ найден!")
+                        
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка чтения _unified_tcl_tk: {e}")
+            else:
+                # Если _unified_tcl_tk не существует, проверяем _tcl_data и _tk_data
+                print(f"[DEBUG] _unified_tcl_tk не найдена, проверяем _tcl_data и _tk_data")
+                
+                tcl_data_path = os.path.join(base_path, '_tcl_data')
+                tk_data_path = os.path.join(base_path, '_tk_data')
+                
+                if os.path.exists(tcl_data_path):
+                    print(f"[DEBUG] ✓ Найдена директория: _tcl_data")
+                    try:
+                        tcl_count = 0
+                        for root, dirs, files in os.walk(tcl_data_path):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(file_path, tcl_data_path)
+                                file_size = os.path.getsize(file_path)
+                                tcl_tk_files.append((f"_tcl_data/{rel_path}", file_size))
+                                tcl_count += 1
+                        print(f"[DEBUG]   Файлов в _tcl_data: {tcl_count}")
+                    except Exception as e:
+                        print(f"[DEBUG] Ошибка чтения _tcl_data: {e}")
+                else:
+                    print(f"[DEBUG] ✗ _tcl_data не найдена!")
+                
+                if os.path.exists(tk_data_path):
+                    print(f"[DEBUG] ✓ Найдена директория: _tk_data")
+                    try:
+                        tk_count = 0
+                        for root, dirs, files in os.walk(tk_data_path):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(file_path, tk_data_path)
+                                file_size = os.path.getsize(file_path)
+                                tcl_tk_files.append((f"_tk_data/{rel_path}", file_size))
+                                tk_count += 1
+                        print(f"[DEBUG]   Файлов в _tk_data: {tk_count}")
+                    except Exception as e:
+                        print(f"[DEBUG] Ошибка чтения _tk_data: {e}")
+                else:
+                    print(f"[DEBUG] ✗ _tk_data не найдена!")
+                
+                # Выводим список всех файлов
+                if tcl_tk_files:
+                    tcl_tk_files.sort(key=lambda x: x[0])
+                    print(f"[DEBUG] Всего файлов Tcl/Tk: {len(tcl_tk_files)}")
+                    print(f"[DEBUG] Список файлов Tcl/Tk:")
+                    for rel_path, file_size in tcl_tk_files:
+                        print(f"[DEBUG]   FILE: {rel_path} ({file_size} bytes)")
+                    
+                    # Проверяем критически важные файлы
+                    has_init_tcl = any('init.tcl' in path for path, _ in tcl_tk_files)
+                    has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
+                    
+                    if has_init_tcl:
+                        print(f"[DEBUG] ✓ init.tcl найден")
+                    else:
+                        print(f"[DEBUG] ✗ init.tcl НЕ найден!")
+                    
+                    if has_tk_tcl:
+                        print(f"[DEBUG] ✓ tk.tcl найден")
+                    else:
+                        print(f"[DEBUG] ✗ tk.tcl НЕ найден!")
+                else:
+                    print(f"[DEBUG] ✗ Файлы Tcl/Tk не найдены!")
+            
+            # Выводим установленные переменные окружения
+            print(f"[DEBUG] TCL_LIBRARY = {os.environ.get('TCL_LIBRARY', 'не установлен')}")
+            print(f"[DEBUG] TK_LIBRARY = {os.environ.get('TK_LIBRARY', 'не установлен')}")
+            
+            # КРИТИЧНО: Добавляем путь к .so библиотекам в LD_LIBRARY_PATH
+            # Избегаем дублирования пути
+            if 'LD_LIBRARY_PATH' in os.environ:
+                existing_paths = os.environ['LD_LIBRARY_PATH'].split(':')
+                if base_path not in existing_paths:
+                    os.environ['LD_LIBRARY_PATH'] = f"{base_path}:{os.environ['LD_LIBRARY_PATH']}"
+            else:
+                os.environ['LD_LIBRARY_PATH'] = base_path
+            print(f"[DEBUG] LD_LIBRARY_PATH = {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
+            
+            # КРИТИЧНО: Предзагрузка libBLT выполняется в runtime hook pyi_rth_libblt.py
+            # Runtime hook выполняется ДО импорта tkinter и использует dlopen с RTLD_GLOBAL
+            # для предзагрузки зависимостей (libtcl8.6.so, libtk8.6.so) и самой libBLT
+            if found_blt_so:
+                blt_path = found_blt_so[0]
+                blt_name = os.path.basename(blt_path)
+                print(f"[DEBUG] libBLT найдена: {blt_name} (предзагрузка выполняется в runtime hook)")
+            
+            # ЗАКОММЕНТИРОВАНО: PyInstaller с --collect-all tkinter автоматически настраивает TCL_LIBRARY и TK_LIBRARY
+            # Не нужно вручную искать директории и устанавливать переменные - это мешает автоматической настройке PyInstaller
+            # PyInstaller создает директории _tcl_data и _tk_data и автоматически настраивает пути через встроенный runtime hook
+            # Универсальный поиск библиотек Tcl/Tk в бинарнике (без привязки к версии)
+            # Ищем любые директории tcl* и tk* в бинарнике
+            # found_tcl_dir = None
+            # found_tk_dir = None
+            # for item in os.listdir(base_path):
+            #     item_path = os.path.join(base_path, item)
+            #     if os.path.isdir(item_path):
+            #         # Ищем директорию Tcl (начинается с tcl)
+            #         if item.startswith('tcl') and os.path.exists(os.path.join(item_path, 'init.tcl')):
+            #             found_tcl_dir = item_path
+            #             os.environ['TCL_LIBRARY'] = item_path
+            #             print(f"[DEBUG] Найдена директория Tcl: {item_path}")
+            #             print(f"[DEBUG]   TCL_LIBRARY = {item_path}")
+            #         # Ищем директорию Tk (начинается с tk)
+            #         if item.startswith('tk') and os.path.exists(os.path.join(item_path, 'tk.tcl')):
+            #             found_tk_dir = item_path
+            #             os.environ['TK_LIBRARY'] = item_path
+            #             print(f"[DEBUG] Найдена директория Tk: {item_path}")
+            #             print(f"[DEBUG]   TK_LIBRARY = {item_path}")
+            # 
+            # if not found_tcl_dir:
+            #     print(f"[DEBUG] ВНИМАНИЕ: Директория tcl* с init.tcl не найдена в бинарнике!")
+            # if not found_tk_dir:
+            #     print(f"[DEBUG] ВНИМАНИЕ: Директория tk* с tk.tcl не найдена в бинарнике!")
+                
+        except (AttributeError, OSError) as e:
+            # Игнорируем ошибки при установке переменных окружения
+            # Но выводим для отладки
+            print(f"[DEBUG] Ошибка установки переменных окружения Tcl/Tk: {e}")
+            import traceback
+            traceback.print_exc()
+            pass
+    
+    # КРИТИЧНО: Явная загрузка библиотек Tcl/Tk ПЕРЕД импортом tkinter
+    # Это гарантирует, что все библиотеки загружены и доступны до импорта tkinter
+    if getattr(sys, 'frozen', False):
+        print("[DEBUG] Явная загрузка библиотек Tcl/Tk перед импортом tkinter...")
+        _load_tcl_tk_libraries()
+    
+    # КРИТИЧНО: Импорт tkinter ВНУТРИ блока if __name__ == '__main__'
+    # Это гарантирует, что tkinter импортируется только один раз - в процессе sudo
+    try:
+        print("[DEBUG] Попытка импорта tkinter...")
+        import tkinter  # NOQA: PyInstaller needs this
+        print(f"[DEBUG] ✓ tkinter импортирован: {tkinter.__file__ if hasattr(tkinter, '__file__') else 'встроенный'}")
+        import tkinter as tk  # NOQA: PyInstaller needs this
+        from tkinter import ttk, messagebox, scrolledtext  # NOQA: PyInstaller needs this
+        import tkinter.messagebox  # NOQA: PyInstaller needs this
+        import tkinter.filedialog as filedialog  # NOQA: PyInstaller needs this
+        
+        # Проверяем доступность _tkinter C-модуля
+        try:
+            import _tkinter
+            print(f"[DEBUG] ✓ _tkinter C-модуль найден: {_tkinter.__file__ if hasattr(_tkinter, '__file__') else 'встроенный'}")
+        except ImportError as e:
+            print(f"[DEBUG] ✗ _tkinter C-модуль НЕ найден: {e}")
+        
+        # Проверяем версии Tcl/Tk
+        try:
+            tcl_version = tkinter.TclVersion
+            tk_version = tkinter.TkVersion
+            print(f"[DEBUG] ✓ Tcl/Tk версии: Tcl {tcl_version}, Tk {tk_version}")
         except Exception as e:
-            print(f"[WARNING] Не удалось создать папку Log: {e}")
+            print(f"[WARNING] ✗ Не удалось получить версии Tcl/Tk: {e}")
+        
+        # Проверяем наличие BLT
+        try:
+            tkinter.Tcl().eval('package require BLT')
+            print("[DEBUG] ✓ BLT пакет доступен")
+        except tkinter.TclError as e:
+            print(f"[WARNING] ✗ BLT пакет НЕ доступен: {e}")
+        
+        # Устанавливаем глобальные переменные
+        TKINTER_AVAILABLE = True
+        print("[DEBUG] ✓ tkinter полностью доступен")
+    except ImportError as e:
+        # Сохраняем детали ошибки для отладки
+        TKINTER_IMPORT_ERROR = str(e)
+        print(f"[ERROR] Не удалось импортировать tkinter: {e}")
+        import traceback
+        traceback.print_exc()
+        TKINTER_AVAILABLE = False
+        tk = None
+        ttk = None
+        messagebox = None
+        scrolledtext = None
+        filedialog = None
+        print("[ERROR] Критическая ошибка: tkinter недоступен, завершаем работу")
+        sys.exit(1)
+    
+    print("[DEBUG] tkinter успешно импортирован, продолжаем...")
     
     # Парсим аргументы
-    skip_update = '--skip-update' in sys.argv
-    force_update = '--force-update' in sys.argv
     console_mode = '--console' in sys.argv
+    print(f"[DEBUG] Режим работы: {'консольный' if console_mode else 'GUI'}")
     
     # ═══════════════════════════════════════════════════════════════════════
-    # РЕЖИМ 1: Принудительное обновление (--force-update)
-    # Сначала обновляется, потом продолжает работу
+    # РЕЖИМ 1: Консольный режим (--console)
+    # Проверка обновлений с интерактивным запросом
     # ═══════════════════════════════════════════════════════════════════════
-    if force_update and not skip_update:
-        print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
-        print("[INFO] Принудительное обновление...")
-        try:
-            updater = SelfUpdater(APP_VERSION)
-            new_ver = updater.check_for_updates()
-            if new_ver:
-                print(f"[INFO] Найдена версия: {new_ver}")
-                if updater.download_and_apply():
-                    print("[INFO] ✓ Обновление применено!")
-                    updater.restart()  # Перезапуск с --skip-update
-            else:
-                print("[INFO] ✓ Установлена актуальная версия")
-        except Exception as e:
-            print(f"[WARNING] Ошибка обновления: {e}")
-        # Продолжаем работу даже если обновление не удалось
-    
-    # ═══════════════════════════════════════════════════════════════════════
-    # РЕЖИМ 2: Консольный режим (--console)
-    # Только выводим информацию о наличии обновления в лог
-    # ═══════════════════════════════════════════════════════════════════════
-    elif console_mode and not skip_update:
+    if console_mode:
         print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
         print("[INFO] Проверка обновлений...")
         try:
             updater = SelfUpdater(APP_VERSION)
             new_ver = updater.check_for_updates()
             if new_ver:
-                print("[INFO] " + "=" * 50)
+                print("\n" + "=" * 60)
                 print(f"[INFO] ⬆️  ДОСТУПНО ОБНОВЛЕНИЕ: {new_ver}")
-                print(f"[INFO]    Для обновления: ./FSA-AstraInstall --force-update")
-                print("[INFO] " + "=" * 50)
+                print(f"[INFO] Текущая версия: {APP_VERSION}")
+                print("=" * 60)
+                
+                # Интерактивный запрос
+                while True:
+                    response = input("\n[?] Обновить сейчас? (y/n): ").strip().lower()
+                    if response in ('y', 'yes', 'д', 'да'):
+                        print("[INFO] Начинаем обновление...")
+                        if updater.download_and_apply():
+                            print("[INFO] ✓ Обновление применено! Перезапуск...")
+                            updater.restart()  # Перезапуск в консольном режиме
+                        else:
+                            print("[ERROR] Не удалось применить обновление")
+                            break
+                    elif response in ('n', 'no', 'н', 'нет'):
+                        print("[INFO] Обновление пропущено. Продолжаем работу...")
+                        break
+                    else:
+                        print("[WARNING] Введите 'y' или 'n'")
             else:
                 print("[INFO] ✓ Установлена актуальная версия")
         except Exception as e:
             print(f"[WARNING] Не удалось проверить обновления: {e}")
     
     # ═══════════════════════════════════════════════════════════════════════
-    # РЕЖИМ 3: GUI режим (по умолчанию)
+    # РЕЖИМ 2: GUI режим (по умолчанию)
     # Отложенная проверка через 3 сек, показ диалога
     # ═══════════════════════════════════════════════════════════════════════
-    elif not console_mode and not skip_update:
+    elif not console_mode:
         def delayed_update_check():
             """Отложенная проверка обновлений для GUI"""
             time.sleep(3)  # Ждём 3 секунды после запуска GUI
@@ -27700,7 +28180,6 @@ if __name__ == '__main__':
                 new_ver = updater.check_for_updates()
                 if new_ver:
                     # Показываем диалог в главном потоке
-                    # Используем глобальную переменную для передачи данных
                     global _update_available
                     _update_available = (new_ver, updater)
             except Exception:
@@ -27712,25 +28191,6 @@ if __name__ == '__main__':
         update_thread.start()
     
     # ═══════════════════════════════════════════════════════════════════════
-    # Специальные режимы
-    # ═══════════════════════════════════════════════════════════════════════
-    if '--update-only' in sys.argv:
-        print("[INFO] Режим: только обновление из сети")
-        update_from_network()
-        sys.exit(0)
-    
-    if '--install-deps-only' in sys.argv:
-        print("[INFO] Режим: только установка зависимостей")
-        install_dependencies()
-        sys.exit(0)
-    
-    # ═══════════════════════════════════════════════════════════════════════
     # Запуск основного приложения
     # ═══════════════════════════════════════════════════════════════════════
-    clean_argv = [arg for arg in sys.argv if arg not in (
-        '--skip-update', '--force-update', '--update-only', '--install-deps-only'
-    )]
-    sys.argv = clean_argv
-    
     main()
-

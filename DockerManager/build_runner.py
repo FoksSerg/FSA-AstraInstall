@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для запуска сборок (локально и удаленно)
-Версия: V3.1.158 (2025.12.04)
+Версия: V3.1.159 (2025.12.06)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -70,7 +70,7 @@ def check_platform():
 # ЛОКАЛЬНАЯ СБОРКА
 # ============================================================================
 
-def build_local(project, platform_name):
+def build_local(project, platform_name, rebuild=False):
     """Запускает локальную сборку"""
     _logger.info(f"Запуск локальной сборки: {project} для {platform_name}")
     
@@ -115,6 +115,18 @@ def build_local(project, platform_name):
     # Имя образа
     image_name = platform_config["image_name"]
     _logger.info(f"Имя образа: {image_name}")
+    
+    # Если rebuild=True, удаляем старый образ
+    if rebuild:
+        _logger.info("Принудительная пересборка образа...")
+        print_step("Удаление старого Docker образа...")
+        import subprocess
+        result = subprocess.run(["docker", "rmi", "-f", image_name], capture_output=True)
+        if result.returncode == 0:
+            _logger.info(f"Старый образ {image_name} удален")
+            print_success(f"Старый образ {image_name} удален")
+        else:
+            _logger.info(f"Образ {image_name} не найден или уже удален")
     
     # Проверяем/создаем образ
     _logger.info(f"Проверка существования образа: {image_name}")
@@ -234,10 +246,96 @@ def build_local(project, platform_name):
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
 
 # ============================================================================
-# УДАЛЕННАЯ СБОРКА
+# УДАЛЕННАЯ СБОРКА ОБРАЗА (отдельная функция)
 # ============================================================================
 
-def build_remote(project, platform_name):
+def build_remote_image_only(platform_name, rebuild=False):
+    """
+    Собирает или пересобирает только Docker образ на удаленном сервере
+    (без сборки бинарника)
+    
+    Args:
+        platform_name: Имя платформы (например, "astra-1.8")
+        rebuild: Если True, удаляет старый образ перед сборкой
+    
+    Returns:
+        bool: True если успешно, False если ошибка
+    """
+    if platform_name not in BUILD_PLATFORMS:
+        _logger.error(f"Неизвестная платформа: {platform_name}")
+        print_error(f"Неизвестная платформа: {platform_name}")
+        return False
+    
+    platform_config = BUILD_PLATFORMS[platform_name]
+    image_name = platform_config["image_name"]
+    
+    # Проверяем подключение к серверу
+    _logger.info("Проверка подключения к серверу...")
+    if not test_connection():
+        _logger.error("Не удалось подключиться к серверу")
+        print_error("Не удалось подключиться к серверу")
+        return False
+    
+    # Если rebuild=True, удаляем старый образ
+    if rebuild:
+        _logger.info("Принудительная пересборка образа на сервере...")
+        print_step("Удаление старого Docker образа на сервере...")
+        from .docker_manager import remove_remote_image
+        if remove_remote_image(image_name):
+            _logger.info(f"Старый образ {image_name} удален на сервере")
+            print_success(f"Старый образ {image_name} удален на сервере")
+        else:
+            _logger.info(f"Образ {image_name} не найден на сервере или уже удален")
+    
+    # Проверяем/создаем образ на сервере
+    _logger.info(f"Проверка существования образа на сервере: {image_name}")
+    if not check_remote_image_exists(image_name):
+        _logger.info("Образ не найден на сервере, запуск сборки...")
+        print_step("Сборка Docker образа на сервере...")
+        dockerfile_path = get_dockerfile_path(platform_name)
+        if not dockerfile_path:
+            _logger.error("Dockerfile не найден")
+            print_error("Dockerfile не найден")
+            return False
+        
+        _logger.info(f"Dockerfile: {dockerfile_path}")
+        
+        # Загружаем Dockerfile на сервер
+        from .server_connection import scp_upload
+        from .config import PROJECTS
+        
+        project = "FSA-AstraInstall"  # Можно сделать настраиваемым
+        incoming_path = get_incoming_path(project)
+        remote_dockerfile = f"{incoming_path}/{dockerfile_path.name}"
+        
+        _logger.info(f"Загрузка Dockerfile на сервер: {remote_dockerfile}")
+        if not scp_upload(dockerfile_path, remote_dockerfile):
+            _logger.error("Не удалось загрузить Dockerfile на сервер")
+            print_error("Не удалось загрузить Dockerfile на сервер")
+            return False
+        
+        # Собираем образ
+        _logger.info(f"Сборка образа на сервере: {image_name}")
+        if not build_remote_image(
+            remote_dockerfile,
+            image_name,
+            incoming_path,
+            DOCKER_CONFIG["platform"]
+        ):
+            _logger.error("Не удалось собрать образ на сервере")
+            print_error("Не удалось собрать образ на сервере")
+            return False
+    else:
+        _logger.info(f"Docker образ {image_name} уже существует на сервере")
+        print_success(f"Docker образ {image_name} уже существует на сервере")
+    
+    return True
+
+# ============================================================================
+# УДАЛЕННАЯ СБОРКА БИНАРНИКА
+# ============================================================================
+
+def build_remote(project, platform_name, rebuild=False):
     """Запускает удаленную сборку на сервере"""
     _logger.info(f"Запуск удаленной сборки: {project} для {platform_name}")
     
@@ -286,39 +384,10 @@ def build_remote(project, platform_name):
     # Имя образа
     image_name = platform_config["image_name"]
     
-    # Проверяем/создаем образ на сервере
-    _logger.info(f"Проверка существования образа на сервере: {image_name}")
-    if not check_remote_image_exists(image_name):
-        _logger.info("Образ не найден на сервере, запуск сборки...")
-        print_step("Сборка Docker образа на сервере...")
-        dockerfile_path = get_dockerfile_path(platform_name)
-        if not dockerfile_path:
-            _logger.error("Dockerfile не найден")
-            return False
-        
-        _logger.info(f"Dockerfile: {dockerfile_path}")
-        
-        # Загружаем Dockerfile на сервер
-        from .server_connection import scp_upload
-        remote_dockerfile = f"{incoming_path}/{dockerfile_path.name}"
-        _logger.info(f"Загрузка Dockerfile на сервер: {remote_dockerfile}")
-        if not scp_upload(dockerfile_path, remote_dockerfile):
-            _logger.error("Не удалось загрузить Dockerfile на сервер")
-            return False
-        
-        # Собираем образ
-        _logger.info(f"Сборка образа на сервере: {image_name}")
-        if not build_remote_image(
-            remote_dockerfile,
-            image_name,
-            incoming_path,
-            DOCKER_CONFIG["platform"]
-        ):
+    # Собираем/пересобираем образ (используем отдельную функцию)
+    if not build_remote_image_only(platform_name, rebuild=rebuild):
             _logger.error("Не удалось собрать образ на сервере")
             return False
-    else:
-        _logger.info(f"Docker образ {image_name} уже существует на сервере")
-        print_success(f"Docker образ {image_name} уже существует на сервере")
     
     # Запускаем сборку на сервере
     print_step("Запуск сборки на сервере...")
@@ -361,7 +430,7 @@ chmod +x {outgoing_path}/{output_name}
 # ГЛАВНАЯ ФУНКЦИЯ
 # ============================================================================
 
-def build(project, platform_name, remote=False):
+def build(project, platform_name, remote=False, rebuild=False):
     """Главная функция сборки"""
     _logger.info("=" * 60)
     _logger.info(f"=== Сборка {project} для {platform_name} ({'удаленно' if remote else 'локально'}) ===")
@@ -372,9 +441,9 @@ def build(project, platform_name, remote=False):
     
     try:
         if remote:
-            result = build_remote(project, platform_name)
+            result = build_remote(project, platform_name, rebuild=rebuild)
         else:
-            result = build_local(project, platform_name)
+            result = build_local(project, platform_name, rebuild=rebuild)
         
         if result:
             _logger.info("Сборка завершена успешно")

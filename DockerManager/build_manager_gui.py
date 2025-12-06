@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GUI приложение для управления Docker сборками
-Версия: V3.1.158 (2025.12.04)
+Версия: V3.1.159 (2025.12.06)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -170,6 +170,7 @@ class BuildManagerGUI:
         
         ttk.Button(btn_frame, text="Обновить", command=self.refresh_images).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Создать образ", command=self.create_image).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Пересобрать", command=self.rebuild_image).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Удалить", command=self.delete_image).pack(side=tk.LEFT, padx=5)
     
     def create_sources_tab(self):
@@ -248,22 +249,34 @@ class BuildManagerGUI:
         self.remote_status_label = ttk.Label(remote_frame, text="Проверка...", foreground="gray")
         self.remote_status_label.pack(side=tk.LEFT, padx=(10, 0))
         
+        # Опции сборки
+        options_frame = ttk.LabelFrame(frame, text="Опции сборки")
+        options_frame.grid(row=3, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=5)
+        
+        self.rebuild_var = tk.BooleanVar(value=False)
+        rebuild_check = ttk.Checkbutton(
+            options_frame,
+            text="Пересобрать Docker образ (удалить старый и создать новый)",
+            variable=self.rebuild_var
+        )
+        rebuild_check.pack(anchor=tk.W, padx=5, pady=3)
+        
         # Кнопка запуска
         self.build_button = ttk.Button(frame, text="Запустить сборку", command=self.start_build, state="disabled")
-        self.build_button.grid(row=3, column=0, columnspan=2, pady=10)
+        self.build_button.grid(row=4, column=0, columnspan=2, pady=10)
         
         # Прогресс
         self.build_progress = ttk.Progressbar(frame, mode='indeterminate')
-        self.build_progress.grid(row=4, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=5)
+        self.build_progress.grid(row=5, column=0, columnspan=2, sticky=tk.EW, padx=10, pady=5)
         
         # Статус
         self.build_status = tk.StringVar(value="Готов к сборке")
-        ttk.Label(frame, textvariable=self.build_status).grid(row=5, column=0, columnspan=2, pady=5)
+        ttk.Label(frame, textvariable=self.build_status).grid(row=6, column=0, columnspan=2, pady=5)
         
         # Лог сборки
         log_frame = ttk.LabelFrame(frame, text="Лог сборки")
-        log_frame.grid(row=6, column=0, columnspan=2, sticky=tk.NSEW, padx=10, pady=10)
-        frame.grid_rowconfigure(6, weight=1)
+        log_frame.grid(row=7, column=0, columnspan=2, sticky=tk.NSEW, padx=10, pady=10)
+        frame.grid_rowconfigure(7, weight=1)
         frame.grid_columnconfigure(0, weight=1)
         
         # Текстовое поле для лога
@@ -590,6 +603,49 @@ class BuildManagerGUI:
         if dialog.image_created:
             self.refresh_images()
     
+    def rebuild_image(self):
+        """Пересобирает выбранный образ"""
+        selection = self.images_tree.selection()
+        if not selection:
+            messagebox.showwarning("Предупреждение", "Выберите образ для пересборки")
+            return
+        
+        item = self.images_tree.item(selection[0])
+        image_name = item['text']
+        
+        # Определяем платформу по имени образа
+        platform_name = None
+        from .config import BUILD_PLATFORMS
+        for platform, config in BUILD_PLATFORMS.items():
+            if config["image_name"] == image_name:
+                platform_name = platform
+                break
+        
+        if not platform_name:
+            messagebox.showerror("Ошибка", f"Не удалось определить платформу для образа {image_name}")
+            return
+        
+        if messagebox.askyesno("Подтверждение", f"Пересобрать образ {image_name}?\n\nЭто удалит старый образ и создаст новый."):
+            def rebuild():
+                try:
+                    from .build_runner import build_remote_image_only
+                    
+                    self.log(f"[#] Пересборка образа {image_name} для платформы {platform_name}...")
+                    
+                    # Просто вызываем функцию с rebuild=True
+                    if build_remote_image_only(platform_name, rebuild=True):
+                        self.log(f"[OK] Образ {image_name} успешно пересобран")
+                        self.root.after(0, lambda: messagebox.showinfo("Успех", f"Образ {image_name} успешно пересобран"))
+                        self.root.after(0, self.refresh_images)
+                    else:
+                        self.log(f"[ERROR] Не удалось пересобрать образ {image_name}")
+                        self.root.after(0, lambda: messagebox.showerror("Ошибка", f"Не удалось пересобрать образ {image_name}"))
+                except Exception as e:
+                    self.log(f"[ERROR] Ошибка пересборки образа: {e}")
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка пересборки образа: {e}"))
+            
+            threading.Thread(target=rebuild, daemon=True).start()
+    
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С ИСХОДНИКАМИ
     # ============================================================================
@@ -786,6 +842,7 @@ class BuildManagerGUI:
         project = self.build_project.get()
         platform = self.build_platform.get()
         remote = (self.build_mode == "remote")
+        rebuild = self.rebuild_var.get()  # Получаем значение чекбокса
         
         if not platform:
             self.build_status.set("⚠️ Выберите платформу для сборки")
@@ -827,32 +884,36 @@ class BuildManagerGUI:
         
         # Блокируем кнопку и элементы управления во время сборки
         self.build_button.config(state="disabled")
-        self.build_status.set("Сборка запущена...")
-        self.build_progress.start()
-        self.log(f"[#] Запуск сборки: {project} для {platform} ({'удаленно' if remote else 'локально'})")
-        
-        def run_build():
-            try:
-                success = build(project, platform, remote=remote)
-                if success:
-                    self.log("[OK] Сборка завершена успешно")
-                    self.root.after(0, lambda: self.build_status.set("✅ Сборка завершена успешно"))
-                    self.refresh_builds()
-                else:
-                    self.log("[ERROR] Сборка завершена с ошибками")
-                    self.root.after(0, lambda: self.build_status.set("❌ Сборка завершена с ошибками"))
-            except Exception as e:
-                self.log(f"[ERROR] Ошибка сборки: {e}")
-                self.root.after(0, lambda: self.build_status.set(f"❌ Ошибка: {e}"))
-            finally:
-                # Сбрасываем флаг активной сборки
-                self.build_in_progress = False
-                self.root.after(0, self.build_progress.stop)
-                # Возобновляем периодическую проверку (если вкладка активна)
-                if self._build_tab_active:
-                    self.root.after(500, self.start_periodic_check)
-        
-        threading.Thread(target=run_build, daemon=True).start()
+        if rebuild:
+            self.build_status.set("Сборка запущена (с пересборкой образа)...")
+            self.log(f"[#] Запуск сборки с пересборкой образа: {project} для {platform} ({'удаленно' if remote else 'локально'})")
+        else:
+            self.build_status.set("Сборка запущена...")
+            self.log(f"[#] Запуск сборки: {project} для {platform} ({'удаленно' if remote else 'локально'})")
+            self.build_progress.start()
+            
+            def run_build():
+                try:
+                    success = build(project, platform, remote=remote, rebuild=rebuild)  # Передаем rebuild
+                    if success:
+                        self.log("[OK] Сборка завершена успешно")
+                        self.root.after(0, lambda: self.build_status.set("✅ Сборка завершена успешно"))
+                        self.refresh_builds()
+                    else:
+                        self.log("[ERROR] Сборка завершена с ошибками")
+                        self.root.after(0, lambda: self.build_status.set("❌ Сборка завершена с ошибками"))
+                except Exception as e:
+                    self.log(f"[ERROR] Ошибка сборки: {e}")
+                    self.root.after(0, lambda: self.build_status.set(f"❌ Ошибка: {e}"))
+                finally:
+                    # Сбрасываем флаг активной сборки
+                    self.build_in_progress = False
+                    self.root.after(0, self.build_progress.stop)
+                    # Возобновляем периодическую проверку (если вкладка активна)
+                    if self._build_tab_active:
+                        self.root.after(500, self.start_periodic_check)
+            
+            threading.Thread(target=run_build, daemon=True).start()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С РЕЗУЛЬТАТАМИ
