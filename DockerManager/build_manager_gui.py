@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GUI приложение для управления Docker сборками
-Версия: V3.1.163 (2025.12.06)
+Версия: V3.1.164 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -55,6 +55,10 @@ class BuildManagerGUI:
         self.platform_selected = False
         self.build_in_progress = False
         self._build_tab_active = False  # Флаг активности вкладки сборки
+        
+        # Состояние сортировки таблицы результатов
+        self._results_sort_column = None
+        self._results_sort_reverse = False
         
         # Файл настроек
         self.settings_file = get_dockmanager_dir() / ".build_manager_settings.json"
@@ -324,17 +328,18 @@ class BuildManagerGUI:
         results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         self.results_tree = ttk.Treeview(results_frame, columns=("size", "date", "platform", "type", "path"), show="tree headings", height=15)
-        self.results_tree.heading("#0", text="Файл")
-        self.results_tree.heading("size", text="Размер")
-        self.results_tree.heading("date", text="Дата")
-        self.results_tree.heading("platform", text="Платформа")
-        self.results_tree.column("#0", width=300)
-        self.results_tree.column("size", width=100)
-        self.results_tree.column("date", width=150)
-        self.results_tree.column("platform", width=120)
+        self.results_tree.heading("#0", text="Файл", command=lambda: self._sort_results_tree("#0"))
+        self.results_tree.heading("size", text="Размер", command=lambda: self._sort_results_tree("size"))
+        self.results_tree.heading("date", text="Дата", command=lambda: self._sort_results_tree("date"))
+        self.results_tree.heading("platform", text="Платформа", command=lambda: self._sort_results_tree("platform"))
+        self.results_tree.heading("path", text="Расположение", command=lambda: self._sort_results_tree("path"))
+        self.results_tree.column("#0", width=200)
+        self.results_tree.column("size", width=120, anchor="center")
+        self.results_tree.column("date", width=180, anchor="center")
+        self.results_tree.column("platform", width=150, anchor="center")
+        self.results_tree.column("path", width=530)
         # Скрываем служебные колонки
         self.results_tree.column("type", width=0, stretch=False)
-        self.results_tree.column("path", width=0, stretch=False)
         
         scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scrollbar.set)
@@ -347,6 +352,7 @@ class BuildManagerGUI:
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
         ttk.Button(btn_frame, text="Скачать", command=self.download_result).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Удалить", command=self.delete_result).pack(side=tk.LEFT, padx=5)
     
     
     # ============================================================================
@@ -890,30 +896,32 @@ class BuildManagerGUI:
         else:
             self.build_status.set("Сборка запущена...")
             self.log(f"[#] Запуск сборки: {project} для {platform} ({'удаленно' if remote else 'локально'})")
-            self.build_progress.start()
-            
-            def run_build():
-                try:
-                    success = build(project, platform, remote=remote, rebuild=rebuild)  # Передаем rebuild
-                    if success:
-                        self.log("[OK] Сборка завершена успешно")
-                        self.root.after(0, lambda: self.build_status.set("✅ Сборка завершена успешно"))
-                        self.refresh_builds()
-                    else:
-                        self.log("[ERROR] Сборка завершена с ошибками")
-                        self.root.after(0, lambda: self.build_status.set("❌ Сборка завершена с ошибками"))
-                except Exception as e:
-                    self.log(f"[ERROR] Ошибка сборки: {e}")
-                    self.root.after(0, lambda: self.build_status.set(f"❌ Ошибка: {e}"))
-                finally:
-                    # Сбрасываем флаг активной сборки
-                    self.build_in_progress = False
-                    self.root.after(0, self.build_progress.stop)
-                    # Возобновляем периодическую проверку (если вкладка активна)
-                    if self._build_tab_active:
-                        self.root.after(500, self.start_periodic_check)
-            
-            threading.Thread(target=run_build, daemon=True).start()
+        
+        # Запускаем прогресс-бар
+        self.build_progress.start()
+        
+        def run_build():
+            try:
+                success = build(project, platform, remote=remote, rebuild=rebuild)  # Передаем rebuild
+                if success:
+                    self.log("[OK] Сборка завершена успешно")
+                    self.root.after(0, lambda: self.build_status.set("✅ Сборка завершена успешно"))
+                    self.refresh_builds()
+                else:
+                    self.log("[ERROR] Сборка завершена с ошибками")
+                    self.root.after(0, lambda: self.build_status.set("❌ Сборка завершена с ошибками"))
+            except Exception as e:
+                self.log(f"[ERROR] Ошибка сборки: {e}")
+                self.root.after(0, lambda: self.build_status.set(f"❌ Ошибка: {e}"))
+            finally:
+                # Сбрасываем флаг активной сборки
+                self.build_in_progress = False
+                self.root.after(0, self.build_progress.stop)
+                # Возобновляем периодическую проверку (если вкладка активна)
+                if self._build_tab_active:
+                    self.root.after(500, self.start_periodic_check)
+        
+        threading.Thread(target=run_build, daemon=True).start()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С РЕЗУЛЬТАТАМИ
@@ -956,12 +964,13 @@ class BuildManagerGUI:
                 if project in PROJECTS:
                     project_config = PROJECTS[project]
                     output_name = project_config["output_name"]
-                    local_file = project_dir / output_name
                     
-                    if local_file.exists():
-                        size = local_file.stat().st_size / (1024 * 1024)  # MB
-                        mtime = datetime.fromtimestamp(local_file.stat().st_mtime)
-                        key = (output_name, "Локальный")
+                    # Ищем базовый файл без суффикса
+                    base_file = project_dir / output_name
+                    if base_file.exists() and base_file.is_file():
+                        size = base_file.stat().st_size / (1024 * 1024)  # MB
+                        mtime = datetime.fromtimestamp(base_file.stat().st_mtime)
+                        key = (output_name, "Локальный", "local")
                         if key not in seen_keys:
                             seen_keys.add(key)
                             results.append({
@@ -970,8 +979,29 @@ class BuildManagerGUI:
                                 "size": f"{size:.2f} MB",
                                 "date": mtime.strftime("%Y-%m-%d %H:%M:%S"),
                                 "type": "local",
-                                "path": str(local_file)
+                                "path": str(base_file)
                             })
+                    
+                    # Ищем файлы с суффиксами платформ
+                    for platform_name in BUILD_PLATFORMS.keys():
+                        platform_version = platform_name.replace("astra-", "").replace(".", "-")
+                        output_name_with_platform = f"{output_name}-{platform_version}"
+                        local_file = project_dir / output_name_with_platform
+                        
+                        if local_file.exists() and local_file.is_file():
+                            size = local_file.stat().st_size / (1024 * 1024)  # MB
+                            mtime = datetime.fromtimestamp(local_file.stat().st_mtime)
+                            key = (output_name_with_platform, platform_name, "local")
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                results.append({
+                                    "name": output_name_with_platform,
+                                    "platform": platform_name,
+                                    "size": f"{size:.2f} MB",
+                                    "date": mtime.strftime("%Y-%m-%d %H:%M:%S"),
+                                    "type": "local",
+                                    "path": str(local_file)
+                                })
                 
                 # Получаем удаленные результаты
                 try:
@@ -985,7 +1015,7 @@ class BuildManagerGUI:
                         if remote_list:
                             parsed_files = self._parse_remote_files(remote_list, platform_filter, remote_path)
                             for file_info in parsed_files:
-                                key = (file_info["name"], file_info["platform"])
+                                key = (file_info["name"], file_info["platform"], "remote")
                                 if key not in seen_keys:
                                     seen_keys.add(key)
                                     results.append(file_info)
@@ -997,7 +1027,7 @@ class BuildManagerGUI:
                             if remote_list:
                                 parsed_files = self._parse_remote_files(remote_list, platform_name, remote_path)
                                 for file_info in parsed_files:
-                                    key = (file_info["name"], file_info["platform"])
+                                    key = (file_info["name"], file_info["platform"], "remote")
                                     if key not in seen_keys:
                                         seen_keys.add(key)
                                         results.append(file_info)
@@ -1024,6 +1054,85 @@ class BuildManagerGUI:
                 self._refresh_in_progress = False
         
         threading.Thread(target=refresh_async, daemon=True).start()
+    
+    def _sort_results_tree(self, column):
+        """Сортирует таблицу результатов по указанной колонке"""
+        # Определяем направление сортировки
+        if self._results_sort_column == column:
+            self._results_sort_reverse = not self._results_sort_reverse
+        else:
+            self._results_sort_column = column
+            self._results_sort_reverse = False
+        
+        # Сохраняем все данные элементов перед удалением
+        items_data = []
+        for item_id in self.results_tree.get_children(""):
+            item_data = self.results_tree.item(item_id)
+            text = item_data["text"]
+            values = item_data["values"]
+            # Получаем значение для сортировки
+            if column == "#0":
+                sort_value = text
+            else:
+                # Находим индекс колонки
+                columns = ("size", "date", "platform", "type", "path")
+                if column in columns:
+                    col_index = columns.index(column)
+                    sort_value = values[col_index] if col_index < len(values) else ""
+                else:
+                    sort_value = ""
+            items_data.append((sort_value, text, values))
+        
+        # Определяем функцию сортировки в зависимости от колонки
+        if column == "size":
+            # Сортировка по размеру (числовая)
+            def sort_key(item):
+                value = item[0]
+                try:
+                    # Извлекаем число из "XX.XX MB"
+                    return float(value.replace(" MB", ""))
+                except (ValueError, AttributeError):
+                    return 0.0
+        elif column == "date":
+            # Сортировка по дате
+            def sort_key(item):
+                value = item[0]
+                try:
+                    from datetime import datetime
+                    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                except (ValueError, AttributeError):
+                    from datetime import datetime
+                    return datetime.min
+        else:
+            # Сортировка по тексту (для остальных колонок)
+            def sort_key(item):
+                value = item[0] if item[0] else ""
+                return value.lower()
+        
+        # Сортируем элементы
+        items_data.sort(key=sort_key, reverse=self._results_sort_reverse)
+        
+        # Пересоздаем дерево с отсортированными данными
+        for item in self.results_tree.get_children(""):
+            self.results_tree.delete(item)
+        
+        for sort_value, text, values in items_data:
+            # Вставляем элемент обратно
+            self.results_tree.insert("", tk.END, text=text, values=values)
+        
+        # Обновляем индикатор направления сортировки в заголовке
+        for col in ("#0", "size", "date", "platform", "path"):
+            heading_text = self.results_tree.heading(col, "text")
+            # Убираем предыдущие индикаторы
+            if heading_text.startswith("▲ ") or heading_text.startswith("▼ "):
+                heading_text = heading_text[2:]
+            
+            if col == column:
+                # Добавляем индикатор для текущей колонки
+                indicator = "▼ " if self._results_sort_reverse else "▲ "
+                heading_text = indicator + heading_text
+            
+            self.results_tree.heading(col, text=heading_text)
     
     def _parse_remote_files(self, ls_output, platform_name, remote_path):
         """Парсит вывод ls -la и возвращает список файлов (не директорий)"""
@@ -1097,7 +1206,7 @@ class BuildManagerGUI:
                     "size": f"{size_mb:.2f} MB",
                     "date": date_str,
                     "type": "remote",
-                    "path": filename
+                    "path": file_path
                 })
             except (ValueError, IndexError, KeyError):
                 continue
@@ -1151,6 +1260,73 @@ class BuildManagerGUI:
                 self.root.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка скачивания: {e}"))
         
         threading.Thread(target=download_async, daemon=True).start()
+    
+    def delete_result(self):
+        """Удаляет выбранный результат с подтверждением"""
+        selection = self.results_tree.selection()
+        if not selection:
+            messagebox.showwarning("Предупреждение", "Выберите результат для удаления")
+            return
+        
+        item = self.results_tree.item(selection[0])
+        values = item['values']
+        if len(values) < 5:
+            messagebox.showerror("Ошибка", "Неверный формат данных результата")
+            return
+        
+        result_type = values[3]  # "local" или "remote"
+        result_path = values[4]   # путь к файлу
+        filename = item['text']  # Имя файла
+        platform = values[2]  # платформа
+        
+        # Формируем сообщение подтверждения
+        location_type = "локальный" if result_type == "local" else "удаленный"
+        confirm_msg = (f"Вы уверены, что хотите удалить {location_type} файл?\n\n"
+                      f"Файл: {filename}\n"
+                      f"Платформа: {platform}\n"
+                      f"Путь: {result_path}")
+        
+        # Показываем диалог подтверждения
+        if not messagebox.askyesno("Подтверждение удаления", confirm_msg):
+            return
+        
+        # Удаляем файл
+        if result_type == "local":
+            # Удаление локального файла
+            import os
+            from pathlib import Path
+            try:
+                file_path = Path(result_path)
+                if file_path.exists():
+                    os.remove(file_path)
+                    self.log(f"[OK] Локальный файл удален: {filename}")
+                    messagebox.showinfo("Успех", f"Локальный файл {filename} успешно удален")
+                    # Обновляем список после удаления
+                    self.root.after(500, self.refresh_builds)
+                else:
+                    self.log(f"[WARNING] Файл не найден: {result_path}")
+                    messagebox.showwarning("Предупреждение", f"Файл не найден: {result_path}")
+            except Exception as e:
+                self.log(f"[ERROR] Ошибка удаления локального файла: {e}")
+                messagebox.showerror("Ошибка", f"Не удалось удалить локальный файл: {e}")
+        else:
+            # Удаление удаленного файла
+            def delete_async():
+                try:
+                    from .server_connection import remove_remote_file
+                    if remove_remote_file(result_path):
+                        self.log(f"[OK] Удаленный файл удален: {filename}")
+                        self.root.after(0, lambda: messagebox.showinfo("Успех", f"Удаленный файл {filename} успешно удален"))
+                        # Обновляем список после удаления
+                        self.root.after(500, self.refresh_builds)
+                    else:
+                        self.log("[ERROR] Не удалось удалить удаленный файл")
+                        self.root.after(0, lambda: messagebox.showerror("Ошибка", "Не удалось удалить удаленный файл"))
+                except Exception as e:
+                    self.log(f"[ERROR] Ошибка удаления удаленного файла: {e}")
+                    self.root.after(0, lambda: messagebox.showerror("Ошибка", f"Ошибка удаления: {e}"))
+            
+            threading.Thread(target=delete_async, daemon=True).start()
     
     # ============================================================================
     # МЕТОДЫ РАБОТЫ С ЛОГОМ
