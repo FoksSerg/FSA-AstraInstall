@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.1.162 (2025.12.07)
+Версия: V3.1.163 (2025.12.07)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.1.162 (2025.12.07)"
+APP_VERSION = "V[0-9][0-9]*.[0-9][0-9]*.[0-9][0-9]* (2025.12.07)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -9837,25 +9837,20 @@ class RepoChecker(object):
                     continue
                 
                 # Проверяем строки с deb (активные и закомментированные)
-                # Поддерживаем форматы: "deb ", "#deb ", "# deb "
                 is_repo_line = False
-                comment_format = None  # Формат комментария: None (нет), '#deb ' или '# deb '
+                is_commented = False
                 
                 if line_stripped.startswith('deb '):
                     # Активный репозиторий
                     is_repo_line = True
-                    comment_format = None
-                elif line_stripped.startswith('#deb '):
-                    # Закомментированный без пробела
+                    is_commented = False
+                elif line_stripped.startswith('#deb ') or line_stripped.startswith('# deb '):
+                    # Закомментированный репозиторий
                     is_repo_line = True
-                    comment_format = '#deb '
-                elif line_stripped.startswith('# deb '):
-                    # Закомментированный с пробелом
-                    is_repo_line = True
-                    comment_format = '# deb '
+                    is_commented = True
                 
                 if is_repo_line:
-                    # Убираем комментарий для проверки (учитываем оба формата)
+                    # Убираем комментарий для проверки
                     clean_line = line_stripped.lstrip('#').strip()
                     # Если после lstrip('#') остался пробел в начале, убираем его
                     if clean_line.startswith(' '):
@@ -9868,19 +9863,25 @@ class RepoChecker(object):
                         self.activated_count += 1
                         self.working_repos.append(clean_line)
                         print("Репозиторий АКТИВИРОВАН: %s" % clean_line)
-                        # Активируем репозиторий (убираем #)
-                        temp_file.write(clean_line + '\n')
+                        # Активируем репозиторий - просто убираем решетку, сохраняя исходную строку
+                        if is_commented:
+                            # Убираем только первый символ # и возможный пробел после него
+                            uncommented = line_stripped.lstrip('#').lstrip()
+                            temp_file.write(uncommented + '\n')
+                        else:
+                            # Уже активен - записываем как есть
+                            temp_file.write(clean_line + '\n')
                     else:
                         self.deactivated_count += 1
                         self.broken_repos.append(clean_line)
                         print("Репозиторий ДЕАКТИВИРОВАН: %s" % clean_line)
-                        # Деактивируем репозиторий (сохраняем исходный формат комментария)
-                        if comment_format:
-                            # Сохраняем в исходном формате
-                            temp_file.write(comment_format + clean_line + '\n')
+                        # Деактивируем репозиторий - просто добавляем решетку в начало
+                        if is_commented:
+                            # Уже закомментирован - записываем как есть
+                            temp_file.write(line_stripped + '\n')
                         else:
-                            # Если был активным, используем формат без пробела по умолчанию
-                            temp_file.write('#deb ' + clean_line + '\n')
+                            # Добавляем решетку с пробелом в начало
+                            temp_file.write('# ' + clean_line + '\n')
                 else:
                     # Копируем остальные строки как есть (с исходным форматированием)
                     temp_file.write(line)  # Сохраняем исходный формат (с переносом строки)
@@ -13087,6 +13088,9 @@ class AutomationGUI(object):
         self.current_download_size = 0
         style = self.ttk.Style()
         
+        # Инициализируем переменную для хранения ссылки на контекстное меню
+        self._current_context_menu = None
+        
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
@@ -14295,6 +14299,12 @@ class AutomationGUI(object):
         # Ограничиваем высоту содержимого вкладок, чтобы панель прогресса была видна
         self.notebook.bind('<Configure>', self._limit_tab_height)
         
+        # Обработчик переключения вкладок для закрытия контекстного меню
+        self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
+        
+        # Инициализируем переменную для хранения ссылки на контекстное меню
+        self._current_context_menu = None
+        
         # Основная вкладка
         self.main_frame = self.tk.Frame(self.notebook)
         self.notebook.add(self.main_frame, text=" Обновление ОС ")
@@ -14602,6 +14612,15 @@ class AutomationGUI(object):
         self.check_repos_button2.pack(side=self.tk.LEFT, padx=5)
         ToolTip(self.check_repos_button2, "Проверить доступность всех репозиториев по сети")
         
+        self.auto_check_repos_button = self.tk.Button(button_frame, 
+                                                      text="Автоматическая проверка и обновление", 
+                                                      command=self.run_auto_repo_check,
+                                                      font=('Arial', 10, 'bold'),
+                                                      bg='#9C27B0',
+                                                      fg='white')
+        self.auto_check_repos_button.pack(side=self.tk.LEFT, padx=5)
+        ToolTip(self.auto_check_repos_button, "Автоматически проверить доступность и активировать/деактивировать репозитории")
+        
         self.update_repos_button = self.tk.Button(button_frame, 
                                                   text="Обновить списки (apt update)", 
                                                   command=self.run_apt_update,
@@ -14610,11 +14629,6 @@ class AutomationGUI(object):
                                                   fg='white')
         self.update_repos_button.pack(side=self.tk.LEFT, padx=5)
         ToolTip(self.update_repos_button, "Обновить локальную базу пакетов (выполнить apt update)")
-        
-        self.repos_status_label = self.tk.Label(button_frame, 
-                                               text="Нажмите 'Загрузить репозитории' для начала",
-                                               font=('Arial', 9))
-        self.repos_status_label.pack(side=self.tk.LEFT, padx=10)
         
         # Список репозиториев
         repos_list_frame = self.tk.LabelFrame(self.repos_frame, text="Список репозиториев")
@@ -14670,7 +14684,13 @@ class AutomationGUI(object):
         
         self.tk.Label(stats_inner, text="Файл:").grid(row=1, column=0, sticky=self.tk.W)
         self.repos_file_label = self.tk.Label(stats_inner, text="/etc/apt/sources.list")
-        self.repos_file_label.grid(row=1, column=1, columnspan=5, sticky=self.tk.W, padx=(5, 20))
+        self.repos_file_label.grid(row=1, column=1, columnspan=3, sticky=self.tk.W, padx=(5, 20))
+        
+        self.tk.Label(stats_inner, text="Статус:").grid(row=1, column=4, sticky=self.tk.W, padx=(20, 5))
+        self.repos_status_label = self.tk.Label(stats_inner, 
+                                               text="Нажмите 'Загрузить репозитории' для начала",
+                                               font=('Arial', 9))
+        self.repos_status_label.grid(row=1, column=5, columnspan=2, sticky=self.tk.W, padx=(5, 0))
         
     def create_terminal_tab(self):
         """Создание терминальной вкладки с встроенным терминалом"""
@@ -15516,6 +15536,9 @@ class AutomationGUI(object):
             # Поднимаем окно наверх (если нужно)
             self.root.lift()
             self.root.focus_force()
+            
+            # Автоматическая загрузка репозиториев через 1.5 секунды после открытия формы
+            self.root.after(1500, self._auto_load_repositories)
             
         except Exception as e:
             print(f"Ошибка при показе окна: {e}", level='ERROR')
@@ -21009,12 +21032,43 @@ class AutomationGUI(object):
                 
                 # Парсим строку репозитория
                 if line_clean.startswith('deb'):
-                    parts = line_clean.split()
+                    # Улучшенный парсинг с учетом cdrom репозиториев
+                    parts = line_clean.split(None, 2)  # Разбиваем максимум на 3 части
                     if len(parts) >= 3:
                         repo_type = parts[0]  # deb или deb-src
-                        uri = parts[1]
-                        distribution = parts[2] if len(parts) > 2 else ''
-                        components = ' '.join(parts[3:]) if len(parts) > 3 else ''
+                        
+                        # Для cdrom URI может содержать пробелы в квадратных скобках
+                        # Формат: deb cdrom:[label with spaces]/ distribution components
+                        uri_part = parts[1]
+                        rest = parts[2]  # Остаток: "distribution components" или "cdrom:[...] distribution components"
+                        
+                        # Если URI начинается с cdrom:[, нужно найти где заканчивается метка
+                        if uri_part.startswith('cdrom:['):
+                            # Ищем закрывающую скобку и слэш в остатке
+                            # Формат: cdrom:[label]/ distribution
+                            # Или: cdrom:[label] distribution (без слэша)
+                            bracket_end = rest.find(']')
+                            if bracket_end != -1:
+                                # Нашли закрывающую скобку
+                                if bracket_end + 1 < len(rest) and rest[bracket_end + 1] == '/':
+                                    # Есть слэш после скобки
+                                    uri = uri_part + ' ' + rest[:bracket_end + 2]  # Включаем ]/
+                                    rest = rest[bracket_end + 2:].strip()  # Остаток после ]/
+                                else:
+                                    # Нет слэша, просто скобка
+                                    uri = uri_part + ' ' + rest[:bracket_end + 1]  # Включаем ]
+                                    rest = rest[bracket_end + 1:].strip()  # Остаток после ]
+                            else:
+                                # Не нашли скобку - используем как есть
+                                uri = uri_part
+                        else:
+                            # Обычный URI без пробелов
+                            uri = uri_part
+                        
+                        # Парсим остаток: distribution и components
+                        rest_parts = rest.split(None, 1)
+                        distribution = rest_parts[0] if len(rest_parts) > 0 else ''
+                        components = rest_parts[1] if len(rest_parts) > 1 else ''
                         
                         status = 'Отключен' if is_disabled else 'Активен'
                         
@@ -21119,11 +21173,18 @@ class AutomationGUI(object):
         thread_name = threading.current_thread().name
         print(f"Поток {thread_name} начал выполнение (_run_apt_update_universal)", level='DEBUG')
         try:
+            # Подготавливаем переменные окружения для процесса (как в SystemUpdater)
+            env = os.environ.copy()
+            env['DEBIAN_FRONTEND'] = 'noninteractive'
+            env['DEBIAN_PRIORITY'] = 'critical'
+            env['APT_LISTCHANGES_FRONTEND'] = 'none'
+
             # Используем новый универсальный обработчик
             return_code = self.universal_runner.run_process(
                 ['apt-get', 'update'],
                 process_type="update",
-                channels=["file", "terminal", "gui"]
+                channels=["file", "terminal", "gui"],
+                env=env
             )
             
             # Обновляем GUI в главном потоке
@@ -21146,19 +21207,314 @@ class AutomationGUI(object):
     
     def show_repo_context_menu(self, event):
         """Показать контекстное меню для репозитория"""
+        # Закрываем предыдущее меню, если оно открыто
+        if hasattr(self, '_current_context_menu') and self._current_context_menu:
+            try:
+                self._current_context_menu.unpost()
+            except:
+                pass
+        
+        # Получаем выбранный элемент
+        item = self.repos_tree.identify_row(event.y)
+        if not item:
+            return
+        
+        # Получаем статус репозитория
+        values = self.repos_tree.item(item, 'values')
+        if not values:
+            return
+        
+        status = values[0]  # 'Активен' или 'Отключен'
+        is_active = (status == 'Активен')
+        
         # Создаем контекстное меню
         menu = self.tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Показать детали", command=lambda: self.show_repo_details(None))
+        menu.add_command(label="Показать детали", command=lambda: self._close_context_menu_and_run(self.show_repo_details, None))
         menu.add_separator()
-        menu.add_command(label="Копировать URI", command=self.copy_repo_uri)
+        
+        if is_active:
+            menu.add_command(label="Отключить репозиторий", command=lambda: self._close_context_menu_and_run(self.toggle_repository, item, False))
+        else:
+            menu.add_command(label="Включить репозиторий", command=lambda: self._close_context_menu_and_run(self.toggle_repository, item, True))
+        
+        menu.add_separator()
+        menu.add_command(label="Копировать URI", command=lambda: self._close_context_menu_and_run(self.copy_repo_uri))
+        
+        # Сохраняем ссылку на меню
+        self._current_context_menu = menu
         
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
     
+    def _close_context_menu_and_run(self, func, *args, **kwargs):
+        """Закрыть контекстное меню и выполнить функцию"""
+        if hasattr(self, '_current_context_menu') and self._current_context_menu:
+            try:
+                self._current_context_menu.unpost()
+            except:
+                pass
+            self._current_context_menu = None
+        func(*args, **kwargs)
+    
+    def _on_tab_changed(self, event=None):
+        """Обработчик переключения вкладок - закрывает контекстное меню"""
+        if hasattr(self, '_current_context_menu') and self._current_context_menu:
+            try:
+                self._current_context_menu.unpost()
+            except:
+                pass
+            self._current_context_menu = None
+    
+    def _auto_load_repositories(self):
+        """Автоматическая загрузка репозиториев при открытии формы"""
+        try:
+            # Проверяем, что вкладка репозиториев существует и таблица пуста
+            if hasattr(self, 'repos_tree'):
+                repos_count = len(self.repos_tree.get_children())
+                if repos_count == 0:
+                    # Репозитории не загружены - загружаем автоматически
+                    self.load_repositories()
+        except Exception as e:
+            print(f"[REPOS] Ошибка автоматической загрузки репозиториев: {e}", gui_log=True)
+    
+    def _add_copy_paste_support(self, widget):
+        """
+        Добавить поддержку копирования/вставки для Entry или Text виджета
+        
+        Добавляет:
+        - Контекстное меню (правый клик) с опциями: Копировать, Вставить, Вырезать, Выделить все
+        - Горячие клавиши: Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A
+        
+        Args:
+            widget: tk.Entry или tk.Text виджет
+        """
+        def show_context_menu(event):
+            """Показать контекстное меню"""
+            menu = self.tk.Menu(widget, tearoff=0)
+            
+            # Проверяем, есть ли выделенный текст
+            has_selection = False
+            try:
+                if isinstance(widget, self.tk.Entry):
+                    has_selection = widget.selection_present()
+                elif isinstance(widget, self.tk.Text):
+                    has_selection = bool(widget.tag_ranges(self.tk.SEL))
+            except:
+                pass
+            
+            # Копировать
+            menu.add_command(
+                label="Копировать",
+                command=lambda: self._copy_from_widget(widget),
+                state='normal' if has_selection else 'normal'  # Всегда доступно
+            )
+            # Вставить
+            menu.add_command(
+                label="Вставить",
+                command=lambda: self._paste_to_widget(widget)
+            )
+            # Вырезать
+            menu.add_command(
+                label="Вырезать",
+                command=lambda: self._cut_from_widget(widget),
+                state='normal' if has_selection else 'disabled'
+            )
+            menu.add_separator()
+            # Выделить все
+            menu.add_command(
+                label="Выделить все",
+                command=lambda: self._select_all_in_widget(widget)
+            )
+            
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+        
+        # Привязываем контекстное меню (правый клик)
+        if sys.platform == "darwin":  # macOS
+            widget.bind('<Button-2>', show_context_menu)
+            widget.bind('<Control-Button-1>', show_context_menu)
+        else:  # Linux/Windows
+            widget.bind('<Button-3>', show_context_menu)
+        
+        # Горячие клавиши
+        def on_copy(event):
+            """Обработчик Ctrl+C"""
+            try:
+                if isinstance(widget, self.tk.Entry):
+                    if widget.selection_present():
+                        text = widget.selection_get()
+                    else:
+                        text = widget.get()
+                elif isinstance(widget, self.tk.Text):
+                    try:
+                        text = widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                    except:
+                        text = widget.get('1.0', self.tk.END).rstrip('\n')
+                else:
+                    return "break"
+                
+                if text:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+                return "break"
+            except:
+                return "break"
+        
+        def on_paste(event):
+            """Обработчик Ctrl+V"""
+            try:
+                text = self.root.clipboard_get()
+                if not text:
+                    return "break"
+                
+                if isinstance(widget, self.tk.Entry):
+                    try:
+                        start = widget.index(self.tk.SEL_FIRST)
+                        end = widget.index(self.tk.SEL_LAST)
+                        widget.delete(start, end)
+                        widget.insert(start, text)
+                    except:
+                        cursor_pos = widget.index(self.tk.INSERT)
+                        widget.insert(cursor_pos, text)
+                elif isinstance(widget, self.tk.Text):
+                    try:
+                        widget.delete(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                    except:
+                        pass
+                    widget.insert(self.tk.INSERT, text)
+                return "break"
+            except:
+                return "break"
+        
+        def on_cut(event):
+            """Обработчик Ctrl+X"""
+            try:
+                if isinstance(widget, self.tk.Entry):
+                    if widget.selection_present():
+                        text = widget.selection_get()
+                        self.root.clipboard_clear()
+                        self.root.clipboard_append(text)
+                        start = widget.index(self.tk.SEL_FIRST)
+                        end = widget.index(self.tk.SEL_LAST)
+                        widget.delete(start, end)
+                elif isinstance(widget, self.tk.Text):
+                    try:
+                        text = widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                        self.root.clipboard_clear()
+                        self.root.clipboard_append(text)
+                        widget.delete(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                    except:
+                        pass
+                return "break"
+            except:
+                return "break"
+        
+        def on_select_all(event):
+            """Обработчик Ctrl+A"""
+            try:
+                if isinstance(widget, self.tk.Entry):
+                    widget.select_range(0, self.tk.END)
+                elif isinstance(widget, self.tk.Text):
+                    widget.tag_add(self.tk.SEL, "1.0", self.tk.END)
+                    widget.mark_set(self.tk.INSERT, "1.0")
+                    widget.see(self.tk.INSERT)
+                return "break"
+            except:
+                return "break"
+        
+        # Привязываем горячие клавиши
+        widget.bind('<Control-c>', on_copy)
+        widget.bind('<Control-v>', on_paste)
+        widget.bind('<Control-x>', on_cut)
+        widget.bind('<Control-a>', on_select_all)
+    
+    def _copy_from_widget(self, widget):
+        """Копировать текст из виджета в буфер обмена"""
+        try:
+            if isinstance(widget, self.tk.Entry):
+                if widget.selection_present():
+                    text = widget.selection_get()
+                else:
+                    text = widget.get()
+            elif isinstance(widget, self.tk.Text):
+                try:
+                    text = widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                except:
+                    text = widget.get('1.0', self.tk.END).rstrip('\n')
+            else:
+                return
+            
+            if text:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(text)
+        except:
+            pass
+    
+    def _paste_to_widget(self, widget):
+        """Вставить текст из буфера обмена в виджет"""
+        try:
+            text = self.root.clipboard_get()
+            if not text:
+                return
+            
+            if isinstance(widget, self.tk.Entry):
+                try:
+                    start = widget.index(self.tk.SEL_FIRST)
+                    end = widget.index(self.tk.SEL_LAST)
+                    widget.delete(start, end)
+                    widget.insert(start, text)
+                except:
+                    cursor_pos = widget.index(self.tk.INSERT)
+                    widget.insert(cursor_pos, text)
+            elif isinstance(widget, self.tk.Text):
+                try:
+                    widget.delete(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                except:
+                    pass
+                widget.insert(self.tk.INSERT, text)
+        except:
+            pass
+    
+    def _cut_from_widget(self, widget):
+        """Вырезать текст из виджета в буфер обмена"""
+        try:
+            if isinstance(widget, self.tk.Entry):
+                if widget.selection_present():
+                    text = widget.selection_get()
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+                    start = widget.index(self.tk.SEL_FIRST)
+                    end = widget.index(self.tk.SEL_LAST)
+                    widget.delete(start, end)
+            elif isinstance(widget, self.tk.Text):
+                try:
+                    text = widget.get(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(text)
+                    widget.delete(self.tk.SEL_FIRST, self.tk.SEL_LAST)
+                except:
+                    pass
+        except:
+            pass
+    
+    def _select_all_in_widget(self, widget):
+        """Выделить весь текст в виджете"""
+        try:
+            if isinstance(widget, self.tk.Entry):
+                widget.select_range(0, self.tk.END)
+            elif isinstance(widget, self.tk.Text):
+                widget.tag_add(self.tk.SEL, "1.0", self.tk.END)
+                widget.mark_set(self.tk.INSERT, "1.0")
+                widget.see(self.tk.INSERT)
+        except:
+            pass
+    
     def show_repo_details(self, event):
-        """Показать детали выбранного репозитория"""
+        """Показать детали выбранного репозитория с возможностью редактирования"""
         selection = self.repos_tree.selection()
         if not selection:
             return
@@ -21166,20 +21522,205 @@ class AutomationGUI(object):
         item = selection[0]
         values = self.repos_tree.item(item, 'values')
         
-        if values:
-            details = "Статус: %s\nТип: %s\nURI: %s\nДистрибутив: %s\nКомпоненты: %s" % values
+        if not values or len(values) < 5:
+            return
+        
+        # Получаем компоненты репозитория из таблицы
+        status = values[0]  # Активен или Отключен
+        repo_type = values[1]  # deb или deb-src
+        uri = values[2]        # URI
+        distribution = values[3]  # Дистрибутив
+        components = values[4]     # Компоненты
+        
+        is_active = (status == 'Активен')
+        
+        # Находим полную строку репозитория в sources.list
+        sources_file = "/etc/apt/sources.list"
+        original_line = None
+        original_line_index = -1
+        
+        try:
+            with open(sources_file, 'r') as f:
+                lines = f.readlines()
             
-            # Создаем окно с деталями
-            detail_window = self.tk.Toplevel(self.root)
-            detail_window.title("Детали репозитория")
-            detail_window.geometry("600x200")
+            # Ищем строку репозитория в файле
+            for idx, line in enumerate(lines):
+                line_stripped = line.strip()
+                line_clean = line_stripped.lstrip('#').strip()
+                
+                if line_clean.startswith('deb'):
+                    # Парсим строку (используем тот же алгоритм, что и в load_repositories)
+                    parts = line_clean.split(None, 2)
+                    if len(parts) >= 3:
+                        file_type = parts[0]
+                        uri_part = parts[1]
+                        rest = parts[2]
+                        
+                        # Парсим URI для cdrom
+                        if uri_part.startswith('cdrom:['):
+                            bracket_end = rest.find(']')
+                            if bracket_end != -1:
+                                if bracket_end + 1 < len(rest) and rest[bracket_end + 1] == '/':
+                                    file_uri = uri_part + ' ' + rest[:bracket_end + 2]
+                                    rest = rest[bracket_end + 2:].strip()
+                                else:
+                                    file_uri = uri_part + ' ' + rest[:bracket_end + 1]
+                                    rest = rest[bracket_end + 1:].strip()
+                            else:
+                                file_uri = uri_part
+                        else:
+                            file_uri = uri_part
+                        
+                        # Парсим distribution и components
+                        rest_parts = rest.split(None, 1)
+                        file_dist = rest_parts[0] if len(rest_parts) > 0 else ''
+                        file_components = rest_parts[1] if len(rest_parts) > 1 else ''
+                        
+                        # Сравниваем с выбранным репозиторием
+                        if (file_type == repo_type and 
+                            file_uri == uri and 
+                            file_dist == distribution and 
+                            file_components == components):
+                            original_line = line_stripped
+                            original_line_index = idx
+                            break
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка чтения sources.list: {e}")
+            print(f"[ERROR] Ошибка чтения sources.list: {e}", gui_log=True)
+            return
+        
+        if original_line is None:
+            messagebox.showerror("Ошибка", "Репозиторий не найден в sources.list")
+            return
+        
+        # Создаем окно редактирования
+        detail_window = self.tk.Toplevel(self.root)
+        detail_window.title("Редактирование репозитория")
+        
+        # Размеры окна
+        window_width = 700
+        window_height = 280
+        
+        # Центрируем окно на экране
+        detail_window.update_idletasks()
+        screen_width = detail_window.winfo_screenwidth()
+        screen_height = detail_window.winfo_screenheight()
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        detail_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Фрейм для формы
+        form_frame = self.tk.Frame(detail_window)
+        form_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Переменные для формы
+        active_var = self.tk.BooleanVar(value=is_active)
+        type_var = self.tk.StringVar(value=repo_type)
+        uri_var = self.tk.StringVar(value=uri)
+        dist_var = self.tk.StringVar(value=distribution)
+        comp_var = self.tk.StringVar(value=components)
+        
+        # Строка 0: Активность
+        self.tk.Label(form_frame, text="Активен:", width=15, anchor='e').grid(row=0, column=0, sticky='e', padx=5, pady=5)
+        active_check = self.tk.Checkbutton(form_frame, text="Репозиторий активен", variable=active_var)
+        active_check.grid(row=0, column=1, sticky='w', padx=5, pady=5)
+        
+        # Строка 1: Тип
+        self.tk.Label(form_frame, text="Тип:", width=15, anchor='e').grid(row=1, column=0, sticky='e', padx=5, pady=5)
+        type_frame = self.tk.Frame(form_frame)
+        type_frame.grid(row=1, column=1, sticky='w', padx=5, pady=5)
+        self.tk.Radiobutton(type_frame, text="deb", variable=type_var, value="deb").pack(side='left')
+        self.tk.Radiobutton(type_frame, text="deb-src", variable=type_var, value="deb-src").pack(side='left', padx=(10, 0))
+        
+        # Строка 2: URI
+        self.tk.Label(form_frame, text="URI:", width=15, anchor='e').grid(row=2, column=0, sticky='e', padx=5, pady=5)
+        uri_entry = self.tk.Entry(form_frame, width=60, textvariable=uri_var)
+        uri_entry.grid(row=2, column=1, sticky='ew', padx=5, pady=5)
+        
+        # Строка 3: Дистрибутив
+        self.tk.Label(form_frame, text="Дистрибутив:", width=15, anchor='e').grid(row=3, column=0, sticky='e', padx=5, pady=5)
+        dist_entry = self.tk.Entry(form_frame, width=60, textvariable=dist_var)
+        dist_entry.grid(row=3, column=1, sticky='ew', padx=5, pady=5)
+        
+        # Строка 4: Компоненты
+        self.tk.Label(form_frame, text="Компоненты:", width=15, anchor='e').grid(row=4, column=0, sticky='e', padx=5, pady=5)
+        comp_entry = self.tk.Entry(form_frame, width=60, textvariable=comp_var)
+        comp_entry.grid(row=4, column=1, sticky='ew', padx=5, pady=5)
+        
+        # Настройка растягивания колонок
+        form_frame.columnconfigure(1, weight=1)
+        
+        # Добавляем поддержку копирования/вставки для всех полей
+        self._add_copy_paste_support(uri_entry)
+        self._add_copy_paste_support(dist_entry)
+        self._add_copy_paste_support(comp_entry)
+        
+        # Кнопки
+        button_frame = self.tk.Frame(detail_window)
+        button_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        def save_changes():
+            """Сохранить изменения в sources.list"""
+            # Получаем значения из формы
+            new_active = active_var.get()
+            new_type = type_var.get()
+            new_uri = uri_var.get().strip()
+            new_dist = dist_var.get().strip()
+            new_comp = comp_var.get().strip()
             
-            text_widget = self.tk.Text(detail_window, wrap=self.tk.WORD)
-            text_widget.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
-            text_widget.insert('1.0', details)
-            text_widget.config(state=self.tk.DISABLED)
+            # Валидация
+            if not new_uri:
+                messagebox.showerror("Ошибка", "URI не может быть пустым")
+                return
+            if not new_dist:
+                messagebox.showerror("Ошибка", "Дистрибутив не может быть пустым")
+                return
             
-            print(f"[REPOS] Просмотр деталей: {values[2]}", gui_log=True)
+            try:
+                # Формируем новую строку репозитория
+                if new_comp:
+                    new_repo_line = f"{new_type} {new_uri} {new_dist} {new_comp}"
+                else:
+                    new_repo_line = f"{new_type} {new_uri} {new_dist}"
+                
+                # Если репозиторий отключен, добавляем комментарий
+                if not new_active:
+                    new_repo_line = '# ' + new_repo_line
+                
+                # Читаем sources.list
+                with open(sources_file, 'r') as f:
+                    lines = f.readlines()
+                
+                # Заменяем старую строку на новую
+                if 0 <= original_line_index < len(lines):
+                    lines[original_line_index] = new_repo_line + '\n'
+                    
+                    # Записываем обратно
+                    with open(sources_file, 'w') as f:
+                        f.writelines(lines)
+                    
+                    messagebox.showinfo("Успех", "Репозиторий обновлен")
+                    detail_window.destroy()
+                    # Перезагружаем список репозиториев
+                    self.load_repositories()
+                else:
+                    messagebox.showerror("Ошибка", "Репозиторий не найден в файле")
+                    
+            except PermissionError:
+                messagebox.showerror("Ошибка", "Нет прав на запись в /etc/apt/sources.list")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Ошибка сохранения: {str(e)}")
+                print(f"[ERROR] Ошибка сохранения репозитория: {e}", gui_log=True)
+        
+        save_button = self.tk.Button(button_frame, text="Сохранить", command=save_changes,
+                                     bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
+        save_button.pack(side=self.tk.LEFT, padx=5)
+        
+        cancel_button = self.tk.Button(button_frame, text="Отмена", command=detail_window.destroy,
+                                      bg='#f44336', fg='white', font=('Arial', 10, 'bold'))
+        cancel_button.pack(side=self.tk.LEFT, padx=5)
+        
+        print(f"[REPOS] Редактирование репозитория: {uri}", gui_log=True)
     
     def copy_repo_uri(self):
         """Копировать URI репозитория в буфер обмена"""
@@ -21196,6 +21737,127 @@ class AutomationGUI(object):
             self.root.clipboard_append(uri)
             print(f"[REPOS] URI скопирован в буфер обмена: {uri}", gui_log=True)
             self.repos_status_label.config(text="URI скопирован в буфер обмена", fg='green')
+    
+    def run_auto_repo_check(self):
+        """Автоматическая проверка и обновление репозиториев через run_repo_checker"""
+        self.repos_status_label.config(text="Автоматическая проверка репозиториев...", fg='blue')
+        self.auto_check_repos_button.config(state=self.tk.DISABLED)
+        
+        def run_in_thread():
+            try:
+                success = run_repo_checker(gui_terminal=self, dry_run=False)
+                if success:
+                    self.root.after(0, lambda: self.repos_status_label.config(
+                        text="Автоматическая проверка завершена успешно", fg='green'))
+                    # Перезагружаем список репозиториев
+                    self.root.after(0, self.load_repositories)
+                else:
+                    self.root.after(0, lambda: self.repos_status_label.config(
+                        text="Ошибка автоматической проверки", fg='red'))
+            except Exception as e:
+                self.root.after(0, lambda: self.repos_status_label.config(
+                    text=f"Ошибка: {str(e)}", fg='red'))
+                print(f"[ERROR] Ошибка автоматической проверки репозиториев: {e}", gui_log=True)
+            finally:
+                self.root.after(0, lambda: self.auto_check_repos_button.config(state=self.tk.NORMAL))
+        
+        thread = threading.Thread(target=run_in_thread, name="AutoRepoCheckThread")
+        thread.daemon = True
+        thread.start()
+    
+    def toggle_repository(self, item, enable):
+        """Включить или отключить репозиторий вручную"""
+        try:
+            values = self.repos_tree.item(item, 'values')
+            if not values or len(values) < 5:
+                return
+            
+            # Получаем компоненты репозитория из таблицы
+            repo_type = values[1]  # deb или deb-src
+            uri = values[2]        # URI (теперь полный, не обрезанный)
+            distribution = values[3]  # Дистрибутив
+            components = values[4]     # Компоненты
+            
+            # Читаем sources.list
+            sources_file = "/etc/apt/sources.list"
+            with open(sources_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Ищем и изменяем строку
+            modified = False
+            with open(sources_file, 'w') as f:
+                for line in lines:
+                    line_stripped = line.strip()
+                    line_clean = line_stripped.lstrip('#').strip()
+                    
+                    # Проверяем, это ли наш репозиторий
+                    if line_clean.startswith('deb'):
+                        # Используем тот же алгоритм парсинга, что и в load_repositories
+                        parts = line_clean.split(None, 2)
+                        if len(parts) >= 3:
+                            file_type = parts[0]
+                            uri_part = parts[1]
+                            rest = parts[2]
+                            
+                            # Парсим URI для cdrom
+                            if uri_part.startswith('cdrom:['):
+                                bracket_end = rest.find(']')
+                                if bracket_end != -1:
+                                    if bracket_end + 1 < len(rest) and rest[bracket_end + 1] == '/':
+                                        file_uri = uri_part + ' ' + rest[:bracket_end + 2]
+                                        rest = rest[bracket_end + 2:].strip()
+                                    else:
+                                        file_uri = uri_part + ' ' + rest[:bracket_end + 1]
+                                        rest = rest[bracket_end + 1:].strip()
+                                else:
+                                    file_uri = uri_part
+                            else:
+                                file_uri = uri_part
+                            
+                            # Парсим distribution и components
+                            rest_parts = rest.split(None, 1)
+                            file_dist = rest_parts[0] if len(rest_parts) > 0 else ''
+                            file_components = rest_parts[1] if len(rest_parts) > 1 else ''
+                            
+                            # Сравниваем: тип должен совпадать, URI должен совпадать полностью
+                            # (теперь URI полный, не обрезанный), distribution и components должны совпадать
+                            if (file_type == repo_type and 
+                                file_uri == uri and 
+                                file_dist == distribution and 
+                                file_components == components):
+                                if enable:
+                                    # Включаем (убираем комментарий)
+                                    f.write(line_clean + '\n')
+                                else:
+                                    # Отключаем (добавляем комментарий)
+                                    if line_stripped.startswith('#'):
+                                        f.write(line)  # Уже закомментирован
+                                    else:
+                                        f.write('# ' + line_clean + '\n')
+                                modified = True
+                            else:
+                                f.write(line)
+                        else:
+                            f.write(line)
+                    else:
+                        f.write(line)
+            
+            if modified:
+                action = "включен" if enable else "отключен"
+                self.repos_status_label.config(text=f"Репозиторий {action}", fg='green')
+                print(f"[REPOS] Репозиторий {action}: {repo_type} {uri} {distribution} {components}", gui_log=True)
+                # Перезагружаем список
+                self.load_repositories()
+            else:
+                self.repos_status_label.config(text="Репозиторий не найден", fg='red')
+                print(f"[REPOS] Репозиторий не найден: {repo_type} {uri} {distribution} {components}", gui_log=True)
+                
+        except PermissionError:
+            self.repos_status_label.config(text="Ошибка: нет прав на запись", fg='red')
+            print("[ERROR] Нет прав на запись в /etc/apt/sources.list", gui_log=True)
+        except Exception as e:
+            self.repos_status_label.config(text=f"Ошибка: {str(e)}", fg='red')
+            print(f"[ERROR] Ошибка переключения репозитория: {e}", gui_log=True)
     
     def open_system_monitor(self):
         """Открыть системный монитор"""
@@ -26583,7 +27245,7 @@ def find_running_instance():
     
         found_processes = []  # Список найденных процессов: [(pid, memory_kb), ...]
     
-        # Проходим по всем процессам в /proc
+    # Проходим по всем процессам в /proc
         for pid_str in os.listdir('/proc'):
             if not pid_str.isdigit():
                 continue
@@ -27090,8 +27752,6 @@ def main():
         i += 1
     
     try:
-        # Проверяем права root (без логирования)
-        
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
             # Запускаем GUI
@@ -27116,6 +27776,17 @@ def main():
         temp_dir = None
         
         try:
+            # КРИТИЧНО: Сначала проверяем и редактируем репозитории
+            print("[INFO] Проверка и настройка репозиториев...", gui_log=True)
+            print("\n[REPOS] Проверка и настройка репозиториев...")
+            
+            repo_success = run_repo_checker(gui_terminal=None, dry_run=False)
+            
+            if repo_success:
+                print("[OK] Репозитории настроены успешно", gui_log=True)
+            else:
+                print("[WARNING] Ошибка настройки репозиториев, продолжаем работу...", gui_log=True)
+
             # Консольный режим - полное обновление системы
             print("[INFO] КОНСОЛЬНЫЙ РЕЖИМ: Обновление системы", gui_log=True)
             print("\n[CONSOLE] Консольный режим - обновление системы...")
