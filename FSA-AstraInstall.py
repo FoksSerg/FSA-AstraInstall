@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.2.165 (2025.12.07)
+Версия: V3.3.166 (2025.12.08)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.2.165 (2025.12.07)"
+APP_VERSION = "V3.3.166 (2025.12.08)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -81,6 +81,46 @@ _global_activity_tracker = None  # ActivityTracker
 
 # Глобальная ссылка на GUI экземпляр
 sys._gui_instance = None
+
+# Глобальный путь к директории бинарника/скрипта (стартовая директория)
+# Инициализируется при запуске приложения
+START_DIR = None  # Директория, где находится бинарник или скрипт
+
+def _get_start_dir():
+    """
+    Получить директорию бинарника или скрипта (стартовая директория)
+    
+    КРИТИЧНО: Для PyInstaller использует sys.executable для получения
+    реального пути к бинарнику, а не к временной папке распаковки.
+    
+    Returns:
+        str: Полный путь к директории бинарника или скрипта
+    """
+    # КРИТИЧНО: Для бинарника PyInstaller используем sys.executable
+    # чтобы получить реальный путь к бинарнику, а не к временной папке распаковки
+    if getattr(sys, 'frozen', False):
+        # Frozen приложение (PyInstaller) - используем sys.executable
+        if hasattr(sys, 'executable') and sys.executable:
+            return os.path.dirname(os.path.abspath(sys.executable))
+        else:
+            # Fallback: используем /proc/self/exe на Linux (символическая ссылка на реальный бинарник)
+            # Это лучше чем sys.argv[0], который указывает на временную папку PyInstaller
+            if platform.system() == 'Linux' and os.path.exists('/proc/self/exe'):
+                try:
+                    real_path = os.readlink('/proc/self/exe')
+                    return os.path.dirname(os.path.abspath(real_path))
+                except (OSError, ValueError):
+                    pass
+            # Последний fallback - используем текущую рабочую директорию
+            # (лучше чем sys.argv[0] для PyInstaller)
+            return os.getcwd()
+    else:
+        # Обычный скрипт - используем sys.argv[0]
+        if os.path.isabs(sys.argv[0]):
+            script_path = sys.argv[0]
+        else:
+            script_path = os.path.join(os.getcwd(), sys.argv[0])
+        return os.path.dirname(os.path.abspath(script_path))
 
 class DualStreamLogger:
 # ============================================================================
@@ -1110,7 +1150,7 @@ COMPONENTS_CONFIG = {
         'source_dir': 'CountPack',
         'copy_method': 'replace',
         'source_priority': 'archive',  # Приоритет источника: 'archive' или 'directory'
-        'source_fallback': True,  # Использовать fallback на другой источник
+        'source_fallback': False,  # Не использовать fallback на другой источник
         'wine_source': 'system',
         'gui_selectable': True,
         'description': 'CONT-Designer 3.0',
@@ -1232,7 +1272,7 @@ COMPONENTS_CONFIG = {
         'archive_name': None,  # Имя архива (если None, используется {source_dir}.tar.gz)
         'copy_method': 'replace',
         'source_priority': 'archive',
-        'source_fallback': True,
+        'source_fallback': False, # Не использовать fallback на другой источник
         'gui_selectable': True,
         'description': 'Astra.IDE приложение (из архива)',
         'sort_order': 12
@@ -2530,27 +2570,20 @@ class ComponentHandler(ABC):
         if os.path.isabs(source_dir_name):
             return source_dir_name
         
-        # Относительный путь - ищем в директории скрипта
-        if os.path.isabs(sys.argv[0]):
-            script_path = sys.argv[0]
-        else:
-            script_path = os.path.join(os.getcwd(), sys.argv[0])
-        script_dir = os.path.dirname(os.path.abspath(script_path))
+        # Относительный путь - ищем в стартовой директории
+        script_dir = START_DIR if START_DIR else _get_start_dir()
         full_path = os.path.join(script_dir, source_dir_name)
         return full_path
     
     def _get_script_dir(self):
         """
-        Получить директорию скрипта
+        Получить директорию скрипта или бинарника
         
         Returns:
-            str: Полный путь к директории скрипта
+            str: Полный путь к директории скрипта или бинарника
         """
-        if os.path.isabs(sys.argv[0]):
-            script_path = sys.argv[0]
-        else:
-            script_path = os.path.join(os.getcwd(), sys.argv[0])
-        return os.path.dirname(os.path.abspath(script_path))
+        # Используем глобальную переменную START_DIR
+        return START_DIR if START_DIR else _get_start_dir()
     
     def _resolve_single_file(self, file_path, config=None, script_dir=None, cleanup_temp=True, 
                              source_priority=None, fallback=True):
@@ -6664,6 +6697,19 @@ class WineApplicationHandler(ComponentHandler):
         # Пробуем источники в порядке приоритета
         for source_type in check_order:
             if source_type == 'directory':
+                # КРИТИЧНО: Если fallback выключен, не проверяем директорию (она не приоритетный источник)
+                if not source_fallback and source_priority != 'directory':
+                    # Это fallback-источник, но fallback выключен - пропускаем
+                    continue
+                
+                # КРИТИЧНО: Если приоритет у архива, не используем папку как fallback,
+                # если она совпадает с astrapack_dir (это директория с архивами, а не содержимое)
+                if source_priority == 'archive' and self.astrapack_dir:
+                    if os.path.abspath(directory_path) == os.path.abspath(self.astrapack_dir):
+                        # Это директория с архивами, пропускаем её при fallback
+                        print(f"Пропускаем директорию {directory_path} - это директория с архивами, не содержимое", level='DEBUG')
+                        continue
+                
                 if os.path.exists(directory_path) and os.path.isdir(directory_path):
                     print(f"Пробуем источник: папка {directory_path}")
                     if self._copy_from_directory_fast(directory_path, component_id, config, install_start_time):
@@ -9313,6 +9359,17 @@ class UniversalProcessRunner(object):
             if len(process_name) > 20:
                 process_name = process_name[:20] + "..."
             
+            # КРИТИЧНО: Изолируем переменные окружения для системных команд
+            # Если env=None, создаем копию os.environ
+            if env is None:
+                env = os.environ.copy()
+            
+            # Для системных команд (apt, dpkg, systemd и т.д.) удаляем LD_LIBRARY_PATH
+            # чтобы они не видели библиотеки из бинарника PyInstaller
+            system_commands = ['apt', 'apt-get', 'dpkg', 'systemd', 'systemctl', 'apt-cache']
+            if process_name in system_commands:
+                env.pop('LD_LIBRARY_PATH', None)
+            
             # Запускаем процесс
             process = subprocess.Popen(
                 command,
@@ -9321,7 +9378,7 @@ class UniversalProcessRunner(object):
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 bufsize=1,
-                env=env  # НОВОЕ: Передаем переменные окружения
+                env=env  # Передаем переменные окружения (изолированные для системных команд)
             )
             
             # Сохраняем информацию о запущенном процессе для мониторинга
@@ -11989,16 +12046,13 @@ class ComponentInstaller(object):
     
     def _get_script_dir(self):
         """
-        Получить директорию скрипта
+        Получить директорию скрипта или бинарника
         
         Returns:
-            str: Полный путь к директории скрипта
+            str: Полный путь к директории скрипта или бинарника
         """
-        if os.path.isabs(sys.argv[0]):
-            script_path = sys.argv[0]
-        else:
-            script_path = os.path.join(os.getcwd(), sys.argv[0])
-        return os.path.dirname(os.path.abspath(script_path))
+        # Используем глобальную переменную START_DIR
+        return START_DIR if START_DIR else _get_start_dir()
     
     def _get_wineprefix(self):
         """
@@ -13217,12 +13271,9 @@ class AutomationGUI(object):
         # UniversalProcessRunner готов к работе
         
     def _get_script_dir(self):
-        """Получить директорию скрипта"""
-        if os.path.isabs(sys.argv[0]):
-            script_path = sys.argv[0]
-        else:
-            script_path = os.path.join(os.getcwd(), sys.argv[0])
-        return os.path.dirname(os.path.abspath(script_path))
+        """Получить директорию скрипта или бинарника"""
+        # Используем глобальную переменную START_DIR
+        return START_DIR if START_DIR else _get_start_dir()
     
     def _get_wineprefix(self):
         """Получить путь к WINEPREFIX"""
@@ -15108,7 +15159,7 @@ class AutomationGUI(object):
         try:
             
             # Определяем директорию для поиска логов
-            script_dir = os.path.dirname(os.path.abspath(sys.argv[0])) if hasattr(sys, 'argv') and sys.argv else os.getcwd()
+            script_dir = START_DIR if START_DIR else _get_start_dir()
             log_dir = os.path.join(script_dir, "LogLinux")
             
             if not os.path.exists(log_dir):
@@ -15443,15 +15494,7 @@ class AutomationGUI(object):
         self.cancel_operation_button.pack(side=self.tk.RIGHT, padx=5)  # ПРИЖАТО К ПРАВОМУ КРАЮ
         ToolTip(self.cancel_operation_button, "Прервать текущую операцию установки/удаления")
         
-        # Вторая строка: Флажок использования минимального winetricks и статус
-        second_row_frame = self.tk.Frame(button_frame)
-        second_row_frame.pack(fill=self.tk.X, pady=2)
-        
-        # Статус на второй строке
-        self.wine_status_label = self.tk.Label(second_row_frame, 
-                                               text="Нажмите кнопку для проверки",
-                                               font=('Arial', 9))
-        self.wine_status_label.pack(side=self.tk.LEFT, padx=10)
+        # Вторая строка удалена - статус перенесен в нижнее поле прогресса (wine_stage_label)
     
     def start_background_resource_update(self):
         """Запуск фонового обновления системных ресурсов"""
@@ -15629,10 +15672,10 @@ class AutomationGUI(object):
         readme_button.pack(side=self.tk.LEFT, padx=2)
         ToolTip(readme_button, "Открыть документацию проекта")
         
-        wine_guide_button = self.tk.Button(row2_about, text="Руководство Wine", 
-                                          command=self.open_wine_guide, width=15)
-        wine_guide_button.pack(side=self.tk.LEFT, padx=2)
-        ToolTip(wine_guide_button, "Открыть руководство по установке Wine")
+        help_button = self.tk.Button(row2_about, text="Справка", 
+                                          command=self.open_help, width=15)
+        help_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(help_button, "Открыть руководство по работе с программой")
         
         sysmon_button = self.tk.Button(row2_about, text="Системный монитор", 
                                       command=self.open_system_monitor, width=18)
@@ -18108,35 +18151,77 @@ class AutomationGUI(object):
     
     def open_readme(self):
         """Открыть README.md"""
-        script_dir = self._get_script_dir()
+        # КРИТИЧНО: Для PyInstaller бинарников файлы находятся в sys._MEIPASS (временная папка распаковки)
+        # Для обычных скриптов - в директории скрипта
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            script_dir = sys._MEIPASS
+        else:
+            script_dir = START_DIR if START_DIR else _get_start_dir()
+        
         readme_path = os.path.join(script_dir, "README.md")
+        
         if os.path.exists(readme_path):
-            if platform.system() == "Darwin":  # macOS
-                os.system(f'open "{readme_path}"')
-            elif platform.system() == "Linux":
-                os.system(f'xdg-open "{readme_path}"')
-            else:
-                # Windows
-                os.startfile(readme_path)
-        else:
-            self.tk.messagebox.showwarning("Файл не найден", 
-                                          f"Файл README.md не найден:\n{readme_path}")
+            try:
+                self._show_markdown_in_dialog(readme_path, "README.md")
+            except Exception as e:
+                print(f"[ERROR] open_readme: Ошибка при открытии файла: {e}")
     
-    def open_wine_guide(self):
-        """Открыть WINE_INSTALL_GUIDE.md"""
-        script_dir = self._get_script_dir()
-        guide_path = os.path.join(script_dir, "WINE_INSTALL_GUIDE.md")
-        if os.path.exists(guide_path):
-            if platform.system() == "Darwin":  # macOS
-                os.system(f'open "{guide_path}"')
-            elif platform.system() == "Linux":
-                os.system(f'xdg-open "{guide_path}"')
-            else:
-                # Windows
-                os.startfile(guide_path)
+    def open_help(self):
+        """Открыть HELPME.md"""
+        # КРИТИЧНО: Для PyInstaller бинарников файлы находятся в sys._MEIPASS (временная папка распаковки)
+        # Для обычных скриптов - в директории скрипта
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            script_dir = sys._MEIPASS
         else:
-            self.tk.messagebox.showwarning("Файл не найден", 
-                                          f"Файл WINE_INSTALL_GUIDE.md не найден:\n{guide_path}")
+            script_dir = START_DIR if START_DIR else _get_start_dir()
+        
+        help_path = os.path.join(script_dir, "HELPME.md")
+        
+        if os.path.exists(help_path):
+            try:
+                self._show_markdown_in_dialog(help_path, "HELPME.md")
+            except Exception as e:
+                print(f"[ERROR] open_help: Ошибка при открытии файла: {e}")
+    
+    def _show_markdown_in_dialog(self, file_path, title):
+        """Показать содержимое Markdown файла в диалоговом окне"""
+        try:
+            # Читаем содержимое файла
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Создаем диалоговое окно
+            dialog = self.tk.Toplevel(self.root)
+            dialog.title(title)
+            dialog.geometry("900x700")
+            
+            # Центрируем окно
+            dialog.update_idletasks()
+            width = dialog.winfo_width()
+            height = dialog.winfo_height()
+            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+            y = (dialog.winfo_screenheight() // 2) - (height // 2)
+            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            
+            # Фрейм для текста
+            text_frame = self.tk.Frame(dialog)
+            text_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Текстовая область с прокруткой
+            from tkinter import scrolledtext
+            text_widget = scrolledtext.ScrolledText(text_frame, wrap=self.tk.WORD, 
+                                                    font=('Courier', 10))
+            text_widget.pack(fill=self.tk.BOTH, expand=True)
+            text_widget.insert(1.0, content)
+            text_widget.config(state=self.tk.DISABLED)  # Только для чтения
+            
+            # Обработка закрытия по Escape
+            dialog.focus_set()  # Устанавливаем фокус на окно для получения событий клавиатуры
+            dialog.bind('<Escape>', lambda e: dialog.destroy())  # Закрытие по Escape на уровне окна
+            text_widget.bind('<Escape>', lambda e: dialog.destroy())  # Закрытие по Escape когда фокус в тексте
+            
+        except Exception as e:
+            print(f"[ERROR] _show_markdown_in_dialog: Ошибка при открытии файла: {e}")
     
     def open_company_site(self):
         """Открыть сайт компании"""
@@ -18714,9 +18799,9 @@ class AutomationGUI(object):
         """Автоматическая проверка компонентов при запуске GUI"""
         try:
             
-            # Обновляем статус кнопки
-            if hasattr(self, 'wine_status_label'):
-                self.wine_status_label.config(text="Автоматическая проверка...")
+            # Обновляем статус в нижнем поле прогресса
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Автоматическая проверка...", fg='blue')
             if hasattr(self, 'check_wine_button'):
                 self.check_wine_button.config(state=self.tk.DISABLED)
             
@@ -18732,8 +18817,8 @@ class AutomationGUI(object):
             self._update_wine_status()
             
             # Обновляем статус кнопки
-            if hasattr(self, 'wine_status_label'):
-                self.wine_status_label.config(text="Проверка завершена")
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Проверка завершена", fg='green')
             if hasattr(self, 'check_wine_button'):
                 self.check_wine_button.config(state=self.tk.NORMAL)
             
@@ -18743,8 +18828,8 @@ class AutomationGUI(object):
             
             # Безопасно обновляем статус кнопки
             try:
-                if hasattr(self, 'wine_status_label'):
-                    self.wine_status_label.config(text="Ошибка автоматической проверки")
+                if hasattr(self, 'wine_stage_label'):
+                    self.wine_stage_label.config(text="Ошибка автоматической проверки", fg='red')
                 if hasattr(self, 'check_wine_button'):
                     self.check_wine_button.config(state=self.tk.NORMAL)
             except:
@@ -18802,7 +18887,8 @@ class AutomationGUI(object):
     
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
-        self.wine_status_label.config(text="Проверка...")
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Проверка...", fg='blue')
         self.check_wine_button.config(state=self.tk.DISABLED)
         
         # Запускаем проверку в отдельном потоке
@@ -18938,11 +19024,13 @@ class AutomationGUI(object):
             
             # Обновляем статус кнопки
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
-            self.root.after(0, lambda: self.wine_status_label.config(text="Проверка завершена"))
+            if hasattr(self, 'wine_stage_label'):
+                self.root.after(0, lambda: self.wine_stage_label.config(text="Проверка завершена", fg='green'))
             
         except Exception as e:
             error_msg = "Ошибка проверки: %s" % str(e)
-            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg))
+            if hasattr(self, 'wine_stage_label'):
+                self.root.after(0, lambda: self.wine_stage_label.config(text=error_msg, fg='red'))
             self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
         finally:
             thread_name = threading.current_thread().name
@@ -19330,16 +19418,17 @@ class AutomationGUI(object):
         self.wine_tree.update()
         self.root.update()
         
-        # Обновляем только статус (wine_summary_text удален)
+        # Обновляем статус в нижнем поле прогресса
+        if hasattr(self, 'wine_stage_label'):
         if self.wine_checker.is_fully_installed():
-            self.wine_status_label.config(text="Все компоненты установлены", fg='green')
+                self.wine_stage_label.config(text="Все компоненты установлены", fg='green')
         elif self.wine_checker.is_wine_installed() and not self.wine_checker.is_astra_ide_installed():
-            self.wine_status_label.config(text="Требуется установка Astra.IDE", fg='orange')
+                self.wine_stage_label.config(text="Требуется установка Astra.IDE", fg='orange')
         elif not self.wine_checker.is_wine_installed():
-            self.wine_status_label.config(text="Требуется установка Wine", fg='red')
+                self.wine_stage_label.config(text="Требуется установка Wine", fg='red')
         else:
             missing = self.wine_checker.get_missing_components()
-            self.wine_status_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
+                self.wine_stage_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
         
         # Управляем доступностью кнопок
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -19357,14 +19446,16 @@ class AutomationGUI(object):
         """Запуск установки Wine компонентов"""
         # Проверяем права root
         if os.geteuid() != 0:
-            self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка: требуются права root", fg='red')
             print("[ERROR] Для установки Wine требуются права root", gui_log=True)
             return
         
         # Получаем список выбранных компонентов
         selected = self.get_selected_wine_components()
         if not selected:
-            self.wine_status_label.config(text="Ничего не выбрано для установки", fg='orange')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ничего не выбрано для установки", fg='orange')
             return
         
         # НОВОЕ: Создаем экземпляры приложений для комбинаций wineprefix × шаблоны
@@ -19438,7 +19529,8 @@ class AutomationGUI(object):
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         self.operation_cancelled = False
-        self.wine_status_label.config(text="Установка...", fg='blue')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Установка...", fg='blue')
         
         # КРИТИЧНО: Устанавливаем статус 'pending' для всех компонентов, которые будут установлены
         # (и выбранных, и зависимостей), но еще не установлены
@@ -19529,10 +19621,12 @@ class AutomationGUI(object):
                     pending_reboot_components.append(component_id)
         
         if success:
-            self.wine_status_label.config(text="Установка завершена успешно", fg='green')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Установка завершена успешно", fg='green')
             print("[OK] Установка компонентов завершена успешно", gui_log=True)
         else:
-            self.wine_status_label.config(text="Ошибка установки", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка установки", fg='red')
             print("[ERROR] Ошибка установки компонентов", gui_log=True)
         
         # Показываем диалог о необходимости перезагрузки, если есть компоненты с pending_reboot
@@ -19691,8 +19785,8 @@ class AutomationGUI(object):
         
         # Обновляем статус-метку (только первые 80 символов)
         short_msg = message[:80] + "..." if len(message) > 80 else message
-        if hasattr(self, 'wine_status_label'):
-            self.wine_status_label.config(text=short_msg, fg='blue')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text=short_msg, fg='blue')
         
         # Определяем текущий этап по сообщению
         stage_name = None
@@ -19754,8 +19848,8 @@ class AutomationGUI(object):
         progress_manager = get_global_progress_manager()
         
         if success:
-            if hasattr(self, 'wine_status_label'):
-                self.wine_status_label.config(text="Установка завершена успешно!", fg='green')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Установка завершена успешно!", fg='green')
             progress_manager.update_progress(
                 process_type='complete',  # КОМАНДА COMPLETE: Завершение установки
                 stage_name='Установка завершена!',
@@ -19768,8 +19862,8 @@ class AutomationGUI(object):
             # Автоматически запускаем проверку
             self.root.after(2000, self.run_wine_check)
         else:
-            if hasattr(self, 'wine_status_label'):
-                self.wine_status_label.config(text="Установка прервана (см. лог)", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Установка прервана (см. лог)", fg='red')
             progress_manager.update_progress(
                 process_type='cancel',  # КОМАНДА CANCEL: Отмена установки
                 stage_name='Ошибка установки',
@@ -20334,14 +20428,16 @@ class AutomationGUI(object):
         """Запуск удаления Wine компонентов"""
         # Проверяем права root
         if os.geteuid() != 0:
-            self.wine_status_label.config(text="Ошибка: требуются права root", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка: требуются права root", fg='red')
             print("[ERROR] Для удаления Wine требуются права root", gui_log=True)
             return
         
         # Получаем список выбранных компонентов
         selected = self.get_selected_wine_components()
         if not selected:
-            self.wine_status_label.config(text="Выберите компоненты для удаления", fg='orange')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Выберите компоненты для удаления", fg='orange')
             return
         
         # НОВОЕ: Если удаляется wineprefix - автоматически добавляем все его экземпляры
@@ -20409,7 +20505,8 @@ class AutomationGUI(object):
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         self.operation_cancelled = False
-        self.wine_status_label.config(text="Удаление...", fg='blue')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Удаление...", fg='blue')
         
         # КРИТИЧНО: Устанавливаем статус 'pending' для всех компонентов, которые будут удалены
         # (и выбранных, и зависимостей), но еще не удалены
@@ -20462,10 +20559,12 @@ class AutomationGUI(object):
         self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         if success:
-            self.wine_status_label.config(text="Удаление завершено успешно", fg='green')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Удаление завершено успешно", fg='green')
             print("[OK] Удаление компонентов завершено успешно", gui_log=True)
         else:
-            self.wine_status_label.config(text="Ошибка удаления", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
         
         # Обновляем статус компонентов
@@ -20480,7 +20579,8 @@ class AutomationGUI(object):
             return
         
         print("[INFO] Пользователь запросил отмену операции", gui_log=True)
-        self.wine_status_label.config(text="Отмена операции...", fg='orange')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Отмена операции...", fg='orange')
         self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         # Устанавливаем флаг отмены
@@ -20540,7 +20640,8 @@ class AutomationGUI(object):
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         self.operation_cancelled = False
-        self.wine_status_label.config(text="Операция отменена", fg='orange')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Операция отменена", fg='orange')
         print("[INFO] Операция отменена пользователем", gui_log=True)
         
         # Восстанавливаем кнопки
@@ -20599,7 +20700,8 @@ class AutomationGUI(object):
             
         except Exception as e:
             error_msg = "Ошибка удаления: %s" % str(e)
-            self.root.after(0, lambda: self.wine_status_label.config(text=error_msg, fg='red'))
+            if hasattr(self, 'wine_stage_label'):
+                self.root.after(0, lambda: self.wine_stage_label.config(text=error_msg, fg='red'))
             self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             traceback.print_exc()
             self.root.after(0, lambda: self.uninstall_wine_button.config(state=self.tk.NORMAL))
@@ -20665,7 +20767,8 @@ class AutomationGUI(object):
         )
         
         if status_tag != 'ok':
-            self.wine_status_label.config(
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(
                 text=f"Компонент '{component_id}' не установлен. Сначала установите его.", 
                 fg='orange'
             )
@@ -20679,10 +20782,12 @@ class AutomationGUI(object):
         
         # 4. Проверяем, что префикс существует
         wineprefix_path = config.get('wineprefix_path', '~/.wine-astraregul')
-        wineprefix_path = os.path.expanduser(wineprefix_path)
+        # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
+        wineprefix_path = expand_user_path(wineprefix_path)
         
         if not os.path.exists(wineprefix_path):
-            self.wine_status_label.config(text=f"Wine-префикс не найден: {wineprefix_path}", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text=f"Wine-префикс не найден: {wineprefix_path}", fg='red')
             messagebox.showerror(
                 "Ошибка", 
                 f"Wine-префикс не найден:\n{wineprefix_path}"
@@ -20692,7 +20797,8 @@ class AutomationGUI(object):
         # Проверяем наличие system.reg
         system_reg = os.path.join(wineprefix_path, 'system.reg')
         if not os.path.exists(system_reg):
-            self.wine_status_label.config(text=f"Wine-префикс не инициализирован", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text=f"Wine-префикс не инициализирован", fg='red')
             messagebox.showerror(
                 "Ошибка", 
                 f"Wine-префикс не инициализирован:\n{wineprefix_path}"
@@ -20847,7 +20953,8 @@ class AutomationGUI(object):
         dialog.wait_window()
         
         if not result['confirmed']:
-            self.wine_status_label.config(text="Создание образа отменено", fg='gray')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Создание образа отменено", fg='gray')
             return
         
         archive_path = result['archive_path']
@@ -20855,7 +20962,8 @@ class AutomationGUI(object):
         
         # 6. Получаем обработчик и запускаем создание
         if 'wine_environment' not in self.component_handlers:
-            self.wine_status_label.config(text="Обработчик Wine-окружения не найден", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Обработчик Wine-окружения не найден", fg='red')
             return
         
         handler = self.component_handlers['wine_environment']
@@ -20867,7 +20975,8 @@ class AutomationGUI(object):
         self.cancel_operation_button.config(state=self.tk.NORMAL)
         
         # 8. Запускаем создание архива в отдельном потоке
-        self.wine_status_label.config(text="Создание образа...", fg='blue')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text="Создание образа...", fg='blue')
         self.create_template_button.config(state=self.tk.DISABLED)
         
         def create_archive_thread():
@@ -20913,21 +21022,24 @@ class AutomationGUI(object):
             except:
                 size_str = "неизвестно"
             
-            self.wine_status_label.config(text=f"Образ создан: {os.path.basename(result)} ({size_str})", fg='green')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text=f"Образ создан: {os.path.basename(result)} ({size_str})", fg='green')
             messagebox.showinfo(
                 "Успешно", 
                 f"Образ Wine-префикса успешно создан:\n{result}\n\n"
                 f"Размер: {size_str}"
             )
         else:
-            self.wine_status_label.config(text="Не удалось создать образ", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Не удалось создать образ", fg='red')
             messagebox.showerror("Ошибка", "Не удалось создать образ Wine-префикса")
     
     def _on_wineprefix_template_error(self, error_msg, component_id):
         """Обработчик ошибки создания образа"""
         self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
         self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
-        self.wine_status_label.config(text=f"Ошибка создания образа: {error_msg[:50]}...", fg='red')
+        if hasattr(self, 'wine_stage_label'):
+            self.wine_stage_label.config(text=f"Ошибка создания образа: {error_msg[:50]}...", fg='red')
         messagebox.showerror("Ошибка", f"Ошибка при создании образа:\n{error_msg}")
     
     def _wine_uninstall_completed(self, success):
@@ -20957,10 +21069,12 @@ class AutomationGUI(object):
         self.check_wine_button.config(state=self.tk.NORMAL)
         
         if success:
-            self.wine_status_label.config(text="Удаление завершено успешно!", fg='green')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Удаление завершено успешно!", fg='green')
             print("[OK] Удаление компонентов завершено успешно", gui_log=True)
         else:
-            self.wine_status_label.config(text="Ошибка удаления", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
         
         # КРИТИЧНО: Снимаем галочки с удаленных компонентов на основе фактического статуса
@@ -21175,6 +21289,9 @@ class AutomationGUI(object):
         try:
             # Подготавливаем переменные окружения для процесса (как в SystemUpdater)
             env = os.environ.copy()
+            # КРИТИЧНО: Удаляем LD_LIBRARY_PATH чтобы системные команды не видели библиотеки из бинарника
+            # Это изолирует системные процессы (apt, dpkg, systemd) от библиотек PyInstaller
+            env.pop('LD_LIBRARY_PATH', None)
             env['DEBIAN_FRONTEND'] = 'noninteractive'
             env['DEBIAN_PRIORITY'] = 'critical'
             env['APT_LISTCHANGES_FRONTEND'] = 'none'
@@ -21894,7 +22011,8 @@ class AutomationGUI(object):
                                                      stdout=subprocess.DEVNULL,
                                                      stderr=subprocess.DEVNULL,
                                                      check=False)
-                                        self.wine_status_label.config(text="Фокус переведен на окно", fg='green')
+                                        if hasattr(self, 'wine_stage_label'):
+                                            self.wine_stage_label.config(text="Фокус переведен на окно", fg='green')
                                         return
                         except Exception as e:
                             print(f"Ошибка wmctrl: {e}", gui_log=True)
@@ -21905,7 +22023,8 @@ class AutomationGUI(object):
                                          stdout=subprocess.DEVNULL,
                                          stderr=subprocess.DEVNULL,
                                          check=False)
-                            self.wine_status_label.config(text="Фокус переведен через xdotool", fg='green')
+                            if hasattr(self, 'wine_stage_label'):
+                                self.wine_stage_label.config(text="Фокус переведен через xdotool", fg='green')
                         except:
                             # Дополнительная диагностика - пробуем найти окно по классу
                             try:
@@ -21928,12 +22047,14 @@ class AutomationGUI(object):
                                                              stdout=subprocess.DEVNULL,
                                                              stderr=subprocess.DEVNULL,
                                                              check=False)
-                                                self.wine_status_label.config(text="Фокус переведен через xdotool ID", fg='green')
+                                                if hasattr(self, 'wine_stage_label'):
+                                                    self.wine_stage_label.config(text="Фокус переведен через xdotool ID", fg='green')
                                                 return
                             except Exception as e:
                                 print(f"Ошибка xwininfo: {e}", gui_log=True)
                             
-                            self.wine_status_label.config(text="Системный монитор уже запущен", fg='blue')
+                            if hasattr(self, 'wine_stage_label'):
+                                self.wine_stage_label.config(text="Системный монитор уже запущен", fg='blue')
                         return
                 except:
                     continue
@@ -21963,17 +22084,20 @@ class AutomationGUI(object):
                         subprocess.Popen(['sudo', monitor], 
                                        stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
-                        self.wine_status_label.config(text="Системный монитор запущен", fg='green')
+                        if hasattr(self, 'wine_stage_label'):
+                            self.wine_stage_label.config(text="Системный монитор запущен", fg='green')
                         return
                 except:
                     continue
             
             # Если ничего не нашли
-            self.wine_status_label.config(text="Системный монитор не найден", fg='orange')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Системный монитор не найден", fg='orange')
             
         except Exception as e:
             print(f"[ERROR] Ошибка запуска системного монитора: {e}", gui_log=True)
-            self.wine_status_label.config(text="Ошибка запуска монитора", fg='red')
+            if hasattr(self, 'wine_stage_label'):
+                self.wine_stage_label.config(text="Ошибка запуска монитора", fg='red')
     
     def check_desktop_shortcut_status(self):
         """Проверка статуса ярлыка на рабочем столе"""
@@ -25759,6 +25883,9 @@ class SystemUpdater(object):
         try:
             # Подготавливаем переменные окружения для процесса
             env = os.environ.copy()
+            # КРИТИЧНО: Удаляем LD_LIBRARY_PATH чтобы системные команды не видели библиотеки из бинарника
+            # Это изолирует системные процессы (apt, dpkg, systemd) от библиотек PyInstaller
+            env.pop('LD_LIBRARY_PATH', None)
             env['DEBIAN_FRONTEND'] = 'noninteractive'
             env['DEBIAN_PRIORITY'] = 'critical'
             env['APT_LISTCHANGES_FRONTEND'] = 'none'
@@ -27726,6 +27853,10 @@ def main():
 # ============================================================================
     """Основная функция"""
     
+    # КРИТИЧНО: Инициализируем глобальный путь к стартовой директории
+    global START_DIR
+    START_DIR = _get_start_dir()
+    
     # Создаем единый universal_runner для всего приложения (dual_logger через глобальную переменную)
     logger = UniversalProcessRunner()
     logger.set_log_file(GLOBAL_LOG_FILE)
@@ -27817,11 +27948,8 @@ def main():
                     
                     # Вспомогательные функции для получения путей
                     def _get_script_dir():
-                        if os.path.isabs(sys.argv[0]):
-                            script_path = sys.argv[0]
-                        else:
-                            script_path = os.path.join(os.getcwd(), sys.argv[0])
-                        return os.path.dirname(os.path.abspath(script_path))
+                        # Используем глобальную переменную START_DIR
+                        return START_DIR if START_DIR else _get_start_dir()
                     
                     def _get_astrapack_dir():
                         script_dir = _get_script_dir()
@@ -28459,7 +28587,8 @@ if __name__ == '__main__':
                     if hasattr(sys, 'executable') and sys.executable:
                         binary_dir = os.path.dirname(os.path.abspath(sys.executable))
                     else:
-                        binary_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                        # Используем глобальную переменную START_DIR
+                        binary_dir = START_DIR if START_DIR else _get_start_dir()
                 else:
                     # Для скрипта - директория скрипта
                     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28655,34 +28784,6 @@ if __name__ == '__main__':
                 blt_path = found_blt_so[0]
                 blt_name = os.path.basename(blt_path)
                 print(f"[DEBUG] libBLT найдена: {blt_name} (предзагрузка выполняется в runtime hook)")
-            
-            # ЗАКОММЕНТИРОВАНО: PyInstaller с --collect-all tkinter автоматически настраивает TCL_LIBRARY и TK_LIBRARY
-            # Не нужно вручную искать директории и устанавливать переменные - это мешает автоматической настройке PyInstaller
-            # PyInstaller создает директории _tcl_data и _tk_data и автоматически настраивает пути через встроенный runtime hook
-            # Универсальный поиск библиотек Tcl/Tk в бинарнике (без привязки к версии)
-            # Ищем любые директории tcl* и tk* в бинарнике
-            # found_tcl_dir = None
-            # found_tk_dir = None
-            # for item in os.listdir(base_path):
-            #     item_path = os.path.join(base_path, item)
-            #     if os.path.isdir(item_path):
-            #         # Ищем директорию Tcl (начинается с tcl)
-            #         if item.startswith('tcl') and os.path.exists(os.path.join(item_path, 'init.tcl')):
-            #             found_tcl_dir = item_path
-            #             os.environ['TCL_LIBRARY'] = item_path
-            #             print(f"[DEBUG] Найдена директория Tcl: {item_path}")
-            #             print(f"[DEBUG]   TCL_LIBRARY = {item_path}")
-            #         # Ищем директорию Tk (начинается с tk)
-            #         if item.startswith('tk') and os.path.exists(os.path.join(item_path, 'tk.tcl')):
-            #             found_tk_dir = item_path
-            #             os.environ['TK_LIBRARY'] = item_path
-            #             print(f"[DEBUG] Найдена директория Tk: {item_path}")
-            #             print(f"[DEBUG]   TK_LIBRARY = {item_path}")
-            # 
-            # if not found_tcl_dir:
-            #     print(f"[DEBUG] ВНИМАНИЕ: Директория tcl* с init.tcl не найдена в бинарнике!")
-            # if not found_tk_dir:
-            #     print(f"[DEBUG] ВНИМАНИЕ: Директория tk* с tk.tcl не найдена в бинарнике!")
                 
         except (AttributeError, OSError) as e:
             # Игнорируем ошибки при установке переменных окружения

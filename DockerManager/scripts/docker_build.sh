@@ -1,6 +1,6 @@
 #!/bin/bash
 # Скрипт сборки бинарного файла в Docker контейнере
-# Версия: V3.2.165 (2025.12.07)
+# Версия: V3.3.166 (2025.12.08)
 # Компания: ООО "НПА Вира-Реалтайм"
 # Разработчик: @FoksSegr & AI Assistant (@LLM)
 
@@ -300,6 +300,29 @@ fi
 # УБРАНЫ все избыточные --hidden-import для стандартных библиотек (PyInstaller включает их автоматически)
 # УБРАНЫ все избыточные --hidden-import для tkinter (--collect-all tkinter включает всё)
 # УБРАНЫ избыточные --collect-submodules, --collect-binaries, --collect-data (уже в --collect-all)
+
+# Подготавливаем параметры для добавления файлов документации
+# КРИТИЧНО: PyInstaller использует относительные пути от текущей директории
+# КРИТИЧНО: Из-за --workpath build PyInstaller может искать файлы в build/
+# Решение: используем абсолютные пути в формате, который PyInstaller понимает
+ADD_DATA_PARAMS=""
+BUILD_DIR="/build"
+if [ -f "${BUILD_DIR}/README.md" ]; then
+    # Используем абсолютный путь в формате PyInstaller: /absolute/path:destination
+    ADD_DATA_PARAMS="${ADD_DATA_PARAMS} --add-data \"${BUILD_DIR}/README.md:.\""
+    echo "[#] Файл README.md найден, будет добавлен в бинарник" >&2
+else
+    echo "[#] Предупреждение: файл README.md не найден в ${BUILD_DIR}" >&2
+fi
+
+if [ -f "${BUILD_DIR}/HELPME.md" ]; then
+    # Используем абсолютный путь в формате PyInstaller: /absolute/path:destination
+    ADD_DATA_PARAMS="${ADD_DATA_PARAMS} --add-data \"${BUILD_DIR}/HELPME.md:.\""
+    echo "[#] Файл HELPME.md найден, будет добавлен в бинарник" >&2
+else
+    echo "[#] Предупреждение: файл HELPME.md не найден в ${BUILD_DIR}" >&2
+fi
+
 eval pyinstaller --onefile --console \
     $ICON_PARAM \
     $ICON_DATA_PARAM \
@@ -316,6 +339,7 @@ eval pyinstaller --onefile --console \
     --hidden-import psutil \
     --collect-all psutil \
     --collect-all tkinter \
+    $ADD_DATA_PARAMS \
     "${INPUT_FILE}"
 
 # Устанавливаем права на выполнение

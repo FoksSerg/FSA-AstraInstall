@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Модуль для работы с файлами (загрузка/скачивание)
-Версия: V3.2.165 (2025.12.07)
+Версия: V3.3.166 (2025.12.08)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -78,6 +78,10 @@ def upload_sources(project, exclude_patterns=None):
             # ВАЖНО: FSA-AstraInstall.py должен быть включен (это объединенный файл)
             if path.name == f"{project_config['output_name']}.py":
                 return False  # Не исключаем объединенный .py файл
+            
+            # КРИТИЧНО: README.md и HELPME.md должны быть включены (нужны для встраивания в бинарник)
+            if path.name in ['README.md', 'HELPME.md']:
+                return False  # Не исключаем эти файлы
             
             for pattern in exclude_patterns:
                 # Проверяем точное совпадение имени (для бинарника без расширения)
