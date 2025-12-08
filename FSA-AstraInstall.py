@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.168 (2025.12.08)
+Версия: V3.3.169 (2025.12.08)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.168 (2025.12.08)"
+APP_VERSION = "V3.3.169 (2025.12.08)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -53,7 +53,7 @@ import urllib.parse
 # from импорты
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 from datetime import datetime as dt
 
 # Опциональные библиотеки (с проверкой доступности)
@@ -1039,25 +1039,112 @@ messagebox = None
 scrolledtext = None
 filedialog = None
 
-# Константы для самообновления (SelfUpdater)
-# SMB сервер (приоритет - для разработки/тестирования)
-SMB_SERVER = "10.10.55.77"
-SMB_SHARE = "Install"
-SMB_PATH = "ISO/Linux/Astra"
-
-# Git репозиторий (fallback - для клиентов)
-GIT_REPO = "https://github.com/FoksSerg/FSA-AstraInstall"
-GIT_BRANCH = "master"
-GIT_RAW_URL = "https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall"
-
 # Имена файлов для самообновления
 BINARY_FILENAME = "FSA-AstraInstall"
-PYTHON_FILENAME = "FSA-AstraInstall.py"
-VERSION_SOURCE_FILE = "FSA-AstraInstall.py"  # Файл для проверки версии
+VERSION_FILE = "Version.txt"  # Файл для проверки версии (самый быстрый вариант)
 
 # Таймауты для самообновления
 TIMEOUT_CHECK = 10
 TIMEOUT_DOWNLOAD = 300
+
+# ============================================================================
+# КОНФИГУРАЦИЯ ИСТОЧНИКОВ ОБНОВЛЕНИЙ
+# ============================================================================
+# 
+# Описание структуры источника:
+#   - id: уникальный идентификатор (используется в коде)
+#   - name: отображаемое имя для пользователя
+#   - description: описание/путь к источнику
+#   - priority: приоритет проверки (1 - высший, проверяется первым)
+#   - enabled: включен ли источник (True/False)
+#   - type: тип источника ('smb', 'git', 'ftp', 'http', etc.)
+#   - params: параметры подключения (зависят от типа)
+#
+# Для добавления нового источника скопируйте один из существующих
+# и измените параметры под ваш источник.
+#
+UPDATE_SOURCES_CONFIG = [
+    {
+        'id': 'smb',
+        'name': 'SMB сервер',
+        'priority': 1,
+        'enabled': True,
+        'type': 'smb',
+        'params': {
+            'server': '10.10.55.77',
+            'share': 'Install',
+            'path': 'ISO/Linux/Astra',
+        }
+    },
+    {
+        'id': 'smb_backup',
+        'name': 'SMB сервер (резервный)',
+        'priority': 2,
+        'enabled': True,
+        'type': 'smb',
+        'params': {
+            'server': '10.10.55.78',
+            'share': 'Backup',
+            'path': 'Updates',
+        }
+    },
+    {
+        'id': 'git',
+        'name': 'Git репозиторий',
+        'priority': 3,
+        'enabled': True,
+        'type': 'git',
+        'params': {
+            'repo': 'https://github.com/FoksSerg/FSA-AstraInstall',
+            'branch': 'master',
+            'raw_url': 'https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall',
+        }
+    },
+    # Пример добавления нового источника (закомментирован):
+    # {
+    #     'id': 'ftp',
+    #     'name': 'FTP сервер',
+    #     'priority': 4,
+    #     'enabled': False,  # Отключен по умолчанию
+    #     'type': 'ftp',
+    #     'params': {
+    #         'host': 'ftp.example.com',
+    #         'port': 21,
+    #         'path': '/updates',
+    #         'username': None,  # Опционально
+    #         'password': None,  # Опционально
+    #     }
+    # },
+]
+
+def get_source_description(source_config: Dict) -> str:
+    """
+    Формирует описание источника из его параметров.
+    
+    Args:
+        source_config: Конфигурация источника из UPDATE_SOURCES_CONFIG
+        
+    Returns:
+        Строка с описанием пути к источнику
+    """
+    source_type = source_config.get('type', '')
+    params = source_config.get('params', {})
+    
+    if source_type == 'smb':
+        server = params.get('server', '')
+        share = params.get('share', '')
+        path = params.get('path', '')
+        return f'//{server}/{share}/{path}'
+    elif source_type == 'git':
+        raw_url = params.get('raw_url', '')
+        branch = params.get('branch', '')
+        return f'{raw_url}/{branch}'
+    elif source_type == 'ftp':
+        host = params.get('host', '')
+        path = params.get('path', '')
+        return f'ftp://{host}{path}'
+    else:
+        return source_config.get('name', 'Неизвестный источник')
 
 # ============================================================================
 # УНИВЕРСАЛЬНАЯ КОНФИГУРАЦИЯ КОМПОНЕНТОВ
@@ -22110,7 +22197,7 @@ class AutomationGUI(object):
             # Создаем диалоговое окно
             dialog = self.tk.Toplevel(self.root)
             dialog.title("Проверка обновлений")
-            dialog.geometry("800x600")
+            dialog.geometry("700x500")
             
             # Центрируем окно
             dialog.update_idletasks()
@@ -22135,23 +22222,19 @@ class AutomationGUI(object):
             resources_frame = self.tk.LabelFrame(content_frame, text="Пути к ресурсам обновлений")
             resources_frame.grid(row=0, column=0, sticky='ew', padx=5, pady=5)
             
-            # Путь к SMB
-            smb_path_frame = self.tk.Frame(resources_frame)
-            smb_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
-            self.tk.Label(smb_path_frame, text="SMB:", width=12, anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-            smb_path_text = f"//{SMB_SERVER}/{SMB_SHARE}/{SMB_PATH}"
-            smb_path_label = self.tk.Label(smb_path_frame, text=smb_path_text, 
-                                         font=('Courier', 9), anchor='w', fg='blue')
-            smb_path_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+            # Динамически генерируем пути из конфигурации
+            enabled_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('enabled', True)]
+            enabled_sources.sort(key=lambda x: x.get('priority', 999))
             
-            # Путь к Git
-            git_path_frame = self.tk.Frame(resources_frame)
-            git_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
-            self.tk.Label(git_path_frame, text="Git:", width=12, anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
-            git_path_text = f"{GIT_RAW_URL}/{GIT_BRANCH}"
-            git_path_label = self.tk.Label(git_path_frame, text=git_path_text, 
+            for source_config in enabled_sources:
+                source_frame = self.tk.Frame(resources_frame)
+                source_frame.pack(fill=self.tk.X, padx=5, pady=3)
+                self.tk.Label(source_frame, text=f"{source_config['name']}:", width=12, 
+                            anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+                description = get_source_description(source_config)
+                path_label = self.tk.Label(source_frame, text=description, 
                                          font=('Courier', 9), anchor='w', fg='blue')
-            git_path_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+                path_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
             
             # Фрейм для лога (ограниченная высота)
             log_frame = self.tk.LabelFrame(content_frame, text="Лог проверки")
@@ -22214,16 +22297,36 @@ class AutomationGUI(object):
                                 dialog.after(0, lambda: append_log(message))
                             updater.log = log_to_window
                             
-                            # Проверяем обновления
-                            new_version = updater.check_for_updates()
+                            # Проверяем обновления (теперь возвращает список источников)
+                            sources = updater.check_for_updates()
+                            
+                            # Фильтруем источники с обновлениями
+                            update_sources = [s for s in sources if s.get('needs_update', False) and s.get('available', False)]
                             
                             # Обновляем статус
-                            if new_version:
-                                dialog.after(0, lambda: status_label.config(
-                                    text=f"Доступно обновление: {new_version}", fg='green'))
-                                # Показываем диалог с предложением обновиться
-                                dialog.after(0, lambda: self._show_update_dialog(dialog, updater, new_version))
+                            if update_sources:
+                                if len(update_sources) == 1:
+                                    # Один источник с обновлением - сразу предлагаем обновиться
+                                    selected_source = update_sources[0]
+                                    source_updater = selected_source['updater']
+                                    version = selected_source.get('version', 'неизвестная')
+                                    dialog.after(0, lambda: status_label.config(
+                                        text=f"Доступно обновление: {version}", fg='green'))
+                                    dialog.after(0, lambda: self._show_update_dialog(
+                                        dialog, source_updater, version, selected_source))
+                                else:
+                                    # Несколько источников - показываем диалог выбора
+                                    dialog.after(0, lambda: status_label.config(
+                                        text=f"Найдено {len(update_sources)} источников с обновлениями", fg='green'))
+                                    def show_selection():
+                                        selected_source = self._show_source_selection_dialog(dialog, update_sources)
+                                        if selected_source:
+                                            source_updater = selected_source['updater']
+                                            version = selected_source.get('version', 'неизвестная')
+                                            self._show_update_dialog(dialog, source_updater, version, selected_source)
+                                    dialog.after(0, show_selection)
                             else:
+                                # Нет обновлений
                                 dialog.after(0, lambda: status_label.config(
                                     text="Версия актуальна", fg='gray'))
                             break  # Успешно, выходим из цикла
@@ -22283,6 +22386,96 @@ class AutomationGUI(object):
                 thread.daemon = True
                 thread.start()
             
+            # Функция принудительного обновления
+            def force_update():
+                # Проверяем, что приложение - бинарник
+                if not getattr(sys, 'frozen', False):
+                    messagebox.showwarning("Предупреждение", 
+                                         "Принудительное обновление доступно только для бинарника",
+                                         parent=dialog)
+                    return
+                
+                def run_force_check():
+                    smb_user = None
+                    smb_password = None
+                    max_retries = 3
+                    auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                            
+                            original_log = updater.log
+                            def log_to_window(message, level="INFO", gui_log=False):
+                                original_log(message, level=level, gui_log=gui_log)
+                                dialog.after(0, lambda: append_log(message))
+                            updater.log = log_to_window
+                            
+                            # Проверяем все источники
+                            sources = updater.check_for_updates()
+                            
+                            # Фильтруем только доступные источники
+                            available_sources = [s for s in sources if s.get('available', False)]
+                            
+                            if available_sources:
+                                # Помечаем все как требующие обновления (принудительно)
+                                for source in available_sources:
+                                    source['needs_update'] = True
+                                    source['update_reason'] = 'forced'
+                                
+                                # Показываем диалог выбора источника
+                                def show_selection():
+                                    selected_source = self._show_source_selection_dialog(dialog, available_sources)
+                                    if selected_source:
+                                        source_updater = selected_source['updater']
+                                        version = selected_source.get('version', APP_VERSION)
+                                        self._show_update_dialog(dialog, source_updater, version, selected_source)
+                                dialog.after(0, show_selection)
+                            else:
+                                dialog.after(0, lambda: messagebox.showwarning(
+                                    "Предупреждение", 
+                                    "Нет доступных источников для обновления",
+                                    parent=dialog))
+                            break
+                            
+                        except PermissionError as e:
+                            if "авторизации SMB" in str(e):
+                                dialog.after(0, lambda: append_log("Ошибка авторизации SMB"))
+                                dialog.after(0, lambda: append_log("Требуется ввод учетных данных"))
+                                
+                                auth_result['user'] = None
+                                auth_result['password'] = None
+                                auth_result['ready'].clear()
+                                
+                                def show_auth_dialog():
+                                    user, password = self._show_smb_auth_dialog(dialog)
+                                    auth_result['user'] = user
+                                    auth_result['password'] = password
+                                    auth_result['ready'].set()
+                                
+                                dialog.after(0, show_auth_dialog)
+                                
+                                if auth_result['ready'].wait(timeout=60):
+                                    if auth_result['user'] and auth_result['password']:
+                                        smb_user = auth_result['user']
+                                        smb_password = auth_result['password']
+                                        continue
+                                    else:
+                                        break
+                                else:
+                                    break
+                            else:
+                                break
+                        except Exception as e:
+                            dialog.after(0, lambda: messagebox.showerror(
+                                "Ошибка", f"Ошибка проверки обновлений:\n{e}",
+                                parent=dialog))
+                            break
+                
+                thread = threading.Thread(target=run_force_check, name="ForceUpdateThread")
+                thread.daemon = True
+                thread.start()
+            
             # Кнопки (зафиксированы внизу через grid)
             button_frame = self.tk.Frame(dialog)
             button_frame.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
@@ -22292,6 +22485,11 @@ class AutomationGUI(object):
                                         command=check_updates, bg='#4CAF50', fg='white',
                                         font=('Arial', 10, 'bold'))
             check_button.grid(row=0, column=0, sticky='w', padx=5)
+            
+            force_button = self.tk.Button(button_frame, text="Принудительно обновиться", 
+                                         command=force_update, bg='#FF9800', fg='white',
+                                         font=('Arial', 10, 'bold'))
+            force_button.grid(row=0, column=1, sticky='w', padx=5)
             
             close_button = self.tk.Button(button_frame, text="Закрыть", 
                                         command=dialog.destroy, bg='#f44336', fg='white',
@@ -22306,13 +22504,32 @@ class AutomationGUI(object):
             print(f"Ошибка открытия окна проверки обновлений: {e}", level='ERROR')
             messagebox.showerror("Ошибка", f"Не удалось открыть окно проверки обновлений:\n{e}")
     
-    def _show_update_dialog(self, parent_window, updater, new_version):
+    def _show_update_dialog(self, parent_window, updater, new_version, source_info=None):
         """Показать диалог с предложением обновиться"""
+        # Формируем сообщение
+        message_parts = []
+        
+        if source_info:
+            message_parts.append(f"Источник: {source_info.get('name', 'неизвестный')}")
+            if source_info.get('update_reason') == 'size_diff':
+                message_parts.append("Причина: Размер файла отличается")
+            elif source_info.get('update_reason') == 'new_version':
+                message_parts.append("Причина: Новая версия")
+        
+        if new_version:
+            message_parts.append(f"Доступна версия: {new_version}")
+        message_parts.append(f"Текущая версия: {APP_VERSION}")
+        
+        if source_info and source_info.get('file_size'):
+            size_mb = source_info['file_size'] / (1024 * 1024)
+            message_parts.append(f"Размер файла: {size_mb:.2f} MB")
+        
+        message_parts.append("")
+        message_parts.append("Хотите обновиться сейчас?")
+        
         result = messagebox.askyesno(
             "Обновление доступно",
-            f"Доступна новая версия: {new_version}\n\n"
-            f"Текущая версия: {APP_VERSION}\n\n"
-            "Хотите обновиться сейчас?",
+            "\n".join(message_parts),
             parent=parent_window
         )
         
@@ -22408,6 +22625,139 @@ class AutomationGUI(object):
         if result['confirmed']:
             return result['user'], result['password']
         return None, None
+    
+    def _show_source_selection_dialog(self, parent_window, sources: List[Dict]) -> Optional[Dict]:
+        """
+        Показать диалог выбора источника обновления.
+        
+        Args:
+            parent_window: Родительское окно
+            sources: Список источников с информацией об обновлениях
+            
+        Returns:
+            Выбранный источник или None
+        """
+        dialog = self.tk.Toplevel(parent_window)
+        dialog.title("Выбор источника обновления")
+        
+        # Вычисляем размер окна в зависимости от количества источников
+        num_sources = len(sources)
+        dialog_height = min(400, 150 + num_sources * 80)
+        dialog.geometry(f"600x{dialog_height}")
+        dialog.resizable(False, False)
+        
+        # Центрируем окно
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
+        result = {'selected': None}
+        
+        # Заголовок
+        header_label = self.tk.Label(dialog, text="Выберите источник для обновления:", 
+                                    font=('Arial', 10, 'bold'))
+        header_label.pack(pady=10)
+        
+        # Фрейм для списка источников
+        sources_frame = self.tk.Frame(dialog)
+        sources_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Переменная для выбора
+        selected_var = self.tk.StringVar()
+        
+        # Создаем радиокнопки для каждого источника
+        for idx, source in enumerate(sources):
+            source_frame = self.tk.Frame(sources_frame, relief=self.tk.RAISED, borderwidth=1)
+            source_frame.pack(fill=self.tk.X, pady=3, padx=5)
+            
+            # Радиокнопка
+            radio = self.tk.Radiobutton(
+                source_frame,
+                variable=selected_var,
+                value=source['id'],
+                text=source['name'],
+                font=('Arial', 9, 'bold'),
+                anchor='w'
+            )
+            radio.pack(side=self.tk.LEFT, padx=5, pady=5)
+            
+            # Информация об источнике
+            info_frame = self.tk.Frame(source_frame)
+            info_frame.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5, pady=5)
+            
+            # Описание
+            desc_label = self.tk.Label(info_frame, text=source['description'], 
+                                      font=('Courier', 8), anchor='w', fg='gray')
+            desc_label.pack(fill=self.tk.X)
+            
+            # Версия и размер
+            info_text = []
+            if source['version']:
+                info_text.append(f"Версия: {source['version']}")
+            if source['file_size']:
+                size_mb = source['file_size'] / (1024 * 1024)
+                info_text.append(f"Размер: {size_mb:.2f} MB")
+            
+            if info_text:
+                info_label = self.tk.Label(info_frame, text=" | ".join(info_text), 
+                                          font=('Arial', 8), anchor='w')
+                info_label.pack(fill=self.tk.X)
+            
+            # Причина обновления
+            if source['needs_update']:
+                reason_text = {
+                    'new_version': 'Новая версия',
+                    'size_diff': 'Размер файла отличается',
+                    'forced': 'Принудительное обновление'
+                }.get(source['update_reason'], 'Требуется обновление')
+                reason_label = self.tk.Label(info_frame, text=reason_text, 
+                                            font=('Arial', 8, 'bold'), 
+                                            anchor='w', fg='green')
+                reason_label.pack(fill=self.tk.X)
+            
+            # Выбираем первый источник по умолчанию
+            if idx == 0:
+                selected_var.set(source['id'])
+        
+        # Кнопки
+        button_frame = self.tk.Frame(dialog)
+        button_frame.pack(fill=self.tk.X, padx=10, pady=10)
+        
+        def on_ok():
+            result['selected'] = selected_var.get()
+            dialog.destroy()
+        
+        def on_cancel():
+            result['selected'] = None
+            dialog.destroy()
+        
+        ok_button = self.tk.Button(button_frame, text="Обновить", command=on_ok, 
+                                  bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'), width=12)
+        ok_button.pack(side=self.tk.LEFT, padx=5)
+        
+        cancel_button = self.tk.Button(button_frame, text="Отмена", command=on_cancel, 
+                                      bg='#f44336', fg='white', font=('Arial', 10, 'bold'), width=12)
+        cancel_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # Обработка Enter и Escape
+        dialog.bind('<Return>', lambda e: on_ok())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+        
+        # Модальное окно
+        dialog.transient(parent_window)
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.wait_window()
+        
+        if result['selected']:
+            # Находим выбранный источник
+            for source in sources:
+                if source['id'] == result['selected']:
+                    return source
+        return None
     
     def check_desktop_shortcut_status(self):
         """Проверка статуса ярлыка на рабочем столе"""
@@ -27996,6 +28346,7 @@ class SelfUpdater:
         self.available_version: Optional[str] = None
         self.selected_source: Optional[str] = None  # 'smb' или 'git'
         self.remote_file_size: Optional[int] = None  # Размер файла на ресурсе
+        self.current_source_params: Optional[Dict] = None  # Параметры текущего источника из конфигурации
     
     def log(self, message: str, level: str = "INFO", gui_log: bool = False):
         """Логирование с поддержкой универсального print и GUI"""
@@ -28133,26 +28484,40 @@ class SelfUpdater:
         return -1 if p1 < p2 else (1 if p1 > p2 else 0)
     
     def extract_version_from_content(self, content: str) -> Optional[str]:
-        """Извлекает версию из содержимого файла."""
-        # APP_VERSION = "V2.6.141 (2025.12.02)"
-        match = re.search(r'APP_VERSION\s*=\s*["\']([^"\']+)["\']', content)
+        """Извлекает версию из содержимого файла Version.txt."""
+        # Формат: APP_VERSION=V3.3.168
+        match = re.search(r'APP_VERSION\s*=\s*([^\s\n]+)', content)
         if match:
-            return match.group(1)
-        # Версия: V2.6.141
-        match = re.search(r'Версия:\s*(V[\d.]+)', content)
+            return match.group(1).strip()
+        # Альтернативный формат: APP_VERSION=V3.3.168 (2025.12.08)
+        match = re.search(r'APP_VERSION\s*=\s*([^\n]+)', content)
         if match:
-            return match.group(1)
+            version = match.group(1).strip()
+            # Убираем возможные пробелы и скобки
+            return version
         return None
     
     # ========================================================================
     # ПРОВЕРКА SMB
     # ========================================================================
     
-    def check_smb_available(self) -> bool:
+    def check_smb_available(self, server: Optional[str] = None) -> bool:
         """Проверяет доступность SMB сервера."""
+        # Используем параметры из конфигурации, если не передан явно
+        if server is None:
+            if self.current_source_params and 'server' in self.current_source_params:
+                server = self.current_source_params['server']
+            else:
+                # Fallback на первый SMB источник из конфигурации
+                smb_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'smb' and s.get('enabled', True)]
+                if smb_sources:
+                    server = smb_sources[0]['params']['server']
+                else:
+                    return False
+        
         try:
             result = subprocess.run(
-                ['ping', '-c', '1', '-W', '2', SMB_SERVER],
+                ['ping', '-c', '1', '-W', '2', server],
                 capture_output=True, timeout=5
             )
             return result.returncode == 0
@@ -28160,19 +28525,33 @@ class SelfUpdater:
             return False
     
     def get_version_from_smb(self) -> Optional[str]:
-        """Получает версию с SMB."""
+        """Получает версию с SMB из файла Version.txt."""
         try:
-            remote_file = f"{SMB_PATH}/{VERSION_SOURCE_FILE}"
+            # Получаем параметры из конфигурации
+            if not self.current_source_params or 'server' not in self.current_source_params:
+                # Fallback на первый SMB источник
+                smb_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'smb' and s.get('enabled', True)]
+                if not smb_sources:
+                    return None
+                params = smb_sources[0]['params']
+            else:
+                params = self.current_source_params
             
-            # Читаем первые 5KB файла
+            server = params['server']
+            share = params['share']
+            path = params['path']
+            
+            remote_file = f"{path}/{VERSION_FILE}"
+            
+            # Читаем файл Version.txt (очень маленький файл, скачивается быстро)
             auth_params = self._build_smbclient_auth()
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
+            cmd = ['smbclient', f'//{server}/{share}'] + auth_params + [
                    '-c', f'get {remote_file} -']
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
             
             if result.returncode == 0:
                 if result.stdout:
-                    return self.extract_version_from_content(result.stdout[:5000])
+                    return self.extract_version_from_content(result.stdout)
                 else:
                     self.log(f"Файл {remote_file} пуст или не найден на SMB", "WARNING")
             else:
@@ -28196,13 +28575,27 @@ class SelfUpdater:
     def download_from_smb(self, dest_path: str) -> bool:
         """Скачивает файл с SMB."""
         try:
-            remote_file = f"{SMB_PATH}/{self.update_filename}"
-            self.log(f"Скачивание с SMB: //{SMB_SERVER}/{SMB_SHARE}/{remote_file}")
+            # Получаем параметры из конфигурации
+            if not self.current_source_params or 'server' not in self.current_source_params:
+                # Fallback на первый SMB источник
+                smb_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'smb' and s.get('enabled', True)]
+                if not smb_sources:
+                    return False
+                params = smb_sources[0]['params']
+            else:
+                params = self.current_source_params
+            
+            server = params['server']
+            share = params['share']
+            path = params['path']
+            
+            remote_file = f"{path}/{self.update_filename}"
+            self.log(f"Скачивание с SMB: //{server}/{share}/{remote_file}")
             
             auth_params = self._build_smbclient_auth()
             # Используем тот же формат команды, что и в старом скрипте (без кавычек в пути get)
             smb_cmd = f'get {remote_file} {dest_path}'
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
+            cmd = ['smbclient', f'//{server}/{share}'] + auth_params + [
                    '-c', smb_cmd]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD)
             
@@ -28243,7 +28636,20 @@ class SelfUpdater:
     def check_git_available(self) -> bool:
         """Проверяет доступность Git репозитория."""
         try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/README.md"
+            # Получаем параметры из конфигурации
+            if not self.current_source_params or 'raw_url' not in self.current_source_params:
+                # Fallback на первый Git источник
+                git_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'git' and s.get('enabled', True)]
+                if not git_sources:
+                    return False
+                params = git_sources[0]['params']
+            else:
+                params = self.current_source_params
+            
+            raw_url = params['raw_url']
+            branch = params['branch']
+            
+            url = f"{raw_url}/{branch}/README.md"
             result = subprocess.run(
                 ['curl', '-s', '-f', '--max-time', '5', '-I', url],
                 capture_output=True, text=True, timeout=10
@@ -28261,9 +28667,22 @@ class SelfUpdater:
             return False
     
     def get_version_from_git(self) -> Optional[str]:
-        """Получает версию с Git."""
+        """Получает версию с Git из файла Version.txt."""
         try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{VERSION_SOURCE_FILE}"
+            # Получаем параметры из конфигурации
+            if not self.current_source_params or 'raw_url' not in self.current_source_params:
+                # Fallback на первый Git источник
+                git_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'git' and s.get('enabled', True)]
+                if not git_sources:
+                    return None
+                params = git_sources[0]['params']
+            else:
+                params = self.current_source_params
+            
+            raw_url = params['raw_url']
+            branch = params['branch']
+            
+            url = f"{raw_url}/{branch}/{VERSION_FILE}"
             result = subprocess.run(
                 ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
                 capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
@@ -28271,9 +28690,9 @@ class SelfUpdater:
             
             if result.returncode == 0:
                 if result.stdout:
-                    return self.extract_version_from_content(result.stdout[:5000])
+                    return self.extract_version_from_content(result.stdout)
                 else:
-                    self.log(f"Файл {VERSION_SOURCE_FILE} пуст или не найден на Git", "WARNING")
+                    self.log(f"Файл {VERSION_FILE} пуст или не найден на Git", "WARNING")
             else:
                 # Логируем ошибку
                 error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
@@ -28287,7 +28706,20 @@ class SelfUpdater:
     def download_from_git(self, dest_path: str) -> bool:
         """Скачивает файл с Git."""
         try:
-            url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
+            # Получаем параметры из конфигурации
+            if not self.current_source_params or 'raw_url' not in self.current_source_params:
+                # Fallback на первый Git источник
+                git_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'git' and s.get('enabled', True)]
+                if not git_sources:
+                    return False
+                params = git_sources[0]['params']
+            else:
+                params = self.current_source_params
+            
+            raw_url = params['raw_url']
+            branch = params['branch']
+            
+            url = f"{raw_url}/{branch}/{self.update_filename}"
             self.log(f"Скачивание с Git: {url}")
             
             result = subprocess.run(
@@ -28308,11 +28740,25 @@ class SelfUpdater:
         """Получает размер файла с ресурса"""
         try:
             if self.selected_source == 'smb':
+                # Получаем параметры из конфигурации
+                if not self.current_source_params or 'server' not in self.current_source_params:
+                    # Fallback на первый SMB источник
+                    smb_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'smb' and s.get('enabled', True)]
+                    if not smb_sources:
+                        return None
+                    params = smb_sources[0]['params']
+                else:
+                    params = self.current_source_params
+                
+                server = params['server']
+                share = params['share']
+                path = params['path']
+                
                 # Для SMB используем smbclient с командой ls (как в старом скрипте)
-                remote_file = f"{SMB_PATH}/{self.update_filename}"
+                remote_file = f"{path}/{self.update_filename}"
                 auth_params = self._build_smbclient_auth()
                 # Используем ls с кавычками вокруг пути (как в старом скрипте)
-                cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
+                cmd = ['smbclient', f'//{server}/{share}'] + auth_params + [
                        '-c', f'ls "{remote_file}"']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
                 
@@ -28327,9 +28773,6 @@ class SelfUpdater:
                 
                 if result.returncode == 0:
                     # Парсим размер из вывода ls (как в старом скрипте)
-                    # Выводим весь вывод для отладки
-                    self.log(f"Вывод ls для {remote_file}: {result.stdout[:300]}", "DEBUG")
-                    
                     # Ищем размер в выводе ls (формат: числа из 4+ цифр)
                     # Старый скрипт: size=$(echo "$ls_output" | grep -oE '[0-9]{4,}' | head -1)
                     size_match = re.search(r'\b(\d{4,})\b', result.stdout)
@@ -28358,7 +28801,20 @@ class SelfUpdater:
                         self.log(f"Вывод команды: {result.stdout[:200]}", "DEBUG")
             else:
                 # Для Git используем HEAD запрос
-                url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
+                # Получаем параметры из конфигурации
+                if not self.current_source_params or 'raw_url' not in self.current_source_params:
+                    # Fallback на первый Git источник
+                    git_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('type') == 'git' and s.get('enabled', True)]
+                    if not git_sources:
+                        return None
+                    params = git_sources[0]['params']
+                else:
+                    params = self.current_source_params
+                
+                raw_url = params['raw_url']
+                branch = params['branch']
+                
+                url = f"{raw_url}/{branch}/{self.update_filename}"
                 result = subprocess.run(
                     ['curl', '-s', '-I', '--max-time', str(TIMEOUT_CHECK), url],
                     capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
@@ -28385,10 +28841,138 @@ class SelfUpdater:
     # ПРОВЕРКА ОБНОВЛЕНИЙ
     # ========================================================================
     
-    def check_for_updates(self) -> Optional[str]:
+    def _check_source(self, source_config: Dict, local_size: int, local_version: str) -> Dict:
         """
-        Расширенная проверка обновлений: версия + размер.
-        Возвращает новую версию или None.
+        Проверяет один источник обновлений.
+        
+        Args:
+            source_config: Конфигурация источника из UPDATE_SOURCES_CONFIG
+            local_size: Размер текущего бинарника в байтах
+            local_version: Текущая версия приложения
+            
+        Returns:
+            Словарь с информацией об источнике:
+            {
+                'id': str,
+                'name': str,
+                'description': str,
+                'available': bool,
+                'version': Optional[str],
+                'file_size': Optional[int],
+                'needs_update': bool,
+                'update_reason': str,  # 'new_version', 'size_diff', 'forced', 'none'
+                'updater': SelfUpdater instance
+            }
+        """
+        source_id = source_config['id']
+        source_name = source_config['name']
+        source_type = source_config['type']
+        
+        result = {
+            'id': source_id,
+            'name': source_name,
+            'description': get_source_description(source_config),
+            'available': False,
+            'version': None,
+            'file_size': None,
+            'needs_update': False,
+            'update_reason': 'none',
+            'updater': None
+        }
+        
+        # Сохраняем параметры источника для использования в методах
+        self.current_source_params = source_config.get('params', {})
+        self.selected_source = source_id
+        
+        # Проверяем доступность источника
+        if source_type == 'smb':
+            server = self.current_source_params.get('server')
+            if not self.check_smb_available(server=server):
+                self.log(f"{source_name} недоступен", "WARNING", gui_log=True)
+                return result
+        elif source_type == 'git':
+            if not self.check_git_available():
+                self.log(f"{source_name} недоступен", "WARNING", gui_log=True)
+                return result
+        
+        result['available'] = True
+        self.log(f"Проверка источника: {source_name}...", gui_log=True)
+        
+        # Проверяем размер файла
+        self.log(f"Получение размера файла {self.update_filename} с {source_name}...", gui_log=True)
+        remote_size = self.get_file_size_from_source()
+        if remote_size:
+            remote_size_mb = remote_size / (1024 * 1024)
+            self.log(f"Размер файла на {source_name}: {remote_size_mb:.2f} MB ({remote_size} байт)", gui_log=True)
+            result['file_size'] = remote_size
+        else:
+            self.log(f"Не удалось получить размер файла с {source_name}", "WARNING", gui_log=True)
+        
+        # Проверяем версию
+        self.log(f"Получение версии с {source_name}...", gui_log=True)
+        version = None
+        if source_type == 'smb':
+            version = self.get_version_from_smb()
+        elif source_type == 'git':
+            version = self.get_version_from_git()
+        
+        if version:
+            self.log(f"Версия на {source_name}: {version}", gui_log=True)
+            result['version'] = version
+            
+            # Сравниваем версии
+            comparison = self.compare_versions(version, local_version)
+            if comparison > 0:
+                # Версия новее
+                result['needs_update'] = True
+                result['update_reason'] = 'new_version'
+                self.log(f"✓ Найдено обновление: {version} (текущая: {local_version})", "INFO", gui_log=True)
+            elif comparison == 0:
+                # Версия совпадает - проверяем размер
+                if remote_size and remote_size != local_size:
+                    result['needs_update'] = True
+                    result['update_reason'] = 'size_diff'
+                    size_diff = abs(remote_size - local_size) / (1024 * 1024)
+                    self.log(f"Версия совпадает, но размер отличается на {size_diff:.2f} MB", "INFO", gui_log=True)
+                else:
+                    self.log("✓ Установлена актуальная версия", gui_log=True)
+            else:
+                # Версия старше
+                self.log(f"Версия на источнике ({version}) старше текущей ({local_version})", "WARNING", gui_log=True)
+        else:
+            self.log(f"Не удалось получить версию с {source_name}", "WARNING", gui_log=True)
+            # Если нет версии, но размер отличается - предлагаем обновление
+            if remote_size and remote_size != local_size:
+                result['needs_update'] = True
+                result['update_reason'] = 'size_diff'
+                size_diff = abs(remote_size - local_size) / (1024 * 1024)
+                self.log(f"Размер отличается на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
+        
+        # Сохраняем ссылку на updater для этого источника
+        result['updater'] = self
+        
+        return result
+    
+    def check_for_updates(self) -> List[Dict]:
+        """
+        Проверяет все доступные источники обновлений из конфигурации.
+        
+        Returns:
+            Список словарей с информацией об источниках:
+            [
+                {
+                    'id': str,
+                    'name': str,
+                    'description': str,
+                    'available': bool,
+                    'version': Optional[str],
+                    'file_size': Optional[int],
+                    'needs_update': bool,
+                    'update_reason': str,  # 'new_version', 'size_diff', 'forced', 'none'
+                    'updater': SelfUpdater instance
+                },
+                ...
+            ]
         """
         self._update_gui_status("Проверка обновлений...", 'blue')
         self.log(f"Проверка обновлений (текущая версия: {self.current_version})", gui_log=True)
@@ -28398,99 +28982,30 @@ class SelfUpdater:
         local_size_mb = local_size / (1024 * 1024)
         self.log(f"Размер текущего бинарника: {local_size_mb:.2f} MB ({local_size} байт)", gui_log=True)
         
-        # 1. Пробуем SMB (приоритет)
-        self.log(f"Проверка источника: SMB {SMB_SERVER}...", gui_log=True)
-        if self.check_smb_available():
-            self.log("SMB сервер доступен", gui_log=True)
-            # Устанавливаем источник для получения размера
-            self.selected_source = 'smb'
-            
-            # Проверяем размер файла
-            self.log(f"Получение размера файла {self.update_filename} с SMB...", gui_log=True)
-            self.remote_file_size = self.get_file_size_from_source()
-            if self.remote_file_size:
-                remote_size_mb = self.remote_file_size / (1024 * 1024)
-                self.log(f"Размер файла на SMB: {remote_size_mb:.2f} MB ({self.remote_file_size} байт)", gui_log=True)
-                if self.remote_file_size != local_size:
-                    size_diff = abs(self.remote_file_size - local_size) / (1024 * 1024)
-                    self.log(f"Размеры отличаются на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
-                else:
-                    self.log("Размеры файлов совпадают", gui_log=True)
-            else:
-                self.log("Не удалось получить размер файла с SMB", "WARNING", gui_log=True)
-            
-            # Проверяем версию
-            self.log("Получение версии с SMB...", gui_log=True)
-            version = self.get_version_from_smb()
-            if version:
-                self.log(f"Версия на SMB: {version}", gui_log=True)
-                comparison = self.compare_versions(version, self.current_version)
-                if comparison > 0:
-                    self.available_version = version
-                    self.log(f"✓ Найдено обновление: {version} (текущая: {self.current_version})", "INFO", gui_log=True)
-                    self._update_gui_status(f"Доступно обновление: {version}", 'green')
-                    return version
-                elif comparison == 0:
-                    self.log("✓ Установлена актуальная версия", gui_log=True)
-                    self._update_gui_status("Версия актуальна", 'gray')
-                    return None
-                else:
-                    self.log(f"Версия на сервере ({version}) старше текущей ({self.current_version})", "WARNING", gui_log=True)
-                    self._update_gui_status("Версия актуальна", 'gray')
-                    return None
-            else:
-                self.log("Не удалось получить версию с SMB", "WARNING", gui_log=True)
-        else:
-            self.log("SMB сервер недоступен", "WARNING", gui_log=True)
+        # Получаем список источников из конфигурации, отсортированных по приоритету
+        enabled_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('enabled', True)]
+        enabled_sources.sort(key=lambda x: x.get('priority', 999))
         
-        # 2. Пробуем Git (fallback)
-        self.log(f"Проверка источника: Git...", gui_log=True)
-        if self.check_git_available():
-            self.log("Git репозиторий доступен", gui_log=True)
-            # Устанавливаем источник для получения размера
-            self.selected_source = 'git'
-            
-            # Проверяем размер файла
-            self.log(f"Получение размера файла {self.update_filename} с Git...", gui_log=True)
-            self.remote_file_size = self.get_file_size_from_source()
-            if self.remote_file_size:
-                remote_size_mb = self.remote_file_size / (1024 * 1024)
-                self.log(f"Размер файла на Git: {remote_size_mb:.2f} MB ({self.remote_file_size} байт)", gui_log=True)
-                if self.remote_file_size != local_size:
-                    size_diff = abs(self.remote_file_size - local_size) / (1024 * 1024)
-                    self.log(f"Размеры отличаются на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
-                else:
-                    self.log("Размеры файлов совпадают", gui_log=True)
-            else:
-                self.log("Не удалось получить размер файла с Git", "WARNING", gui_log=True)
-            
-            # Проверяем версию
-            self.log("Получение версии с Git...", gui_log=True)
-            version = self.get_version_from_git()
-            if version:
-                self.log(f"Версия на Git: {version}", gui_log=True)
-                comparison = self.compare_versions(version, self.current_version)
-                if comparison > 0:
-                    self.available_version = version
-                    self.log(f"✓ Найдено обновление: {version} (текущая: {self.current_version})", "INFO", gui_log=True)
-                    self._update_gui_status(f"Доступно обновление: {version}", 'green')
-                    return version
-                elif comparison == 0:
-                    self.log("✓ Установлена актуальная версия", gui_log=True)
-                    self._update_gui_status("Версия актуальна", 'gray')
-                    return None
-                else:
-                    self.log(f"Версия на сервере ({version}) старше текущей ({self.current_version})", "WARNING", gui_log=True)
-                    self._update_gui_status("Версия актуальна", 'gray')
-                    return None
-            else:
-                self.log("Не удалось получить версию с Git", "WARNING", gui_log=True)
-        else:
-            self.log("Git репозиторий недоступен", "WARNING", gui_log=True)
+        sources_info = []
         
-        self.log("Не удалось проверить обновления - все источники недоступны", "WARNING", gui_log=True)
-        self._update_gui_status("Проверка обновлений недоступна", 'orange')
-        return None
+        # Проверяем каждый источник
+        for source_config in enabled_sources:
+            source_info = self._check_source(source_config, local_size, self.current_version)
+            sources_info.append(source_info)
+        
+        # Подсчитываем доступные источники и источники с обновлениями
+        available_count = sum(1 for s in sources_info if s['available'])
+        updates_count = sum(1 for s in sources_info if s['needs_update'])
+        
+        if updates_count > 0:
+            self._update_gui_status(f"Найдено обновлений: {updates_count}", 'green')
+        elif available_count > 0:
+            self._update_gui_status("Версия актуальна", 'gray')
+        else:
+            self.log("Не удалось проверить обновления - все источники недоступны", "WARNING", gui_log=True)
+            self._update_gui_status("Проверка обновлений недоступна", 'orange')
+        
+        return sources_info
     
     # ========================================================================
     # ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ

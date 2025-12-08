@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.3.167 (2025.12.08)
+# Версия проекта: V3.3.169 (2025.12.08)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -17,7 +17,7 @@
 ## 🏷️ ПРАВИЛА ВЕРСИОНИРОВАНИЯ:
 
 ### Схема версий:
-- **Версия проекта**: `VMAJOR.MINOR.PATCH` (MAJOR/MINOR из `version.txt`, PATCH = номер коммита) - общая для всех файлов проекта
+- **Версия проекта**: `VMAJOR.MINOR.PATCH` (MAJOR/MINOR из `Version.txt`, PATCH = номер коммита) - общая для всех файлов проекта
 - **Дата релиза файла**: `YYYY.MM.DD` - индивидуальная для каждого файла
 
 ### Формат в файлах:
@@ -103,8 +103,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - **КРИТИЧНО:** Сохранить переменные в `.commit_vars.sh` через функцию `save_vars_to_file()` сразу после определения
 
 4. **Определение новой версии:** 
-   - Прочитать `MAJOR` из `version.txt`: `grep "^MAJOR=" version.txt | cut -d= -f2`
-   - Прочитать `MINOR` из `version.txt`: `grep "^MINOR=" version.txt | cut -d= -f2`
+   - Прочитать `MAJOR` из `Version.txt`: `grep "^MAJOR=" Version.txt | cut -d= -f2`
+   - Прочитать `MINOR` из `Version.txt`: `grep "^MINOR=" Version.txt | cut -d= -f2`
    - Если `MAJOR` или `MINOR` пусты - остановиться с ошибкой
    - **КРИТИЧНО:** Сохранить переменную `NEW_VERSION` в `.commit_vars.sh` через функцию `save_vars_to_file()` сразу после определения
    - Выполнить `git rev-list --count HEAD` → сохранить в `CURRENT_COMMIT`
@@ -199,7 +199,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh` (КРИТИЧНО: без переменных продолжать нельзя)
    - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
-   - Загрузить `MAJOR` и `MINOR` из `version.txt`
+   - Загрузить `MAJOR` и `MINOR` из `Version.txt`
    - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
    - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
      - **КРИТИЧНО:** Проверить, что `NEW_VERSION` не пуста перед выполнением замены (если пуста, пропустить файл с ошибкой)
@@ -483,10 +483,10 @@ echo "✓ Переменные шага 3 сохранены в .commit_vars.sh"
 
 # ШАГ 4: Определяем новую версию проекта
 echo "=== ШАГ 4: Определение новой версии ==="
-[ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true
-MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
-MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
+[ ! -f "Version.txt" ] && stop_on_error "Файл Version.txt не найден" || true
+MAJOR=$(grep "^MAJOR=" Version.txt | cut -d= -f2)
+MINOR=$(grep "^MINOR=" Version.txt | cut -d= -f2)
+[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из Version.txt" || true
 CURRENT_COMMIT=$(git rev-list --count HEAD)
 [ -z "$CURRENT_COMMIT" ] && stop_on_error "Не удалось определить количество коммитов" || true
 NEW_PATCH=$((CURRENT_COMMIT + 1))
@@ -718,10 +718,10 @@ echo "✓ Рабочая директория: $(pwd)"
 # КРИТИЧНО: Загружаем переменные из .commit_vars.sh
 [ -f ".commit_vars.sh" ] && source .commit_vars.sh || stop_on_error "Файл .commit_vars.sh не найден. Невозможно продолжить без переменных."
 [ -z "$NEW_VERSION" ] && stop_on_error "Переменная NEW_VERSION не загружена" || true
-[ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true
-MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
-MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
+[ ! -f "Version.txt" ] && stop_on_error "Файл Version.txt не найден" || true
+MAJOR=$(grep "^MAJOR=" Version.txt | cut -d= -f2)
+MINOR=$(grep "^MINOR=" Version.txt | cut -d= -f2)
+[ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из Version.txt" || true
 
 echo "Обновление версий на: $NEW_VERSION"
 # КРИТИЧНО: Используем git ls-files вместо find
@@ -744,6 +744,19 @@ while IFS= read -r f; do
   echo "  ✓ Обработан: $f"
 done < <(git ls-files | grep -E '\.(py|sh|md)$')
 echo "✓ Версии обновлены во всех файлах"
+
+# Обновляем APP_VERSION в Version.txt
+echo "Обновление APP_VERSION в Version.txt: $NEW_VERSION"
+if grep -q "^APP_VERSION=" Version.txt; then
+    # Заменяем существующее значение
+    sed -i '' "s/^APP_VERSION=.*/APP_VERSION=${NEW_VERSION}/" Version.txt
+else
+    # Добавляем после PATCH если нет APP_VERSION
+    sed -i '' "/^PATCH=/a\\
+APP_VERSION=${NEW_VERSION}" Version.txt
+fi
+echo "✓ APP_VERSION обновлен в Version.txt"
+
 # КРИТИЧНО: Проверка успешности шага 11
 if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 11 не выполнен успешно"
