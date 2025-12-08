@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Запускающий скрипт для GUI PackageManager
-Версия: V3.3.166 (2025.12.06)
+Версия: V3.3.167 (2025.12.08)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -34,9 +34,9 @@ os.chdir(PROJECT_DIR)
 # Запускаем GUI
 if __name__ == "__main__":
     try:
-    from PackageManager.gui import main
-    
-    sys.exit(main() or 0)
+        from PackageManager.gui import main
+        
+        sys.exit(main() or 0)
     except ImportError as e:
         print(f"❌ ОШИБКА: Не удалось импортировать PackageManager.gui: {e}")
         print(f"Проверьте, что модуль PackageManager находится в {PROJECT_DIR}")

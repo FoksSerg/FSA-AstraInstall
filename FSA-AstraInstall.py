@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.166 (2025.12.08)
+Версия: V3.3.167 (2025.12.08)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.166 (2025.12.08)"
+APP_VERSION = "V3.3.167 (2025.12.08)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -19420,15 +19420,15 @@ class AutomationGUI(object):
         
         # Обновляем статус в нижнем поле прогресса
         if hasattr(self, 'wine_stage_label'):
-        if self.wine_checker.is_fully_installed():
+            if self.wine_checker.is_fully_installed():
                 self.wine_stage_label.config(text="Все компоненты установлены", fg='green')
-        elif self.wine_checker.is_wine_installed() and not self.wine_checker.is_astra_ide_installed():
+            elif self.wine_checker.is_wine_installed() and not self.wine_checker.is_astra_ide_installed():
                 self.wine_stage_label.config(text="Требуется установка Astra.IDE", fg='orange')
-        elif not self.wine_checker.is_wine_installed():
+            elif not self.wine_checker.is_wine_installed():
                 self.wine_stage_label.config(text="Требуется установка Wine", fg='red')
         else:
             missing = self.wine_checker.get_missing_components()
-                self.wine_stage_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
+            self.wine_status_label.config(text="Некоторые компоненты отсутствуют", fg='orange')
         
         # Управляем доступностью кнопок
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -27518,6 +27518,140 @@ def activate_existing_window(process_pids=None):
     print(f"[DEBUG] Активация окна не удалась")
     return False
 
+def detect_astra_version() -> Optional[str]:
+    """
+    Автоматически определяет версию Astra Linux (1.7 или 1.8).
+    Возвращает '1-7' или '1-8' или None если не удалось определить.
+    """
+    # Метод 1: Через /etc/astra-release (приоритет)
+    if os.path.exists('/etc/astra-release'):
+        try:
+            with open('/etc/astra-release', 'r', encoding='utf-8') as f:
+                content = f.read()
+                # Ищем версию в формате "1.7" или "1.8"
+                match = re.search(r'(\d+)\.(\d+)', content)
+                if match:
+                    major = int(match.group(1))
+                    minor = int(match.group(2))
+                    if major == 1:
+                        return f"{major}-{minor}"
+        except Exception:
+            pass
+    
+    # Метод 2: Через /etc/os-release
+    if os.path.exists('/etc/os-release'):
+        try:
+            with open('/etc/os-release', 'r', encoding='utf-8') as f:
+                for line in f:
+                    # Ищем VERSION_ID="1.7" или VERSION="1.7"
+                    if line.startswith('VERSION_ID='):
+                        version_str = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        match = re.search(r'(\d+)\.(\d+)', version_str)
+                        if match:
+                            major = int(match.group(1))
+                            minor = int(match.group(2))
+                            if major == 1:
+                                return f"{major}-{minor}"
+                    elif line.startswith('VERSION='):
+                        version_str = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        match = re.search(r'(\d+)\.(\d+)', version_str)
+                        if match:
+                            major = int(match.group(1))
+                            minor = int(match.group(2))
+                            if major == 1:
+                                return f"{major}-{minor}"
+        except Exception:
+            pass
+    
+    # Метод 3: Через версию GLIBC (fallback)
+    try:
+        result = subprocess.run(
+            ['ldd', '--version'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            # Парсим версию GLIBC
+            # GLIBC 2.28 -> Astra 1.7
+            # GLIBC 2.36 -> Astra 1.8
+            match = re.search(r'(\d+)\.(\d+)', result.stdout)
+            if match:
+                glibc_major = int(match.group(1))
+                glibc_minor = int(match.group(2))
+                if glibc_major == 2:
+                    if glibc_minor <= 28:
+                        return "1-7"
+                    elif glibc_minor >= 36:
+                        return "1-8"
+    except Exception:
+        pass
+    
+    return None
+
+def restart_with_path(new_path: str):
+    """Перезапускает приложение с указанным путем (только для бинарника)"""
+    if not getattr(sys, 'frozen', False):
+        return  # Только для бинарника
+    
+    args = [new_path]
+    # Добавляем все аргументы
+    args.extend(sys.argv[1:])
+    
+    print(f"[INFO] Перезапуск: {' '.join(args)}", level='INFO')
+    os.execv(args[0], args)
+
+def ensure_correct_binary_name():
+    """
+    Проверяет и переименовывает бинарник в правильное имя при необходимости.
+    Работает ТОЛЬКО для frozen приложения (бинарника).
+    Возвращает True если нужно перезапуститься, False если всё ОК.
+    """
+    # КРИТИЧНО: Только для бинарника
+    if not getattr(sys, 'frozen', False):
+        return False  # Для Python скрипта не переименовываем
+    
+    current_path = sys.executable
+    current_name = os.path.basename(current_path)
+    current_dir = os.path.dirname(current_path)
+    expected_path = os.path.join(current_dir, BINARY_FILENAME)
+    
+    # Если имя уже правильное - ничего не делаем
+    if current_name == BINARY_FILENAME:
+        return False
+    
+    # Если файл с правильным именем уже существует
+    if os.path.exists(expected_path):
+        # Проверяем, не является ли это тот же файл (hard link)
+        try:
+            if os.path.samefile(current_path, expected_path):
+                # Это тот же файл - ничего не делаем
+                return False
+        except Exception:
+            pass
+        
+        # Разные файлы - используем существующий
+        print(f"[INFO] Файл {BINARY_FILENAME} уже существует, используем его", level='INFO')
+        restart_with_path(expected_path)
+        return True
+    
+    # Переименовываем
+    try:
+        print(f"[INFO] Переименование {current_name} -> {BINARY_FILENAME}", level='INFO')
+        shutil.move(current_path, expected_path)
+        os.chmod(expected_path, 0o755)
+        
+        # Запускаем переименованный файл
+        restart_with_path(expected_path)
+        return True
+    except PermissionError:
+        # На Linux может потребоваться sudo для переименования
+        print(f"[WARNING] Недостаточно прав для переименования. Продолжаем с текущим именем.", level='WARNING')
+        return False
+    except Exception as e:
+        print(f"[ERROR] Не удалось переименовать: {e}", level='ERROR')
+        return False
+
 class SelfUpdater:
 # ============================================================================
 # КЛАСС САМООБНОВЛЕНИЯ
@@ -27528,16 +27662,26 @@ class SelfUpdater:
         self.current_version = current_version
         self.is_frozen = getattr(sys, 'frozen', False)
         
-        # Определяем какой файл обновляем
-        if self.is_frozen:
-            self.update_filename = BINARY_FILENAME
-            self.current_path = sys.executable
+        # КРИТИЧНО: Только для бинарника
+        if not self.is_frozen:
+            raise ValueError("SelfUpdater работает только для бинарника (frozen приложения)")
+        
+        self.current_path = sys.executable
+        
+        # Автоматически определяем платформу
+        self.platform_suffix = detect_astra_version()
+        
+        if self.platform_suffix:
+            self.log(f"Определена платформа: Astra {self.platform_suffix.replace('-', '.')}")
+            # Формируем имя файла с префиксом для загрузки
+            self.update_filename = f"{BINARY_FILENAME}-{self.platform_suffix}"
         else:
-            self.update_filename = PYTHON_FILENAME
-            self.current_path = os.path.abspath(sys.argv[0])
+            self.log("Не удалось определить платформу, используем базовое имя", "WARNING")
+            self.update_filename = BINARY_FILENAME
         
         self.available_version: Optional[str] = None
         self.selected_source: Optional[str] = None  # 'smb' или 'git'
+        self.remote_file_size: Optional[int] = None  # Размер файла на ресурсе
     
     def log(self, message: str, level: str = "INFO"):
         timestamp = dt.now().strftime("%H:%M:%S")
@@ -27682,26 +27826,80 @@ class SelfUpdater:
             self.log(f"Ошибка Git: {e}", "ERROR")
             return False
     
+    def get_file_size_from_source(self) -> Optional[int]:
+        """Получает размер файла с ресурса"""
+        try:
+            if self.selected_source == 'smb':
+                # Для SMB используем smbclient с командой stat
+                remote_file = f"{SMB_PATH}/{self.update_filename}"
+                cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
+                       '-c', f'stat {remote_file}']
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
+                
+                if result.returncode == 0:
+                    # Парсим размер из вывода stat
+                    for line in result.stdout.split('\n'):
+                        if 'size' in line.lower() or 'Size' in line:
+                            # Извлекаем размер
+                            match = re.search(r'(\d+)\s+bytes', line)
+                            if match:
+                                return int(match.group(1))
+                            # Альтернативный формат: Size: 12345678
+                            match = re.search(r'Size:\s*(\d+)', line, re.IGNORECASE)
+                            if match:
+                                return int(match.group(1))
+            else:
+                # Для Git используем HEAD запрос
+                url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
+                result = subprocess.run(
+                    ['curl', '-s', '-I', '--max-time', str(TIMEOUT_CHECK), url],
+                    capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
+                )
+                
+                if result.returncode == 0:
+                    # Парсим Content-Length из заголовков
+                    for line in result.stdout.split('\n'):
+                        if line.lower().startswith('content-length:'):
+                            return int(line.split(':', 1)[1].strip())
+        except Exception as e:
+            self.log(f"Ошибка получения размера файла: {e}", "WARNING")
+        
+        return None
+    
     # ========================================================================
     # ПРОВЕРКА ОБНОВЛЕНИЙ
     # ========================================================================
     
     def check_for_updates(self) -> Optional[str]:
         """
-        Проверяет наличие обновлений.
+        Расширенная проверка обновлений: версия + размер.
         Возвращает новую версию или None.
         """
         self.log(f"Проверка обновлений (текущая: {self.current_version})")
         
+        # Получаем размер текущего бинарника
+        local_size = os.path.getsize(self.current_path)
+        self.log(f"Размер текущего бинарника: {local_size} байт")
+        
         # 1. Пробуем SMB (приоритет)
         self.log(f"Источник: SMB {SMB_SERVER}...")
         if self.check_smb_available():
+            # Устанавливаем источник для получения размера
+            self.selected_source = 'smb'
+            
+            # Проверяем размер файла
+            self.remote_file_size = self.get_file_size_from_source()
+            if self.remote_file_size:
+                self.log(f"Размер файла на SMB: {self.remote_file_size} байт")
+                if self.remote_file_size != local_size:
+                    self.log("Размеры отличаются - возможно обновление", "INFO")
+            
+            # Проверяем версию
             version = self.get_version_from_smb()
             if version:
                 self.log(f"SMB версия: {version}")
                 if self.compare_versions(version, self.current_version) > 0:
                     self.available_version = version
-                    self.selected_source = 'smb'
                     return version
                 else:
                     self.log("✓ Установлена актуальная версия")
@@ -27712,12 +27910,22 @@ class SelfUpdater:
         # 2. Пробуем Git (fallback)
         self.log(f"Источник: Git...")
         if self.check_git_available():
+            # Устанавливаем источник для получения размера
+            self.selected_source = 'git'
+            
+            # Проверяем размер файла
+            self.remote_file_size = self.get_file_size_from_source()
+            if self.remote_file_size:
+                self.log(f"Размер файла на Git: {self.remote_file_size} байт")
+                if self.remote_file_size != local_size:
+                    self.log("Размеры отличаются - возможно обновление", "INFO")
+            
+            # Проверяем версию
             version = self.get_version_from_git()
             if version:
                 self.log(f"Git версия: {version}")
                 if self.compare_versions(version, self.current_version) > 0:
                     self.available_version = version
-                    self.selected_source = 'git'
                     return version
                 else:
                     self.log("✓ Установлена актуальная версия")
@@ -27803,8 +28011,47 @@ class SelfUpdater:
     # ГЛАВНЫЕ МЕТОДЫ
     # ========================================================================
     
+    def launch_new_version(self, new_file_path: str):
+        """Запускает новую версию приложения и закрывает текущую"""
+        if not self.is_frozen:
+            return  # Только для бинарника
+        
+        args = [new_file_path]
+        # Сохраняем все аргументы
+        args.extend(sys.argv[1:])
+        
+        self.log(f"Запуск новой версии: {' '.join(args)}", "INFO")
+        
+        # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
+        if '--console' in sys.argv:
+            # Консольный режим - заменяем процесс
+            os.execv(args[0], args)
+        else:
+            # GUI режим - запускаем в фоне и закрываем текущее
+            try:
+                subprocess.Popen(
+                    args,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                # Даем время на запуск
+                time.sleep(0.5)
+                # Закрываем текущее приложение
+                sys.exit(0)
+            except Exception as e:
+                self.log(f"Ошибка запуска новой версии: {e}", "ERROR")
+    
     def download_and_apply(self) -> bool:
-        """Скачивает и применяет обновление."""
+        """
+        Скачивает обновление и запускает новый файл.
+        Работает ТОЛЬКО для бинарника.
+        """
+        if not self.is_frozen:
+            self.log("Обновление доступно только для бинарника", "ERROR")
+            return False
+        
         # Если источник не выбран — сначала проверяем
         if not self.selected_source:
             if not self.check_for_updates():
@@ -27812,8 +28059,8 @@ class SelfUpdater:
                 return False
         
         # Создаём временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='_update') as tmp:
-            tmp_path = tmp.name
+        binary_dir = os.path.dirname(self.current_path)
+        tmp_path = os.path.join(binary_dir, f"{self.update_filename}.tmp")
         
         try:
             # Скачиваем
@@ -27830,8 +28077,36 @@ class SelfUpdater:
                 os.remove(tmp_path)
                 return False
             
-            # Применяем
-            return self.apply_update(tmp_path)
+            # Проверяем размер (дополнительная проверка)
+            downloaded_size = os.path.getsize(tmp_path)
+            if self.remote_file_size and downloaded_size != self.remote_file_size:
+                self.log(f"Размер скачанного файла не совпадает: {downloaded_size} != {self.remote_file_size}", "ERROR")
+                os.remove(tmp_path)
+                return False
+            
+            # Копируем рядом с текущим бинарником (не заменяем сразу)
+            new_file_path = os.path.join(binary_dir, self.update_filename)
+            
+            # Если файл уже существует - создаем резервную копию
+            if os.path.exists(new_file_path):
+                backup_path = new_file_path + ".backup"
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
+                shutil.copy2(new_file_path, backup_path)
+            
+            # Копируем новый файл
+            shutil.copy2(tmp_path, new_file_path)
+            os.chmod(new_file_path, 0o755)
+            
+            # Удаляем временный файл
+            os.remove(tmp_path)
+            
+            self.log(f"Новый файл готов: {new_file_path}", "INFO")
+            
+            # Запускаем новый файл
+            self.launch_new_version(new_file_path)
+            
+            return True
             
         except Exception as e:
             self.log(f"Ошибка: {e}", "ERROR")
@@ -28418,8 +28693,15 @@ def _load_tcl_tk_libraries():
 if __name__ == '__main__':
 # ═══════════════════════════════════════════════════════════════════════
 # ГЛАВНАЯ ТОЧКА ВХОДА 
+# ЭТАП 0: ПЕРЕИМЕНОВАНИЕ БИНАРНИКА (ПЕРВОЕ И ОБЯЗАТЕЛЬНОЕ)
 # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
 # ═══════════════════════════════════════════════════════════════════════
+    # КРИТИЧНО: Переименование бинарника - ПЕРВОЕ действие перед всем остальным
+    if ensure_correct_binary_name():
+        # Функция переименовала файл и запустила его заново - текущий процесс завершается
+        # Этот код не выполнится, так как os.execv() заменит процесс
+        pass
+    
     # На macOS не требуются права root, пропускаем проверку
     is_macos = platform.system() == 'Darwin'
     
@@ -28878,8 +29160,9 @@ if __name__ == '__main__':
                     if response in ('y', 'yes', 'д', 'да'):
                         print("[INFO] Начинаем обновление...")
                         if updater.download_and_apply():
-                            print("[INFO] ✓ Обновление применено! Перезапуск...")
-                            updater.restart()  # Перезапуск в консольном режиме
+                            # download_and_apply() уже запустил новую версию через launch_new_version()
+                            # В консольном режиме os.execv() заменит процесс, этот код не выполнится
+                            print("[INFO] ✓ Обновление применено! Запуск новой версии...")
                         else:
                             print("[ERROR] Не удалось применить обновление")
                             break

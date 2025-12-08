@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Скрипт автоматической сборки FSA-AstraInstall на удаленном Docker для всех платформ astra
-Версия: V3.2.165 (2025.12.07)
+Версия: V3.3.167 (2025.12.08)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -66,8 +66,8 @@ if __name__ == "__main__":
                 "--remote",
                 # "--rebuild"  # Пересобрать образ с wmctrl
             ]
-        
-        exit_code = main()
+            
+            exit_code = main()
             exit_codes.append((platform_id, exit_code))
             
             if exit_code != 0:

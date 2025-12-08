@@ -5,7 +5,7 @@ PyInstaller Runtime Hook для предзагрузки libBLT с RTLD_GLOBAL
 Этот hook выполняется ДО импорта tkinter, что позволяет предзагрузить libBLT
 с флагом RTLD_GLOBAL и настроить переменные окружения TCL_LIBRARY и TK_LIBRARY
 
-Версия: V3.3.166 (2025.12.07)
+Версия: V3.3.167 (2025.12.07)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
