@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.3.169 (2025.12.08)
+# Версия проекта: V3.3.170 (2025.12.08)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -771,10 +771,10 @@ PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
 
 # Проверяем и загружаем MAJOR/MINOR если они не установлены
 if [ -z "$MAJOR" ] || [ -z "$MINOR" ]; then
-    [ ! -f "version.txt" ] && stop_on_error "Файл version.txt не найден" || true
-    MAJOR=$(grep "^MAJOR=" version.txt | cut -d= -f2)
-    MINOR=$(grep "^MINOR=" version.txt | cut -d= -f2)
-    [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из version.txt" || true
+    [ ! -f "Version.txt" ] && stop_on_error "Файл Version.txt не найден" || true
+    MAJOR=$(grep "^MAJOR=" Version.txt | cut -d= -f2)
+    MINOR=$(grep "^MINOR=" Version.txt | cut -d= -f2)
+    [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из Version.txt" || true
 fi
 
 VERSION_ERRORS=0

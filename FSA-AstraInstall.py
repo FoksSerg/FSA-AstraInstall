@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.169 (2025.12.08)
+Версия: V3.3.170 (2025.12.08)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.169 (2025.12.08)"
+APP_VERSION = "V3.3.170 (2025.12.08)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -28348,6 +28348,13 @@ class SelfUpdater:
         self.remote_file_size: Optional[int] = None  # Размер файла на ресурсе
         self.current_source_params: Optional[Dict] = None  # Параметры текущего источника из конфигурации
     
+    def _get_source_type(self) -> Optional[str]:
+        """Получает тип источника по его ID"""
+        if not self.selected_source:
+            return None
+        source_config = next((s for s in UPDATE_SOURCES_CONFIG if s.get('id') == self.selected_source), None)
+        return source_config.get('type') if source_config else None
+    
     def log(self, message: str, level: str = "INFO", gui_log: bool = False):
         """Логирование с поддержкой универсального print и GUI"""
         # Используем универсальный print с правильными уровнями
@@ -28739,7 +28746,8 @@ class SelfUpdater:
     def get_file_size_from_source(self) -> Optional[int]:
         """Получает размер файла с ресурса"""
         try:
-            if self.selected_source == 'smb':
+            source_type = self._get_source_type()
+            if source_type == 'smb':
                 # Получаем параметры из конфигурации
                 if not self.current_source_params or 'server' not in self.current_source_params:
                     # Fallback на первый SMB источник
@@ -29135,7 +29143,8 @@ class SelfUpdater:
         
         try:
             # Скачиваем
-            if self.selected_source == 'smb':
+            source_type = self._get_source_type()
+            if source_type == 'smb':
                 success = self.download_from_smb(tmp_path)
             else:
                 success = self.download_from_git(tmp_path)
