@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.167 (2025.12.08)
+Версия: V3.3.168 (2025.12.08)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.167 (2025.12.08)"
+APP_VERSION = "V3.3.168 (2025.12.08)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -1046,9 +1046,9 @@ SMB_SHARE = "Install"
 SMB_PATH = "ISO/Linux/Astra"
 
 # Git репозиторий (fallback - для клиентов)
-GIT_REPO = "https://github.com/ViRa-Realtime/FSA-AstraInstall"
+GIT_REPO = "https://github.com/FoksSerg/FSA-AstraInstall"
 GIT_BRANCH = "master"
-GIT_RAW_URL = "https://raw.githubusercontent.com/ViRa-Realtime/FSA-AstraInstall"
+GIT_RAW_URL = "https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall"
 
 # Имена файлов для самообновления
 BINARY_FILENAME = "FSA-AstraInstall"
@@ -15681,6 +15681,11 @@ class AutomationGUI(object):
                                       command=self.open_system_monitor, width=18)
         sysmon_button.pack(side=self.tk.LEFT, padx=2)
         ToolTip(sysmon_button, "Открыть системный монитор для отслеживания ресурсов")
+        
+        update_check_button = self.tk.Button(row2_about, text="Проверка обновлений", 
+                                            command=self.open_update_check_window, width=20)
+        update_check_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(update_check_button, "Проверить наличие обновлений приложения")
         # ===============================================
         
         # ========== СЕКЦИЯ: СИСТЕМНЫЕ РЕСУРСЫ ==========
@@ -22099,6 +22104,311 @@ class AutomationGUI(object):
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Ошибка запуска монитора", fg='red')
     
+    def open_update_check_window(self):
+        """Открыть окно проверки обновлений"""
+        try:
+            # Создаем диалоговое окно
+            dialog = self.tk.Toplevel(self.root)
+            dialog.title("Проверка обновлений")
+            dialog.geometry("800x600")
+            
+            # Центрируем окно
+            dialog.update_idletasks()
+            width = dialog.winfo_width()
+            height = dialog.winfo_height()
+            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+            y = (dialog.winfo_screenheight() // 2) - (height // 2)
+            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            
+            # Используем grid для точного контроля размещения
+            dialog.grid_rowconfigure(0, weight=1)  # Контент может расширяться
+            dialog.grid_rowconfigure(1, weight=0)  # Кнопки фиксированы
+            dialog.grid_columnconfigure(0, weight=1)
+            
+            # Контейнер для всего контента (кроме кнопок)
+            content_frame = self.tk.Frame(dialog)
+            content_frame.grid(row=0, column=0, sticky='nsew', padx=10, pady=5)
+            content_frame.grid_rowconfigure(2, weight=1)  # Лог может расширяться
+            content_frame.grid_columnconfigure(0, weight=1)
+            
+            # Фрейм для путей к ресурсам
+            resources_frame = self.tk.LabelFrame(content_frame, text="Пути к ресурсам обновлений")
+            resources_frame.grid(row=0, column=0, sticky='ew', padx=5, pady=5)
+            
+            # Путь к SMB
+            smb_path_frame = self.tk.Frame(resources_frame)
+            smb_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
+            self.tk.Label(smb_path_frame, text="SMB:", width=12, anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+            smb_path_text = f"//{SMB_SERVER}/{SMB_SHARE}/{SMB_PATH}"
+            smb_path_label = self.tk.Label(smb_path_frame, text=smb_path_text, 
+                                         font=('Courier', 9), anchor='w', fg='blue')
+            smb_path_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+            
+            # Путь к Git
+            git_path_frame = self.tk.Frame(resources_frame)
+            git_path_frame.pack(fill=self.tk.X, padx=5, pady=3)
+            self.tk.Label(git_path_frame, text="Git:", width=12, anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+            git_path_text = f"{GIT_RAW_URL}/{GIT_BRANCH}"
+            git_path_label = self.tk.Label(git_path_frame, text=git_path_text, 
+                                         font=('Courier', 9), anchor='w', fg='blue')
+            git_path_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+            
+            # Фрейм для лога (ограниченная высота)
+            log_frame = self.tk.LabelFrame(content_frame, text="Лог проверки")
+            log_frame.grid(row=2, column=0, sticky='nsew', padx=5, pady=5)
+            
+            # Текстовая область с прокруткой (ограниченная высота - 12 строк)
+            from tkinter import scrolledtext
+            log_text = scrolledtext.ScrolledText(log_frame, wrap=self.tk.WORD, 
+                                                 font=('Courier', 9), state=self.tk.DISABLED, height=12)
+            log_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Статус-бар
+            status_frame = self.tk.Frame(content_frame)
+            status_frame.grid(row=3, column=0, sticky='ew', padx=5, pady=5)
+            status_label = self.tk.Label(status_frame, text="Готов к проверке", 
+                                       font=('Arial', 9), anchor='w')
+            status_label.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True)
+            
+            # Функция для добавления текста в лог
+            def append_log(text):
+                log_text.config(state=self.tk.NORMAL)
+                log_text.insert(self.tk.END, text + '\n')
+                log_text.see(self.tk.END)
+                log_text.config(state=self.tk.DISABLED)
+            
+            # Функция проверки обновлений
+            def check_updates():
+                # Очищаем лог
+                log_text.config(state=self.tk.NORMAL)
+                log_text.delete(1.0, self.tk.END)
+                log_text.config(state=self.tk.DISABLED)
+                
+                # Обновляем статус
+                status_label.config(text="Проверка обновлений...", fg='blue')
+                check_button.config(state=self.tk.DISABLED)
+                
+                # Проверяем, что приложение - бинарник
+                if not getattr(sys, 'frozen', False):
+                    append_log("Проверка обновлений доступна только для бинарника")
+                    status_label.config(text="Доступно только для бинарника", fg='orange')
+                    check_button.config(state=self.tk.NORMAL)
+                    return
+                
+                def run_check():
+                    smb_user = None
+                    smb_password = None
+                    max_retries = 3
+                    auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            # Создаем экземпляр SelfUpdater с учетными данными
+                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                            
+                            # Переопределяем метод log для вывода в окно
+                            original_log = updater.log
+                            def log_to_window(message, level="INFO", gui_log=False):
+                                original_log(message, level=level, gui_log=gui_log)
+                                # Выводим в окно
+                                dialog.after(0, lambda: append_log(message))
+                            updater.log = log_to_window
+                            
+                            # Проверяем обновления
+                            new_version = updater.check_for_updates()
+                            
+                            # Обновляем статус
+                            if new_version:
+                                dialog.after(0, lambda: status_label.config(
+                                    text=f"Доступно обновление: {new_version}", fg='green'))
+                                # Показываем диалог с предложением обновиться
+                                dialog.after(0, lambda: self._show_update_dialog(dialog, updater, new_version))
+                            else:
+                                dialog.after(0, lambda: status_label.config(
+                                    text="Версия актуальна", fg='gray'))
+                            break  # Успешно, выходим из цикла
+                            
+                        except PermissionError as e:
+                            if "авторизации SMB" in str(e):
+                                # Ошибка авторизации - запрашиваем учетные данные
+                                dialog.after(0, lambda: append_log("Ошибка авторизации SMB"))
+                                dialog.after(0, lambda: append_log("Требуется ввод учетных данных"))
+                                
+                                # Сбрасываем результат
+                                auth_result['user'] = None
+                                auth_result['password'] = None
+                                auth_result['ready'].clear()
+                                
+                                # Показываем диалог запроса учетных данных
+                                def show_auth_dialog():
+                                    user, password = self._show_smb_auth_dialog(dialog)
+                                    auth_result['user'] = user
+                                    auth_result['password'] = password
+                                    auth_result['ready'].set()
+                                
+                                dialog.after(0, show_auth_dialog)
+                                
+                                # Ждем результата (максимум 60 секунд)
+                                if auth_result['ready'].wait(timeout=60):
+                                    if auth_result['user'] and auth_result['password']:
+                                        smb_user = auth_result['user']
+                                        smb_password = auth_result['password']
+                                        dialog.after(0, lambda: append_log(f"Повторная попытка (попытка {attempt + 2}/{max_retries})"))
+                                        continue  # Повторяем попытку
+                                    else:
+                                        dialog.after(0, lambda: append_log("Отменено пользователем"))
+                                        dialog.after(0, lambda: status_label.config(text="Отменено", fg='orange'))
+                                        break
+                                else:
+                                    dialog.after(0, lambda: append_log("Таймаут ожидания ввода учетных данных"))
+                                    dialog.after(0, lambda: status_label.config(text="Таймаут", fg='orange'))
+                                    break
+                            else:
+                                # Другая PermissionError
+                                error_msg = f"Ошибка проверки обновлений: {e}"
+                                append_log(error_msg)
+                                dialog.after(0, lambda: status_label.config(text="Ошибка проверки", fg='red'))
+                                break
+                                
+                        except Exception as e:
+                            error_msg = f"Ошибка проверки обновлений: {e}"
+                            append_log(error_msg)
+                            dialog.after(0, lambda: status_label.config(text="Ошибка проверки", fg='red'))
+                            break
+                        finally:
+                            dialog.after(0, lambda: check_button.config(state=self.tk.NORMAL))
+                
+                # Запускаем в отдельном потоке
+                thread = threading.Thread(target=run_check, name="UpdateCheckThread")
+                thread.daemon = True
+                thread.start()
+            
+            # Кнопки (зафиксированы внизу через grid)
+            button_frame = self.tk.Frame(dialog)
+            button_frame.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
+            button_frame.grid_columnconfigure(0, weight=1)  # Пустое пространство между кнопками
+            
+            check_button = self.tk.Button(button_frame, text="Проверить обновления", 
+                                        command=check_updates, bg='#4CAF50', fg='white',
+                                        font=('Arial', 10, 'bold'))
+            check_button.grid(row=0, column=0, sticky='w', padx=5)
+            
+            close_button = self.tk.Button(button_frame, text="Закрыть", 
+                                        command=dialog.destroy, bg='#f44336', fg='white',
+                                        font=('Arial', 10, 'bold'))
+            close_button.grid(row=0, column=2, sticky='e', padx=5)
+            
+            # Обработка закрытия по Escape
+            dialog.focus_set()
+            dialog.bind('<Escape>', lambda e: dialog.destroy())
+            
+        except Exception as e:
+            print(f"Ошибка открытия окна проверки обновлений: {e}", level='ERROR')
+            messagebox.showerror("Ошибка", f"Не удалось открыть окно проверки обновлений:\n{e}")
+    
+    def _show_update_dialog(self, parent_window, updater, new_version):
+        """Показать диалог с предложением обновиться"""
+        result = messagebox.askyesno(
+            "Обновление доступно",
+            f"Доступна новая версия: {new_version}\n\n"
+            f"Текущая версия: {APP_VERSION}\n\n"
+            "Хотите обновиться сейчас?",
+            parent=parent_window
+        )
+        
+        if result:
+            # Запускаем обновление в отдельном потоке
+            def run_update():
+                try:
+                    updater.log("Начало обновления...", gui_log=True)
+                    if updater.download_and_apply():
+                        updater.log("Обновление завершено успешно!", gui_log=True)
+                        parent_window.after(0, lambda: messagebox.showinfo(
+                            "Успех", "Обновление завершено! Приложение будет перезапущено.",
+                            parent=parent_window))
+                    else:
+                        updater.log("Ошибка обновления", level='ERROR', gui_log=True)
+                        parent_window.after(0, lambda: messagebox.showerror(
+                            "Ошибка", "Не удалось обновиться. Проверьте лог.",
+                            parent=parent_window))
+                except Exception as e:
+                    updater.log(f"Ошибка обновления: {e}", level='ERROR', gui_log=True)
+                    parent_window.after(0, lambda: messagebox.showerror(
+                        "Ошибка", f"Ошибка обновления:\n{e}",
+                        parent=parent_window))
+            
+            thread = threading.Thread(target=run_update, name="UpdateThread")
+            thread.daemon = True
+            thread.start()
+    
+    def _show_smb_auth_dialog(self, parent_window) -> tuple[Optional[str], Optional[str]]:
+        """Показать диалог запроса учетных данных SMB"""
+        dialog = self.tk.Toplevel(parent_window)
+        dialog.title("Аутентификация SMB")
+        dialog.geometry("400x150")
+        dialog.resizable(False, False)
+        
+        # Центрируем окно
+        dialog.update_idletasks()
+        width = dialog.winfo_width()
+        height = dialog.winfo_height()
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
+        result = {'user': None, 'password': None, 'confirmed': False}
+        
+        # Поле для пользователя
+        user_frame = self.tk.Frame(dialog)
+        user_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(user_frame, text="Пользователь:", width=12, anchor='w').pack(side=self.tk.LEFT)
+        user_entry = self.tk.Entry(user_frame)
+        user_entry.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+        
+        # Поле для пароля
+        pass_frame = self.tk.Frame(dialog)
+        pass_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        self.tk.Label(pass_frame, text="Пароль:", width=12, anchor='w').pack(side=self.tk.LEFT)
+        password_entry = self.tk.Entry(pass_frame, show='*')
+        password_entry.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=5)
+        
+        # Кнопки
+        button_frame = self.tk.Frame(dialog)
+        button_frame.pack(fill=self.tk.X, padx=10, pady=10)
+        
+        def on_ok():
+            result['user'] = user_entry.get().strip() if user_entry.get().strip() else None
+            result['password'] = password_entry.get().strip() if password_entry.get().strip() else None
+            result['confirmed'] = True
+            dialog.destroy()
+        
+        def on_cancel():
+            result['confirmed'] = False
+            dialog.destroy()
+        
+        ok_button = self.tk.Button(button_frame, text="OK", command=on_ok, width=10)
+        ok_button.pack(side=self.tk.LEFT, padx=5)
+        
+        cancel_button = self.tk.Button(button_frame, text="Отмена", command=on_cancel, width=10)
+        cancel_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # Фокус на поле пользователя
+        user_entry.focus_set()
+        
+        # Обработка Enter
+        user_entry.bind('<Return>', lambda e: password_entry.focus_set())
+        password_entry.bind('<Return>', lambda e: on_ok())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+        
+        # Модальное окно
+        dialog.transient(parent_window)
+        dialog.grab_set()
+        dialog.wait_window()
+        
+        if result['confirmed']:
+            return result['user'], result['password']
+        return None, None
+    
     def check_desktop_shortcut_status(self):
         """Проверка статуса ярлыка на рабочем столе"""
         try:
@@ -27658,7 +27968,7 @@ class SelfUpdater:
 # ============================================================================    
     """Класс для самообновления файла."""
     
-    def __init__(self, current_version: str):
+    def __init__(self, current_version: str, smb_user: Optional[str] = None, smb_password: Optional[str] = None):
         self.current_version = current_version
         self.is_frozen = getattr(sys, 'frozen', False)
         
@@ -27667,6 +27977,10 @@ class SelfUpdater:
             raise ValueError("SelfUpdater работает только для бинарника (frozen приложения)")
         
         self.current_path = sys.executable
+        
+        # Параметры аутентификации SMB
+        self.smb_user = smb_user
+        self.smb_password = smb_password
         
         # Автоматически определяем платформу
         self.platform_suffix = detect_astra_version()
@@ -27683,9 +27997,114 @@ class SelfUpdater:
         self.selected_source: Optional[str] = None  # 'smb' или 'git'
         self.remote_file_size: Optional[int] = None  # Размер файла на ресурсе
     
-    def log(self, message: str, level: str = "INFO"):
-        timestamp = dt.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] [{level}] {message}")
+    def log(self, message: str, level: str = "INFO", gui_log: bool = False):
+        """Логирование с поддержкой универсального print и GUI"""
+        # Используем универсальный print с правильными уровнями
+        print(message, level=level, gui_log=gui_log)
+    
+    def _update_gui_status(self, message: str, color: str = 'gray'):
+        """Обновляет статус в информационном поле GUI"""
+        try:
+            gui = getattr(sys, '_gui_instance', None)
+            if gui and hasattr(gui, 'wine_stage_label'):
+                def update():
+                    try:
+                        gui.wine_stage_label.config(text=message, fg=color)
+                    except Exception:
+                        pass
+                if hasattr(gui, 'root'):
+                    gui.root.after(0, update)
+        except Exception:
+            pass
+    
+    def _get_credentials_file_path(self) -> str:
+        """Возвращает путь к файлу с учетными данными SMB."""
+        home_dir = os.path.expanduser("~")
+        return os.path.join(home_dir, ".smbcredentials")
+    
+    def _ensure_credentials_file(self) -> bool:
+        """Создает или обновляет файл с учетными данными SMB."""
+        if not self.smb_user or not self.smb_password:
+            return False
+        
+        credentials_file = self._get_credentials_file_path()
+        
+        try:
+            # Создаем или обновляем файл с учетными данными
+            with open(credentials_file, 'w') as f:
+                f.write(f"username={self.smb_user}\n")
+                f.write(f"password={self.smb_password}\n")
+            
+            # Устанавливаем права доступа 600 (только для владельца)
+            os.chmod(credentials_file, 0o600)
+            
+            self.log(f"Учетные данные сохранены в {credentials_file}", "DEBUG")
+            return True
+        except Exception as e:
+            self.log(f"Ошибка сохранения учетных данных: {e}", "WARNING")
+            return False
+    
+    def _credentials_file_exists(self) -> bool:
+        """Проверяет существование файла с учетными данными."""
+        credentials_file = self._get_credentials_file_path()
+        return os.path.exists(credentials_file)
+    
+    def _get_credentials_file_user(self) -> Optional[str]:
+        """Получает имя пользователя из файла с учетными данными."""
+        credentials_file = self._get_credentials_file_path()
+        
+        if not os.path.exists(credentials_file):
+            return None
+        
+        try:
+            with open(credentials_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('username='):
+                        return line.split('=', 1)[1].strip()
+        except Exception:
+            pass
+        
+        return None
+    
+    def _build_smbclient_auth(self) -> list:
+        """Формирует параметры аутентификации для smbclient."""
+        credentials_file = self._get_credentials_file_path()
+        
+        # Если переданы пользователь и пароль - сохраняем в файл
+        if self.smb_user and self.smb_password:
+            self._ensure_credentials_file()
+        
+        # Проверяем, существует ли файл с учетными данными
+        if os.path.exists(credentials_file):
+            # Проверяем, что пользователь в файле совпадает с переданным (если передан)
+            if self.smb_user:
+                file_user = self._get_credentials_file_user()
+                if file_user and file_user != self.smb_user:
+                    # Пользователь не совпадает - обновляем файл
+                    self._ensure_credentials_file()
+            # Используем файл с учетными данными: -A путь_к_файлу
+            self.log(f"Используется файл с учетными данными: {credentials_file}", "DEBUG")
+            return ['-A', credentials_file]
+        elif self.smb_user and self.smb_password:
+            # Файла нет, но есть учетные данные - создаем и используем
+            if self._ensure_credentials_file():
+                self.log(f"Создан файл с учетными данными: {credentials_file}", "DEBUG")
+                return ['-A', credentials_file]
+            else:
+                # Не удалось создать файл - используем -U
+                self.log("Не удалось создать файл с учетными данными, используем -U", "WARNING")
+                return ['-U', f"{self.smb_user}%{self.smb_password}"]
+        else:
+            # Проверяем, есть ли сохраненный файл (даже если пользователь не передан)
+            if os.path.exists(credentials_file):
+                file_user = self._get_credentials_file_user()
+                if file_user:
+                    self.log(f"Используется сохраненный файл с учетными данными для пользователя {file_user}", "DEBUG")
+                    return ['-A', credentials_file]
+            # Анонимный доступ: -N
+            self.log("Используется анонимный доступ к SMB", "DEBUG")
+            return ['-N']
     
     # ========================================================================
     # ПАРСИНГ ВЕРСИЙ
@@ -27746,14 +28165,32 @@ class SelfUpdater:
             remote_file = f"{SMB_PATH}/{VERSION_SOURCE_FILE}"
             
             # Читаем первые 5KB файла
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
+            auth_params = self._build_smbclient_auth()
+            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
                    '-c', f'get {remote_file} -']
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
             
             if result.returncode == 0:
-                return self.extract_version_from_content(result.stdout[:5000])
+                if result.stdout:
+                    return self.extract_version_from_content(result.stdout[:5000])
+                else:
+                    self.log(f"Файл {remote_file} пуст или не найден на SMB", "WARNING")
+            else:
+                # Проверяем на ошибки авторизации
+                if result.stderr:
+                    error_output = result.stderr.lower()
+                    if any(keyword in error_output for keyword in [
+                        'nt_status_logon_failure', 'nt_status_wrong_password',
+                        'authentication failed', 'access denied', 'login failed'
+                    ]):
+                        raise PermissionError("Ошибка авторизации SMB")
+                # Логируем другие ошибки из stderr
+                error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                self.log(f"Ошибка получения версии с SMB: {error_msg}", "WARNING")
+                self.log(f"Команда: {' '.join(cmd)}", "DEBUG")
             return None
-        except Exception:
+        except Exception as e:
+            self.log(f"Исключение при получении версии с SMB: {e}", "WARNING")
             return None
     
     def download_from_smb(self, dest_path: str) -> bool:
@@ -27762,17 +28199,41 @@ class SelfUpdater:
             remote_file = f"{SMB_PATH}/{self.update_filename}"
             self.log(f"Скачивание с SMB: //{SMB_SERVER}/{SMB_SHARE}/{remote_file}")
             
-            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
-                   '-c', f'get {remote_file} {dest_path}']
+            auth_params = self._build_smbclient_auth()
+            # Используем тот же формат команды, что и в старом скрипте (без кавычек в пути get)
+            smb_cmd = f'get {remote_file} {dest_path}'
+            cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
+                   '-c', smb_cmd]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD)
             
-            if result.returncode == 0 and os.path.exists(dest_path):
-                size = os.path.getsize(dest_path) / 1024 / 1024
-                self.log(f"Скачано: {size:.2f} MB")
-                return True
+            # КРИТИЧНО: Проверяем вывод на ошибки авторизации ПЕРЕД проверкой кода возврата
+            # smbclient может вернуть код 0 даже при ошибке авторизации
+            if result.stderr:
+                error_output = result.stderr.lower()
+                if any(keyword in error_output for keyword in [
+                    'nt_status_logon_failure', 'nt_status_wrong_password',
+                    'authentication failed', 'access denied', 'login failed'
+                ]):
+                    raise PermissionError("Ошибка авторизации SMB")
+            
+            if result.returncode == 0:
+                # Дополнительная проверка: файл должен существовать после копирования
+                if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
+                    size = os.path.getsize(dest_path) / 1024 / 1024
+                    self.log(f"Скачано: {size:.2f} MB")
+                    return True
+                else:
+                    self.log("Файл не найден или пуст после скачивания с SMB", "WARNING")
+                    if result.stderr:
+                        self.log(f"Ошибка smbclient: {result.stderr[:200]}", "WARNING")
+            else:
+                # Логируем ошибку
+                error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                self.log(f"Ошибка скачивания с SMB: {error_msg}", "WARNING")
+                self.log(f"Команда: {' '.join(cmd)}", "DEBUG")
             return False
         except Exception as e:
-            self.log(f"Ошибка SMB: {e}", "ERROR")
+            self.log(f"Исключение при скачивании с SMB: {e}", "ERROR")
             return False
     
     # ========================================================================
@@ -27785,10 +28246,18 @@ class SelfUpdater:
             url = f"{GIT_RAW_URL}/{GIT_BRANCH}/README.md"
             result = subprocess.run(
                 ['curl', '-s', '-f', '--max-time', '5', '-I', url],
-                capture_output=True, timeout=10
+                capture_output=True, text=True, timeout=10
             )
-            return result.returncode == 0
-        except Exception:
+            if result.returncode == 0:
+                return True
+            else:
+                # Логируем ошибку
+                error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                self.log(f"Git репозиторий недоступен: {error_msg}", "WARNING")
+                self.log(f"URL: {url}", "DEBUG")
+                return False
+        except Exception as e:
+            self.log(f"Исключение при проверке Git: {e}", "WARNING")
             return False
     
     def get_version_from_git(self) -> Optional[str]:
@@ -27801,9 +28270,18 @@ class SelfUpdater:
             )
             
             if result.returncode == 0:
-                return self.extract_version_from_content(result.stdout[:5000])
+                if result.stdout:
+                    return self.extract_version_from_content(result.stdout[:5000])
+                else:
+                    self.log(f"Файл {VERSION_SOURCE_FILE} пуст или не найден на Git", "WARNING")
+            else:
+                # Логируем ошибку
+                error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                self.log(f"Ошибка получения версии с Git: {error_msg}", "WARNING")
+                self.log(f"URL: {url}", "DEBUG")
             return None
-        except Exception:
+        except Exception as e:
+            self.log(f"Исключение при получении версии с Git: {e}", "WARNING")
             return None
     
     def download_from_git(self, dest_path: str) -> bool:
@@ -27830,24 +28308,54 @@ class SelfUpdater:
         """Получает размер файла с ресурса"""
         try:
             if self.selected_source == 'smb':
-                # Для SMB используем smbclient с командой stat
+                # Для SMB используем smbclient с командой ls (как в старом скрипте)
                 remote_file = f"{SMB_PATH}/{self.update_filename}"
-                cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}', '-N',
-                       '-c', f'stat {remote_file}']
+                auth_params = self._build_smbclient_auth()
+                # Используем ls с кавычками вокруг пути (как в старом скрипте)
+                cmd = ['smbclient', f'//{SMB_SERVER}/{SMB_SHARE}'] + auth_params + [
+                       '-c', f'ls "{remote_file}"']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
                 
+                # Проверяем на ошибки авторизации
+                if result.stderr:
+                    error_output = result.stderr.lower()
+                    if any(keyword in error_output for keyword in [
+                        'nt_status_logon_failure', 'nt_status_wrong_password',
+                        'authentication failed', 'access denied', 'login failed'
+                    ]):
+                        raise PermissionError("Ошибка авторизации SMB")
+                
                 if result.returncode == 0:
-                    # Парсим размер из вывода stat
-                    for line in result.stdout.split('\n'):
-                        if 'size' in line.lower() or 'Size' in line:
-                            # Извлекаем размер
-                            match = re.search(r'(\d+)\s+bytes', line)
-                            if match:
-                                return int(match.group(1))
-                            # Альтернативный формат: Size: 12345678
-                            match = re.search(r'Size:\s*(\d+)', line, re.IGNORECASE)
-                            if match:
-                                return int(match.group(1))
+                    # Парсим размер из вывода ls (как в старом скрипте)
+                    # Выводим весь вывод для отладки
+                    self.log(f"Вывод ls для {remote_file}: {result.stdout[:300]}", "DEBUG")
+                    
+                    # Ищем размер в выводе ls (формат: числа из 4+ цифр)
+                    # Старый скрипт: size=$(echo "$ls_output" | grep -oE '[0-9]{4,}' | head -1)
+                    size_match = re.search(r'\b(\d{4,})\b', result.stdout)
+                    if size_match:
+                        size = int(size_match.group(1))
+                        self.log(f"Найден размер файла: {size} байт", "DEBUG")
+                        return size
+                    
+                    # Альтернативный способ - ищем любое число (как в старом скрипте)
+                    size_match = re.search(r'\b(\d+)\b', result.stdout)
+                    if size_match:
+                        size = int(size_match.group(1))
+                        # Проверяем, что размер разумный (больше 1MB для бинарника)
+                        if size > 1000000:
+                            self.log(f"Найден размер файла (альтернативный способ): {size} байт", "DEBUG")
+                            return size
+                    
+                    self.log(f"Не удалось найти размер в выводе ls", "WARNING")
+                    self.log(f"Полный вывод ls: {result.stdout}", "DEBUG")
+                else:
+                    # Логируем ошибку из stderr
+                    error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                    self.log(f"Ошибка получения размера файла с SMB: {error_msg}", "WARNING")
+                    self.log(f"Команда: {' '.join(cmd)}", "DEBUG")
+                    if result.stdout:
+                        self.log(f"Вывод команды: {result.stdout[:200]}", "DEBUG")
             else:
                 # Для Git используем HEAD запрос
                 url = f"{GIT_RAW_URL}/{GIT_BRANCH}/{self.update_filename}"
@@ -27860,9 +28368,16 @@ class SelfUpdater:
                     # Парсим Content-Length из заголовков
                     for line in result.stdout.split('\n'):
                         if line.lower().startswith('content-length:'):
-                            return int(line.split(':', 1)[1].strip())
+                            size = int(line.split(':', 1)[1].strip())
+                            self.log(f"Найден размер файла на Git: {size} байт", "DEBUG")
+                            return size
+                else:
+                    # Логируем ошибку
+                    error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
+                    self.log(f"Ошибка получения размера файла с Git: {error_msg}", "WARNING")
+                    self.log(f"URL: {url}", "DEBUG")
         except Exception as e:
-            self.log(f"Ошибка получения размера файла: {e}", "WARNING")
+            self.log(f"Исключение при получении размера файла: {e}", "WARNING")
         
         return None
     
@@ -27875,65 +28390,106 @@ class SelfUpdater:
         Расширенная проверка обновлений: версия + размер.
         Возвращает новую версию или None.
         """
-        self.log(f"Проверка обновлений (текущая: {self.current_version})")
+        self._update_gui_status("Проверка обновлений...", 'blue')
+        self.log(f"Проверка обновлений (текущая версия: {self.current_version})", gui_log=True)
         
         # Получаем размер текущего бинарника
         local_size = os.path.getsize(self.current_path)
-        self.log(f"Размер текущего бинарника: {local_size} байт")
+        local_size_mb = local_size / (1024 * 1024)
+        self.log(f"Размер текущего бинарника: {local_size_mb:.2f} MB ({local_size} байт)", gui_log=True)
         
         # 1. Пробуем SMB (приоритет)
-        self.log(f"Источник: SMB {SMB_SERVER}...")
+        self.log(f"Проверка источника: SMB {SMB_SERVER}...", gui_log=True)
         if self.check_smb_available():
+            self.log("SMB сервер доступен", gui_log=True)
             # Устанавливаем источник для получения размера
             self.selected_source = 'smb'
             
             # Проверяем размер файла
+            self.log(f"Получение размера файла {self.update_filename} с SMB...", gui_log=True)
             self.remote_file_size = self.get_file_size_from_source()
             if self.remote_file_size:
-                self.log(f"Размер файла на SMB: {self.remote_file_size} байт")
+                remote_size_mb = self.remote_file_size / (1024 * 1024)
+                self.log(f"Размер файла на SMB: {remote_size_mb:.2f} MB ({self.remote_file_size} байт)", gui_log=True)
                 if self.remote_file_size != local_size:
-                    self.log("Размеры отличаются - возможно обновление", "INFO")
+                    size_diff = abs(self.remote_file_size - local_size) / (1024 * 1024)
+                    self.log(f"Размеры отличаются на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
+                else:
+                    self.log("Размеры файлов совпадают", gui_log=True)
+            else:
+                self.log("Не удалось получить размер файла с SMB", "WARNING", gui_log=True)
             
             # Проверяем версию
+            self.log("Получение версии с SMB...", gui_log=True)
             version = self.get_version_from_smb()
             if version:
-                self.log(f"SMB версия: {version}")
-                if self.compare_versions(version, self.current_version) > 0:
+                self.log(f"Версия на SMB: {version}", gui_log=True)
+                comparison = self.compare_versions(version, self.current_version)
+                if comparison > 0:
                     self.available_version = version
+                    self.log(f"✓ Найдено обновление: {version} (текущая: {self.current_version})", "INFO", gui_log=True)
+                    self._update_gui_status(f"Доступно обновление: {version}", 'green')
                     return version
-                else:
-                    self.log("✓ Установлена актуальная версия")
+                elif comparison == 0:
+                    self.log("✓ Установлена актуальная версия", gui_log=True)
+                    self._update_gui_status("Версия актуальна", 'gray')
                     return None
+                else:
+                    self.log(f"Версия на сервере ({version}) старше текущей ({self.current_version})", "WARNING", gui_log=True)
+                    self._update_gui_status("Версия актуальна", 'gray')
+                    return None
+            else:
+                self.log("Не удалось получить версию с SMB", "WARNING", gui_log=True)
         else:
-            self.log("SMB недоступен", "WARNING")
+            self.log("SMB сервер недоступен", "WARNING", gui_log=True)
         
         # 2. Пробуем Git (fallback)
-        self.log(f"Источник: Git...")
+        self.log(f"Проверка источника: Git...", gui_log=True)
         if self.check_git_available():
+            self.log("Git репозиторий доступен", gui_log=True)
             # Устанавливаем источник для получения размера
             self.selected_source = 'git'
             
             # Проверяем размер файла
+            self.log(f"Получение размера файла {self.update_filename} с Git...", gui_log=True)
             self.remote_file_size = self.get_file_size_from_source()
             if self.remote_file_size:
-                self.log(f"Размер файла на Git: {self.remote_file_size} байт")
+                remote_size_mb = self.remote_file_size / (1024 * 1024)
+                self.log(f"Размер файла на Git: {remote_size_mb:.2f} MB ({self.remote_file_size} байт)", gui_log=True)
                 if self.remote_file_size != local_size:
-                    self.log("Размеры отличаются - возможно обновление", "INFO")
+                    size_diff = abs(self.remote_file_size - local_size) / (1024 * 1024)
+                    self.log(f"Размеры отличаются на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
+                else:
+                    self.log("Размеры файлов совпадают", gui_log=True)
+            else:
+                self.log("Не удалось получить размер файла с Git", "WARNING", gui_log=True)
             
             # Проверяем версию
+            self.log("Получение версии с Git...", gui_log=True)
             version = self.get_version_from_git()
             if version:
-                self.log(f"Git версия: {version}")
-                if self.compare_versions(version, self.current_version) > 0:
+                self.log(f"Версия на Git: {version}", gui_log=True)
+                comparison = self.compare_versions(version, self.current_version)
+                if comparison > 0:
                     self.available_version = version
+                    self.log(f"✓ Найдено обновление: {version} (текущая: {self.current_version})", "INFO", gui_log=True)
+                    self._update_gui_status(f"Доступно обновление: {version}", 'green')
                     return version
-                else:
-                    self.log("✓ Установлена актуальная версия")
+                elif comparison == 0:
+                    self.log("✓ Установлена актуальная версия", gui_log=True)
+                    self._update_gui_status("Версия актуальна", 'gray')
                     return None
+                else:
+                    self.log(f"Версия на сервере ({version}) старше текущей ({self.current_version})", "WARNING", gui_log=True)
+                    self._update_gui_status("Версия актуальна", 'gray')
+                    return None
+            else:
+                self.log("Не удалось получить версию с Git", "WARNING", gui_log=True)
         else:
-            self.log("Git недоступен", "WARNING")
+            self.log("Git репозиторий недоступен", "WARNING", gui_log=True)
         
-        self.log("Не удалось проверить обновления", "WARNING")
+        self.log("Не удалось проверить обновления - все источники недоступны", "WARNING", gui_log=True)
+        self._update_gui_status("Проверка обновлений недоступна", 'orange')
         return None
     
     # ========================================================================
@@ -29192,8 +29748,24 @@ if __name__ == '__main__':
                     # Показываем диалог в главном потоке
                     global _update_available
                     _update_available = (new_ver, updater)
-            except Exception:
-                pass
+                else:
+                    # Обновление не требуется - статус уже обновлен в check_for_updates()
+                    pass
+            except Exception as e:
+                print(f"Ошибка при проверке обновлений: {e}", level='ERROR', gui_log=True)
+                # Обновляем статус в GUI при ошибке
+                try:
+                    gui = getattr(sys, '_gui_instance', None)
+                    if gui and hasattr(gui, 'wine_stage_label'):
+                        def update():
+                            try:
+                                gui.wine_stage_label.config(text="Ошибка проверки обновлений", fg='red')
+                            except Exception:
+                                pass
+                        if hasattr(gui, 'root'):
+                            gui.root.after(0, update)
+                except Exception:
+                    pass
         
         # Запускаем проверку в фоновом потоке
         _update_available = None
