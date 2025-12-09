@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.170 (2025.12.08)
+Версия: V3.3.171 (2025.12.09)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.170 (2025.12.08)"
+APP_VERSION = "V3.3.171 (2025.12.09)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -3223,11 +3223,11 @@ class ComponentHandler(ABC):
                     
                     if result['success']:
                         files_prepared = True
-                        print(f"[PREPARE FILES] ✓ Извлечено файлов из архива: {result['extracted_count']}", level='INFO')
+                        print(f"[PREPARE FILES] [OK] Извлечено файлов из архива: {result['extracted_count']}", level='INFO')
                     else:
-                        print(f"[PREPARE FILES] ✗ Ошибка извлечения: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
+                        print(f"[PREPARE FILES] [FAIL] Ошибка извлечения: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
             else:
-                print(f"[PREPARE FILES] ✗ Архив не найден", level='WARNING')
+                print(f"[PREPARE FILES] [FAIL] Архив не найден", level='WARNING')
         
         # ШАГ 2: FALLBACK - Если файлы не подготовлены и fallback включен
         if not files_prepared and source_fallback:
@@ -3270,14 +3270,14 @@ class ComponentHandler(ABC):
                             shutil.copy2(file_path, dest_path)
                             fix_permissions(dest_path)
                             file_size = os.path.getsize(dest_path)
-                            print(f"[PREPARE FILES] ✓ Скопирован {dest_name} ({file_size} байт) из {files_result.get('sources', {}).get(file_key, files_result.get('source', 'unknown'))}", level='INFO')
+                            print(f"[PREPARE FILES] [OK] Скопирован {dest_name} ({file_size} байт) из {files_result.get('sources', {}).get(file_key, files_result.get('source', 'unknown'))}", level='INFO')
                             copied_count += 1
                         except Exception as e:
-                            print(f"[PREPARE FILES] ✗ Ошибка копирования {dest_name}: {e}", level='ERROR')
+                            print(f"[PREPARE FILES] [FAIL] Ошибка копирования {dest_name}: {e}", level='ERROR')
                 
                 if copied_count > 0:
                     files_prepared = True
-                    print(f"[PREPARE FILES] ✓ Скопировано файлов: {copied_count}", level='INFO')
+                    print(f"[PREPARE FILES] [OK] Скопировано файлов: {copied_count}", level='INFO')
                 
                 # Очищаем временные директории
                 temp_dir = files_result.get('temp_dir')
@@ -3289,9 +3289,9 @@ class ComponentHandler(ABC):
         
         # Итог
         if files_prepared:
-            print(f"[PREPARE FILES] ✓ УСПЕХ: Файлы подготовлены", level='INFO')
+            print(f"[PREPARE FILES] [OK] УСПЕХ: Файлы подготовлены", level='INFO')
         else:
-            print(f"[PREPARE FILES] ✗ НЕУДАЧА: Файлы не получены из всех источников", level='WARNING')
+            print(f"[PREPARE FILES] [FAIL] НЕУДАЧА: Файлы не получены из всех источников", level='WARNING')
         
         print(f"[PREPARE FILES] ========== КОНЕЦ ПОДГОТОВКИ ФАЙЛОВ ==========", level='INFO')
         
@@ -6108,9 +6108,9 @@ class WinetricksHandler(ComponentHandler):
                 print(f"[WINETRICKS CACHE CHECK] Папка кэша не существует!", level='WARNING')
         
         if cache_check_passed:
-            print(f"[WINETRICKS CACHE CHECK] ✓ ПРОВЕРКА ПРОЙДЕНА: Все файлы в кэше", level='INFO')
+            print(f"[WINETRICKS CACHE CHECK] [OK] ПРОВЕРКА ПРОЙДЕНА: Все файлы в кэше", level='INFO')
         else:
-            print(f"[WINETRICKS CACHE CHECK] ✗ ПРОВЕРКА НЕ ПРОЙДЕНА: Отсутствуют файлы: {', '.join(missing_files) if missing_files else 'кэш пуст'}", level='WARNING')
+            print(f"[WINETRICKS CACHE CHECK] [FAIL] ПРОВЕРКА НЕ ПРОЙДЕНА: Отсутствуют файлы: {', '.join(missing_files) if missing_files else 'кэш пуст'}", level='WARNING')
             if config.get('source_fallback', True):
                 print(f"[WINETRICKS CACHE CHECK] Fallback включен - winetricks попытается скачать файлы из интернета", level='WARNING')
             else:
@@ -11364,7 +11364,7 @@ class WinetricksManager(object):
             cache_dir = f"$HOME/.cache/winetricks/{component}"
             script_content += f"echo \"[3] Проверка кэша для {component}: {cache_dir}\"\n"
             script_content += f"if [ -d \"{cache_dir}\" ]; then\n"
-            script_content += f"  echo \"[3]   ✓ Кэш существует\"\n"
+            script_content += f"  echo \"[3]   [OK] Кэш существует\"\n"
             script_content += f"  echo \"[3]   Содержимое:\"\n"
             script_content += f"  ls -lah \"{cache_dir}\" | head -10 | sed 's/^/[3]     /'\n"
             script_content += f"  file_count=$(ls -1 \"{cache_dir}\" 2>/dev/null | wc -l)\n"
@@ -11375,16 +11375,16 @@ class WinetricksManager(object):
             script_content += f"  if [ -n \"$installer_files\" ]; then\n"
             script_content += f"    echo \"$installer_files\" | while read file; do\n"
             script_content += f"      size=$(du -h \"$file\" 2>/dev/null | cut -f1)\n"
-            script_content += f"      echo \"[3]     ✓ Найден: $(basename \"$file\") ($size)\"\n"
+            script_content += f"      echo \"[3]     [OK] Найден: $(basename \"$file\") ($size)\"\n"
             script_content += f"    done\n"
             script_content += f"    installer_count=$(echo \"$installer_files\" | wc -l)\n"
             script_content += f"    echo \"[3]   Всего установщиков: $installer_count\"\n"
             script_content += f"  else\n"
-            script_content += f"    echo \"[3]     ✗ Файлы установщиков НЕ найдены!\"\n"
+            script_content += f"    echo \"[3]     [FAIL] Файлы установщиков НЕ найдены!\"\n"
             script_content += f"    echo \"[3]     Winetricks может попытаться скачать их из интернета\"\n"
             script_content += f"  fi\n"
             script_content += f"else\n"
-            script_content += f"  echo \"[3]   ✗ Кэш НЕ существует!\"\n"
+            script_content += f"  echo \"[3]   [FAIL] Кэш НЕ существует!\"\n"
             script_content += f"fi\n"
             script_content += "echo ''\n"
         script_content += "echo '[3] =========================================='\n"
@@ -11395,37 +11395,37 @@ class WinetricksManager(object):
         script_content += "echo '[4] ПРОВЕРКА WINETRICKS СКРИПТА'\n"
         script_content += "echo '[4] =========================================='\n"
         script_content += f"if [ ! -f \"./{winetricks_name}\" ]; then\n"
-        script_content += f"  echo \"[4] ✗ ОШИБКА: {winetricks_name} не найден в $(pwd)\"\n"
+        script_content += f"  echo \"[4] [FAIL] ОШИБКА: {winetricks_name} не найден в $(pwd)\"\n"
         script_content += "  exit 1\n"
         script_content += "fi\n"
-        script_content += f"echo \"[4] ✓ Winetricks найден: $(pwd)/{winetricks_name}\"\n"
+        script_content += f"echo \"[4] [OK] Winetricks найден: $(pwd)/{winetricks_name}\"\n"
         script_content += f"ls -la \"./{winetricks_name}\"\n"
         script_content += f"echo \"[4] Проверка версии:\"\n"
         script_content += f"./{winetricks_name} --version 2>&1 | head -3 | sed 's/^/[4]   /'\n"
         script_content += "echo '[4] Проверка прав доступа:'\n"
-        script_content += f"test -x \"./{winetricks_name}\" && echo '[4]   ✓ Файл исполняемый' || echo '[4]   ✗ Файл НЕ исполняемый'\n"
-        script_content += f"test -r \"./{winetricks_name}\" && echo '[4]   ✓ Файл читаемый' || echo '[4]   ✗ Файл НЕ читаемый'\n"
+        script_content += f"test -x \"./{winetricks_name}\" && echo '[4]   [OK] Файл исполняемый' || echo '[4]   [FAIL] Файл НЕ исполняемый'\n"
+        script_content += f"test -r \"./{winetricks_name}\" && echo '[4]   [OK] Файл читаемый' || echo '[4]   [FAIL] Файл НЕ читаемый'\n"
         script_content += "echo '[4] Проверка доступных компонентов:'\n"
         script_content += f"echo '[4]   Проверка метаданных winetricks:'\n"
         script_content += f"  WINETRICKS_METADATA_DIR=\"$HOME/.local/share/winetricks/metadata\"\n"
         script_content += f"  if [ -d \"$WINETRICKS_METADATA_DIR\" ]; then\n"
-        script_content += f"    echo '[4]     ✓ Директория метаданных существует: $WINETRICKS_METADATA_DIR'\n"
+        script_content += f"    echo '[4]     [OK] Директория метаданных существует: $WINETRICKS_METADATA_DIR'\n"
         script_content += f"    vars_count=$(find \"$WINETRICKS_METADATA_DIR\" -name '*.vars' 2>/dev/null | wc -l)\n"
         script_content += f"    echo '[4]     Файлов метаданных (.vars): $vars_count'\n"
         script_content += f"    if [ $vars_count -gt 0 ]; then\n"
         script_content += f"      echo '[4]     Примеры файлов метаданных:'\n"
         script_content += f"      find \"$WINETRICKS_METADATA_DIR\" -name '*.vars' 2>/dev/null | head -5 | sed 's/^/[4]       /'\n"
         script_content += f"      if [ -f \"$WINETRICKS_METADATA_DIR/dlls/vcrun2013.vars\" ]; then\n"
-        script_content += f"        echo '[4]     ✓ Метаданные vcrun2013 найдены!'\n"
+        script_content += f"        echo '[4]     [OK] Метаданные vcrun2013 найдены!'\n"
         script_content += f"      else\n"
-        script_content += f"        echo '[4]     ✗ Метаданные vcrun2013 НЕ найдены!'\n"
+        script_content += f"        echo '[4]     [FAIL] Метаданные vcrun2013 НЕ найдены!'\n"
         script_content += f"      fi\n"
         script_content += f"    else\n"
-        script_content += f"      echo '[4]     ✗ Файлы метаданных отсутствуют!'\n"
+        script_content += f"      echo '[4]     [FAIL] Файлы метаданных отсутствуют!'\n"
         script_content += f"      echo '[4]     Winetricks нужно инициализировать метаданные'\n"
         script_content += f"    fi\n"
         script_content += f"  else\n"
-        script_content += f"    echo '[4]     ✗ Директория метаданных НЕ существует!'\n"
+        script_content += f"    echo '[4]     [FAIL] Директория метаданных НЕ существует!'\n"
         script_content += f"    echo '[4]     Winetricks нужно инициализировать метаданные'\n"
         script_content += f"  fi\n"
         script_content += f"echo '[4]   Поиск компонентов в списке winetricks:'\n"
@@ -11433,7 +11433,7 @@ class WinetricksManager(object):
         script_content += f"  list_count=$(echo \"$list_output\" | wc -l)\n"
         script_content += f"  echo '[4]   Всего компонентов в winetricks: $list_count'\n"
         script_content += f"  if [ $list_count -lt 10 ]; then\n"
-        script_content += f"    echo '[4]     ⚠ ВНИМАНИЕ: Очень мало компонентов! Метаданные не загружены.'\n"
+        script_content += f"    echo '[4]     [WARN] ВНИМАНИЕ: Очень мало компонентов! Метаданные не загружены.'\n"
         script_content += f"    echo '[4]     Полный список компонентов:'\n"
         script_content += f"    echo \"$list_output\" | sed 's/^/[4]       /'\n"
         script_content += f"  fi\n"
@@ -11441,9 +11441,9 @@ class WinetricksManager(object):
         script_content += f"  echo \"$list_output\" | grep -i vcrun | head -10 | sed 's/^/[4]     /'\n"
         for component in components:
             script_content += f"  if echo \"$list_output\" | grep -q -w '{component}'; then\n"
-            script_content += f"    echo '[4]     ✓ {component} найден в списке'\n"
+            script_content += f"    echo '[4]     [OK] {component} найден в списке'\n"
             script_content += f"  else\n"
-            script_content += f"    echo '[4]     ✗ {component} НЕ найден в списке!'\n"
+            script_content += f"    echo '[4]     [FAIL] {component} НЕ найден в списке!'\n"
             script_content += f"    echo '[4]       Попытка поиска по частичному совпадению:'\n"
             script_content += f"    echo \"$list_output\" | grep -i '{component}' | head -5 | sed 's/^/[4]         /'\n"
             script_content += f"  fi\n"
@@ -11457,12 +11457,12 @@ class WinetricksManager(object):
             script_content += "echo '[5] ПРОВЕРКА WINE'\n"
             script_content += "echo '[5] =========================================='\n"
             script_content += f"if [ -f \"$WINE\" ]; then\n"
-            script_content += f"  echo \"[5] ✓ Wine найден: $WINE\"\n"
+            script_content += f"  echo \"[5] [OK] Wine найден: $WINE\"\n"
             script_content += f"  ls -la \"$WINE\"\n"
             script_content += f"  echo \"[5] Версия Wine:\"\n"
             script_content += f"  \"$WINE\" --version 2>&1 | sed 's/^/[5]   /'\n"
             script_content += f"else\n"
-            script_content += f"  echo \"[5] ✗ Wine НЕ найден: $WINE\"\n"
+            script_content += f"  echo \"[5] [FAIL] Wine НЕ найден: $WINE\"\n"
             script_content += f"fi\n"
             script_content += "echo '[5] =========================================='\n"
             script_content += "echo ''\n\n"
@@ -11474,15 +11474,15 @@ class WinetricksManager(object):
             script_content += "echo '[6] ПРОВЕРКА WINEPREFIX'\n"
             script_content += "echo '[6] =========================================='\n"
             script_content += f"if [ -d \"$WINEPREFIX\" ]; then\n"
-            script_content += f"  echo \"[6] ✓ WINEPREFIX существует: $WINEPREFIX\"\n"
+            script_content += f"  echo \"[6] [OK] WINEPREFIX существует: $WINEPREFIX\"\n"
             script_content += f"  ls -ld \"$WINEPREFIX\"\n"
             script_content += f"  if [ -w \"$WINEPREFIX\" ]; then\n"
-            script_content += f"    echo \"[6] ✓ WINEPREFIX доступен для записи\"\n"
+            script_content += f"    echo \"[6] [OK] WINEPREFIX доступен для записи\"\n"
             script_content += f"  else\n"
-            script_content += f"    echo \"[6] ✗ WINEPREFIX НЕ доступен для записи\"\n"
+            script_content += f"    echo \"[6] [FAIL] WINEPREFIX НЕ доступен для записи\"\n"
             script_content += f"  fi\n"
             script_content += f"else\n"
-            script_content += f"  echo \"[6] ✗ WINEPREFIX НЕ существует: $WINEPREFIX\"\n"
+            script_content += f"  echo \"[6] [FAIL] WINEPREFIX НЕ существует: $WINEPREFIX\"\n"
             script_content += f"fi\n"
             script_content += "echo '[6] =========================================='\n"
             script_content += "echo ''\n\n"
@@ -11499,9 +11499,9 @@ class WinetricksManager(object):
         script_content += f"./{winetricks_name} list dlls >/dev/null 2>&1\n"
         script_content += "LIST_EXIT=$?\n"
         script_content += "if [ $LIST_EXIT -eq 0 ]; then\n"
-        script_content += "  echo '[7] ✓ Метаданные инициализированы'\n"
+        script_content += "  echo '[7] [OK] Метаданные инициализированы'\n"
         script_content += "else\n"
-        script_content += "  echo '[7] ⚠ Предупреждение: winetricks list завершился с кодом $LIST_EXIT'\n"
+        script_content += "  echo '[7] [WARN] Предупреждение: winetricks list завершился с кодом $LIST_EXIT'\n"
         script_content += "  echo '[7]   Продолжаем установку...'\n"
         script_content += "fi\n"
         script_content += "echo ''\n"
@@ -11511,18 +11511,18 @@ class WinetricksManager(object):
         script_content += "    vars_count=$(find \"$WINETRICKS_METADATA_TMP\" -name '*.vars' 2>/dev/null | wc -l)\n"
         script_content += "    echo '[7]   Файлов метаданных во временной директории: $vars_count'\n"
         script_content += "    if [ $vars_count -gt 0 ]; then\n"
-        script_content += "      echo '[7]   ✓ Метаданные извлечены успешно'\n"
+        script_content += "      echo '[7]   [OK] Метаданные извлечены успешно'\n"
         for component in components:
             script_content += f"      if [ -f \"$WINETRICKS_METADATA_TMP/dlls/{component}.vars\" ] || [ -f \"$WINETRICKS_METADATA_TMP/apps/{component}.vars\" ]; then\n"
-            script_content += f"        echo '[7]     ✓ Метаданные {component} найдены!'\n"
+            script_content += f"        echo '[7]     [OK] Метаданные {component} найдены!'\n"
             script_content += f"      else\n"
-            script_content += f"        echo '[7]     ✗ Метаданные {component} НЕ найдены!'\n"
+            script_content += f"        echo '[7]     [FAIL] Метаданные {component} НЕ найдены!'\n"
             script_content += f"      fi\n"
         script_content += "    else\n"
-        script_content += "      echo '[7]   ✗ Метаданные НЕ извлечены!'\n"
+        script_content += "      echo '[7]   [FAIL] Метаданные НЕ извлечены!'\n"
         script_content += "    fi\n"
         script_content += "  else\n"
-        script_content += "    echo '[7]   ⚠ Временная директория метаданных не найдена'\n"
+        script_content += "    echo '[7]   [WARN] Временная директория метаданных не найдена'\n"
         script_content += "  fi\n"
         script_content += "echo '[7] =========================================='\n"
         script_content += "echo ''\n\n"
@@ -11565,11 +11565,11 @@ class WinetricksManager(object):
             script_content += "echo '[9] =========================================='\n"
             script_content += f"WINETRICKS_LOG=\"$WINEPREFIX/winetricks.log\"\n"
             script_content += "if [ -f \"$WINETRICKS_LOG\" ]; then\n"
-            script_content += "  echo '[9] ✓ winetricks.log существует'\n"
+            script_content += "  echo '[9] [OK] winetricks.log существует'\n"
             script_content += "  echo '[9] Последние 30 строк:'\n"
             script_content += "  tail -30 \"$WINETRICKS_LOG\" | sed 's/^/[9]   /'\n"
             script_content += "else\n"
-            script_content += "  echo '[9] ✗ winetricks.log НЕ существует'\n"
+            script_content += "  echo '[9] [FAIL] winetricks.log НЕ существует'\n"
             script_content += "fi\n"
             script_content += "echo '[9] =========================================='\n"
             script_content += "echo ''\n\n"
@@ -11578,9 +11578,9 @@ class WinetricksManager(object):
         script_content += "echo 'ИТОГИ УСТАНОВКИ'\n"
         script_content += "echo '=========================================='\n"
         script_content += "if [ $EXIT_CODE -eq 0 ]; then\n"
-        script_content += "  echo '✓ Установка завершена успешно'\n"
+        script_content += "  echo '[OK] Установка завершена успешно'\n"
         script_content += "else\n"
-        script_content += "  echo \"✗ Установка завершена с ошибкой (код: $EXIT_CODE)\"\n"
+        script_content += "  echo \"[FAIL] Установка завершена с ошибкой (код: $EXIT_CODE)\"\n"
         script_content += "fi\n"
         script_content += "echo '=========================================='\n"
         script_content += "echo ''\n"
@@ -13217,9 +13217,9 @@ class AutomationGUI(object):
         # Оно будет показано после полной инициализации и центрирования
         self.root.withdraw()
         
-        # Делаем окно всплывающим поверх других окон на 7 секунд
+        # Делаем окно всплывающим поверх других окон на 2 секунды
         self.root.attributes('-topmost', True)
-        self.root.after(7000, lambda: self.root.attributes('-topmost', False))
+        self.root.after(2000, lambda: self.root.attributes('-topmost', False))
         
         # Создаем стили для цветных прогресс-баров
         style = ttk.Style()
@@ -13231,6 +13231,9 @@ class AutomationGUI(object):
         
         # Инициализируем переменную для хранения ссылки на контекстное меню
         self._current_context_menu = None
+        
+        # Инициализируем переменную для хранения ссылки на окно проверки обновлений
+        self.update_check_window = None
         
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -18163,14 +18166,14 @@ class AutomationGUI(object):
                     package_name,
                     size,
                     status,
-                    "✓" if flags.get('downloaded') else "",
-                    "✓" if flags.get('unpacked') else "",
-                    "✓" if flags.get('configured') else ""
+                    "[OK]" if flags.get('downloaded') else "",
+                    "[OK]" if flags.get('unpacked') else "",
+                    "[OK]" if flags.get('configured') else ""
                 ))
                 
                 # Цветовая индикация (опционально)
                 if flags.get('configured'):
-                    self.packages_tree.set(item_id, "status", "✓ Настроен")
+                    self.packages_tree.set(item_id, "status", "[OK] Настроен")
                 elif flags.get('unpacked'):
                     self.packages_tree.set(item_id, "status", "→ Распакован")
                 elif flags.get('downloaded'):
@@ -22194,6 +22197,19 @@ class AutomationGUI(object):
     def open_update_check_window(self):
         """Открыть окно проверки обновлений"""
         try:
+            # Проверяем, не открыто ли уже окно проверки обновлений
+            if self.update_check_window is not None:
+                try:
+                    # Проверяем, существует ли окно
+                    if self.update_check_window.winfo_exists():
+                        # Активируем существующее окно
+                        self.update_check_window.lift()
+                        self.update_check_window.focus_set()
+                        return
+                except:
+                    # Окно было закрыто, но ссылка осталась - очищаем
+                    self.update_check_window = None
+
             # Создаем диалоговое окно
             dialog = self.tk.Toplevel(self.root)
             dialog.title("Проверка обновлений")
@@ -22206,7 +22222,17 @@ class AutomationGUI(object):
             x = (dialog.winfo_screenwidth() // 2) - (width // 2)
             y = (dialog.winfo_screenheight() // 2) - (height // 2)
             dialog.geometry(f'{width}x{height}+{x}+{y}')
+
+            # Сохраняем ссылку на окно
+            self.update_check_window = dialog
             
+            # Обработчик закрытия окна - очищаем ссылку
+            def on_close():
+                self.update_check_window = None
+                dialog.destroy()
+            
+            dialog.protocol("WM_DELETE_WINDOW", on_close)
+
             # Используем grid для точного контроля размещения
             dialog.grid_rowconfigure(0, weight=1)  # Контент может расширяться
             dialog.grid_rowconfigure(1, weight=0)  # Кнопки фиксированы
@@ -22296,39 +22322,66 @@ class AutomationGUI(object):
                                 # Выводим в окно
                                 dialog.after(0, lambda: append_log(message))
                             updater.log = log_to_window
-                            
+
                             # Проверяем обновления (теперь возвращает список источников)
                             sources = updater.check_for_updates()
+                            
+                            # Фильтруем доступные источники
+                            available_sources = [s for s in sources if s.get('available', False)]
                             
                             # Фильтруем источники с обновлениями
                             update_sources = [s for s in sources if s.get('needs_update', False) and s.get('available', False)]
                             
                             # Обновляем статус
-                            if update_sources:
-                                if len(update_sources) == 1:
-                                    # Один источник с обновлением - сразу предлагаем обновиться
-                                    selected_source = update_sources[0]
-                                    source_updater = selected_source['updater']
-                                    version = selected_source.get('version', 'неизвестная')
+                            if len(available_sources) > 1:
+                                # Несколько доступных источников - всегда показываем выбор
+                                if update_sources:
+                                    dialog.after(0, lambda: status_label.config(
+                                        text=f"Найдено {len(update_sources)} источников с обновлениями", fg='green'))
+                                else:
+                                    dialog.after(0, lambda: status_label.config(
+                                        text=f"Найдено {len(available_sources)} доступных источников", fg='blue'))
+                                
+                                def show_selection():
+                                    # Показываем выбор из всех доступных источников
+                                    selected_source = self._show_source_selection_dialog(dialog, available_sources)
+                                    if selected_source:
+                                        source_updater = selected_source['updater']
+                                        version = selected_source.get('version', 'неизвестная')
+                                        if selected_source.get('needs_update', False):
+                                            # Есть обновление - показываем диалог обновления
+                                            self._show_update_dialog(dialog, source_updater, version, selected_source)
+                                        else:
+                                            # Нет обновления - просто сообщение
+                                            from tkinter import messagebox
+                                            messagebox.showinfo(
+                                                "Информация",
+                                                f"Версия {version} на источнике {selected_source.get('name', 'неизвестный')} актуальна.\n"
+                                                f"Текущая версия: {APP_VERSION}",
+                                                parent=dialog
+                                            )
+                                dialog.after(0, show_selection)
+                            elif len(available_sources) == 1:
+                                # Один доступный источник
+                                selected_source = available_sources[0]
+                                source_updater = selected_source['updater']
+                                version = selected_source.get('version', 'неизвестная')
+                                
+                                if selected_source.get('needs_update', False):
+                                    # Есть обновление - показываем диалог обновления
                                     dialog.after(0, lambda: status_label.config(
                                         text=f"Доступно обновление: {version}", fg='green'))
                                     dialog.after(0, lambda: self._show_update_dialog(
                                         dialog, source_updater, version, selected_source))
                                 else:
-                                    # Несколько источников - показываем диалог выбора
+                                    # Нет обновлений
                                     dialog.after(0, lambda: status_label.config(
-                                        text=f"Найдено {len(update_sources)} источников с обновлениями", fg='green'))
-                                    def show_selection():
-                                        selected_source = self._show_source_selection_dialog(dialog, update_sources)
-                                        if selected_source:
-                                            source_updater = selected_source['updater']
-                                            version = selected_source.get('version', 'неизвестная')
-                                            self._show_update_dialog(dialog, source_updater, version, selected_source)
-                                    dialog.after(0, show_selection)
+                                        text="Версия актуальна", fg='gray'))
                             else:
-                                # Нет обновлений
+                                # Нет доступных источников
                                 dialog.after(0, lambda: status_label.config(
-                                    text="Версия актуальна", fg='gray'))
+                                    text="Нет доступных источников обновлений", fg='orange'))
+
                             break  # Успешно, выходим из цикла
                             
                         except PermissionError as e:
@@ -22492,13 +22545,13 @@ class AutomationGUI(object):
             force_button.grid(row=0, column=1, sticky='w', padx=5)
             
             close_button = self.tk.Button(button_frame, text="Закрыть", 
-                                        command=dialog.destroy, bg='#f44336', fg='white',
+                                        command=on_close, bg='#f44336', fg='white',
                                         font=('Arial', 10, 'bold'))
             close_button.grid(row=0, column=2, sticky='e', padx=5)
             
             # Обработка закрытия по Escape
             dialog.focus_set()
-            dialog.bind('<Escape>', lambda e: dialog.destroy())
+            dialog.bind('<Escape>', lambda e: on_close())
             
         except Exception as e:
             print(f"Ошибка открытия окна проверки обновлений: {e}", level='ERROR')
@@ -22534,15 +22587,28 @@ class AutomationGUI(object):
         )
         
         if result:
+            # Показываем сообщение о начале обновления
+            parent_window.after(0, lambda: messagebox.showinfo(
+                "Обновление", "Начинается обновление приложения. Окно закроется автоматически после завершения.",
+                parent=parent_window))
+            
             # Запускаем обновление в отдельном потоке
             def run_update():
                 try:
+                    # Небольшая задержка, чтобы пользователь увидел сообщение
+                    time.sleep(0.5)
+                    
+                    # КРИТИЧНО: Восстанавливаем параметры выбранного источника перед загрузкой
+                    # Это необходимо, так как self.current_source_params и self.selected_source
+                    # были перезаписаны последним проверенным источником в check_for_updates()
+                    if source_info:
+                        updater._restore_source_params(source_info)
+                    
                     updater.log("Начало обновления...", gui_log=True)
                     if updater.download_and_apply():
+                        # download_and_apply() уже запустит новую версию и закроет текущее приложение
+                        # Этот код не выполнится, так как приложение закроется
                         updater.log("Обновление завершено успешно!", gui_log=True)
-                        parent_window.after(0, lambda: messagebox.showinfo(
-                            "Успех", "Обновление завершено! Приложение будет перезапущено.",
-                            parent=parent_window))
                     else:
                         updater.log("Ошибка обновления", level='ERROR', gui_log=True)
                         parent_window.after(0, lambda: messagebox.showerror(
@@ -22558,7 +22624,7 @@ class AutomationGUI(object):
             thread.daemon = True
             thread.start()
     
-    def _show_smb_auth_dialog(self, parent_window) -> tuple[Optional[str], Optional[str]]:
+    def _show_smb_auth_dialog(self, parent_window) -> Tuple[Optional[str], Optional[str]]:
         """Показать диалог запроса учетных данных SMB"""
         dialog = self.tk.Toplevel(parent_window)
         dialog.title("Аутентификация SMB")
@@ -28261,6 +28327,20 @@ def restart_with_path(new_path: str):
     print(f"[INFO] Перезапуск: {' '.join(args)}", level='INFO')
     os.execv(args[0], args)
 
+def cleanup_update_launcher_script():
+    """Удаляет скрипт-обертку для отложенного запуска обновления, если он существует"""
+    if not getattr(sys, 'frozen', False):
+        return  # Только для бинарника
+    
+    try:
+        binary_dir = os.path.dirname(os.path.abspath(sys.executable))
+        launcher_script = os.path.join(binary_dir, 'launch_update.sh')
+        if os.path.exists(launcher_script):
+            os.remove(launcher_script)
+            print(f"Удален скрипт-обертка обновления: {launcher_script}", level='DEBUG')
+    except Exception as e:
+        print(f"Не удалось удалить скрипт-обертку: {e}", level='DEBUG')
+
 def ensure_correct_binary_name():
     """
     Проверяет и переименовывает бинарник в правильное имя при необходимости.
@@ -28290,10 +28370,13 @@ def ensure_correct_binary_name():
         except Exception:
             pass
         
-        # Разные файлы - используем существующий
-        print(f"[INFO] Файл {BINARY_FILENAME} уже существует, используем его", level='INFO')
-        restart_with_path(expected_path)
-        return True
+        # Разные файлы - удаляем существующий, текущий файл автоматически переименуется дальше
+        try:
+            os.remove(expected_path)
+            print(f"Удален существующий файл {BINARY_FILENAME}", level='INFO')
+        except Exception as e:
+            print(f"Не удалось удалить существующий файл {BINARY_FILENAME}: {e}", level='WARNING')
+        # Продолжаем выполнение - дальше код автоматически переименует текущий файл
     
     # Переименовываем
     try:
@@ -28355,6 +28438,12 @@ class SelfUpdater:
         source_config = next((s for s in UPDATE_SOURCES_CONFIG if s.get('id') == self.selected_source), None)
         return source_config.get('type') if source_config else None
     
+    def _restore_source_params(self, source_info: Dict):
+        """Восстанавливает параметры источника из source_info в self для использования в методах загрузки"""
+        if source_info:
+            self.selected_source = source_info.get('id')
+            self.current_source_params = source_info.get('source_params', {})
+    
     def log(self, message: str, level: str = "INFO", gui_log: bool = False):
         """Логирование с поддержкой универсального print и GUI"""
         # Используем универсальный print с правильными уровнями
@@ -28375,10 +28464,21 @@ class SelfUpdater:
         except Exception:
             pass
     
+    def _find_credentials_file(self) -> Optional[str]:
+        """Ищет файл с учетными данными SMB только в домашней директории пользователя."""
+        # КРИТИЧНО: Ищем файл только в домашней директории пользователя (даже если запущено от root)
+        credentials_file = expand_user_path("~/.smbcredentials")
+        
+        if os.path.exists(credentials_file) and os.path.isfile(credentials_file):
+            self.log(f"Найден файл учетных данных: {credentials_file}", "DEBUG")
+            return credentials_file
+        
+        return None
+    
     def _get_credentials_file_path(self) -> str:
-        """Возвращает путь к файлу с учетными данными SMB."""
-        home_dir = os.path.expanduser("~")
-        return os.path.join(home_dir, ".smbcredentials")
+        """Возвращает путь к файлу с учетными данными SMB (только в домашней директории пользователя)."""
+        # КРИТИЧНО: Всегда используем домашнюю директорию пользователя (даже если запущено от root)
+        return expand_user_path("~/.smbcredentials")
     
     def _ensure_credentials_file(self) -> bool:
         """Создает или обновляет файл с учетными данными SMB."""
@@ -28425,13 +28525,56 @@ class SelfUpdater:
         
         return None
     
+    def _request_credentials_console(self, max_attempts: int = 3) -> bool:
+        """Запрашивает учетные данные SMB в терминальном режиме (до 3 попыток)."""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"\n[?] Попытка {attempt} из {max_attempts}: Введите учетные данные для SMB")
+                username = input("Пользователь: ").strip()
+                if not username:
+                    print("[WARNING] Имя пользователя не может быть пустым")
+                    continue
+                
+                password = getpass.getpass("Пароль: ").strip()
+                if not password:
+                    print("[WARNING] Пароль не может быть пустым")
+                    continue
+                
+                # Сохраняем учетные данные
+                self.smb_user = username
+                self.smb_password = password
+                
+                # Сохраняем в файл
+                if self._ensure_credentials_file():
+                    print(f"[OK] Учетные данные сохранены в {self._get_credentials_file_path()}")
+                    return True
+                else:
+                    print("[WARNING] Не удалось сохранить учетные данные")
+                    continue
+            except (EOFError, KeyboardInterrupt):
+                print("\n[INFO] Ввод прерван пользователем")
+                return False
+            except Exception as e:
+                print(f"[ERROR] Ошибка при запросе учетных данных: {e}")
+                continue
+        
+        print(f"[ERROR] Не удалось получить учетные данные после {max_attempts} попыток")
+        return False
+    
     def _build_smbclient_auth(self) -> list:
         """Формирует параметры аутентификации для smbclient."""
-        credentials_file = self._get_credentials_file_path()
+        # Сначала ищем существующий файл в домашней директории пользователя
+        credentials_file = self._find_credentials_file()
+        
+        # Если файл не найден, используем стандартный путь
+        if not credentials_file:
+            credentials_file = self._get_credentials_file_path()
         
         # Если переданы пользователь и пароль - сохраняем в файл
         if self.smb_user and self.smb_password:
             self._ensure_credentials_file()
+            # После создания обновляем путь
+            credentials_file = self._get_credentials_file_path()
         
         # Проверяем, существует ли файл с учетными данными
         if os.path.exists(credentials_file):
@@ -28460,8 +28603,8 @@ class SelfUpdater:
                 if file_user:
                     self.log(f"Используется сохраненный файл с учетными данными для пользователя {file_user}", "DEBUG")
                     return ['-A', credentials_file]
-            # Анонимный доступ: -N
-            self.log("Используется анонимный доступ к SMB", "DEBUG")
+            # Анонимный доступ: -N (ошибки подключения будут в логе)
+            self.log(f"Используется анонимный доступ к SMB (файл не найден: {credentials_file})", "DEBUG")
             return ['-N']
     
     # ========================================================================
@@ -28556,29 +28699,43 @@ class SelfUpdater:
                    '-c', f'get {remote_file} -']
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
             
+            # КРИТИЧНО: Проверяем на ошибки авторизации ПЕРЕД проверкой кода возврата
+            # smbclient может вернуть код 0 даже при ошибке авторизации
+            # Проверяем и stderr, и stdout (smbclient может выводить ошибки в stdout)
+            error_text = ""
+            if result.stderr:
+                error_text += result.stderr.lower()
+            if result.stdout:
+                error_text += " " + result.stdout.lower()
+            
+            if error_text:
+                if any(keyword in error_text for keyword in [
+                    'nt_status_logon_failure', 'nt_status_wrong_password',
+                    'authentication failed', 'access denied', 'login failed',
+                    'session setup failed', 'nt_status_access_denied'
+                ]):
+                    raise PermissionError("Ошибка авторизации SMB")
+            
             if result.returncode == 0:
                 if result.stdout:
                     return self.extract_version_from_content(result.stdout)
                 else:
                     self.log(f"Файл {remote_file} пуст или не найден на SMB", "WARNING")
             else:
-                # Проверяем на ошибки авторизации
-                if result.stderr:
-                    error_output = result.stderr.lower()
-                    if any(keyword in error_output for keyword in [
-                        'nt_status_logon_failure', 'nt_status_wrong_password',
-                        'authentication failed', 'access denied', 'login failed'
-                    ]):
-                        raise PermissionError("Ошибка авторизации SMB")
                 # Логируем другие ошибки из stderr
                 error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
                 self.log(f"Ошибка получения версии с SMB: {error_msg}", "WARNING")
                 self.log(f"Команда: {' '.join(cmd)}", "DEBUG")
             return None
+
+        except PermissionError:
+            # Пробрасываем PermissionError дальше для обработки запроса учетных данных
+            raise
+
         except Exception as e:
             self.log(f"Исключение при получении версии с SMB: {e}", "WARNING")
             return None
-    
+
     def download_from_smb(self, dest_path: str) -> bool:
         """Скачивает файл с SMB."""
         try:
@@ -28608,11 +28765,18 @@ class SelfUpdater:
             
             # КРИТИЧНО: Проверяем вывод на ошибки авторизации ПЕРЕД проверкой кода возврата
             # smbclient может вернуть код 0 даже при ошибке авторизации
+            # Проверяем и stderr, и stdout (smbclient может выводить ошибки в stdout)
+            error_text = ""
             if result.stderr:
-                error_output = result.stderr.lower()
-                if any(keyword in error_output for keyword in [
+                error_text += result.stderr.lower()
+            if result.stdout:
+                error_text += " " + result.stdout.lower()
+            
+            if error_text:
+                if any(keyword in error_text for keyword in [
                     'nt_status_logon_failure', 'nt_status_wrong_password',
-                    'authentication failed', 'access denied', 'login failed'
+                    'authentication failed', 'access denied', 'login failed',
+                    'session setup failed', 'nt_status_access_denied'
                 ]):
                     raise PermissionError("Ошибка авторизации SMB")
             
@@ -28770,13 +28934,22 @@ class SelfUpdater:
                        '-c', f'ls "{remote_file}"']
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_CHECK)
                 
-                # Проверяем на ошибки авторизации
+                # Проверяем на ошибки авторизации ПЕРЕД проверкой кода возврата
+                # Проверяем и stderr, и stdout (smbclient может выводить ошибки в stdout)
+                error_text = ""
                 if result.stderr:
-                    error_output = result.stderr.lower()
-                    if any(keyword in error_output for keyword in [
+                    error_text += result.stderr.lower()
+                if result.stdout:
+                    error_text += " " + result.stdout.lower()
+                
+                if error_text:
+                    if any(keyword in error_text for keyword in [
                         'nt_status_logon_failure', 'nt_status_wrong_password',
-                        'authentication failed', 'access denied', 'login failed'
+                        'authentication failed', 'access denied', 'login failed',
+                        'session setup failed', 'nt_status_access_denied'
                     ]):
+                        error_msg = (result.stderr or result.stdout or "Ошибка авторизации")[:200]
+                        self.log(f"Ошибка авторизации SMB при получении размера файла: {error_msg}", "WARNING")
                         raise PermissionError("Ошибка авторизации SMB")
                 
                 if result.returncode == 0:
@@ -28840,6 +29013,9 @@ class SelfUpdater:
                     error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
                     self.log(f"Ошибка получения размера файла с Git: {error_msg}", "WARNING")
                     self.log(f"URL: {url}", "DEBUG")
+        except PermissionError:
+            # Пробрасываем PermissionError дальше для обработки запроса учетных данных
+            raise
         except Exception as e:
             self.log(f"Исключение при получении размера файла: {e}", "WARNING")
         
@@ -28885,10 +29061,14 @@ class SelfUpdater:
             'file_size': None,
             'needs_update': False,
             'update_reason': 'none',
-            'updater': None
+            'updater': None,
+            'source_params': source_config.get('params', {}),  # Сохраняем параметры источника в result
+            'source_type': source_type  # Сохраняем тип источника в result
         }
         
-        # Сохраняем параметры источника для использования в методах
+        # Временно сохраняем параметры источника для использования в методах проверки
+        # ВАЖНО: Эти значения будут перезаписаны при проверке следующего источника
+        # Правильные параметры сохраняются в result и будут восстановлены при выборе источника
         self.current_source_params = source_config.get('params', {})
         self.selected_source = source_id
         
@@ -28908,7 +29088,11 @@ class SelfUpdater:
         
         # Проверяем размер файла
         self.log(f"Получение размера файла {self.update_filename} с {source_name}...", gui_log=True)
-        remote_size = self.get_file_size_from_source()
+        try:
+            remote_size = self.get_file_size_from_source()
+        except PermissionError:
+            # Пробрасываем PermissionError дальше для обработки запроса учетных данных
+            raise
         if remote_size:
             remote_size_mb = remote_size / (1024 * 1024)
             self.log(f"Размер файла на {source_name}: {remote_size_mb:.2f} MB ({remote_size} байт)", gui_log=True)
@@ -28920,7 +29104,11 @@ class SelfUpdater:
         self.log(f"Получение версии с {source_name}...", gui_log=True)
         version = None
         if source_type == 'smb':
-            version = self.get_version_from_smb()
+            try:
+                version = self.get_version_from_smb()
+            except PermissionError:
+                # Пробрасываем PermissionError дальше для обработки запроса учетных данных
+                raise
         elif source_type == 'git':
             version = self.get_version_from_git()
         
@@ -28934,7 +29122,7 @@ class SelfUpdater:
                 # Версия новее
                 result['needs_update'] = True
                 result['update_reason'] = 'new_version'
-                self.log(f"✓ Найдено обновление: {version} (текущая: {local_version})", "INFO", gui_log=True)
+                self.log(f"[OK] Найдено обновление: {version} (текущая: {local_version})", "INFO", gui_log=True)
             elif comparison == 0:
                 # Версия совпадает - проверяем размер
                 if remote_size and remote_size != local_size:
@@ -28943,7 +29131,7 @@ class SelfUpdater:
                     size_diff = abs(remote_size - local_size) / (1024 * 1024)
                     self.log(f"Версия совпадает, но размер отличается на {size_diff:.2f} MB", "INFO", gui_log=True)
                 else:
-                    self.log("✓ Установлена актуальная версия", gui_log=True)
+                    self.log("[OK] Установлена актуальная версия", gui_log=True)
             else:
                 # Версия старше
                 self.log(f"Версия на источнике ({version}) старше текущей ({local_version})", "WARNING", gui_log=True)
@@ -29063,7 +29251,7 @@ class SelfUpdater:
             if os.path.exists(backup_path):
                 os.remove(backup_path)
             
-            self.log("✓ Обновление применено!")
+            self.log("[OK] Обновление применено!")
             return True
             
         except Exception as e:
@@ -29101,27 +29289,126 @@ class SelfUpdater:
         
         self.log(f"Запуск новой версии: {' '.join(args)}", "INFO")
         
-        # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
-        if '--console' in sys.argv:
-            # Консольный режим - заменяем процесс
-            os.execv(args[0], args)
+        # КРИТИЧНО: Переименовываем файл в правильное имя ПЕРЕД запуском
+        binary_dir = os.path.dirname(os.path.abspath(sys.executable))
+        final_path = os.path.join(binary_dir, BINARY_FILENAME)
+        
+        # Если файл уже с правильным именем - используем его
+        if os.path.basename(new_file_path) == BINARY_FILENAME:
+            final_path = new_file_path
         else:
-            # GUI режим - запускаем в фоне и закрываем текущее
+            # Переименовываем файл в правильное имя
+            if os.path.exists(final_path):
+                try:
+                    os.remove(final_path)
+                    self.log(f"Удален существующий файл {BINARY_FILENAME}", "DEBUG")
+                except Exception as e:
+                    self.log(f"Не удалось удалить существующий файл: {e}", "WARNING")
+            
             try:
-                subprocess.Popen(
-                    args,
-                    start_new_session=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                # Даем время на запуск
-                time.sleep(0.5)
-                # Закрываем текущее приложение
-                sys.exit(0)
+                shutil.move(new_file_path, final_path)
+                os.chmod(final_path, 0o755)
+                self.log(f"Файл переименован: {os.path.basename(new_file_path)} -> {BINARY_FILENAME}", "DEBUG")
             except Exception as e:
-                self.log(f"Ошибка запуска новой версии: {e}", "ERROR")
-    
+                self.log(f"Не удалось переименовать файл: {e}", "ERROR")
+                final_path = new_file_path  # Используем исходный путь
+        
+        # Обновляем путь для запуска
+        args[0] = final_path
+        
+        # Создаем bash-скрипт для отложенного запуска
+        try:
+            launcher_script = os.path.join(binary_dir, 'launch_update.sh')
+            
+            # Формируем команду запуска с правильным экранированием аргументов
+            escaped_args = [shlex.quote(arg) for arg in args]
+            command_line = ' '.join(escaped_args)
+            
+            # Создаем bash-скрипт (без сохранения переменных окружения - они передаются через env)
+            script_content = textwrap.dedent(f"""\
+			#!/bin/bash
+			# Скрипт для отложенного запуска обновления
+			sleep 1
+			{command_line}
+			""")
+            with open(launcher_script, 'w', encoding='utf-8') as f:
+                f.write(script_content)
+            os.chmod(launcher_script, 0o755)
+            
+            self.log(f"Создан скрипт-обертка: {launcher_script}", "DEBUG")
+            
+            # Запускаем скрипт вместо прямого запуска
+            script_args = ['/bin/bash', launcher_script]
+            
+            # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
+            if '--console' in sys.argv:
+                # Консольный режим - заменяем процесс
+                os.execv(script_args[0], script_args)
+            else:
+                # GUI режим - запускаем в фоне и закрываем текущее
+                try:
+                    # КРИТИЧНО: Закрываем все окна tkinter перед запуском нового процесса
+                    # Это необходимо, чтобы старое приложение корректно завершилось
+                    if hasattr(sys, '_gui_instance') and sys._gui_instance:
+                        try:
+                            # Закрываем главное окно через after, чтобы дать время на обработку
+                            def close_and_exit():
+                                try:
+                                    # Закрываем все дочерние окна
+                                    for widget in sys._gui_instance.root.winfo_children():
+                                        try:
+                                            if hasattr(widget, 'destroy'):
+                                                widget.destroy()
+                                        except:
+                                            pass
+                                    # Закрываем главное окно
+                                    sys._gui_instance.root.quit()
+                                    sys._gui_instance.root.destroy()
+                                except:
+                                    pass
+                                # Принудительно завершаем процесс
+                                os._exit(0)
+                            
+                            # Запускаем скрипт с передачей переменных окружения
+                            new_process = subprocess.Popen(
+                                script_args,
+                                env=os.environ.copy(),
+                                start_new_session=True
+                            )
+                            
+                            # Проверяем, что процесс запустился успешно
+                            time.sleep(0.3)
+                            if new_process.poll() is None:  # Процесс еще работает
+                                # Процесс запустился успешно - закрываем старое приложение
+                                sys._gui_instance.root.after(100, close_and_exit)
+                            else:
+                                # Процесс завершился сразу - ошибка запуска
+                                self.log(f"Ошибка: скрипт завершился сразу с кодом {new_process.returncode}", "ERROR")
+                                return
+                        except Exception as e:
+                            self.log(f"Ошибка при закрытии GUI: {e}", "ERROR")
+                            # Пытаемся запустить скрипт в любом случае
+                            subprocess.Popen(
+                                script_args,
+                                env=os.environ.copy(),
+                                start_new_session=True
+                            )
+                            time.sleep(0.5)
+                            os._exit(0)
+                    else:
+                        # GUI не найден - просто запускаем скрипт и выходим
+                        subprocess.Popen(
+                            script_args,
+                            env=os.environ.copy(),
+                            start_new_session=True
+                        )
+                        time.sleep(0.5)
+                        os._exit(0)
+                except Exception as e:
+                    self.log(f"Ошибка запуска новой версии: {e}", "ERROR")
+        except Exception as e:
+            self.log(f"Ошибка создания скрипта-обертки: {e}", "ERROR")
+
     def download_and_apply(self) -> bool:
         """
         Скачивает обновление и запускает новый файл.
@@ -29598,7 +29885,7 @@ def _scan_binary_contents(base_path, output_file):
             
             write_tree(result['items'])
         
-        print(f"[DEBUG] ✓ Информация о содержимом бинарника сохранена:")
+        print(f"[DEBUG] [OK] Информация о содержимом бинарника сохранена:")
         print(f"[DEBUG]   JSON: {output_file}")
         print(f"[DEBUG]   TXT: {txt_file}")
     except Exception as e:
@@ -29699,21 +29986,21 @@ def _load_tcl_tk_libraries():
         if libtcl_path and os.path.exists(libtcl_path):
             try:
                 ctypes.CDLL(libtcl_path, mode=rtld_global)
-                print(f"[DEBUG] ✓ Загружена библиотека Tcl: {os.path.basename(libtcl_path)}")
+                print(f"[DEBUG] [OK] Загружена библиотека Tcl: {os.path.basename(libtcl_path)}")
             except Exception as e:
                 print(f"[WARNING] Не удалось загрузить {libtcl_path}: {e}")
         
         if libtk_path and os.path.exists(libtk_path):
             try:
                 ctypes.CDLL(libtk_path, mode=rtld_global)
-                print(f"[DEBUG] ✓ Загружена библиотека Tk: {os.path.basename(libtk_path)}")
+                print(f"[DEBUG] [OK] Загружена библиотека Tk: {os.path.basename(libtk_path)}")
             except Exception as e:
                 print(f"[WARNING] Не удалось загрузить {libtk_path}: {e}")
         
         if libblt_path and os.path.exists(libblt_path):
             try:
                 ctypes.CDLL(libblt_path, mode=rtld_global)
-                print(f"[DEBUG] ✓ Загружена библиотека BLT: {os.path.basename(libblt_path)}")
+                print(f"[DEBUG] [OK] Загружена библиотека BLT: {os.path.basename(libblt_path)}")
             except Exception as e:
                 print(f"[WARNING] Не удалось загрузить {libblt_path}: {e}")
         
@@ -29723,36 +30010,36 @@ def _load_tcl_tk_libraries():
         
         # КРИТИЧНО: Проверяем существование директорий и выводим явные сообщения
         if not os.path.exists(tcl_data_path):
-            print(f"[DEBUG] ❌ КРИТИЧНО: Директория _tcl_data НЕ СУЩЕСТВУЕТ: {tcl_data_path}")
-            print(f"[DEBUG] ❌ PyInstaller не включил скрипты Tcl в бинарник!")
+            print(f"[DEBUG] [ERROR] КРИТИЧНО: Директория _tcl_data НЕ СУЩЕСТВУЕТ: {tcl_data_path}")
+            print(f"[DEBUG] [ERROR] PyInstaller не включил скрипты Tcl в бинарник!")
         else:
-            print(f"[DEBUG] ✓ Директория _tcl_data найдена: {tcl_data_path}")
+            print(f"[DEBUG] [OK] Директория _tcl_data найдена: {tcl_data_path}")
             tcl_library_found = False
             for root, dirs, files in os.walk(tcl_data_path):
                 if 'init.tcl' in files:
                     os.environ['TCL_LIBRARY'] = root
-                    print(f"[DEBUG] ✓ TCL_LIBRARY установлен: {root}")
+                    print(f"[DEBUG] [OK] TCL_LIBRARY установлен: {root}")
                     tcl_library_found = True
                     break
             
             if not tcl_library_found:
-                print(f"[DEBUG] ❌ init.tcl НЕ найден в _tcl_data (директория существует, но файла нет)!")
+                print(f"[DEBUG] [ERROR] init.tcl НЕ найден в _tcl_data (директория существует, но файла нет)!")
         
         if not os.path.exists(tk_data_path):
-            print(f"[DEBUG] ❌ КРИТИЧНО: Директория _tk_data НЕ СУЩЕСТВУЕТ: {tk_data_path}")
-            print(f"[DEBUG] ❌ PyInstaller не включил скрипты Tk в бинарник!")
+            print(f"[DEBUG] [ERROR] КРИТИЧНО: Директория _tk_data НЕ СУЩЕСТВУЕТ: {tk_data_path}")
+            print(f"[DEBUG] [ERROR] PyInstaller не включил скрипты Tk в бинарник!")
         else:
-            print(f"[DEBUG] ✓ Директория _tk_data найдена: {tk_data_path}")
+            print(f"[DEBUG] [OK] Директория _tk_data найдена: {tk_data_path}")
             tk_library_found = False
             for root, dirs, files in os.walk(tk_data_path):
                 if 'tk.tcl' in files:
                     os.environ['TK_LIBRARY'] = root
-                    print(f"[DEBUG] ✓ TK_LIBRARY установлен: {root}")
+                    print(f"[DEBUG] [OK] TK_LIBRARY установлен: {root}")
                     tk_library_found = True
                     break
             
             if not tk_library_found:
-                print(f"[DEBUG] ❌ tk.tcl НЕ найден в _tk_data (директория существует, но файла нет)!")
+                print(f"[DEBUG] [ERROR] tk.tcl НЕ найден в _tk_data (директория существует, но файла нет)!")
         
         # 4. Установить LD_LIBRARY_PATH для поиска .so файлов
         if 'LD_LIBRARY_PATH' in os.environ:
@@ -29762,7 +30049,7 @@ def _load_tcl_tk_libraries():
         else:
             os.environ['LD_LIBRARY_PATH'] = base_path
         
-        print(f"[DEBUG] ✓ LD_LIBRARY_PATH установлен: {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
+        print(f"[DEBUG] [OK] LD_LIBRARY_PATH установлен: {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
         
     except Exception as e:
         print(f"[WARNING] Ошибка загрузки библиотек Tcl/Tk: {e}")
@@ -29776,6 +30063,9 @@ if __name__ == '__main__':
 # ЭТАП 0: ПЕРЕИМЕНОВАНИЕ БИНАРНИКА (ПЕРВОЕ И ОБЯЗАТЕЛЬНОЕ)
 # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
 # ═══════════════════════════════════════════════════════════════════════
+    # Очистка скрипта-обертки обновления (если остался от предыдущего запуска)
+    cleanup_update_launcher_script()
+    
     # КРИТИЧНО: Переименование бинарника - ПЕРВОЕ действие перед всем остальным
     if ensure_correct_binary_name():
         # Функция переименовала файл и запустила его заново - текущий процесс завершается
@@ -30000,13 +30290,13 @@ if __name__ == '__main__':
                 if os.path.isfile(item_path) and (item.endswith('.so') or '.so.' in item):
                     if item.startswith('libtcl'):
                         found_tcl_so.append(item_path)
-                        print(f"[DEBUG] ✓ Найдена библиотека Tcl: {item}")
+                        print(f"[DEBUG] [OK] Найдена библиотека Tcl: {item}")
                     elif item.startswith('libtk'):
                         found_tk_so.append(item_path)
-                        print(f"[DEBUG] ✓ Найдена библиотека Tk: {item}")
+                        print(f"[DEBUG] [OK] Найдена библиотека Tk: {item}")
                     elif item.startswith('libBLT'):
                         found_blt_so.append(item_path)
-                        print(f"[DEBUG] ✓ Найдена библиотека BLT: {item}")
+                        print(f"[DEBUG] [OK] Найдена библиотека BLT: {item}")
                     elif item.startswith('libX'):
                         found_x11_so.append(item_path)
             
@@ -30017,7 +30307,7 @@ if __name__ == '__main__':
             if not found_blt_so:
                 print(f"[DEBUG] ВНИМАНИЕ: Библиотека libBLT*.so не найдена в бинарнике!")
             else:
-                print(f"[DEBUG] ✓ Найдено {len(found_x11_so)} X11 библиотек, {len(found_blt_so)} BLT библиотек")
+                print(f"[DEBUG] [OK] Найдено {len(found_x11_so)} X11 библиотек, {len(found_blt_so)} BLT библиотек")
             
             # КРИТИЧНО: Проверяем наличие всех файлов Tcl/Tk (скрипты .tcl)
             print(f"[DEBUG] Проверка файлов Tcl/Tk:")
@@ -30027,7 +30317,7 @@ if __name__ == '__main__':
             tcl_tk_files = []
             
             if os.path.exists(unified_tcl_tk_dir):
-                print(f"[DEBUG] ✓ Найдена объединенная директория: _unified_tcl_tk")
+                print(f"[DEBUG] [OK] Найдена объединенная директория: _unified_tcl_tk")
                 try:
                     for root, dirs, files in os.walk(unified_tcl_tk_dir):
                         for file in files:
@@ -30049,14 +30339,14 @@ if __name__ == '__main__':
                     has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
                     
                     if has_init_tcl:
-                        print(f"[DEBUG] ✓ init.tcl найден")
+                        print(f"[DEBUG] [OK] init.tcl найден")
                     else:
-                        print(f"[DEBUG] ✗ init.tcl НЕ найден!")
+                        print(f"[DEBUG] [FAIL] init.tcl НЕ найден!")
                     
                     if has_tk_tcl:
-                        print(f"[DEBUG] ✓ tk.tcl найден")
+                        print(f"[DEBUG] [OK] tk.tcl найден")
                     else:
-                        print(f"[DEBUG] ✗ tk.tcl НЕ найден!")
+                        print(f"[DEBUG] [FAIL] tk.tcl НЕ найден!")
                         
                 except Exception as e:
                     print(f"[DEBUG] Ошибка чтения _unified_tcl_tk: {e}")
@@ -30068,7 +30358,7 @@ if __name__ == '__main__':
                 tk_data_path = os.path.join(base_path, '_tk_data')
                 
                 if os.path.exists(tcl_data_path):
-                    print(f"[DEBUG] ✓ Найдена директория: _tcl_data")
+                    print(f"[DEBUG] [OK] Найдена директория: _tcl_data")
                     try:
                         tcl_count = 0
                         for root, dirs, files in os.walk(tcl_data_path):
@@ -30082,10 +30372,10 @@ if __name__ == '__main__':
                     except Exception as e:
                         print(f"[DEBUG] Ошибка чтения _tcl_data: {e}")
                 else:
-                    print(f"[DEBUG] ✗ _tcl_data не найдена!")
+                    print(f"[DEBUG] [FAIL] _tcl_data не найдена!")
                 
                 if os.path.exists(tk_data_path):
-                    print(f"[DEBUG] ✓ Найдена директория: _tk_data")
+                    print(f"[DEBUG] [OK] Найдена директория: _tk_data")
                     try:
                         tk_count = 0
                         for root, dirs, files in os.walk(tk_data_path):
@@ -30099,7 +30389,7 @@ if __name__ == '__main__':
                     except Exception as e:
                         print(f"[DEBUG] Ошибка чтения _tk_data: {e}")
                 else:
-                    print(f"[DEBUG] ✗ _tk_data не найдена!")
+                    print(f"[DEBUG] [FAIL] _tk_data не найдена!")
                 
                 # Выводим список всех файлов
                 if tcl_tk_files:
@@ -30114,16 +30404,16 @@ if __name__ == '__main__':
                     has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
                     
                     if has_init_tcl:
-                        print(f"[DEBUG] ✓ init.tcl найден")
+                        print(f"[DEBUG] [OK] init.tcl найден")
                     else:
-                        print(f"[DEBUG] ✗ init.tcl НЕ найден!")
+                        print(f"[DEBUG] [FAIL] init.tcl НЕ найден!")
                     
                     if has_tk_tcl:
-                        print(f"[DEBUG] ✓ tk.tcl найден")
+                        print(f"[DEBUG] [OK] tk.tcl найден")
                     else:
-                        print(f"[DEBUG] ✗ tk.tcl НЕ найден!")
+                        print(f"[DEBUG] [FAIL] tk.tcl НЕ найден!")
                 else:
-                    print(f"[DEBUG] ✗ Файлы Tcl/Tk не найдены!")
+                    print(f"[DEBUG] [FAIL] Файлы Tcl/Tk не найдены!")
             
             # Выводим установленные переменные окружения
             print(f"[DEBUG] TCL_LIBRARY = {os.environ.get('TCL_LIBRARY', 'не установлен')}")
@@ -30166,7 +30456,7 @@ if __name__ == '__main__':
     try:
         print("[DEBUG] Попытка импорта tkinter...")
         import tkinter  # NOQA: PyInstaller needs this
-        print(f"[DEBUG] ✓ tkinter импортирован: {tkinter.__file__ if hasattr(tkinter, '__file__') else 'встроенный'}")
+        print(f"[DEBUG] [OK] tkinter импортирован: {tkinter.__file__ if hasattr(tkinter, '__file__') else 'встроенный'}")
         import tkinter as tk  # NOQA: PyInstaller needs this
         from tkinter import ttk, messagebox, scrolledtext  # NOQA: PyInstaller needs this
         import tkinter.messagebox  # NOQA: PyInstaller needs this
@@ -30175,28 +30465,28 @@ if __name__ == '__main__':
         # Проверяем доступность _tkinter C-модуля
         try:
             import _tkinter
-            print(f"[DEBUG] ✓ _tkinter C-модуль найден: {_tkinter.__file__ if hasattr(_tkinter, '__file__') else 'встроенный'}")
+            print(f"[DEBUG] [OK] _tkinter C-модуль найден: {_tkinter.__file__ if hasattr(_tkinter, '__file__') else 'встроенный'}")
         except ImportError as e:
-            print(f"[DEBUG] ✗ _tkinter C-модуль НЕ найден: {e}")
+            print(f"[DEBUG] [FAIL] _tkinter C-модуль НЕ найден: {e}")
         
         # Проверяем версии Tcl/Tk
         try:
             tcl_version = tkinter.TclVersion
             tk_version = tkinter.TkVersion
-            print(f"[DEBUG] ✓ Tcl/Tk версии: Tcl {tcl_version}, Tk {tk_version}")
+            print(f"[DEBUG] [OK] Tcl/Tk версии: Tcl {tcl_version}, Tk {tk_version}")
         except Exception as e:
-            print(f"[WARNING] ✗ Не удалось получить версии Tcl/Tk: {e}")
+            print(f"[WARNING] [FAIL] Не удалось получить версии Tcl/Tk: {e}")
         
         # Проверяем наличие BLT
         try:
             tkinter.Tcl().eval('package require BLT')
-            print("[DEBUG] ✓ BLT пакет доступен")
+            print("[DEBUG] [OK] BLT пакет доступен")
         except tkinter.TclError as e:
-            print(f"[WARNING] ✗ BLT пакет НЕ доступен: {e}")
+            print(f"[WARNING] [FAIL] BLT пакет НЕ доступен: {e}")
         
         # Устанавливаем глобальные переменные
         TKINTER_AVAILABLE = True
-        print("[DEBUG] ✓ tkinter полностью доступен")
+        print("[DEBUG] [OK] tkinter полностью доступен")
     except ImportError as e:
         # Сохраняем детали ошибки для отладки
         TKINTER_IMPORT_ERROR = str(e)
@@ -30226,11 +30516,50 @@ if __name__ == '__main__':
         print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
         print("[INFO] Проверка обновлений...")
         try:
-            updater = SelfUpdater(APP_VERSION)
-            new_ver = updater.check_for_updates()
-            if new_ver:
+            # Механизм повторных попыток при ошибках авторизации SMB (до 3 попыток)
+            max_auth_attempts = 3
+            auth_attempt = 0
+            smb_user = None
+            smb_password = None
+            
+            while auth_attempt < max_auth_attempts:
+                try:
+                    updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                    sources = updater.check_for_updates()
+                    # Находим первый источник с обновлением
+                    update_sources = [s for s in sources if s.get('needs_update', False) and s.get('available', False)]
+                    break  # Успешно, выходим из цикла попыток
+                except PermissionError as e:
+                    if "авторизации SMB" in str(e) or "Ошибка авторизации SMB" in str(e):
+                        auth_attempt += 1
+                        if auth_attempt < max_auth_attempts:
+                            print(f"\n[WARNING] Ошибка авторизации SMB (попытка {auth_attempt}/{max_auth_attempts})")
+                            if updater._request_credentials_console(max_attempts=1):
+                                smb_user = updater.smb_user
+                                smb_password = updater.smb_password
+                                print(f"[INFO] Повторная попытка подключения с новыми учетными данными...")
+                                continue
+                            else:
+                                print("[ERROR] Не удалось получить учетные данные")
+                                break
+                        else:
+                            print(f"[ERROR] Не удалось подключиться к SMB после {max_auth_attempts} попыток")
+                            break
+                    else:
+                        # Другая ошибка PermissionError - пробрасываем дальше
+                        raise
+                except Exception as e:
+                    print(f"[WARNING] Ошибка при проверке обновлений: {e}")
+                    break
+            
+            if auth_attempt >= max_auth_attempts:
+                print("[ERROR] Превышено количество попыток авторизации")
+            elif update_sources:
+                selected_source = update_sources[0]  # Используем первый источник с обновлением
+                new_ver = selected_source.get('version', 'неизвестная')
                 print("\n" + "=" * 60)
-                print(f"[INFO] ⬆️  ДОСТУПНО ОБНОВЛЕНИЕ: {new_ver}")
+                print(f"[INFO] [UPDATE] ДОСТУПНО ОБНОВЛЕНИЕ: {new_ver}")
+                print(f"[INFO] Источник: {selected_source.get('name', 'неизвестный')}")
                 print(f"[INFO] Текущая версия: {APP_VERSION}")
                 print("=" * 60)
                 
@@ -30239,10 +30568,12 @@ if __name__ == '__main__':
                     response = input("\n[?] Обновить сейчас? (y/n): ").strip().lower()
                     if response in ('y', 'yes', 'д', 'да'):
                         print("[INFO] Начинаем обновление...")
+                        # КРИТИЧНО: Восстанавливаем параметры выбранного источника перед загрузкой
+                        updater._restore_source_params(selected_source)
                         if updater.download_and_apply():
                             # download_and_apply() уже запустил новую версию через launch_new_version()
                             # В консольном режиме os.execv() заменит процесс, этот код не выполнится
-                            print("[INFO] ✓ Обновление применено! Запуск новой версии...")
+                            print("[INFO] [OK] Обновление применено! Запуск новой версии...")
                         else:
                             print("[ERROR] Не удалось применить обновление")
                             break
@@ -30252,7 +30583,7 @@ if __name__ == '__main__':
                     else:
                         print("[WARNING] Введите 'y' или 'n'")
             else:
-                print("[INFO] ✓ Установлена актуальная версия")
+                print("[INFO] [OK] Установлена актуальная версия")
         except Exception as e:
             print(f"[WARNING] Не удалось проверить обновления: {e}")
     
