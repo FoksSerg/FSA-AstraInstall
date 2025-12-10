@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.3.171 (2025.12.09)
+Версия: V3.3.173 (2025.12.10)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.3.171 (2025.12.09)"
+APP_VERSION = "V3.3.173 (2025.12.10)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -1077,18 +1077,6 @@ UPDATE_SOURCES_CONFIG = [
         }
     },
     {
-        'id': 'smb_backup',
-        'name': 'SMB сервер (резервный)',
-        'priority': 2,
-        'enabled': True,
-        'type': 'smb',
-        'params': {
-            'server': '10.10.55.78',
-            'share': 'Backup',
-            'path': 'Updates',
-        }
-    },
-    {
         'id': 'git',
         'name': 'Git репозиторий',
         'priority': 3,
@@ -1378,7 +1366,7 @@ COMPONENTS_CONFIG = {
         'executable_path': 'drive_c/Program Files/AstraRegul/Astra.IDE_64_*/Astra.IDE/Common/Astra.IDE.exe',
         'wine_source': 'astrapack',
         'terminal': False,
-        'icon': '',
+        'icon': '8446_ShortcutCODESYSDes_9C634813B7D14649AECD44544B896927.0',
         'comment': 'Ярлык Astra.IDE на рабочем столе',
         'gui_selectable': True,
         'description': 'Ярлык Astra.IDE на рабочем столе',
@@ -19339,6 +19327,14 @@ class AutomationGUI(object):
             check_paths = get_component_field(component_id, 'check_paths', [])
             display_path = check_paths[0] if check_paths else 'N/A'
             
+            # Для пакетов убираем "N/A" и "[---]"
+            category = get_component_field(component_id, 'category', '')
+            if category == 'package':
+                if display_path == 'N/A':
+                    display_path = ''
+                if status_text == '[---]':
+                    status_text = ''
+            
             # Определяем, есть ли чекбокс
             has_checkbox = get_component_field(component_id, 'gui_selectable', False)
             checkbox = '☐' if has_checkbox else '  '
@@ -19447,12 +19443,6 @@ class AutomationGUI(object):
         for i, (component_id, _) in enumerate(root_components):
             is_last = (i == len(root_components) - 1)
             render_component(component_id, indent=0, is_last=is_last, prefix="", skip_templates=True)
-        
-        # НОВОЕ: Добавляем разделитель
-        separator_item = self.wine_tree.insert('', self.tk.END, values=(
-            '  ',
-            '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-            ))
         
         # НОВОЕ: Отображаем шаблоны приложений
         templates = []
@@ -22255,7 +22245,7 @@ class AutomationGUI(object):
             for source_config in enabled_sources:
                 source_frame = self.tk.Frame(resources_frame)
                 source_frame.pack(fill=self.tk.X, padx=5, pady=3)
-                self.tk.Label(source_frame, text=f"{source_config['name']}:", width=12, 
+                self.tk.Label(source_frame, text=f"{source_config['name']}:", width=20, 
                             anchor='w', font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
                 description = get_source_description(source_config)
                 path_label = self.tk.Label(source_frame, text=description, 
@@ -22307,132 +22297,243 @@ class AutomationGUI(object):
                 def run_check():
                     smb_user = None
                     smb_password = None
-                    max_retries = 3
-                    auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                    max_auth_attempts = 3
                     
-                    for attempt in range(max_retries):
-                        try:
-                            # Создаем экземпляр SelfUpdater с учетными данными
-                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
-                            
-                            # Переопределяем метод log для вывода в окно
-                            original_log = updater.log
-                            def log_to_window(message, level="INFO", gui_log=False):
-                                original_log(message, level=level, gui_log=gui_log)
-                                # Выводим в окно
-                                dialog.after(0, lambda: append_log(message))
-                            updater.log = log_to_window
-
-                            # Проверяем обновления (теперь возвращает список источников)
-                            sources = updater.check_for_updates()
-                            
-                            # Фильтруем доступные источники
-                            available_sources = [s for s in sources if s.get('available', False)]
-                            
-                            # Фильтруем источники с обновлениями
-                            update_sources = [s for s in sources if s.get('needs_update', False) and s.get('available', False)]
-                            
-                            # Обновляем статус
-                            if len(available_sources) > 1:
-                                # Несколько доступных источников - всегда показываем выбор
-                                if update_sources:
-                                    dialog.after(0, lambda: status_label.config(
-                                        text=f"Найдено {len(update_sources)} источников с обновлениями", fg='green'))
-                                else:
-                                    dialog.after(0, lambda: status_label.config(
-                                        text=f"Найдено {len(available_sources)} доступных источников", fg='blue'))
-                                
-                                def show_selection():
-                                    # Показываем выбор из всех доступных источников
-                                    selected_source = self._show_source_selection_dialog(dialog, available_sources)
-                                    if selected_source:
-                                        source_updater = selected_source['updater']
-                                        version = selected_source.get('version', 'неизвестная')
-                                        if selected_source.get('needs_update', False):
-                                            # Есть обновление - показываем диалог обновления
-                                            self._show_update_dialog(dialog, source_updater, version, selected_source)
-                                        else:
-                                            # Нет обновления - просто сообщение
-                                            from tkinter import messagebox
-                                            messagebox.showinfo(
-                                                "Информация",
-                                                f"Версия {version} на источнике {selected_source.get('name', 'неизвестный')} актуальна.\n"
-                                                f"Текущая версия: {APP_VERSION}",
-                                                parent=dialog
-                                            )
-                                dialog.after(0, show_selection)
-                            elif len(available_sources) == 1:
-                                # Один доступный источник
-                                selected_source = available_sources[0]
-                                source_updater = selected_source['updater']
-                                version = selected_source.get('version', 'неизвестная')
-                                
-                                if selected_source.get('needs_update', False):
-                                    # Есть обновление - показываем диалог обновления
-                                    dialog.after(0, lambda: status_label.config(
-                                        text=f"Доступно обновление: {version}", fg='green'))
-                                    dialog.after(0, lambda: self._show_update_dialog(
-                                        dialog, source_updater, version, selected_source))
-                                else:
-                                    # Нет обновлений
-                                    dialog.after(0, lambda: status_label.config(
-                                        text="Версия актуальна", fg='gray'))
-                            else:
-                                # Нет доступных источников
-                                dialog.after(0, lambda: status_label.config(
-                                    text="Нет доступных источников обновлений", fg='orange'))
-
-                            break  # Успешно, выходим из цикла
-                            
-                        except PermissionError as e:
-                            if "авторизации SMB" in str(e):
-                                # Ошибка авторизации - запрашиваем учетные данные
-                                dialog.after(0, lambda: append_log("Ошибка авторизации SMB"))
-                                dialog.after(0, lambda: append_log("Требуется ввод учетных данных"))
-                                
-                                # Сбрасываем результат
-                                auth_result['user'] = None
-                                auth_result['password'] = None
-                                auth_result['ready'].clear()
-                                
-                                # Показываем диалог запроса учетных данных
-                                def show_auth_dialog():
-                                    user, password = self._show_smb_auth_dialog(dialog)
-                                    auth_result['user'] = user
-                                    auth_result['password'] = password
-                                    auth_result['ready'].set()
-                                
-                                dialog.after(0, show_auth_dialog)
-                                
-                                # Ждем результата (максимум 60 секунд)
-                                if auth_result['ready'].wait(timeout=60):
-                                    if auth_result['user'] and auth_result['password']:
-                                        smb_user = auth_result['user']
-                                        smb_password = auth_result['password']
-                                        dialog.after(0, lambda: append_log(f"Повторная попытка (попытка {attempt + 2}/{max_retries})"))
-                                        continue  # Повторяем попытку
-                                    else:
-                                        dialog.after(0, lambda: append_log("Отменено пользователем"))
-                                        dialog.after(0, lambda: status_label.config(text="Отменено", fg='orange'))
-                                        break
-                                else:
-                                    dialog.after(0, lambda: append_log("Таймаут ожидания ввода учетных данных"))
-                                    dialog.after(0, lambda: status_label.config(text="Таймаут", fg='orange'))
+                    # Получаем список источников из конфигурации, отсортированных по приоритету
+                    enabled_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('enabled', True)]
+                    enabled_sources.sort(key=lambda x: x.get('priority', 999))
+                    
+                    # Получаем размер текущего бинарника
+                    try:
+                        local_size = os.path.getsize(sys.executable)
+                        local_version = APP_VERSION
+                    except Exception:
+                        local_size = 0
+                        local_version = APP_VERSION
+                    
+                    sources_info = []
+                    
+                    # Проверяем каждый источник по очереди
+                    for source_config in enabled_sources:
+                        source_id = source_config.get('id', 'unknown')
+                        source_name = source_config.get('name', 'Неизвестный источник')
+                        source_type = source_config.get('type', 'unknown')
+                        
+                        dialog.after(0, lambda name=source_name: append_log(f"Проверка источника: {name}..."))
+                        
+                        # Для SMB источников - обрабатываем аутентификацию с циклом до 3 попыток
+                        if source_type == 'smb':
+                            auth_success = False
+                            for auth_attempt in range(1, max_auth_attempts + 1):
+                                try:
+                                    # Создаем/обновляем updater с учетными данными
+                                    updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                                    
+                                    # Переопределяем метод log для вывода в окно
+                                    original_log = updater.log
+                                    def log_to_window(message, level="INFO", gui_log=False):
+                                        original_log(message, level=level, gui_log=gui_log)
+                                        dialog.after(0, lambda msg=message: append_log(msg))
+                                    updater.log = log_to_window
+                                    
+                                    # Проверяем только этот источник
+                                    source_info = updater._check_source(source_config, local_size, local_version)
+                                    sources_info.append(source_info)
+                                    auth_success = True
+                                    
+                                    # Сохраняем успешные учетные данные для следующих источников
+                                    if source_info.get('available'):
+                                        smb_user = updater.smb_user
+                                        smb_password = updater.smb_password
+                                        dialog.after(0, lambda name=source_name: append_log(f"✓ {name} доступен"))
                                     break
-                            else:
-                                # Другая PermissionError
-                                error_msg = f"Ошибка проверки обновлений: {e}"
-                                append_log(error_msg)
-                                dialog.after(0, lambda: status_label.config(text="Ошибка проверки", fg='red'))
-                                break
+                                    
+                                except PermissionError as e:
+                                    # Получаем название источника из исключения или из конфигурации
+                                    error_source_name = getattr(e, 'source_name', source_name)
+                                    
+                                    if auth_attempt < max_auth_attempts:
+                                        # Запрашиваем пароль для этого источника
+                                        dialog.after(0, lambda name=error_source_name, att=auth_attempt, max_att=max_auth_attempts: 
+                                                   append_log(f"Ошибка авторизации для {name} (попытка {att}/{max_att})"))
+                                        
+                                        auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                                        auth_result['ready'].clear()
+                                        
+                                        def show_auth_dialog():
+                                            user, password = self._show_smb_auth_dialog(dialog, error_source_name, auth_attempt, max_auth_attempts)
+                                            auth_result['user'] = user
+                                            auth_result['password'] = password
+                                            auth_result['ready'].set()
+                                        
+                                        dialog.after(0, show_auth_dialog)
+                                        
+                                        if auth_result['ready'].wait(timeout=60):
+                                            if auth_result['user'] and auth_result['password']:
+                                                smb_user = auth_result['user']
+                                                smb_password = auth_result['password']
+                                                continue  # Повторяем попытку с новыми данными
+                                            else:
+                                                # Отменено пользователем
+                                                dialog.after(0, lambda name=error_source_name: append_log(f"✗ Отменено для {name}"))
+                                                source_info = {
+                                                    'id': source_id,
+                                                    'name': source_name,
+                                                    'description': get_source_description(source_config),
+                                                    'available': False,
+                                                    'version': None,
+                                                    'file_size': None,
+                                                    'needs_update': False,
+                                                    'update_reason': 'none',
+                                                    'updater': None,
+                                                    'source_params': source_config.get('params', {}),
+                                                    'source_type': source_type,
+                                                    'error': 'Отменено пользователем'
+                                                }
+                                                sources_info.append(source_info)
+                                                break
+                                        else:
+                                            # Таймаут
+                                            dialog.after(0, lambda name=error_source_name: append_log(f"✗ Таймаут для {name}"))
+                                            source_info = {
+                                                'id': source_id,
+                                                'name': source_name,
+                                                'description': get_source_description(source_config),
+                                                'available': False,
+                                                'version': None,
+                                                'file_size': None,
+                                                'needs_update': False,
+                                                'update_reason': 'none',
+                                                'updater': None,
+                                                'source_params': source_config.get('params', {}),
+                                                'source_type': source_type,
+                                                'error': 'Таймаут'
+                                            }
+                                            sources_info.append(source_info)
+                                            break
+                                    else:
+                                        # Исчерпаны попытки
+                                        dialog.after(0, lambda name=error_source_name: append_log(f"✗ Исчерпаны попытки авторизации для {name}"))
+                                        source_info = {
+                                            'id': source_id,
+                                            'name': source_name,
+                                            'description': get_source_description(source_config),
+                                            'available': False,
+                                            'version': None,
+                                            'file_size': None,
+                                            'needs_update': False,
+                                            'update_reason': 'none',
+                                            'updater': None,
+                                            'source_params': source_config.get('params', {}),
+                                            'source_type': source_type,
+                                            'error': f'Исчерпаны попытки ({max_auth_attempts})'
+                                        }
+                                        sources_info.append(source_info)
+                                        break
+                                except Exception as e:
+                                    # Другие ошибки
+                                    dialog.after(0, lambda name=source_name, err=str(e): append_log(f"✗ Ошибка проверки {name}: {err}"))
+                                    source_info = {
+                                        'id': source_id,
+                                        'name': source_name,
+                                        'description': get_source_description(source_config),
+                                        'available': False,
+                                        'version': None,
+                                        'file_size': None,
+                                        'needs_update': False,
+                                        'update_reason': 'none',
+                                        'updater': None,
+                                        'source_params': source_config.get('params', {}),
+                                        'source_type': source_type,
+                                        'error': str(e)
+                                    }
+                                    sources_info.append(source_info)
+                                    break
+                        else:
+                            # Для не-SMB источников - обычная проверка
+                            try:
+                                updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
                                 
-                        except Exception as e:
-                            error_msg = f"Ошибка проверки обновлений: {e}"
-                            append_log(error_msg)
-                            dialog.after(0, lambda: status_label.config(text="Ошибка проверки", fg='red'))
-                            break
-                        finally:
-                            dialog.after(0, lambda: check_button.config(state=self.tk.NORMAL))
+                                # Переопределяем метод log для вывода в окно
+                                original_log = updater.log
+                                def log_to_window(message, level="INFO", gui_log=False):
+                                    original_log(message, level=level, gui_log=gui_log)
+                                    dialog.after(0, lambda msg=message: append_log(msg))
+                                updater.log = log_to_window
+                                
+                                source_info = updater._check_source(source_config, local_size, local_version)
+                                sources_info.append(source_info)
+                                
+                                if source_info.get('available'):
+                                    dialog.after(0, lambda name=source_name: append_log(f"✓ {name} доступен"))
+                            except Exception as e:
+                                # Обработка других ошибок
+                                dialog.after(0, lambda name=source_name, err=str(e): append_log(f"✗ Ошибка проверки {name}: {err}"))
+                                source_info = {
+                                    'id': source_id,
+                                    'name': source_name,
+                                    'description': get_source_description(source_config),
+                                    'available': False,
+                                    'version': None,
+                                    'file_size': None,
+                                    'needs_update': False,
+                                    'update_reason': 'none',
+                                    'updater': None,
+                                    'source_params': source_config.get('params', {}),
+                                    'source_type': source_type,
+                                    'error': str(e)
+                                }
+                                sources_info.append(source_info)
+                    
+                    # Фильтруем доступные источники
+                    available_sources = [s for s in sources_info if s.get('available', False)]
+                    
+                    # Фильтруем источники с обновлениями
+                    update_sources = [s for s in sources_info if s.get('needs_update', False) and s.get('available', False)]
+                    
+                    # Обновляем статус
+                    if len(available_sources) > 1:
+                        # Несколько доступных источников
+                        if update_sources:
+                            # Есть источники с обновлениями - показываем выбор
+                            dialog.after(0, lambda: status_label.config(
+                                text=f"Найдено {len(update_sources)} источников с обновлениями", fg='green'))
+                            
+                            def show_selection():
+                                # Показываем выбор только из источников с обновлениями
+                                selected_source = self._show_source_selection_dialog(dialog, update_sources)
+                                if selected_source:
+                                    source_updater = selected_source['updater']
+                                    version = selected_source.get('version', 'неизвестная')
+                                    # Всегда показываем диалог обновления, т.к. это источники с обновлениями
+                                    self._show_update_dialog(dialog, source_updater, version, selected_source)
+                            dialog.after(0, show_selection)
+                        else:
+                            # Нет источников с обновлениями - не показываем окно выбора
+                            dialog.after(0, lambda: status_label.config(
+                                text="Версия актуальна на всех источниках", fg='gray'))
+                    elif len(available_sources) == 1:
+                        # Один доступный источник
+                        selected_source = available_sources[0]
+                        source_updater = selected_source['updater']
+                        version = selected_source.get('version', 'неизвестная')
+                        
+                        if selected_source.get('needs_update', False):
+                            # Есть обновление - показываем диалог обновления
+                            dialog.after(0, lambda: status_label.config(
+                                text=f"Доступно обновление: {version}", fg='green'))
+                            dialog.after(0, lambda: self._show_update_dialog(
+                                dialog, source_updater, version, selected_source))
+                        else:
+                            # Нет обновлений
+                            dialog.after(0, lambda: status_label.config(
+                                text="Версия актуальна", fg='gray'))
+                    else:
+                        # Нет доступных источников
+                        dialog.after(0, lambda: status_label.config(
+                            text="Нет доступных источников обновлений", fg='orange'))
+                    
+                    dialog.after(0, lambda: check_button.config(state=self.tk.NORMAL))
                 
                 # Запускаем в отдельном потоке
                 thread = threading.Thread(target=run_check, name="UpdateCheckThread")
@@ -22451,79 +22552,214 @@ class AutomationGUI(object):
                 def run_force_check():
                     smb_user = None
                     smb_password = None
-                    max_retries = 3
-                    auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                    max_auth_attempts = 3
                     
-                    for attempt in range(max_retries):
-                        try:
-                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
-                            
-                            original_log = updater.log
-                            def log_to_window(message, level="INFO", gui_log=False):
-                                original_log(message, level=level, gui_log=gui_log)
-                                dialog.after(0, lambda: append_log(message))
-                            updater.log = log_to_window
-                            
-                            # Проверяем все источники
-                            sources = updater.check_for_updates()
-                            
-                            # Фильтруем только доступные источники
-                            available_sources = [s for s in sources if s.get('available', False)]
-                            
-                            if available_sources:
-                                # Помечаем все как требующие обновления (принудительно)
-                                for source in available_sources:
-                                    source['needs_update'] = True
-                                    source['update_reason'] = 'forced'
-                                
-                                # Показываем диалог выбора источника
-                                def show_selection():
-                                    selected_source = self._show_source_selection_dialog(dialog, available_sources)
-                                    if selected_source:
-                                        source_updater = selected_source['updater']
-                                        version = selected_source.get('version', APP_VERSION)
-                                        self._show_update_dialog(dialog, source_updater, version, selected_source)
-                                dialog.after(0, show_selection)
-                            else:
-                                dialog.after(0, lambda: messagebox.showwarning(
-                                    "Предупреждение", 
-                                    "Нет доступных источников для обновления",
-                                    parent=dialog))
-                            break
-                            
-                        except PermissionError as e:
-                            if "авторизации SMB" in str(e):
-                                dialog.after(0, lambda: append_log("Ошибка авторизации SMB"))
-                                dialog.after(0, lambda: append_log("Требуется ввод учетных данных"))
-                                
-                                auth_result['user'] = None
-                                auth_result['password'] = None
-                                auth_result['ready'].clear()
-                                
-                                def show_auth_dialog():
-                                    user, password = self._show_smb_auth_dialog(dialog)
-                                    auth_result['user'] = user
-                                    auth_result['password'] = password
-                                    auth_result['ready'].set()
-                                
-                                dialog.after(0, show_auth_dialog)
-                                
-                                if auth_result['ready'].wait(timeout=60):
-                                    if auth_result['user'] and auth_result['password']:
-                                        smb_user = auth_result['user']
-                                        smb_password = auth_result['password']
-                                        continue
-                                    else:
-                                        break
-                                else:
+                    # Получаем список источников из конфигурации, отсортированных по приоритету
+                    enabled_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('enabled', True)]
+                    enabled_sources.sort(key=lambda x: x.get('priority', 999))
+                    
+                    # Получаем размер текущего бинарника
+                    try:
+                        local_size = os.path.getsize(sys.executable)
+                        local_version = APP_VERSION
+                    except Exception:
+                        local_size = 0
+                        local_version = APP_VERSION
+                    
+                    sources_info = []
+                    
+                    # Проверяем каждый источник по очереди
+                    for source_config in enabled_sources:
+                        source_id = source_config.get('id', 'unknown')
+                        source_name = source_config.get('name', 'Неизвестный источник')
+                        source_type = source_config.get('type', 'unknown')
+                        
+                        dialog.after(0, lambda name=source_name: append_log(f"Проверка источника: {name}..."))
+                        
+                        # Для SMB источников - обрабатываем аутентификацию с циклом до 3 попыток
+                        if source_type == 'smb':
+                            auth_success = False
+                            for auth_attempt in range(1, max_auth_attempts + 1):
+                                try:
+                                    # Создаем/обновляем updater с учетными данными
+                                    updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                                    
+                                    original_log = updater.log
+                                    def log_to_window(message, level="INFO", gui_log=False):
+                                        original_log(message, level=level, gui_log=gui_log)
+                                        dialog.after(0, lambda msg=message: append_log(msg))
+                                    updater.log = log_to_window
+                                    
+                                    # Проверяем только этот источник
+                                    source_info = updater._check_source(source_config, local_size, local_version)
+                                    sources_info.append(source_info)
+                                    auth_success = True
+                                    
+                                    # Сохраняем успешные учетные данные для следующих источников
+                                    if source_info.get('available'):
+                                        smb_user = updater.smb_user
+                                        smb_password = updater.smb_password
+                                        dialog.after(0, lambda name=source_name: append_log(f"✓ {name} доступен"))
                                     break
-                            else:
-                                break
-                        except Exception as e:
-                            dialog.after(0, lambda: messagebox.showerror(
-                                "Ошибка", f"Ошибка проверки обновлений:\n{e}",
-                                parent=dialog))
-                            break
+                                    
+                                except PermissionError as e:
+                                    # Получаем название источника из исключения или из конфигурации
+                                    error_source_name = getattr(e, 'source_name', source_name)
+                                    
+                                    if auth_attempt < max_auth_attempts:
+                                        # Запрашиваем пароль для этого источника
+                                        dialog.after(0, lambda name=error_source_name, att=auth_attempt, max_att=max_auth_attempts: 
+                                                   append_log(f"Ошибка авторизации для {name} (попытка {att}/{max_att})"))
+                                        
+                                        auth_result = {'user': None, 'password': None, 'ready': threading.Event()}
+                                        auth_result['ready'].clear()
+                                        
+                                        def show_auth_dialog():
+                                            user, password = self._show_smb_auth_dialog(dialog, error_source_name, auth_attempt, max_auth_attempts)
+                                            auth_result['user'] = user
+                                            auth_result['password'] = password
+                                            auth_result['ready'].set()
+                                        
+                                        dialog.after(0, show_auth_dialog)
+                                        
+                                        if auth_result['ready'].wait(timeout=60):
+                                            if auth_result['user'] and auth_result['password']:
+                                                smb_user = auth_result['user']
+                                                smb_password = auth_result['password']
+                                                continue  # Повторяем попытку с новыми данными
+                                            else:
+                                                # Отменено пользователем
+                                                dialog.after(0, lambda name=error_source_name: append_log(f"✗ Отменено для {name}"))
+                                                source_info = {
+                                                    'id': source_id,
+                                                    'name': source_name,
+                                                    'description': get_source_description(source_config),
+                                                    'available': False,
+                                                    'version': None,
+                                                    'file_size': None,
+                                                    'needs_update': False,
+                                                    'update_reason': 'none',
+                                                    'updater': None,
+                                                    'source_params': source_config.get('params', {}),
+                                                    'source_type': source_type,
+                                                    'error': 'Отменено пользователем'
+                                                }
+                                                sources_info.append(source_info)
+                                                break
+                                        else:
+                                            # Таймаут
+                                            dialog.after(0, lambda name=error_source_name: append_log(f"✗ Таймаут для {name}"))
+                                            source_info = {
+                                                'id': source_id,
+                                                'name': source_name,
+                                                'description': get_source_description(source_config),
+                                                'available': False,
+                                                'version': None,
+                                                'file_size': None,
+                                                'needs_update': False,
+                                                'update_reason': 'none',
+                                                'updater': None,
+                                                'source_params': source_config.get('params', {}),
+                                                'source_type': source_type,
+                                                'error': 'Таймаут'
+                                            }
+                                            sources_info.append(source_info)
+                                            break
+                                    else:
+                                        # Исчерпаны попытки
+                                        dialog.after(0, lambda name=error_source_name: append_log(f"✗ Исчерпаны попытки авторизации для {name}"))
+                                        source_info = {
+                                            'id': source_id,
+                                            'name': source_name,
+                                            'description': get_source_description(source_config),
+                                            'available': False,
+                                            'version': None,
+                                            'file_size': None,
+                                            'needs_update': False,
+                                            'update_reason': 'none',
+                                            'updater': None,
+                                            'source_params': source_config.get('params', {}),
+                                            'source_type': source_type,
+                                            'error': f'Исчерпаны попытки ({max_auth_attempts})'
+                                        }
+                                        sources_info.append(source_info)
+                                        break
+                                except Exception as e:
+                                    # Другие ошибки
+                                    dialog.after(0, lambda name=source_name, err=str(e): append_log(f"✗ Ошибка проверки {name}: {err}"))
+                                    source_info = {
+                                        'id': source_id,
+                                        'name': source_name,
+                                        'description': get_source_description(source_config),
+                                        'available': False,
+                                        'version': None,
+                                        'file_size': None,
+                                        'needs_update': False,
+                                        'update_reason': 'none',
+                                        'updater': None,
+                                        'source_params': source_config.get('params', {}),
+                                        'source_type': source_type,
+                                        'error': str(e)
+                                    }
+                                    sources_info.append(source_info)
+                                    break
+                        else:
+                            # Для не-SMB источников - обычная проверка
+                            try:
+                                updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                                
+                                original_log = updater.log
+                                def log_to_window(message, level="INFO", gui_log=False):
+                                    original_log(message, level=level, gui_log=gui_log)
+                                    dialog.after(0, lambda msg=message: append_log(msg))
+                                updater.log = log_to_window
+                                
+                                source_info = updater._check_source(source_config, local_size, local_version)
+                                sources_info.append(source_info)
+                                
+                                if source_info.get('available'):
+                                    dialog.after(0, lambda name=source_name: append_log(f"✓ {name} доступен"))
+                            except Exception as e:
+                                # Обработка других ошибок
+                                dialog.after(0, lambda name=source_name, err=str(e): append_log(f"✗ Ошибка проверки {name}: {err}"))
+                                source_info = {
+                                    'id': source_id,
+                                    'name': source_name,
+                                    'description': get_source_description(source_config),
+                                    'available': False,
+                                    'version': None,
+                                    'file_size': None,
+                                    'needs_update': False,
+                                    'update_reason': 'none',
+                                    'updater': None,
+                                    'source_params': source_config.get('params', {}),
+                                    'source_type': source_type,
+                                    'error': str(e)
+                                }
+                                sources_info.append(source_info)
+                    
+                    # Фильтруем только доступные источники
+                    available_sources = [s for s in sources_info if s.get('available', False)]
+                    
+                    if available_sources:
+                        # Помечаем все как требующие обновления (принудительно)
+                        for source in available_sources:
+                            source['needs_update'] = True
+                            source['update_reason'] = 'forced'
+                        
+                        # Показываем диалог выбора источника
+                        def show_selection():
+                            selected_source = self._show_source_selection_dialog(dialog, available_sources)
+                            if selected_source:
+                                source_updater = selected_source['updater']
+                                version = selected_source.get('version', APP_VERSION)
+                                self._show_update_dialog(dialog, source_updater, version, selected_source)
+                        dialog.after(0, show_selection)
+                    else:
+                        dialog.after(0, lambda: messagebox.showwarning(
+                            "Предупреждение", 
+                            "Нет доступных источников для обновления",
+                            parent=dialog))
                 
                 thread = threading.Thread(target=run_force_check, name="ForceUpdateThread")
                 thread.daemon = True
@@ -22532,7 +22768,7 @@ class AutomationGUI(object):
             # Кнопки (зафиксированы внизу через grid)
             button_frame = self.tk.Frame(dialog)
             button_frame.grid(row=1, column=0, sticky='ew', padx=10, pady=10)
-            button_frame.grid_columnconfigure(0, weight=1)  # Пустое пространство между кнопками
+            button_frame.grid_columnconfigure(2, weight=1)  # Пустое пространство справа для кнопки "Закрыть"
             
             check_button = self.tk.Button(button_frame, text="Проверить обновления", 
                                         command=check_updates, bg='#4CAF50', fg='white',
@@ -22542,7 +22778,7 @@ class AutomationGUI(object):
             force_button = self.tk.Button(button_frame, text="Принудительно обновиться", 
                                          command=force_update, bg='#FF9800', fg='white',
                                          font=('Arial', 10, 'bold'))
-            force_button.grid(row=0, column=1, sticky='w', padx=5)
+            force_button.grid(row=0, column=1, sticky='w', padx=(5, 5))
             
             close_button = self.tk.Button(button_frame, text="Закрыть", 
                                         command=on_close, bg='#f44336', fg='white',
@@ -22552,7 +22788,9 @@ class AutomationGUI(object):
             # Обработка закрытия по Escape
             dialog.focus_set()
             dialog.bind('<Escape>', lambda e: on_close())
-            
+            # Автоматически запускаем проверку обновлений при открытии окна
+            dialog.after(100, check_updates)
+                        
         except Exception as e:
             print(f"Ошибка открытия окна проверки обновлений: {e}", level='ERROR')
             messagebox.showerror("Ошибка", f"Не удалось открыть окно проверки обновлений:\n{e}")
@@ -22624,11 +22862,11 @@ class AutomationGUI(object):
             thread.daemon = True
             thread.start()
     
-    def _show_smb_auth_dialog(self, parent_window) -> Tuple[Optional[str], Optional[str]]:
+    def _show_smb_auth_dialog(self, parent_window, source_name: str = "SMB сервер", attempt: int = 1, max_attempts: int = 3) -> Tuple[Optional[str], Optional[str]]:
         """Показать диалог запроса учетных данных SMB"""
         dialog = self.tk.Toplevel(parent_window)
-        dialog.title("Аутентификация SMB")
-        dialog.geometry("400x150")
+        dialog.title(f"Аутентификация SMB - {source_name}")
+        dialog.geometry("450x180")
         dialog.resizable(False, False)
         
         # Центрируем окно
@@ -22640,6 +22878,11 @@ class AutomationGUI(object):
         dialog.geometry(f'{width}x{height}+{x}+{y}')
         
         result = {'user': None, 'password': None, 'confirmed': False}
+        
+        # Название источника и попытка
+        info_label = self.tk.Label(dialog, text=f"Источник: {source_name}\nПопытка {attempt} из {max_attempts}", 
+                                   font=('Arial', 9), fg='blue')
+        info_label.pack(pady=5)
         
         # Поле для пользователя
         user_frame = self.tk.Frame(dialog)
@@ -28525,41 +28768,38 @@ class SelfUpdater:
         
         return None
     
-    def _request_credentials_console(self, max_attempts: int = 3) -> bool:
-        """Запрашивает учетные данные SMB в терминальном режиме (до 3 попыток)."""
-        for attempt in range(1, max_attempts + 1):
-            try:
-                print(f"\n[?] Попытка {attempt} из {max_attempts}: Введите учетные данные для SMB")
-                username = input("Пользователь: ").strip()
-                if not username:
-                    print("[WARNING] Имя пользователя не может быть пустым")
-                    continue
-                
-                password = getpass.getpass("Пароль: ").strip()
-                if not password:
-                    print("[WARNING] Пароль не может быть пустым")
-                    continue
-                
-                # Сохраняем учетные данные
-                self.smb_user = username
-                self.smb_password = password
-                
-                # Сохраняем в файл
-                if self._ensure_credentials_file():
-                    print(f"[OK] Учетные данные сохранены в {self._get_credentials_file_path()}")
-                    return True
-                else:
-                    print("[WARNING] Не удалось сохранить учетные данные")
-                    continue
-            except (EOFError, KeyboardInterrupt):
-                print("\n[INFO] Ввод прерван пользователем")
+    def _request_credentials_console(self, source_name: str = "SMB сервер", attempt: int = 1, max_attempts: int = 3) -> bool:
+        """Запрашивает учетные данные SMB в терминальном режиме."""
+        try:
+            print(f"\n[?] Источник: {source_name}")
+            print(f"[?] Попытка {attempt} из {max_attempts}: Введите учетные данные для SMB")
+            username = input("Пользователь: ").strip()
+            if not username:
+                print("[WARNING] Имя пользователя не может быть пустым")
                 return False
-            except Exception as e:
-                print(f"[ERROR] Ошибка при запросе учетных данных: {e}")
-                continue
-        
-        print(f"[ERROR] Не удалось получить учетные данные после {max_attempts} попыток")
-        return False
+            
+            password = getpass.getpass("Пароль: ").strip()
+            if not password:
+                print("[WARNING] Пароль не может быть пустым")
+                return False
+            
+            # Сохраняем учетные данные
+            self.smb_user = username
+            self.smb_password = password
+            
+            # Сохраняем в файл
+            if self._ensure_credentials_file():
+                print(f"[OK] Учетные данные сохранены в {self._get_credentials_file_path()}")
+                return True
+            else:
+                print("[WARNING] Не удалось сохранить учетные данные")
+                return False
+        except (EOFError, KeyboardInterrupt):
+            print("\n[INFO] Ввод прерван пользователем")
+            return False
+        except Exception as e:
+            print(f"[ERROR] Ошибка при запросе учетных данных: {e}")
+            return False
     
     def _build_smbclient_auth(self) -> list:
         """Формирует параметры аутентификации для smbclient."""
@@ -28838,7 +29078,7 @@ class SelfUpdater:
             return False
     
     def get_version_from_git(self) -> Optional[str]:
-        """Получает версию с Git из файла Version.txt."""
+        """Получает версию с Git из файла Version.txt (без учёта регистра имени файла)."""
         try:
             # Получаем параметры из конфигурации
             if not self.current_source_params or 'raw_url' not in self.current_source_params:
@@ -28853,22 +29093,20 @@ class SelfUpdater:
             raw_url = params['raw_url']
             branch = params['branch']
             
-            url = f"{raw_url}/{branch}/{VERSION_FILE}"
-            result = subprocess.run(
-                ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
-                capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
-            )
+            # Пробуем разные варианты регистра имени файла
+            version_file_variants = ["Version.txt", "version.txt", "VERSION.txt"]
             
-            if result.returncode == 0:
-                if result.stdout:
+            for version_file in version_file_variants:
+                url = f"{raw_url}/{branch}/{version_file}"
+                result = subprocess.run(
+                    ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
+                    capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
+                )
+                
+                if result.returncode == 0 and result.stdout:
                     return self.extract_version_from_content(result.stdout)
-                else:
-                    self.log(f"Файл {VERSION_FILE} пуст или не найден на Git", "WARNING")
-            else:
-                # Логируем ошибку
-                error_msg = result.stderr.strip() if result.stderr else "Неизвестная ошибка"
-                self.log(f"Ошибка получения версии с Git: {error_msg}", "WARNING")
-                self.log(f"URL: {url}", "DEBUG")
+            
+            self.log(f"Файл Version.txt не найден на Git (пробовали: {', '.join(version_file_variants)})", "WARNING")
             return None
         except Exception as e:
             self.log(f"Исключение при получении версии с Git: {e}", "WARNING")
@@ -29084,7 +29322,6 @@ class SelfUpdater:
                 return result
         
         result['available'] = True
-        self.log(f"Проверка источника: {source_name}...", gui_log=True)
         
         # Проверяем размер файла
         self.log(f"Получение размера файла {self.update_filename} с {source_name}...", gui_log=True)
@@ -29129,7 +29366,7 @@ class SelfUpdater:
                     result['needs_update'] = True
                     result['update_reason'] = 'size_diff'
                     size_diff = abs(remote_size - local_size) / (1024 * 1024)
-                    self.log(f"Версия совпадает, но размер отличается на {size_diff:.2f} MB", "INFO", gui_log=True)
+                    self.log(f"Версия совпадает, но размер отличается на {size_diff:.6f} MB", "INFO", gui_log=True)
                 else:
                     self.log("[OK] Установлена актуальная версия", gui_log=True)
             else:
@@ -29142,7 +29379,7 @@ class SelfUpdater:
                 result['needs_update'] = True
                 result['update_reason'] = 'size_diff'
                 size_diff = abs(remote_size - local_size) / (1024 * 1024)
-                self.log(f"Размер отличается на {size_diff:.2f} MB - возможно обновление", "INFO", gui_log=True)
+                self.log(f"Размер отличается на {size_diff:.6f} MB - возможно обновление", "INFO", gui_log=True)
         
         # Сохраняем ссылку на updater для этого источника
         result['updater'] = self
@@ -29186,8 +29423,64 @@ class SelfUpdater:
         
         # Проверяем каждый источник
         for source_config in enabled_sources:
-            source_info = self._check_source(source_config, local_size, self.current_version)
-            sources_info.append(source_info)
+            try:
+                source_info = self._check_source(source_config, local_size, self.current_version)
+                sources_info.append(source_info)
+            except PermissionError as e:
+                # Для SMB источников пробрасываем PermissionError для запроса пароля
+                source_type = source_config.get('type', 'unknown')
+                if source_type == 'smb':
+                    # Сохраняем информацию об источнике для передачи в исключении
+                    source_name = source_config.get('name', 'Неизвестный источник')
+                    # Пробрасываем с информацией об источнике
+                    error = PermissionError(f"Ошибка авторизации SMB для источника: {source_name}")
+                    error.source_name = source_name  # Добавляем атрибут с названием
+                    error.source_config = source_config  # Добавляем конфигурацию источника
+                    raise error
+                else:
+                    # Для других типов источников - помечаем как недоступный
+                    source_id = source_config.get('id', 'unknown')
+                    source_name = source_config.get('name', 'Неизвестный источник')
+                    self.log(f"Ошибка аутентификации для {source_name}: {e}", "WARNING", gui_log=True)
+                    source_info = {
+                        'id': source_id,
+                        'name': source_name,
+                        'description': get_source_description(source_config),
+                        'available': False,
+                        'version': None,
+                        'file_size': None,
+                        'needs_update': False,
+                        'update_reason': 'none',
+                        'updater': None,
+                        'source_params': source_config.get('params', {}),
+                        'source_type': source_type,
+                        'error': str(e)
+                    }
+                    sources_info.append(source_info)
+                    continue
+            except Exception as e:
+                # Другие ошибки - логируем и продолжаем
+                source_id = source_config.get('id', 'unknown')
+                source_name = source_config.get('name', 'Неизвестный источник')
+                self.log(f"Ошибка при проверке источника {source_name}: {e}", "WARNING", gui_log=True)
+                # Создаем информацию об источнике с available=False
+                source_info = {
+                    'id': source_id,
+                    'name': source_name,
+                    'description': get_source_description(source_config),
+                    'available': False,
+                    'version': None,
+                    'file_size': None,
+                    'needs_update': False,
+                    'update_reason': 'none',
+                    'updater': None,
+                    'source_params': source_config.get('params', {}),
+                    'source_type': source_config.get('type', 'unknown'),
+                    'error': str(e)  # Сохраняем информацию об ошибке
+                }
+                sources_info.append(source_info)
+                # Продолжаем проверку остальных источников
+                continue
         
         # Подсчитываем доступные источники и источники с обновлениями
         available_count = sum(1 for s in sources_info if s['available'])
@@ -29324,12 +29617,13 @@ class SelfUpdater:
             escaped_args = [shlex.quote(arg) for arg in args]
             command_line = ' '.join(escaped_args)
             
-            # Создаем bash-скрипт (без сохранения переменных окружения - они передаются через env)
+            # Создаем bash-скрипт с nohup для независимого выполнения
             script_content = textwrap.dedent(f"""\
 			#!/bin/bash
 			# Скрипт для отложенного запуска обновления
-			sleep 1
-			{command_line}
+			cd {shlex.quote(binary_dir)}
+			sleep 3
+			exec {command_line} > /dev/null 2>&1
 			""")
             with open(launcher_script, 'w', encoding='utf-8') as f:
                 f.write(script_content)
@@ -29337,13 +29631,14 @@ class SelfUpdater:
             
             self.log(f"Создан скрипт-обертка: {launcher_script}", "DEBUG")
             
-            # Запускаем скрипт вместо прямого запуска
-            script_args = ['/bin/bash', launcher_script]
-            
+            # КРИТИЧНО для Astra 1.8: Упрощенная команда - запускаем скрипт напрямую через setsid
+            # Скрипт уже содержит cd, поэтому не нужно его в команде
+            script_cmd = f"setsid {shlex.quote(launcher_script)} < /dev/null > /dev/null 2>&1 &"
+
             # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
             if '--console' in sys.argv:
-                # Консольный режим - заменяем процесс
-                os.execv(script_args[0], script_args)
+                # Консольный режим - запускаем скрипт напрямую
+                os.execv('/bin/bash', ['/bin/bash', launcher_script])
             else:
                 # GUI режим - запускаем в фоне и закрываем текущее
                 try:
@@ -29354,6 +29649,15 @@ class SelfUpdater:
                             # Закрываем главное окно через after, чтобы дать время на обработку
                             def close_and_exit():
                                 try:
+                                    # КРИТИЧНО: Запускаем скрипт ПЕРЕД закрытием приложения
+                                    # Используем os.system для гарантированного запуска
+                                    try:
+                                        self.log(f"Запуск скрипта: {script_cmd}", "DEBUG")
+                                        result = os.system(script_cmd)
+                                        self.log(f"Результат запуска скрипта: {result}", "DEBUG")
+                                    except Exception as e:
+                                        self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
+                                    
                                     # Закрываем все дочерние окна
                                     for widget in sys._gui_instance.root.winfo_children():
                                         try:
@@ -29369,40 +29673,23 @@ class SelfUpdater:
                                 # Принудительно завершаем процесс
                                 os._exit(0)
                             
-                            # Запускаем скрипт с передачей переменных окружения
-                            new_process = subprocess.Popen(
-                                script_args,
-                                env=os.environ.copy(),
-                                start_new_session=True
-                            )
+                            # Запускаем закрытие через after (скрипт запустится в close_and_exit)
+                            sys._gui_instance.root.after(100, close_and_exit)
                             
-                            # Проверяем, что процесс запустился успешно
-                            time.sleep(0.3)
-                            if new_process.poll() is None:  # Процесс еще работает
-                                # Процесс запустился успешно - закрываем старое приложение
-                                sys._gui_instance.root.after(100, close_and_exit)
-                            else:
-                                # Процесс завершился сразу - ошибка запуска
-                                self.log(f"Ошибка: скрипт завершился сразу с кодом {new_process.returncode}", "ERROR")
-                                return
                         except Exception as e:
                             self.log(f"Ошибка при закрытии GUI: {e}", "ERROR")
                             # Пытаемся запустить скрипт в любом случае
-                            subprocess.Popen(
-                                script_args,
-                                env=os.environ.copy(),
-                                start_new_session=True
-                            )
-                            time.sleep(0.5)
+                            try:
+                                os.system(script_cmd)
+                            except Exception as e:
+                                self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
                             os._exit(0)
                     else:
                         # GUI не найден - просто запускаем скрипт и выходим
-                        subprocess.Popen(
-                            script_args,
-                            env=os.environ.copy(),
-                            start_new_session=True
-                        )
-                        time.sleep(0.5)
+                        try:
+                            os.system(script_cmd)
+                        except Exception as e:
+                            self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
                         os._exit(0)
                 except Exception as e:
                     self.log(f"Ошибка запуска новой версии: {e}", "ERROR")
@@ -29750,150 +30037,10 @@ def main():
         except:
             pass
 
-# КРИТИЧНО: Функция для полного сканирования содержимого бинарника
-def _scan_binary_contents(base_path, output_file):
-    """Полное сканирование содержимого бинарника и сохранение в файл
-    
-    Args:
-        base_path: Путь к sys._MEIPASS
-        output_file: Путь к файлу для сохранения информации
-    """
-    
-    result = {
-        'scan_timestamp': dt.now().isoformat(),
-        'base_path': base_path,
-        'exists': os.path.exists(base_path),
-        'items': []
-    }
-    
-    if not os.path.exists(base_path):
-        result['error'] = f"Директория не существует: {base_path}"
-        try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(result, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"[DEBUG] Ошибка сохранения информации о бинарнике: {e}")
-        return
-    
-    def scan_directory(path, relative_path=""):
-        """Рекурсивное сканирование директории"""
-        items = []
-        try:
-            for item in sorted(os.listdir(path)):
-                item_path = os.path.join(path, item)
-                item_rel_path = os.path.join(relative_path, item) if relative_path else item
-                
-                item_info = {
-                    'name': item,
-                    'relative_path': item_rel_path,
-                    'absolute_path': item_path,
-                    'type': None,
-                    'size': None,
-                    'permissions': None,
-                    'modified': None,
-                    'children': None
-                }
-                
-                try:
-                    stat_info = os.stat(item_path)
-                    item_info['permissions'] = oct(stat_info.st_mode)[-3:]
-                    item_info['modified'] = dt.fromtimestamp(stat_info.st_mtime).isoformat()
-                    
-                    if os.path.isdir(item_path):
-                        item_info['type'] = 'DIR'
-                        # Рекурсивно сканируем поддиректорию
-                        item_info['children'] = scan_directory(item_path, item_rel_path)
-                    elif os.path.isfile(item_path):
-                        item_info['type'] = 'FILE'
-                        item_info['size'] = stat_info.st_size
-                    elif os.path.islink(item_path):
-                        item_info['type'] = 'LINK'
-                        item_info['link_target'] = os.readlink(item_path)
-                    else:
-                        item_info['type'] = 'OTHER'
-                        
-                except Exception as e:
-                    item_info['error'] = str(e)
-                
-                items.append(item_info)
-        except Exception as e:
-            return [{'error': f"Ошибка сканирования {path}: {e}"}]
-        
-        return items
-    
-    result['items'] = scan_directory(base_path)
-    
-    # Подсчитываем статистику
-    def count_items(items):
-        stats = {'files': 0, 'dirs': 0, 'links': 0, 'total_size': 0}
-        for item in items:
-            if item.get('type') == 'FILE':
-                stats['files'] += 1
-                if item.get('size'):
-                    stats['total_size'] += item['size']
-            elif item.get('type') == 'DIR':
-                stats['dirs'] += 1
-                if item.get('children'):
-                    child_stats = count_items(item['children'])
-                    stats['files'] += child_stats['files']
-                    stats['dirs'] += child_stats['dirs']
-                    stats['links'] += child_stats['links']
-                    stats['total_size'] += child_stats['total_size']
-            elif item.get('type') == 'LINK':
-                stats['links'] += 1
-        return stats
-    
-    stats = count_items(result['items'])
-    result['statistics'] = stats
-    
-    # Сохраняем в JSON
-    try:
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
-        
-        # Также сохраняем в читаемом текстовом формате
-        txt_file = output_file.replace('.json', '.txt')
-        with open(txt_file, 'w', encoding='utf-8') as f:
-            f.write(f"Полное содержимое бинарника PyInstaller\n")
-            f.write(f"{'='*80}\n")
-            f.write(f"Время сканирования: {result['scan_timestamp']}\n")
-            f.write(f"Базовый путь: {base_path}\n")
-            f.write(f"Существует: {result['exists']}\n")
-            f.write(f"\nСтатистика:\n")
-            f.write(f"  Файлов: {stats['files']}\n")
-            f.write(f"  Директорий: {stats['dirs']}\n")
-            f.write(f"  Символических ссылок: {stats['links']}\n")
-            f.write(f"  Общий размер: {stats['total_size']:,} байт ({stats['total_size'] / 1024 / 1024:.2f} MB)\n")
-            f.write(f"\n{'='*80}\n\n")
-            
-            def write_tree(items, prefix="", f=f):
-                for i, item in enumerate(items):
-                    is_last = i == len(items) - 1
-                    current_prefix = "└── " if is_last else "├── "
-                    f.write(f"{prefix}{current_prefix}{item['name']}")
-                    
-                    if item.get('type') == 'FILE' and item.get('size'):
-                        f.write(f" ({item['size']:,} bytes)")
-                    elif item.get('type') == 'LINK':
-                        f.write(f" -> {item.get('link_target', '?')}")
-                    
-                    f.write(f"\n")
-                    
-                    if item.get('children'):
-                        next_prefix = prefix + ("    " if is_last else "│   ")
-                        write_tree(item['children'], next_prefix, f)
-            
-            write_tree(result['items'])
-        
-        print(f"[DEBUG] [OK] Информация о содержимом бинарника сохранена:")
-        print(f"[DEBUG]   JSON: {output_file}")
-        print(f"[DEBUG]   TXT: {txt_file}")
-    except Exception as e:
-        print(f"[DEBUG] Ошибка сохранения информации о бинарнике: {e}")
 
-# КРИТИЧНО: Функция для явной загрузки библиотек Tcl/Tk из _MEIPASS
-# Вынесена на уровень модуля для доступа из AutomationGUI.__init__
 def _load_tcl_tk_libraries():
+    # КРИТИЧНО: Функция для явной загрузки библиотек Tcl/Tk из _MEIPASS
+    # Вынесена на уровень модуля для доступа из AutomationGUI.__init__
     """Явная загрузка библиотек Tcl/Tk из _MEIPASS перед импортом tkinter
     Находит все .so библиотеки, загружает их через ctypes с RTLD_GLOBAL,
     и устанавливает переменные окружения TCL_LIBRARY и TK_LIBRARY
@@ -30056,13 +30203,12 @@ def _load_tcl_tk_libraries():
         import traceback
         traceback.print_exc()
 
-
 if __name__ == '__main__':
-# ═══════════════════════════════════════════════════════════════════════
-# ГЛАВНАЯ ТОЧКА ВХОДА 
-# ЭТАП 0: ПЕРЕИМЕНОВАНИЕ БИНАРНИКА (ПЕРВОЕ И ОБЯЗАТЕЛЬНОЕ)
-# АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
-# ═══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
+    # ГЛАВНАЯ ТОЧКА ВХОДА 
+    # ЭТАП 0: ПЕРЕИМЕНОВАНИЕ БИНАРНИКА (ПЕРВОЕ И ОБЯЗАТЕЛЬНОЕ)
+    # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
+    # ═══════════════════════════════════════════════════════════════════════
     # Очистка скрипта-обертки обновления (если остался от предыдущего запуска)
     cleanup_update_launcher_script()
     
@@ -30108,35 +30254,47 @@ if __name__ == '__main__':
             # Запускаем бинарник через sudo как полностью независимый процесс
             print(f"[INFO] Запуск бинарника через sudo...")
             
-            # Формируем shell команду: nohup sudo <бинарник> <аргументы> &
-            # nohup гарантирует, что процесс продолжит работу после закрытия родителя
-            # & запускает в фоне, sudo сразу завершится после запуска бинарника
-            cmd_parts = [shlex.quote(arg) for arg in sudo_args]
-            cmd = f"nohup {' '.join(cmd_parts)} > /dev/null 2>&1 &"
+            # Проверяем, есть ли --console в аргументах
+            is_console_mode = '--console' in sys.argv
             
-            print(f"[INFO] Команда: {cmd}")
-            
-            try:
-                # Запускаем через shell, чтобы sudo сразу завершился
-                subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    start_new_session=True,  # Новая сессия - независима от родителя
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
+            if is_console_mode:
+                # В консольном режиме запускаем синхронно, заменяя текущий процесс
+                # чтобы вывод шёл в текущий терминал
+                print(f"[INFO] Команда: {' '.join(sudo_args)}")
+                print(f"[INFO] Перезапуск с правами root...")
+                # Заменяем текущий процесс - вывод будет в текущем терминале
+                os.execvpe('sudo', sudo_args, os.environ)
+            else:
+                # В GUI режиме запускаем в фоне через nohup
+                # Формируем shell команду: nohup sudo <бинарник> <аргументы> &
+                # nohup гарантирует, что процесс продолжит работу после закрытия родителя
+                # & запускает в фоне, sudo сразу завершится после запуска бинарника
+                cmd_parts = [shlex.quote(arg) for arg in sudo_args]
+                cmd = f"nohup {' '.join(cmd_parts)} > /dev/null 2>&1 &"
                 
-                print(f"[INFO] Бинарник запущен через sudo")
-                print(f"[INFO] Процесс пользователя завершается (PID: {os.getpid()})")
+                print(f"[INFO] Команда: {cmd}")
                 
-                # Режим самоубийцы: немедленное завершение без cleanup
-                os._exit(0)
+                try:
+                    subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        start_new_session=True,  # Новая сессия - независима от родителя
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    
+                    print(f"[INFO] Бинарник запущен через sudo")
+                    print(f"[INFO] Процесс пользователя завершается (PID: {os.getpid()})")
+                    
+                    # Режим самоубийцы: немедленное завершение без cleanup
+                    os._exit(0)
+                    
+                except Exception as e:
+                    print(f"[ERROR] Не удалось запустить sudo: {e}")
+                    traceback.print_exc()
+                    sys.exit(1)
                 
-            except Exception as e:
-                print(f"[ERROR] Не удалось запустить sudo: {e}")
-                traceback.print_exc()
-                sys.exit(1)
         except Exception as e:
             print(f"[ERROR] Не удалось получить права root: {e}")
             traceback.print_exc()
@@ -30229,53 +30387,6 @@ if __name__ == '__main__':
                 print(f"[ERROR] КРИТИЧНО: sys._MEIPASS указывает на несуществующую директорию: {base_path}")
                 print(f"[ERROR] Это означает, что PyInstaller создал директорию в другом процессе и она была удалена")
                 # Не делаем return - продолжаем выполнение, возможно директория появится
-            
-            # КРИТИЧНО: Сохраняем полную информацию о содержимом бинарника
-            # Вызываем ВСЕГДА, даже если директория не существует - функция сама сохранит ошибку
-            # Сохраняем файл рядом с бинарником (в той же директории, где находится исполняемый файл)
-            try:
-                if getattr(sys, 'frozen', False):
-                    # Для frozen приложения - директория, где находится бинарник
-                    if hasattr(sys, 'executable') and sys.executable:
-                        binary_dir = os.path.dirname(os.path.abspath(sys.executable))
-                    else:
-                        # Используем глобальную переменную START_DIR
-                        binary_dir = START_DIR if START_DIR else _get_start_dir()
-                else:
-                    # Для скрипта - директория скрипта
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    binary_dir = script_dir
-                
-                if binary_dir and os.path.exists(binary_dir):
-                    binary_info_file = os.path.join(binary_dir, "binary_contents.json")
-                    print(f"[DEBUG] Сохранение информации о бинарнике в: {binary_info_file}")
-                    _scan_binary_contents(base_path, binary_info_file)
-                else:
-                    print(f"[DEBUG] Директория бинарника не существует: {binary_dir}")
-            except Exception as e:
-                print(f"[DEBUG] Ошибка определения пути для сохранения информации о бинарнике: {e}")
-            
-            # ОТЛАДКА: Выводим информацию о содержимом бинарника
-            print(f"[DEBUG] PyInstaller бинарник: sys._MEIPASS = {base_path}")
-            if os.path.exists(base_path):
-                print(f"[DEBUG] Содержимое sys._MEIPASS:")
-                try:
-                    items = os.listdir(base_path)
-                    for item in sorted(items):
-                        item_path = os.path.join(base_path, item)
-                        item_type = "DIR" if os.path.isdir(item_path) else "FILE"
-                        item_size = ""
-                        if os.path.isfile(item_path):
-                            try:
-                                size = os.path.getsize(item_path)
-                                item_size = f" ({size} bytes)"
-                            except:
-                                pass
-                        print(f"[DEBUG]   {item_type}: {item}{item_size}")
-                except Exception as e:
-                    print(f"[DEBUG] Ошибка чтения sys._MEIPASS: {e}")
-            else:
-                print(f"[DEBUG] sys._MEIPASS не существует: {base_path}")
             
             # КРИТИЧНО: Проверяем наличие всех необходимых .so библиотек
             # В frozen приложении ctypes.CDLL не работает, полагаемся на LD_LIBRARY_PATH
@@ -30516,45 +30627,209 @@ if __name__ == '__main__':
         print(f"[INFO] FSA-AstraInstall {APP_VERSION}")
         print("[INFO] Проверка обновлений...")
         try:
-            # Механизм повторных попыток при ошибках авторизации SMB (до 3 попыток)
-            max_auth_attempts = 3
-            auth_attempt = 0
             smb_user = None
             smb_password = None
+            max_auth_attempts = 3
             
-            while auth_attempt < max_auth_attempts:
-                try:
-                    updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
-                    sources = updater.check_for_updates()
-                    # Находим первый источник с обновлением
-                    update_sources = [s for s in sources if s.get('needs_update', False) and s.get('available', False)]
-                    break  # Успешно, выходим из цикла попыток
-                except PermissionError as e:
-                    if "авторизации SMB" in str(e) or "Ошибка авторизации SMB" in str(e):
-                        auth_attempt += 1
-                        if auth_attempt < max_auth_attempts:
-                            print(f"\n[WARNING] Ошибка авторизации SMB (попытка {auth_attempt}/{max_auth_attempts})")
-                            if updater._request_credentials_console(max_attempts=1):
-                                smb_user = updater.smb_user
-                                smb_password = updater.smb_password
-                                print(f"[INFO] Повторная попытка подключения с новыми учетными данными...")
-                                continue
-                            else:
-                                print("[ERROR] Не удалось получить учетные данные")
+            # Получаем список источников из конфигурации, отсортированных по приоритету
+            enabled_sources = [s for s in UPDATE_SOURCES_CONFIG if s.get('enabled', True)]
+            enabled_sources.sort(key=lambda x: x.get('priority', 999))
+            
+            # Получаем размер текущего бинарника
+            try:
+                local_size = os.path.getsize(sys.executable)
+                local_version = APP_VERSION
+            except Exception:
+                local_size = 0
+                local_version = APP_VERSION
+            
+            sources_info = []
+            update_sources = []
+            first_smb_processed = False  # Флаг для отслеживания первого SMB источника
+            
+            # Проверяем каждый источник по очереди
+            for source_config in enabled_sources:
+                source_id = source_config.get('id', 'unknown')
+                source_name = source_config.get('name', 'Неизвестный источник')
+                source_type = source_config.get('type', 'unknown')
+                
+                print(f"[INFO] Проверка источника: {source_name}...")
+                
+                # Для SMB источников - упрощенная логика: запрашиваем пароль только для первого
+                if source_type == 'smb':
+                    if not first_smb_processed:
+                        # Первый SMB источник - запрашиваем пароль до 3 раз
+                        first_smb_processed = True
+                        auth_success = False
+                        for auth_attempt in range(1, max_auth_attempts + 1):
+                            try:
+                                # Создаем/обновляем updater с учетными данными
+                                updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                                
+                                # Проверяем только этот источник
+                                source_info = updater._check_source(source_config, local_size, local_version)
+                                sources_info.append(source_info)
+                                auth_success = True
+                                
+                                # Сохраняем успешные учетные данные для следующих источников
+                                if source_info.get('available'):
+                                    smb_user = updater.smb_user
+                                    smb_password = updater.smb_password
+                                    print(f"[OK] {source_name} доступен")
                                 break
-                        else:
-                            print(f"[ERROR] Не удалось подключиться к SMB после {max_auth_attempts} попыток")
-                            break
+                                
+                            except PermissionError as e:
+                                # Получаем название источника из исключения или из конфигурации
+                                error_source_name = getattr(e, 'source_name', source_name)
+                                
+                                if auth_attempt < max_auth_attempts:
+                                    # Запрашиваем пароль для первого SMB источника
+                                    print(f"\n[WARNING] Ошибка авторизации для {error_source_name} (попытка {auth_attempt}/{max_auth_attempts})")
+                                    if updater._request_credentials_console(error_source_name, auth_attempt, max_auth_attempts):
+                                        smb_user = updater.smb_user
+                                        smb_password = updater.smb_password
+                                        print(f"[INFO] Повторная попытка подключения с новыми учетными данными...")
+                                        continue  # Повторяем попытку с новыми данными
+                                    else:
+                                        # Отменено пользователем - помечаем как недоступный и используем пустые данные для остальных
+                                        print(f"[ERROR] Отменено для {error_source_name}")
+                                        source_info = {
+                                            'id': source_id,
+                                            'name': source_name,
+                                            'description': get_source_description(source_config),
+                                            'available': False,
+                                            'version': None,
+                                            'file_size': None,
+                                            'needs_update': False,
+                                            'update_reason': 'none',
+                                            'updater': None,
+                                            'source_params': source_config.get('params', {}),
+                                            'source_type': source_type,
+                                            'error': 'Отменено пользователем'
+                                        }
+                                        sources_info.append(source_info)
+                                        smb_user = None
+                                        smb_password = None  # Сбрасываем для остальных источников
+                                        break
+                                else:
+                                    # Исчерпаны попытки
+                                    print(f"[ERROR] Исчерпаны попытки авторизации для {error_source_name}")
+                                    source_info = {
+                                        'id': source_id,
+                                        'name': source_name,
+                                        'description': get_source_description(source_config),
+                                        'available': False,
+                                        'version': None,
+                                        'file_size': None,
+                                        'needs_update': False,
+                                        'update_reason': 'none',
+                                        'updater': None,
+                                        'source_params': source_config.get('params', {}),
+                                        'source_type': source_type,
+                                        'error': f'Исчерпаны попытки ({max_auth_attempts})'
+                                    }
+                                    sources_info.append(source_info)
+                                    smb_user = None
+                                    smb_password = None  # Сбрасываем для остальных источников
+                                    break
+                            except Exception as e:
+                                # Другие ошибки
+                                print(f"[ERROR] Ошибка проверки {source_name}: {e}")
+                                source_info = {
+                                    'id': source_id,
+                                    'name': source_name,
+                                    'description': get_source_description(source_config),
+                                    'available': False,
+                                    'version': None,
+                                    'file_size': None,
+                                    'needs_update': False,
+                                    'update_reason': 'none',
+                                    'updater': None,
+                                    'source_params': source_config.get('params', {}),
+                                    'source_type': source_type,
+                                    'error': str(e)
+                                }
+                                sources_info.append(source_info)
+                                break
                     else:
-                        # Другая ошибка PermissionError - пробрасываем дальше
-                        raise
-                except Exception as e:
-                    print(f"[WARNING] Ошибка при проверке обновлений: {e}")
-                    break
+                        # Последующие SMB источники - используем сохраненные данные, не запрашиваем новый пароль
+                        try:
+                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                            source_info = updater._check_source(source_config, local_size, local_version)
+                            sources_info.append(source_info)
+                            
+                            if source_info.get('available'):
+                                print(f"[OK] {source_name} доступен")
+                            else:
+                                print(f"[WARNING] {source_name} недоступен")
+                        except PermissionError:
+                            # Ошибка аутентификации - помечаем как недоступный, не запрашиваем новый пароль
+                            print(f"[WARNING] {source_name} недоступен (ошибка аутентификации)")
+                            source_info = {
+                                'id': source_id,
+                                'name': source_name,
+                                'description': get_source_description(source_config),
+                                'available': False,
+                                'version': None,
+                                'file_size': None,
+                                'needs_update': False,
+                                'update_reason': 'none',
+                                'updater': None,
+                                'source_params': source_config.get('params', {}),
+                                'source_type': source_type,
+                                'error': 'Ошибка аутентификации'
+                            }
+                            sources_info.append(source_info)
+                        except Exception as e:
+                            # Другие ошибки
+                            print(f"[ERROR] Ошибка проверки {source_name}: {e}")
+                            source_info = {
+                                'id': source_id,
+                                'name': source_name,
+                                'description': get_source_description(source_config),
+                                'available': False,
+                                'version': None,
+                                'file_size': None,
+                                'needs_update': False,
+                                'update_reason': 'none',
+                                'updater': None,
+                                'source_params': source_config.get('params', {}),
+                                'source_type': source_type,
+                                'error': str(e)
+                            }
+                            sources_info.append(source_info)
+                else:
+                    # Для не-SMB источников - обычная проверка
+                    try:
+                        updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
+                        source_info = updater._check_source(source_config, local_size, local_version)
+                        sources_info.append(source_info)
+                        
+                        if source_info.get('available'):
+                            print(f"[OK] {source_name} доступен")
+                    except Exception as e:
+                        # Обработка других ошибок
+                        print(f"[ERROR] Ошибка проверки {source_name}: {e}")
+                        source_info = {
+                            'id': source_id,
+                            'name': source_name,
+                            'description': get_source_description(source_config),
+                            'available': False,
+                            'version': None,
+                            'file_size': None,
+                            'needs_update': False,
+                            'update_reason': 'none',
+                            'updater': None,
+                            'source_params': source_config.get('params', {}),
+                            'source_type': source_type,
+                            'error': str(e)
+                        }
+                        sources_info.append(source_info)
             
-            if auth_attempt >= max_auth_attempts:
-                print("[ERROR] Превышено количество попыток авторизации")
-            elif update_sources:
+            # Находим источники с обновлениями
+            update_sources = [s for s in sources_info if s.get('needs_update', False) and s.get('available', False)]
+            
+            if update_sources:
                 selected_source = update_sources[0]  # Используем первый источник с обновлением
                 new_ver = selected_source.get('version', 'неизвестная')
                 print("\n" + "=" * 60)
