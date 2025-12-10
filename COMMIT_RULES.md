@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.3.173 (2025.12.10)
+# Версия проекта: V3.4.174 (2025.12.11)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -233,6 +233,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** для поиска измененных файлов с версиями
    - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"`
+   - **КРИТИЧНО: Добавить Version.txt/version.txt в индекс, если он был изменен** (обновлен APP_VERSION в шаге 11)
    - ЗАПРЕЩЕНО использовать `git add .`
    - Выполнить `git status --short` для проверки
    - Если нет файлов в индексе - остановиться с ошибкой
@@ -867,6 +868,12 @@ git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
     [ -f "$f" ] && \
     ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
         (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
+done
+# КРИТИЧНО: Добавляем Version.txt/version.txt если он был изменен (обновлен APP_VERSION в шаге 11)
+for version_file in Version.txt version.txt; do
+    [ -f "$version_file" ] && \
+    ! git diff --quiet HEAD -- "$version_file" 2>/dev/null && \
+        (git add "$version_file" 2>/dev/null && echo "✓ Добавлен измененный: $version_file" || (echo "✗ ОШИБКА: Не удалось добавить $version_file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
 done
 [ -f "$ADD_ERROR_FILE" ] && [ -s "$ADD_ERROR_FILE" ] && ADD_ERROR_COUNT=$(wc -l < "$ADD_ERROR_FILE") && rm "$ADD_ERROR_FILE" && stop_on_error "Не удалось добавить $ADD_ERROR_COUNT файл(ов) в индекс. Проверьте права доступа и состояние файлов." || rm -f "$ADD_ERROR_FILE"
 echo "=== Итоговый статус индекса ==="

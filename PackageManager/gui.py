@@ -3,13 +3,13 @@
 """
 Инструмент управления пакетами для FSA-AstraInstall
 GUI инструмент для формирования архивов и структуры компонентов
-Версия: V3.3.173 (2025.12.03)
+Версия: V3.4.174 (2025.12.11)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
 
 # Версия приложения
-APP_VERSION = "V3.3.173 (2025.12.03)"
+APP_VERSION = "V[0-9][0-9]*.[0-9][0-9]*.[0-9][0-9]* (2025.12.11)"
 
 import os
 import sys
@@ -2051,7 +2051,7 @@ class PackageManagerGUI:
                 else:
                     display_type = '📦 Архив'
             elif name in ['.component.json', '.bundle.json']:
-                display_type = '⚙️ Конфигурация'
+                display_type = '⚙ Конфигурация'
             else:
                 display_type = '📄 Файл'
             
