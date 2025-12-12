@@ -1,6 +1,6 @@
 #!/bin/bash
 # Скрипт сборки бинарного файла в Docker контейнере
-# Версия: V3.4.174 (2025.12.08)
+# Версия: V3.4.175 (2025.12.13)
 # Компания: ООО "НПА Вира-Реалтайм"
 # Разработчик: @FoksSegr & AI Assistant (@LLM)
 
@@ -337,7 +337,11 @@ eval pyinstaller --onefile --console \
     --clean \
     --noconfirm \
     --hidden-import psutil \
+    --hidden-import pystray \
+    --hidden-import PIL \
     --collect-all psutil \
+    --collect-all pystray \
+    --collect-all pillow \
     --collect-all tkinter \
     $ADD_DATA_PARAMS \
     "${INPUT_FILE}"

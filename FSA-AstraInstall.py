@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.174 (2025.12.11)
+Версия: V3.4.175 (2025.12.13)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.174 (2025.12.11)"
+APP_VERSION = "V3.4.175 (2025.12.13)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -53,7 +53,7 @@ import urllib.parse
 # from импорты
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Callable
 from datetime import datetime as dt
 
 # Опциональные библиотеки (с проверкой доступности)
@@ -1546,8 +1546,8 @@ def get_component_data(component_id):
 def extract_archive(
     archive_path: str,
     extract_to: str,
-    extract_items: dict = None,
-    progress_callback: callable = None
+    extract_items: Optional[dict] = None,
+    progress_callback: Optional[Callable] = None
 ) -> dict:
     """
     Универсальная функция распаковки архивов для всех компонентов проекта
@@ -2407,13 +2407,17 @@ def track_class_activity(class_name):
     """Декоратор для отслеживания активности методов класса"""
     def decorator(func):
         def wrapper(*args, **kwargs):
-            _global_activity_tracker.track_operation(class_name, func.__name__, 'start')
+            # КРИТИЧНО: Проверяем доступность трекера перед использованием
+            if _global_activity_tracker is not None:
+                _global_activity_tracker.track_operation(class_name, func.__name__, 'start')
             try:
                 result = func(*args, **kwargs)
-                _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
+                if _global_activity_tracker is not None:
+                    _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
                 return result
             except Exception as e:
-                _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
+                if _global_activity_tracker is not None:
+                    _global_activity_tracker.track_operation(class_name, func.__name__, 'end')
                 raise
         return wrapper
     return decorator
@@ -3238,6 +3242,8 @@ class ComponentHandler(ABC):
                 for file_key, file_path in files.items():
                     if file_path and os.path.exists(file_path):
                         # Определяем имя файла для копирования
+                        # КРИТИЧНО: Инициализируем dest_name по умолчанию
+                        dest_name = os.path.basename(file_path)  # Значение по умолчанию
                         if file_key == 'default':
                             dest_name = config.get('download_filename') or os.path.basename(file_path)
                         elif file_key in ['x86', 'x64', '32', '64']:
@@ -3249,8 +3255,6 @@ class ComponentHandler(ABC):
                                 dest_name = config.get('download_filename_32') or os.path.basename(file_path)
                             elif file_key == '64':
                                 dest_name = config.get('download_filename_64') or os.path.basename(file_path)
-                        else:
-                            dest_name = os.path.basename(file_path)
                         
                         dest_path = os.path.join(final_target_dir, dest_name)
                         
@@ -3335,21 +3339,22 @@ class ComponentHandler(ABC):
             return running_processes
         
         # Используем psutil для более точной проверки
-        try:
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    cmdline = ' '.join(proc.info['cmdline'] or [])
-                    name = proc.info['name'] or ''
-                    
-                    # Проверяем процессы wine (wine, wineserver, wineboot, msiexec, установщики .NET и т.д.)
-                    if 'wine' in name.lower() or 'wine' in cmdline.lower():
-                        running_processes.append((proc.info['pid'], name, cmdline))
-                except (psutil.NoProcess, psutil.AccessDenied):
-                    continue
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        if PSUTIL_AVAILABLE:
+            try:
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        cmdline = ' '.join(proc.info['cmdline'] or [])
+                        name = proc.info['name'] or ''
+                        
+                        # Проверяем процессы wine (wine, wineserver, wineboot, msiexec, установщики .NET и т.д.)
+                        if 'wine' in name.lower() or 'wine' in cmdline.lower():
+                            running_processes.append((proc.info['pid'], name, cmdline))
+                    except (psutil.NoProcess, psutil.AccessDenied):
+                        continue
+                    except Exception:
+                        continue
+            except Exception:
+                pass
         
         return running_processes
     
@@ -3959,7 +3964,7 @@ class ComponentHandler(ABC):
             traceback.print_exc()
             self._update_status(component_id, 'error')
             return False
-
+    
     @abstractmethod
     def uninstall(self, component_id: str, config: dict) -> bool:
         """
@@ -4095,8 +4100,8 @@ class ComponentHandler(ABC):
             # Получаем source_dir из конфигурации компонента
             try:
                 component_config = get_component_data(component_id)
-                if component_config and component_config.get('source_dir'):
-                    source_dir = component_config.get('source_dir')
+                source_dir = component_config.get('source_dir') if component_config else None
+                if source_dir:
                     archive_dir = os.path.join(astrapack_dir, source_dir)
                     used_dir_name = source_dir
                     print(f"[INSTALL LOG] Используем source_dir из конфигурации: {archive_dir}", level='INFO')
@@ -4157,7 +4162,7 @@ class ComponentHandler(ABC):
             print(f"[INSTALL LOG] [ERROR] .tar.gz файлы не найдены в {archive_dir}", level='ERROR')
         
         return None
-
+    
     def _get_component_extract_info(self, config, component_id):
         """
         Определяет что нужно извлечь из конфигурации компонента
@@ -4267,13 +4272,16 @@ class ComponentHandler(ABC):
                 # Определяем путь к папке в архиве
                 try:
                     full_config = get_component_data(component_id)
-                    if full_config and full_config.get('download_path'):
-                        folder_path = full_config.get('download_path')
+                    download_path = full_config.get('download_path') if full_config else None
+                    if download_path:
+                        folder_path = download_path
                     else:
                         folder_path = f'winetricks-cache/{component_id}/{folder_name}'
                 except Exception:
                     folder_path = f'winetricks-cache/{component_id}/{folder_name}'
                 
+                # КРИТИЧНО: folder_path теперь гарантированно не None
+                assert folder_path is not None, "folder_path должен быть определен"
                 # Извлекаем папку напрямую в component_cache_dir
                 # Используем только имя папки (последний компонент пути)
                 extract_items = {'mode': 'folder', 'path': os.path.basename(folder_path)}
@@ -4356,7 +4364,7 @@ class WinePackageHandler(ComponentHandler):
     def get_category(self) -> str:
         return 'wine_packages'
     
-    def _get_wine_dir_from_config(self, component_id: str, config: dict) -> str:
+    def _get_wine_dir_from_config(self, component_id: str, config: dict) -> Optional[str]:
         """
         Извлекает базовую директорию Wine из конфигурации компонента
         
@@ -4365,7 +4373,7 @@ class WinePackageHandler(ComponentHandler):
             config: Конфигурация компонента
             
         Returns:
-            str: Путь к директории Wine или None
+            Optional[str]: Путь к директории Wine или None
         """
         # Пробуем получить путь из поля path
         path_field = config.get('path')
@@ -4385,7 +4393,7 @@ class WinePackageHandler(ComponentHandler):
         
         return None
     
-    def _get_package_name_from_config(self, component_id: str, config: dict) -> str:
+    def _get_package_name_from_config(self, component_id: str, config: dict) -> Optional[str]:
         """
         Извлекает имя пакета из конфигурации компонента (универсально, использует get_component_field)
         
@@ -4394,7 +4402,7 @@ class WinePackageHandler(ComponentHandler):
             config: Конфигурация компонента (не используется, для совместимости)
             
         Returns:
-            str: Имя пакета или None
+            Optional[str]: Имя пакета или None
         """
         # КРИТИЧНО: Используем универсальную функцию get_component_field
         # Поле package_name должно быть указано в конфигурации компонента
@@ -4434,8 +4442,8 @@ class WinePackageHandler(ComponentHandler):
         
         # Если приоритет не указан, определяем автоматически на основе доступных источников
         if source_priority is None:
-            if config.get('package_file'):
-                package_file = config.get('package_file')
+            package_file = config.get('package_file')
+            if package_file:
                 # Если package_file указывает на архив - приоритет архива
                 if '.tar.gz/' in package_file or '.tar/' in package_file:
                     source_priority = 'archive'
@@ -5708,11 +5716,11 @@ class WineEnvironmentHandler(ComponentHandler):
         return os.path.dirname(os.path.abspath(__file__))
     
     def create_wineprefix_template(self, component_id: str, config: dict, 
-                                    archive_name: str = None, 
-                                    output_dir: str = None,
+                                    archive_name: Optional[str] = None, 
+                                    output_dir: Optional[str] = None,
                                     clean_temp: bool = True,
                                     clean_cache: bool = False,
-                                    gui_instance=None) -> str:
+                                    gui_instance=None) -> Optional[str]:
         """
         Создать архив образа Wine-префикса (самый быстрый метод через системный tar)
         
@@ -5801,12 +5809,16 @@ class WineEnvironmentHandler(ComponentHandler):
                 script_dir = self._get_script_dir()
                 output_dir = os.path.join(script_dir, 'WinePrefixes')
         
+        # КРИТИЧНО: output_dir теперь гарантированно не None
+        assert output_dir is not None, "output_dir должен быть определен"
         os.makedirs(output_dir, exist_ok=True)
         
         # 5. Генерируем имя архива
         if not archive_name:
             archive_name = f"{component_id}_template.tar.gz"
         
+        # КРИТИЧНО: archive_name теперь гарантированно не None
+        assert archive_name is not None, "archive_name должен быть определен"
         archive_path = os.path.join(output_dir, archive_name)
         
         if os.path.exists(archive_path):
@@ -6773,6 +6785,30 @@ class AptPackageHandler(ComponentHandler):
             # Если command_name не строка и не список, конвертируем в строку
             packages = [str(command_name)]
         
+        # КРИТИЧНО: Проверяем и исправляем состояние dpkg перед установкой
+        # Если есть пакеты в состоянии "нуждается в переустановке", apt не сможет установить ничего
+        print(f"Проверка состояния dpkg перед установкой...", level='INFO')
+        
+        # Проверяем состояние через apt --fix-broken install
+        # Это исправит состояние пакетов вроде wine-9.0, которые блокируют все операции apt
+        fix_broken_code = self._run_process(
+            ['apt', '--fix-broken', 'install', '-y'],
+            process_type="install",
+            channels=["file", "terminal"]
+        )
+        if fix_broken_code == 0:
+            print(f"Состояние пакетов исправлено через apt --fix-broken install", level='INFO')
+        else:
+            # Если apt --fix-broken не помог, пробуем dpkg --configure -a
+            print(f"apt --fix-broken не помог. Пробуем dpkg --configure -a...", level='INFO')
+            configure_code = self._run_process(
+                ['dpkg', '--configure', '-a'],
+                process_type="install",
+                channels=["file", "terminal"]
+            )
+            if configure_code == 0:
+                print(f"Состояние пакетов исправлено через dpkg --configure -a", level='INFO')
+        
         # Используем UniversalProcessRunner для установки через apt
         return_code = self._run_process(
             ['apt', 'install', '-y'] + packages,
@@ -6896,7 +6932,45 @@ class AptPackageHandler(ComponentHandler):
                 self._update_status(component_id, 'error')
                 return False
         else:
-            print(f"Удаление пакета {component_name}", level='ERROR')
+            # Обнаружена ошибка при удалении. Исправляем состояние dpkg и пробуем снова
+            print(f"Обнаружена ошибка при удалении. Исправляем состояние dpkg...", level='INFO')
+            
+            # Исправляем состояние через apt --fix-broken install
+            fix_broken_code = self._run_process(
+                ['apt', '--fix-broken', 'install', '-y'],
+                process_type="install",
+                channels=["file", "terminal"]
+            )
+            if fix_broken_code == 0:
+                print(f"Состояние пакетов исправлено через apt --fix-broken install", level='INFO')
+            else:
+                # Если apt --fix-broken не помог, пробуем dpkg --configure -a
+                print(f"apt --fix-broken не помог. Пробуем dpkg --configure -a...", level='INFO')
+                configure_code = self._run_process(
+                    ['dpkg', '--configure', '-a'],
+                    process_type="remove",
+                    channels=["file", "terminal"]
+                )
+                if configure_code == 0:
+                    print(f"Состояние пакетов исправлено через dpkg --configure -a", level='INFO')
+            
+            # Повторная попытка удаления после исправления состояния
+            print(f"Повторная попытка удаления пакетов...", level='INFO')
+            return_code = self._run_process(
+                ['apt-get', 'purge', '-y'] + packages,
+                process_type="remove",
+                channels=["file", "terminal"]
+            )
+            
+            if return_code == 0:
+                print(f"Пакет {component_name} удален успешно после исправления состояния")
+                os.sync()
+                actual_status = self.check_status(component_id, config)
+                if not actual_status:
+                    self._update_status(component_id, 'missing')
+                    return True
+            
+            print(f"Удаление пакета {component_name} не удалось", level='ERROR')
             # ОБНОВЛЯЕМ СТАТУС: устанавливаем 'error'
             self._update_status(component_id, 'error')
             return False
@@ -7014,7 +7088,7 @@ class WineApplicationHandler(ComponentHandler):
             self._update_status(component_id, 'error')
             return False
     
-    def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: float = None, progress_range: tuple = None) -> bool:
+    def _copy_preinstalled_config(self, component_id: str, config: dict, install_start_time: Optional[float] = None, progress_range: Optional[tuple] = None) -> bool:
         """
         Копирование предустановленной конфигурации Wine префикса
         Поддерживает приоритеты источников: 'directory' (папка) или 'archive' (архив)
@@ -7305,10 +7379,10 @@ class WineApplicationHandler(ComponentHandler):
             print(f"[INSTALL LOG] Используем cp для копирования", level='INFO')
             return self._copy_with_cp(directory_path, wineprefix_path, 
                                      copy_uid, copy_gid, component_id, config, install_start_time)
-
+    
     def _copy_from_archive_fast(self, archive_path: str, source_dir: str, component_id: str,
                                config: dict, install_start_time: float,
-                               progress_range: tuple = None) -> bool:
+                               progress_range: Optional[tuple] = None) -> bool:
         """
         Быстрая распаковка архива через универсальную функцию extract_archive()
         
@@ -7464,7 +7538,7 @@ class WineApplicationHandler(ComponentHandler):
         )
         
         return True
-
+    
     def _copy_with_rsync(self, src_dir: str, dst_dir: str, uid: int, gid: int,
                         component_id: str, config: dict, start_time: float) -> bool:
         """
@@ -8289,7 +8363,7 @@ class ApplicationHandler(ComponentHandler):
         
         return status
     
-    def _find_installer_file(self, component_id: str, config: dict) -> str:
+    def _find_installer_file(self, component_id: str, config: dict) -> Optional[str]:
         """
         Универсальный поиск установщика с приоритетами источников
         
@@ -9820,6 +9894,11 @@ class UniversalProcessRunner(object):
             self.current_update_phase = "autoremove"
             self.update_phase_start_stage = "cleaning"
         
+        # КРИТИЧНО: Инициализируем переменные перед try блоком
+        process_name = "unknown"
+        process = None
+        start_time = None
+        
         try:
             # Логируем начало процесса
             print("Начало выполнения: %s" % cmd_str, "INFO", channels)
@@ -10035,7 +10114,7 @@ class UniversalProcessRunner(object):
                     # Логируем активность процесса (опционально, для отладки)
                     if timeout and (current_time - last_status_log) > 30:
                         # Логируем статус активности каждые 30 секунд
-                        elapsed = current_time - start_time
+                        elapsed = current_time - start_time if start_time else 0
                         time_since_activity = current_time - last_activity_time
                         remaining_timeout = (max_total_timeout - elapsed) if max_total_timeout else None
                         
@@ -10127,20 +10206,20 @@ class UniversalProcessRunner(object):
             
         except subprocess.TimeoutExpired:
             elapsed_total = time.time() - start_time if start_time else 0
-            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name if 'process_name' in locals() else 'unknown'} | Статус: ТАЙМАУТ | Время работы: {int(elapsed_total)} сек | Завершаем принудительно", "ERROR", channels)
+            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ТАЙМАУТ | Время работы: {int(elapsed_total)} сек | Завершаем принудительно", "ERROR", channels)
             print("Процесс превысил таймаут", "ERROR", channels)
-            if 'process' in locals():
+            if process is not None:
                 process.kill()
             return -1
         except Exception as e:
             elapsed_total = time.time() - start_time if start_time else 0
-            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name if 'process_name' in locals() else 'unknown'} | Статус: ОШИБКА | Время работы: {int(elapsed_total)} сек | Ошибка: {str(e)}", "ERROR", channels)
+            print(f"[КОНТРОЛЬ ПРОЦЕССА] Процесс: {process_name} | Статус: ОШИБКА | Время работы: {int(elapsed_total)} сек | Ошибка: {str(e)}", "ERROR", channels)
             print("Ошибка выполнения процесса: %s" % str(e), "ERROR", channels)
             return -1
         finally:
             self.is_running = False
             # Удаляем процесс из списка отслеживаемых после завершения
-            if 'process' in locals() and process.pid in self.running_processes:
+            if process is not None and process.pid in self.running_processes:
                 del self.running_processes[process.pid]
     
     def add_output(self, message, level="INFO", channels=[], bypass_filter=False):
@@ -11934,7 +12013,7 @@ class ComponentStatusManager(object):
             bool: True если все компоненты установлены
         """
         return len(self.get_missing_components()) == 0
-    
+
 class ComponentInstaller(object):
 # ============================================================================
 # КЛАСС КООРДИНАЦИИ УСТАНОВКИ/УДАЛЕНИЯ КОМПОНЕНТОВ
@@ -12926,6 +13005,10 @@ class ToolTip:
         if self.tooltip_window or not self.text:
             return
         
+        # КРИТИЧНО: Проверяем доступность tkinter перед использованием
+        if tk is None:
+            return  # Не показываем подсказку если tkinter недоступен
+        
         try:
             # Получаем координаты виджета с обновлением
             self.widget.update_idletasks()
@@ -13030,8 +13113,64 @@ class AutomationGUI(object):
         
         # КРИТИЧНО: Библиотеки Tcl/Tk уже загружены перед импортом tkinter
         # Дополнительная загрузка не требуется
-        self.root = tk.Tk()
-        self.root.title(f"{APP_NAME} {APP_VERSION}")
+        
+        # Проверяем наличие X11 дисплея
+        display = os.environ.get('DISPLAY')
+        if not display:
+            error_msg = "X11 дисплей недоступен (переменная DISPLAY не установлена).\n"
+            error_msg += "GUI режим требует активного X11 дисплея.\n"
+            error_msg += "Проверьте:\n"
+            error_msg += "  - Запущен ли X сервер (startx, gdm, lightdm и т.д.)\n"
+            error_msg += "  - Установлена ли переменная DISPLAY (обычно :0 или :0.0)\n"
+            error_msg += "  - Если запускаете через SSH, используйте X11 forwarding: ssh -X\n"
+            print(f"[ERROR] {error_msg}", file=sys.stderr)
+            # Пытаемся записать в лог, если логгер доступен
+            try:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    logger = globals()['_global_dual_logger']
+                    if logger._analysis_file:
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                        logger._analysis_file.flush()
+                        os.fsync(logger._analysis_file.fileno())
+            except Exception:
+                pass
+            raise RuntimeError(error_msg)
+        
+        print(f"[DEBUG] DISPLAY={display}, создаем tk.Tk()...", gui_log=True)
+        
+        # Создаем главное окно с обработкой ошибок
+        try:
+            self.root = tk.Tk()
+            self.root.title(f"{APP_NAME} {APP_VERSION}")
+            print("[DEBUG] [OK] tk.Tk() создан успешно", gui_log=True)
+        except Exception as e:
+            error_msg = f"Не удалось создать главное окно Tkinter: {e}\n"
+            error_msg += f"DISPLAY={display}\n"
+            error_msg += "Возможные причины:\n"
+            error_msg += "  - X сервер не запущен или недоступен\n"
+            error_msg += "  - Неправильная настройка DISPLAY\n"
+            error_msg += "  - Проблемы с правами доступа к X серверу (xhost +)\n"
+            print(f"[ERROR] {error_msg}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            
+            # Пытаемся записать в лог
+            try:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    logger = globals()['_global_dual_logger']
+                    if logger._analysis_file:
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] Traceback:\n")
+                        for line in traceback.format_exc().split('\n'):
+                            logger._analysis_file.write(f"[{timestamp}] [ERROR] {line}\n")
+                        logger._analysis_file.flush()
+                        os.fsync(logger._analysis_file.fileno())
+            except Exception:
+                pass
+            
+            raise RuntimeError(error_msg) from e
         
         # Установка иконки окна
         try:
@@ -13159,7 +13298,38 @@ class AutomationGUI(object):
         sys._gui_instance = self
         
         # Создаем интерфейс
-        self.create_widgets()
+        try:
+            print("[DEBUG] Создание виджетов GUI...", gui_log=True)
+            self.create_widgets()
+            print("[DEBUG] [OK] Виджеты созданы успешно", gui_log=True)
+        except Exception as e:
+            error_msg = f"Ошибка при создании виджетов GUI: {e}\n"
+            print(f"[ERROR] {error_msg}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            
+            # Пытаемся записать в лог
+            try:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    logger = globals()['_global_dual_logger']
+                    if logger._analysis_file:
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] Traceback:\n")
+                        for line in traceback.format_exc().split('\n'):
+                            logger._analysis_file.write(f"[{timestamp}] [ERROR] {line}\n")
+                        logger._analysis_file.flush()
+                        os.fsync(logger._analysis_file.fileno())
+            except Exception:
+                pass
+            
+            # Пытаемся закрыть root, если он был создан
+            try:
+                if hasattr(self, 'root') and self.root:
+                    self.root.destroy()
+            except Exception:
+                pass
+            raise RuntimeError(error_msg) from e
         
         # КРИТИЧНО: Обновляем размеры окна после создания всех виджетов
         self.root.update_idletasks()
@@ -13195,7 +13365,7 @@ class AutomationGUI(object):
             # Автоматически обновляем статусы компонентов при запуске (чтобы при открытии вкладки были актуальные данные)
             self.root.after(2000, self._update_wine_status)  # Задержка 1.5 сек для полной инициализации GUI
             # Автоматически запускаем мониторинг файловой системы через 5 секунд после запуска GUI
-            self.root.after(5000, self._start_filesystem_monitoring)  # Задержка 5 сек для полной инициализации GUI
+            # self.root.after(5000, self._start_filesystem_monitoring)  # Задержка 5 сек для полной инициализации GUI
     
     def _component_status_callback(self, message):
         """Callback для обновления статусов компонентов из новой архитектуры"""
@@ -13494,10 +13664,10 @@ class AutomationGUI(object):
             return self._cached_install_processes  # Возвращаем кэш
         
         try:
-            # Список процессов для проверки - процессы установки обновлений Linux и компонентов
+            # Список процессов для проверки - ТОЛЬКО наши процессы установки (apt, dpkg)
+            # Не проверяем wine процессы - они могут быть запущены пользователем отдельно
             processes_to_check = [
-                'apt-get', 'apt', 'dpkg', 'aptd', 'aptd.system', 'aptd.systemd',
-                'wine', 'wineserver', 'wineboot', 'winetricks', 'msiexec'
+                'apt-get', 'apt', 'dpkg', 'aptd', 'aptd.system', 'aptd.systemd'
             ]
             
             running_processes = []
@@ -13997,11 +14167,35 @@ class AutomationGUI(object):
                     print(f"[ERROR] Ошибка отмены: {e}")
                     self._close_dialog_open = False
             
+            def close_without_kill():
+                """Закрыть без убийства процессов"""
+                try:
+                    # Сбрасываем флаг открытого окна
+                    self._close_dialog_open = False
+                    
+                    # Закрываем модальное окно
+                    dialog.grab_release()
+                    dialog.destroy()
+                    
+                    # Останавливаем трей перед закрытием
+                    if self.tray_icon:
+                        try:
+                            self.tray_icon.stop()
+                        except:
+                            pass
+                    self.root.destroy()
+                    
+                except Exception as e:
+                    print(f"[ERROR] Ошибка закрытия: {e}")
+                    self._close_dialog_open = False
+            
             # Стилизация кнопок
             tk.Button(button_frame, text="Да, убить всех!", command=close_and_kill, 
-                     width=20, bg="#ff4444", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+                     width=18, bg="#ff4444", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
+            tk.Button(button_frame, text="Пропустить", command=close_without_kill, 
+                     width=18, bg="#4488ff", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
             tk.Button(button_frame, text="Отмена", command=cancel, 
-                     width=20, bg="#666666", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+                     width=18, bg="#666666", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=5)
             
             # Автозакрытие через 30 секунд
             def auto_close():
@@ -14392,7 +14586,7 @@ class AutomationGUI(object):
         self.wine_time_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
         # Размер
-        self.tk.Label(info_panel, text="Использование диска:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
+        self.tk.Label(info_panel, text="Диск:", font=('Arial', 9, 'bold')).pack(side=self.tk.LEFT)
         self.wine_size_label = self.tk.Label(info_panel, text="0 MB", font=('Arial', 9))
         self.wine_size_label.pack(side=self.tk.LEFT, padx=(0, 15))
         
@@ -15904,12 +16098,8 @@ class AutomationGUI(object):
         row3_control = self.tk.Frame(control_frame)
         row3_control.pack(fill=self.tk.X, pady=2)
         self.fs_baseline_label = self.tk.Label(row3_control, text="Базовый снимок не создан", 
-                                                 font=('Arial', 8), fg='gray')
-        self.fs_baseline_label.pack(side=self.tk.LEFT)
-        self.tk.Label(row3_control, text="|", font=('Arial', 8), fg='gray').pack(side=self.tk.LEFT, padx=5)
-        self.fs_performance_label = self.tk.Label(row3_control, text="Нагрузка: -", 
                                                    font=('Arial', 8), fg='gray')
-        self.fs_performance_label.pack(side=self.tk.LEFT)
+        self.fs_baseline_label.pack(side=self.tk.LEFT)
         
         # Вкладки представлений
         view_tabs_frame = self.tk.Frame(self.filesystem_monitor_frame)
@@ -16098,7 +16288,7 @@ class AutomationGUI(object):
                 
                 # НЕ сохраняем на диск - работаем только в памяти
                 self.root.after(0, lambda: self.fs_baseline_label.config(
-                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | В памяти", 
+                    text=f"Базовый снимок: / ({snapshot.files_scanned:,} файлов)".replace(',', ' ') + " | В памяти", 
                     fg='green'))
                 
                 # Устанавливаем базовый снимок в памяти
@@ -16235,7 +16425,7 @@ class AutomationGUI(object):
                 self.filesystem_baseline_just_created = True  # Флаг первой проверки после сброса
                 
                 self.root.after(0, lambda: self.fs_baseline_label.config(
-                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | Обновлен в памяти", 
+                    text=f"Базовый снимок: / ({snapshot.files_scanned:,} файлов)".replace(',', ' ') + " | Обновлен в памяти", 
                     fg='green'))
                 self.root.after(0, self._update_filesystem_display)
             except Exception as e:
@@ -16336,7 +16526,7 @@ class AutomationGUI(object):
                 
                 # Обновляем GUI
                 self.root.after(0, lambda: self.fs_baseline_label.config(
-                    text=f"Базовый снимок: / ({snapshot.files_scanned} файлов) | В памяти", 
+                    text=f"Базовый снимок: / ({snapshot.files_scanned:,} файлов)".replace(',', ' ') + " | В памяти", 
                     fg='green'))
                 self.root.after(0, self._update_filesystem_controls_after_start)
                 # Обновляем структуру, если выбрано представление "structure"
@@ -16467,14 +16657,6 @@ class AutomationGUI(object):
         # Активные директории
         active_dirs = len(set([ch.get('directory', '/') for ch in self.filesystem_changes_history if ch]))
         self.fs_dirs_label.config(text=f"Дир: {active_dirs}")
-        
-        # Обновляем метрики производительности
-        if self.filesystem_monitor:
-            metrics = self.filesystem_monitor.get_performance_metrics()
-            cpu_scan = metrics.get('last_scan_metrics', {}).get('scan_duration', 0) * 10  # Примерная нагрузка
-            cpu_compare = metrics.get('compare_duration', 0) * 5
-            self.fs_performance_label.config(
-                text=f"Нагрузка: Сканирование {cpu_scan:.1f}% CPU | Сравнение {cpu_compare:.1f}% CPU")
     
     def _switch_filesystem_view(self):
         """Переключение представления изменений"""
@@ -16748,7 +16930,7 @@ class AutomationGUI(object):
                             if is_fs_tab:
                                 actual_file_count = len(updated_snapshot.files)
                                 self.root.after_idle(lambda: self.fs_baseline_label.config(
-                                    text=f"Базовый снимок: / ({actual_file_count} файлов) | В памяти", 
+                                    text=f"Базовый снимок: / ({actual_file_count:,} файлов)".replace(',', ' ') + " | В памяти", 
                                     fg='green'))
                         else:
                             # Если есть изменения, добавляем в историю ТОЛЬКО если это не первая проверка
@@ -17265,6 +17447,12 @@ class AutomationGUI(object):
         
         all_files = snapshot.files  # {full_path: (size, mtime, hash)}
         all_directories = snapshot.directories  # {full_path, ...}
+        
+        # КРИТИЧНО: Проверяем что данные не None (уже проверено выше, но для линтера)
+        if all_files is None:
+            all_files = {}
+        if all_directories is None:
+            all_directories = set()
         
         # Получаем список отслеживаемых директорий
         monitored_dirs = self._get_monitored_directories()
@@ -17884,12 +18072,15 @@ class AutomationGUI(object):
                 # Планируем следующее обновление через 0.5 секунды
                 self.root.after(500, self._auto_refresh_processes_monitor)
             else:
-                # Вкладка не открыта - не обновляем, но планируем проверку через 5 секунд
-                # чтобы когда пользователь откроет вкладку, обновление возобновилось
-                self.root.after(5000, self._auto_refresh_processes_monitor)
+                # Вкладка не открыта - обновляем каждые 7 секунд для актуальности данных
+                # чтобы когда пользователь откроет вкладку, данные были свежими
+                self._refresh_processes_monitor()
+                # Планируем следующее обновление через 7 секунд
+                self.root.after(7000, self._auto_refresh_processes_monitor)
         except Exception as e:
-            # При ошибке планируем проверку через 5 секунд
-            self.root.after(5000, self._auto_refresh_processes_monitor)
+            # При ошибке обновляем и планируем проверку через 7 секунд
+            self._refresh_processes_monitor()
+            self.root.after(7000, self._auto_refresh_processes_monitor)
     
     def create_packages_tab(self):
         """Создание вкладки Пакеты с динамическим обновлением"""
@@ -17987,7 +18178,7 @@ class AutomationGUI(object):
             unpacked_count = sum(1 for pkg in packages_table if pkg.get('flags', {}).get('unpacked', False))
             configured_count = sum(1 for pkg in packages_table if pkg.get('flags', {}).get('configured', False))
             
-            # Обновляем статистику
+            # Обновляем статистику в таблице пакетов (если есть)
             if hasattr(self, 'packages_stats_label'):
                 self.packages_stats_label.config(
                     text=f"Информация: Всего пакетов: {total_packages} | "
@@ -22519,7 +22710,7 @@ class AutomationGUI(object):
             dialog.bind('<Escape>', lambda e: on_close())
             # Автоматически запускаем проверку обновлений при открытии окна
             dialog.after(100, check_updates)
-                        
+            
         except Exception as e:
             print(f"Ошибка открытия окна проверки обновлений: {e}", level='ERROR')
             messagebox.showerror("Ошибка", f"Не удалось открыть окно проверки обновлений:\n{e}")
@@ -22692,7 +22883,7 @@ class AutomationGUI(object):
         y = (dialog.winfo_screenheight() // 2) - (height // 2)
         dialog.geometry(f'{width}x{height}+{x}+{y}')
         
-        result = {'selected': None}
+        result: Dict[str, Optional[str]] = {'selected': None}
         
         # Заголовок
         header_label = self.tk.Label(dialog, text="Выберите источник для обновления:", 
@@ -22765,7 +22956,8 @@ class AutomationGUI(object):
         button_frame.pack(fill=self.tk.X, padx=10, pady=10)
         
         def on_ok():
-            result['selected'] = selected_var.get()
+            selected_value = selected_var.get()
+            result['selected'] = selected_value if selected_value is not None else None
             dialog.destroy()
         
         def on_cancel():
@@ -23243,10 +23435,6 @@ class AutomationGUI(object):
             
         except Exception as e:
             print(f"[ERROR] Ошибка обработки расширенного прогресса: {e}", level='ERROR')
-                
-        except Exception as e:
-            # Игнорируем ошибки парсинга
-            pass
     
     def handle_universal_progress(self, message):
         """Обработка универсального прогресса от нового парсера
@@ -23543,6 +23731,10 @@ class AutomationGUI(object):
             # Стилизация
             dialog.configure(bg="#f0f0f0")
             
+            # Кнопки (упаковываем ПЕРВЫМИ, чтобы закрепились внизу)
+            button_frame = tk.Frame(dialog, bg="#f0f0f0")
+            button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
+            
             # Заголовок
             title_label = tk.Label(dialog, text="Принудительное прерывание процесса", 
                                  font=("Arial", 16, "bold"), fg="#000000", bg="#f0f0f0")
@@ -23553,9 +23745,52 @@ class AutomationGUI(object):
                                  font=("Arial", 12), fg="#cc6600", bg="#f0f0f0")
             desc_label.pack(pady=10)
             
-            # Список процессов
-            processes_frame = tk.Frame(dialog, bg="#f0f0f0")
-            processes_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            # Список процессов с прокруткой
+            processes_container = tk.Frame(dialog, bg="#f0f0f0")
+            processes_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            
+            # Canvas для прокрутки
+            canvas = tk.Canvas(processes_container, bg="#f0f0f0", highlightthickness=0)
+            scrollbar = tk.Scrollbar(processes_container, orient="vertical", command=canvas.yview)
+            processes_frame = tk.Frame(canvas, bg="#f0f0f0")
+            
+            def update_scrollbar_visibility():
+                """Показывать прокрутку только если содержимое не помещается"""
+                try:
+                    canvas.update_idletasks()
+                    frame_height = processes_frame.winfo_reqheight()
+                    canvas_height = canvas.winfo_height()
+                    
+                    if frame_height > canvas_height:
+                        scrollbar.pack(side="right", fill="y")
+                    else:
+                        scrollbar.pack_forget()
+                except:
+                    pass
+            
+            def on_frame_configure(event):
+                """Обработчик изменения размера фрейма"""
+                canvas.configure(scrollregion=canvas.bbox("all"))
+                update_scrollbar_visibility()
+            
+            processes_frame.bind("<Configure>", on_frame_configure)
+            
+            canvas.create_window((0, 0), window=processes_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # Обработчик изменения размера canvas
+            def on_canvas_configure(event):
+                """Обработчик изменения размера canvas"""
+                canvas_width = event.width
+                found_items = canvas.find_all()
+                if found_items:
+                    canvas.itemconfig(found_items[0], width=canvas_width)
+                update_scrollbar_visibility()
+            
+            canvas.bind("<Configure>", on_canvas_configure)
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
             
             # Получаем список процессов
             running_processes = self._get_running_installation_processes()
@@ -23575,10 +23810,6 @@ class AutomationGUI(object):
             status_label = tk.Label(dialog, text="Готов к принудительному прерыванию", 
                                   font=("Arial", 10), fg="#000000", bg="#f0f0f0")
             status_label.pack(pady=10)
-            
-            # Кнопки
-            button_frame = tk.Frame(dialog, bg="#f0f0f0")
-            button_frame.pack(pady=20)
             
             def kill_and_close():
                 """Убить процессы и закрыть диалог"""
@@ -23609,10 +23840,13 @@ class AutomationGUI(object):
                 except:
                     pass
             
-            # Стилизация кнопок
-            tk.Button(button_frame, text="Да, прервать!", command=kill_and_close, 
+            # Стилизация кнопок (центрируем)
+            button_inner_frame = tk.Frame(button_frame, bg="#f0f0f0")
+            button_inner_frame.pack(expand=True)
+            
+            tk.Button(button_inner_frame, text="Да, прервать!", command=kill_and_close, 
                      width=20, bg="#ff4444", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
-            tk.Button(button_frame, text="Отмена", command=cancel, 
+            tk.Button(button_inner_frame, text="Отмена", command=cancel, 
                      width=20, bg="#666666", fg="white", font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
             
             def final_close():
@@ -25061,6 +25295,17 @@ class SystemUpdateParser:
     
     def add_package_to_table(self, package_name, status, size=None):
         """Добавление пакета в таблицу"""
+        # Проверяем, не добавлен ли уже этот пакет
+        if package_name in self._package_names_set:
+            # Пакет уже есть - обновляем его статус и размер если нужно
+            for pkg in self.packages_table:
+                if pkg.get('package_name') == package_name:
+                    if size:
+                        pkg['size'] = size
+                        pkg['size_bytes'] = self.parse_size_to_bytes(size) if size else 0
+                    pkg['status'] = status
+                    return  # Выходим, не добавляя дубликат
+        
         # Конвертируем размер в байты если он есть
         size_bytes = self.parse_size_to_bytes(size) if size else 0
         
@@ -25403,6 +25648,14 @@ class SystemUpdateParser:
                     f"Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}",
                     **detailed_progress
                 )
+                
+                # Обновляем статус в нижнем общем фрейме (виден из всех вкладок)
+                if self.system_updater and hasattr(self.system_updater, 'gui_instance'):
+                    gui = self.system_updater.gui_instance
+                    if gui and hasattr(gui, 'wine_stage_label'):
+                        gui.wine_stage_label.config(
+                            text=f"Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}"
+                )
             
         except Exception as e:
             print(f"[ERROR] Ошибка обновления прогресс-баров: {e}", gui_log=True)
@@ -25474,18 +25727,22 @@ class SystemUpdateParser:
         package_name = self._extract_package_name(line)
         package_size = self._extract_size(line)
         
-        # Добавляем пакет в таблицу
-        if package_name not in self.packages_table:
-            self.packages_table[package_name] = {
-                "status": "downloading",
-                "package_num": package_num,
-                "size": package_size,
-                "download_time": None,
-                "unpack_time": None,
-                "configure_time": None
-            }
+        # Добавляем пакет в таблицу (используем правильную проверку для списка)
+        if package_name not in self._package_names_set:
+            # Пакета еще нет - добавляем через add_package_to_table
+            self.add_package_to_table(package_name, "downloading", package_size)
             # Инвалидируем кэш при изменении статуса
             self._progress_cache_valid = False
+        else:
+            # Пакет уже есть - обновляем размер и флаг downloaded
+            for pkg in self.packages_table:
+                if pkg.get('package_name') == package_name:
+                    if package_size:
+                        pkg['size'] = package_size
+                        pkg['size_bytes'] = self.parse_size_to_bytes(package_size) if package_size else 0
+                    # Обновляем флаг downloaded
+                    pkg['flags']['downloaded'] = True
+                    break
         
         if self.max_packages_found > 0:
             # Рассчитываем прогресс на основе таблицы пакетов
@@ -25515,8 +25772,12 @@ class SystemUpdateParser:
         # Убираем проверку main_cycle_found - обрабатываем все строки
         package_name = self._extract_package_name_from_unpack(line)
         
-        if package_name in self.packages_table:
-            self.packages_table[package_name]["status"] = "unpacked"
+        if package_name in self._package_names_set:
+            # Находим пакет в списке и обновляем флаг unpacked
+            for pkg in self.packages_table:
+                if pkg.get('package_name') == package_name:
+                    pkg['flags']['unpacked'] = True
+                    break
             # Инвалидируем кэш при изменении статуса
             self._progress_cache_valid = False
         
@@ -25550,8 +25811,12 @@ class SystemUpdateParser:
         # Убираем проверку main_cycle_found - обрабатываем все строки
         package_name = self._extract_package_name_from_config(line)
         
-        if package_name in self.packages_table:
-            self.packages_table[package_name]["status"] = "configured"
+        if package_name in self._package_names_set:
+            # Находим пакет в списке и обновляем флаг configured
+            for pkg in self.packages_table:
+                if pkg.get('package_name') == package_name:
+                    pkg['flags']['configured'] = True
+                    break
             # Инвалидируем кэш при изменении статуса
             self._progress_cache_valid = False
         
@@ -27101,35 +27366,167 @@ class SystemUpdater(object):
         print("\n[OK] Симуляция завершена")
 
 def sync_system_time():
-    """Синхронизация системного времени"""
-    print("[TIME] Синхронизация системного времени...")
+    """Синхронизация системного времени (один раз за сеанс) с проверкой и запуском служб"""
+    TIME_SYNC_FLAG = "/tmp/fsa-time-synced"
     
-    try:
-        # Синхронизируем время через ntpdate
-        result = subprocess.call(['ntpdate', '-s', 'pool.ntp.org'], 
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        if result == 0:
-            print("[OK] Время синхронизировано успешно")
-            return True
-        else:
-            print("[WARNING] ntpdate не доступен, пробуем hwclock...")
-            
-            # Альтернативный способ через hwclock
-            result = subprocess.call(['hwclock', '--hctosys'], 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            if result == 0:
-                print("[OK] Время синхронизировано через hwclock")
-                return True
-            else:
-                print("[WARNING] Не удалось синхронизировать время автоматически")
-                print("   Рекомендуется синхронизировать время вручную")
-                return False
+    # Проверяем флаг - если время уже синхронизировано, пропускаем
+    if os.path.exists(TIME_SYNC_FLAG):
+        print("[i] Время уже синхронизировано в этом сеансе", gui_log=True)
+        return True
+    
+    print("[~] Синхронизация системного времени...", gui_log=True)
+    
+    # Список служб синхронизации времени (в порядке приоритета)
+    time_sync_services = [
+        'systemd-timesyncd',  # systemd (современные системы)
+        'ntpd',               # NTP daemon
+        'chronyd',            # Chrony daemon
+    ]
+    
+    # Проверяем и запускаем службы синхронизации времени
+    service_started = False
+    if shutil.which('systemctl'):
+        for service in time_sync_services:
+            try:
+                # Проверяем, существует ли служба
+                check_result = subprocess.run(['systemctl', 'list-unit-files', '--type=service', f'{service}.service'],
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            timeout=5)
+                if check_result.returncode != 0:
+                    continue  # Служба не найдена, пробуем следующую
                 
+                # Проверяем статус службы
+                status_result = subprocess.run(['systemctl', 'is-active', f'{service}.service'],
+                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                              timeout=5)
+                is_active = status_result.stdout.decode('utf-8', errors='ignore').strip() == 'active'
+                
+                if not is_active:
+                    print(f"   [*] Служба {service} не запущена, запускаем...", gui_log=True)
+                    
+                    # Включаем автозапуск
+                    enable_result = subprocess.run(['systemctl', 'enable', f'{service}.service'],
+                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                  timeout=10)
+                    if enable_result.returncode == 0:
+                        print(f"   [OK] Автозапуск {service} включен", gui_log=True)
+                    
+                    # Запускаем службу
+                    start_result = subprocess.run(['systemctl', 'start', f'{service}.service'],
+                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                 timeout=10)
+                    if start_result.returncode == 0:
+                        print(f"   [OK] Служба {service} запущена", gui_log=True)
+                        service_started = True
+                        
+                        # Ждём немного, чтобы служба инициализировалась
+                        time.sleep(2)
+                    else:
+                        stderr_msg = start_result.stderr.decode('utf-8', errors='ignore').strip()
+                        print(f"   [WARNING] Не удалось запустить {service}: {stderr_msg}", gui_log=True)
+                else:
+                    print(f"   [OK] Служба {service} уже запущена", gui_log=True)
+                    service_started = True
+                    break  # Нашли работающую службу
+                    
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+                print(f"   [SKIP] Ошибка проверки {service}: {e}", gui_log=True)
+                continue
+    
+    # Пробуем разные методы синхронизации времени
+    time_synced = False
+    
+    # Метод 1: timedatectl (systemd) - включаем NTP синхронизацию
+    try:
+        if shutil.which('timedatectl'):
+            print("   [TRY] Включаем NTP синхронизацию через timedatectl...", gui_log=True)
+            result = subprocess.run(['timedatectl', 'set-ntp', 'true'],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   timeout=10)
+            if result.returncode == 0:
+                print("   [OK] NTP синхронизация включена (timedatectl)", gui_log=True)
+                
+                # Пробуем принудительную синхронизацию
+                sync_result = subprocess.run(['timedatectl', 'set-time', ''],
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            timeout=5)
+                # Игнорируем ошибку - это нормально, если время уже синхронизируется
+                
+                # Проверяем статус синхронизации
+                status_result = subprocess.run(['timedatectl', 'status'],
+                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                              timeout=5)
+                if status_result.returncode == 0:
+                    status_output = status_result.stdout.decode('utf-8', errors='ignore')
+                    if 'NTP synchronized: yes' in status_output or 'System clock synchronized: yes' in status_output:
+                        print("   [OK] Время синхронизировано через NTP (timedatectl)", gui_log=True)
+                        time_synced = True
+                    else:
+                        print("   [INFO] NTP синхронизация включена, ожидаем синхронизацию...", gui_log=True)
+                        time_synced = True  # Считаем успешным, если служба запущена
+                else:
+                    print("   [INFO] NTP синхронизация включена, ожидаем синхронизацию...", gui_log=True)
+                    time_synced = True  # Считаем успешным, если служба запущена
+            else:
+                stderr_msg = result.stderr.decode('utf-8', errors='ignore').strip()
+                print(f"   [WARNING] timedatectl вернул код {result.returncode}: {stderr_msg}", gui_log=True)
+    except subprocess.TimeoutExpired:
+        print("   [WARNING] Таймаут при работе с timedatectl", gui_log=True)
+    except FileNotFoundError:
+        print("   [SKIP] timedatectl не найден", gui_log=True)
     except Exception as e:
-        print("[WARNING] Ошибка синхронизации времени: %s" % str(e))
-        return False
+        print(f"   [WARNING] Ошибка timedatectl: {e}", gui_log=True)
+    
+    # Метод 2: ntpdate (если первый не сработал и службы не запущены)
+    if not time_synced and not service_started:
+        try:
+            if shutil.which('ntpdate'):
+                print("   [TRY] Пробуем синхронизацию через ntpdate...", gui_log=True)
+                # Пробуем разные серверы
+                for server in ['time.nist.gov', 'pool.ntp.org']:
+                    print(f"   [TRY] Сервер: {server}", gui_log=True)
+                    result = subprocess.run(['ntpdate', '-s', server],
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           timeout=30)
+                    if result.returncode == 0:
+                        print(f"   [OK] Время синхронизировано через NTP (ntpdate: {server})", gui_log=True)
+                        time_synced = True
+                        break
+                    else:
+                        stderr_msg = result.stderr.decode('utf-8', errors='ignore').strip()
+                        print(f"   [WARNING] ntpdate {server} вернул код {result.returncode}: {stderr_msg}", gui_log=True)
+        except subprocess.TimeoutExpired:
+            print("   [WARNING] Таймаут при синхронизации через ntpdate", gui_log=True)
+        except FileNotFoundError:
+            print("   [SKIP] ntpdate не найден", gui_log=True)
+        except Exception as e:
+            print(f"   [WARNING] Ошибка ntpdate: {e}", gui_log=True)
+    
+    # Создаем флаг успешной синхронизации (если служба запущена или синхронизация выполнена)
+    if time_synced or service_started:
+        try:
+            with open(TIME_SYNC_FLAG, 'w') as f:
+                f.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            print(f"   [OK] Флаг синхронизации создан: {TIME_SYNC_FLAG}", gui_log=True)
+        except Exception as e:
+            print(f"   [WARNING] Не удалось создать флаг: {e}", gui_log=True)
+    else:
+        print("   [!] Не удалось синхронизировать время (продолжаем работу)", gui_log=True)
+    
+    return time_synced or service_started
+
+def sync_system_time_async():
+    """Асинхронная синхронизация времени в фоновом потоке"""
+    def _sync_worker():
+        try:
+            sync_system_time()
+        except Exception as e:
+            print(f"[WARNING] Ошибка синхронизации времени в фоновом потоке: {e}", gui_log=True)
+    
+    # Запускаем в фоновом потоке (daemon - завершится при выходе программы)
+    thread = threading.Thread(target=_sync_worker, daemon=True, name="TimeSyncThread")
+    thread.start()
+    return thread
 
 def run_repo_checker(gui_terminal=None, dry_run=False):
     """Запуск проверки репозиториев через класс RepoChecker"""
@@ -27284,7 +27681,8 @@ def run_system_updater(temp_dir, dry_run=False):
 def run_gui_monitor(temp_dir, dry_run=False):
     """Запуск GUI мониторинга через класс AutomationGUI"""
     # ОТЛАДКА: Отслеживаем вызовы run_gui_monitor
-    caller_info = ''.join(traceback.format_stack()[-3:-1]) if len(traceback.format_stack()) > 2 else "unknown"
+    import traceback as tb  # Явный импорт для линтера
+    caller_info = ''.join(tb.format_stack()[-3:-1]) if len(tb.format_stack()) > 2 else "unknown"
     print(f"[DEBUG_RUN_GUI] Вызов run_gui_monitor() из: {caller_info[:200]}", level='DEBUG', gui_log=False)
     
     # Защита от повторного вызова
@@ -27338,8 +27736,37 @@ def run_gui_monitor(temp_dir, dry_run=False):
     
     try:
         # Создаем экземпляр класса AutomationGUI напрямую
-        print("   [OK] Создаем экземпляр AutomationGUI...")
-        gui = AutomationGUI(console_mode=False)
+        print("   [OK] Создаем экземпляр AutomationGUI...", gui_log=True)
+        try:
+            gui = AutomationGUI(console_mode=False)
+            print("   [OK] AutomationGUI создан успешно", gui_log=True)
+            
+            # КРИТИЧНО: Запускаем синхронизацию времени асинхронно ПОСЛЕ создания GUI
+            # чтобы не блокировать загрузку графических библиотек
+            print("[INFO] Запуск синхронизации времени в фоновом потоке...", gui_log=True)
+            sync_system_time_async()
+        except Exception as gui_error:
+            error_msg = f"Ошибка при создании AutomationGUI: {gui_error}\n"
+            print(f"[ERROR] {error_msg}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            
+            # КРИТИЧНО: Записываем ошибку в файл лога
+            try:
+                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                    logger = globals()['_global_dual_logger']
+                    if logger._analysis_file:
+                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                        logger._analysis_file.write(f"[{timestamp}] [ERROR] Traceback:\n")
+                        for line in traceback.format_exc().split('\n'):
+                            logger._analysis_file.write(f"[{timestamp}] [ERROR] {line}\n")
+                        logger._analysis_file.flush()
+                        os.fsync(logger._analysis_file.fileno())
+            except Exception:
+                pass
+            
+            raise  # Пробрасываем ошибку дальше
         
         # Устанавливаем лог-файл для GUI
         # Получаем путь к лог-файлу из GLOBAL_LOG_FILE (установлен в main())
@@ -28653,6 +29080,8 @@ class SelfUpdater:
                 else:
                     return False
         
+        # КРИТИЧНО: server теперь гарантированно не None
+        assert server is not None, "server должен быть определен"
         try:
             result = subprocess.run(
                 ['ping', '-c', '1', '-W', '2', server],
@@ -29379,7 +29808,7 @@ class SelfUpdater:
             # КРИТИЧНО для Astra 1.8: Упрощенная команда - запускаем скрипт напрямую через setsid
             # Скрипт уже содержит cd, поэтому не нужно его в команде
             script_cmd = f"setsid {shlex.quote(launcher_script)} < /dev/null > /dev/null 2>&1 &"
-
+            
             # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
             if '--console' in sys.argv:
                 # Консольный режим - запускаем скрипт напрямую
@@ -29882,19 +30311,19 @@ def _load_tcl_tk_libraries():
             except Exception as e:
                 print(f"[WARNING] Не удалось загрузить {libtcl_path}: {e}")
         
+        # КРИТИЧНО: НЕ загружаем Tk явно - он уже загружен runtime hook'ом pyi_rth_libblt.py
+        # Явная загрузка Tk через ctypes.CDLL вызывает segfault, так как runtime hook
+        # уже загрузил его с RTLD_GLOBAL при предзагрузке libBLT
         if libtk_path and os.path.exists(libtk_path):
-            try:
-                ctypes.CDLL(libtk_path, mode=rtld_global)
-                print(f"[DEBUG] [OK] Загружена библиотека Tk: {os.path.basename(libtk_path)}")
-            except Exception as e:
-                print(f"[WARNING] Не удалось загрузить {libtk_path}: {e}")
+            print(f"[DEBUG] [INFO] Библиотека Tk найдена: {os.path.basename(libtk_path)} (загружена runtime hook'ом)")
         
+        # КРИТИЧНО: НЕ загружаем BLT явно - он уже загружен runtime hook'ом pyi_rth_libblt.py
+        # Runtime hook загружает BLT с RTLD_GLOBAL при предзагрузке
+        # Повторная загрузка через ctypes.CDLL может вызывать segfault
         if libblt_path and os.path.exists(libblt_path):
-            try:
-                ctypes.CDLL(libblt_path, mode=rtld_global)
-                print(f"[DEBUG] [OK] Загружена библиотека BLT: {os.path.basename(libblt_path)}")
-            except Exception as e:
-                print(f"[WARNING] Не удалось загрузить {libblt_path}: {e}")
+            print(f"[DEBUG] [INFO] Библиотека BLT найдена: {os.path.basename(libblt_path)} (загружена runtime hook'ом)")
+        
+        print(f"[DEBUG] Загрузка библиотек завершена. Переходим к установке TCL_LIBRARY и TK_LIBRARY...")
         
         # 3. Найти и установить TCL_LIBRARY и TK_LIBRARY
         tcl_data_path = os.path.join(base_path, '_tcl_data')
@@ -30332,13 +30761,6 @@ if __name__ == '__main__':
             print(f"[DEBUG] [OK] Tcl/Tk версии: Tcl {tcl_version}, Tk {tk_version}")
         except Exception as e:
             print(f"[WARNING] [FAIL] Не удалось получить версии Tcl/Tk: {e}")
-        
-        # Проверяем наличие BLT
-        try:
-            tkinter.Tcl().eval('package require BLT')
-            print("[DEBUG] [OK] BLT пакет доступен")
-        except tkinter.TclError as e:
-            print(f"[WARNING] [FAIL] BLT пакет НЕ доступен: {e}")
         
         # Устанавливаем глобальные переменные
         TKINTER_AVAILABLE = True
