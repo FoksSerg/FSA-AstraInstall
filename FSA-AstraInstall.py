@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.175 (2025.12.13)
+Версия: V3.4.176 (2025.12.14)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.175 (2025.12.13)"
+APP_VERSION = "V3.4.176 (2025.12.14)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -546,7 +546,6 @@ class DualStreamLogger:
                     with open(self._analysis_log_path, 'a', encoding='utf-8') as f:
                         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                         f.write(f"[{timestamp}] [ERROR] {error_msg}\n")
-                        import traceback
                         f.write(f"[{timestamp}] [ERROR] Traceback:\n")
                         for line in traceback.format_exc().split('\n'):
                             if line.strip():
@@ -1950,12 +1949,12 @@ def check_component_status(component_id, wineprefix_path=None):
                     actual_value = f.read().strip()
                     # ОТЛАДКА для ptrace_scope
                     if component_id == 'ptrace_scope':
-                        print(f"[DEBUG check_status] Компонент: {component_id}", level='DEBUG')
-                        print(f"[DEBUG check_status] Файл: {check_path}", level='DEBUG')
-                        print(f"[DEBUG check_status] Прочитано: '{actual_value}' (repr: {repr(actual_value)}, тип: {type(actual_value)})", level='DEBUG')
-                        print(f"[DEBUG check_status] Ожидается: '{check_value}' (repr: {repr(check_value)}, тип: {type(check_value)})", level='DEBUG')
+                        # print(f"[DEBUG check_status] Компонент: {component_id}", level='DEBUG')
+                        # print(f"[DEBUG check_status] Файл: {check_path}", level='DEBUG')
+                        # print(f"[DEBUG check_status] Прочитано: '{actual_value}' (repr: {repr(actual_value)}, тип: {type(actual_value)})", level='DEBUG')
+                        # print(f"[DEBUG check_status] Ожидается: '{check_value}' (repr: {repr(check_value)}, тип: {type(check_value)})", level='DEBUG')
                         comparison_result = actual_value == check_value
-                        print(f"[DEBUG check_status] Сравнение: {comparison_result}", level='DEBUG')
+                        # print(f"[DEBUG check_status] Сравнение: {comparison_result}", level='DEBUG')
                     # Сравниваем фактическое значение с ожидаемым
                     return actual_value == check_value
             except Exception as e:
@@ -4891,7 +4890,7 @@ class SystemConfigHandler(ComponentHandler):
             try:
                 with open(ptrace_path, 'r') as f:
                     initial_value = f.read().strip()
-                    print(f"[DEBUG ptrace_scope] Начальное значение: '{initial_value}'", level='DEBUG')
+                    # print(f"[DEBUG ptrace_scope] Начальное значение: '{initial_value}'", level='DEBUG')
             except Exception as e:
                 print(f"[DEBUG ptrace_scope] Ошибка чтения начального значения: {e}", level='DEBUG')
             
@@ -4951,10 +4950,10 @@ class SystemConfigHandler(ComponentHandler):
                 try:
                     with open(ptrace_path, 'r') as f:
                         after_sysctl_value = f.read().strip()
-                        print(f"[DEBUG ptrace_scope] Значение после sysctl: '{after_sysctl_value}'", level='DEBUG')
+                        # print(f"[DEBUG ptrace_scope] Значение после sysctl: '{after_sysctl_value}'", level='DEBUG')
                         if after_sysctl_value == '0':
                             sysctl_success = True
-                            print("[DEBUG ptrace_scope] sysctl успешно изменил значение", level='DEBUG')
+                            # print("[DEBUG ptrace_scope] sysctl успешно изменил значение", level='DEBUG')
                         else:
                             print(f"[WARNING] sysctl завершился с кодом 0, но значение не изменилось (осталось '{after_sysctl_value}')", level='WARNING')
                 except Exception as e:
@@ -4976,7 +4975,7 @@ class SystemConfigHandler(ComponentHandler):
                     try:
                         with open(ptrace_path, 'r') as f:
                             after_write_value = f.read().strip()
-                            print(f"[DEBUG ptrace_scope] Значение после прямой записи: '{after_write_value}'", level='DEBUG')
+                            # print(f"[DEBUG ptrace_scope] Значение после прямой записи: '{after_write_value}'", level='DEBUG')
                             if after_write_value == '0':
                                 write_success = True
                                 print("[INFO] Прямая запись успешно изменила значение", level='INFO')
@@ -5062,7 +5061,7 @@ class SystemConfigHandler(ComponentHandler):
                             try:
                                 with open(ptrace_path, 'r') as f:
                                     after_sysctl_system_value = f.read().strip()
-                                    print(f"[DEBUG ptrace_scope] Значение после sysctl --system: '{after_sysctl_system_value}'", level='DEBUG')
+                                    # print(f"[DEBUG ptrace_scope] Значение после sysctl --system: '{after_sysctl_system_value}'", level='DEBUG')
                                     if after_sysctl_system_value == '0':
                                         write_success = True
                                         print("[INFO] Значение изменено через sysctl --system", level='INFO')
@@ -5118,12 +5117,12 @@ class SystemConfigHandler(ComponentHandler):
                         print("[INFO] После перезагрузки значение ptrace_scope будет автоматически установлено в 0", level='INFO')
                         print("[INFO] Компонент будет считаться установленным после перезагрузки", level='INFO')
                         # Помечаем компонент как требующий перезагрузки, но НЕ считаем установленным
-                        print(f"[DEBUG] Устанавливаем статус 'pending_reboot' для компонента {component_id}", level='DEBUG')
+                        # print(f"[DEBUG] Устанавливаем статус 'pending_reboot' для компонента {component_id}", level='DEBUG')
                         self._update_status(component_id, 'pending_reboot')
                         # Проверяем, что статус установлен
                         if hasattr(self, 'status_manager') and self.status_manager:
                             check_status = self.status_manager.get_component_status(component_id, config.get('name', component_id))
-                            print(f"[DEBUG] Проверка статуса после установки: {check_status}", level='DEBUG')
+                            # print(f"[DEBUG] Проверка статуса после установки: {check_status}", level='DEBUG')
                         return False  # НЕ считаем успешным, так как значение фактически не изменилось
                     else:
                         print("[ERROR] Не удалось изменить ptrace_scope ни одним способом", level='ERROR')
@@ -5147,9 +5146,9 @@ class SystemConfigHandler(ComponentHandler):
                 try:
                     with open(ptrace_path, 'r') as f:
                         debug_value = f.read().strip()
-                        print(f"[DEBUG ptrace_scope] Финальное значение в файле: '{debug_value}' (repr: {repr(debug_value)})", level='DEBUG')
-                        print(f"[DEBUG ptrace_scope] Ожидаемое значение: '0' (repr: {repr('0')})", level='DEBUG')
-                        print(f"[DEBUG ptrace_scope] Сравнение: '{debug_value}' == '0' = {debug_value == '0'}", level='DEBUG')
+                        # print(f"[DEBUG ptrace_scope] Финальное значение в файле: '{debug_value}' (repr: {repr(debug_value)})", level='DEBUG')
+                        # print(f"[DEBUG ptrace_scope] Ожидаемое значение: '0' (repr: {repr('0')})", level='DEBUG')
+                        # print(f"[DEBUG ptrace_scope] Сравнение: '{debug_value}' == '0' = {debug_value == '0'}", level='DEBUG')
                 except Exception as e:
                     print(f"[DEBUG ptrace_scope] Ошибка чтения файла для отладки: {e}", level='DEBUG')
                 
@@ -5162,12 +5161,12 @@ class SystemConfigHandler(ComponentHandler):
                     return True
                 else:
                     print("ptrace_scope не настроен после всех попыток", level='ERROR')
-                    print(f"[DEBUG ptrace_scope] Проверка check_status вернула: {actual_status}", level='DEBUG')
+                    # print(f"[DEBUG ptrace_scope] Проверка check_status вернула: {actual_status}", level='DEBUG')
                     # Пробуем еще раз прочитать файл для диагностики
                     try:
                         with open(ptrace_path, 'r') as f:
                             final_value = f.read().strip()
-                            print(f"[DEBUG ptrace_scope] Финальное значение в файле (повторная проверка): '{final_value}'", level='DEBUG')
+                            # print(f"[DEBUG ptrace_scope] Финальное значение в файле (повторная проверка): '{final_value}'", level='DEBUG')
                             if final_value == '3':
                                 print("[ERROR] Значение ptrace_scope заблокировано на уровне системы (значение = 3)", level='ERROR')
                                 print("[ERROR] Возможно, требуется изменить настройки безопасности системы или перезагрузка", level='ERROR')
@@ -5800,6 +5799,40 @@ class WineEnvironmentHandler(ComponentHandler):
                             os.remove(file_path)
                         except:
                             pass
+            
+            # Очистка корзины Wine (если есть)
+            print("Очистка корзины Wine...")
+            drive_c = os.path.join(wineprefix_path, 'drive_c')
+            if os.path.exists(drive_c):
+                # Возможные пути к корзине
+                recycle_paths = [
+                    os.path.join(drive_c, '$RECYCLE.BIN'),
+                    os.path.join(drive_c, 'Recycled'),
+                    os.path.join(drive_c, 'Recycle Bin'),
+                ]
+                
+                # Также проверяем корзины пользователей
+                users_dir = os.path.join(drive_c, 'users')
+                if os.path.exists(users_dir):
+                    try:
+                        for user_dir in os.listdir(users_dir):
+                            user_path = os.path.join(users_dir, user_dir)
+                            if os.path.isdir(user_path):
+                                recycle_paths.extend([
+                                    os.path.join(user_path, 'AppData', 'Local', 'Microsoft', 'Windows', 'Recycle'),
+                                    os.path.join(user_path, '$RECYCLE.BIN'),
+                                ])
+                    except Exception:
+                        pass  # Игнорируем ошибки доступа к users_dir
+                
+                # Удаляем найденные корзины
+                for recycle_path in recycle_paths:
+                    if os.path.exists(recycle_path):
+                        try:
+                            print(f"  Удаление корзины: {recycle_path}")
+                            shutil.rmtree(recycle_path)
+                        except Exception as e:
+                            print(f"  [WARNING] Не удалось удалить корзину {recycle_path}: {e}", level='WARNING')
         
         # 4. Определяем путь для сохранения архива
         if not output_dir:
@@ -7678,7 +7711,9 @@ class WineApplicationHandler(ComponentHandler):
             )
             
             # Закрываем stdout первого процесса (он теперь подключен к stdin второго)
-            process1.stdout.close()
+            # КРИТИЧНО: Проверяем, что process1 и process1.stdout не None
+            if process1 and process1.stdout:
+                process1.stdout.close()
             
             # Запускаем поток мониторинга
             monitor_thread = threading.Thread(
@@ -9563,11 +9598,9 @@ class UniversalProcessRunner(object):
     
     def setup_subprocess_redirect(self):
         """Подмена subprocess.run() на UniversalProcessRunner"""
-        import subprocess as original_subprocess
-        
         # Сохраняем оригинальный subprocess.run
         if not hasattr(self, '_original_subprocess_run'):
-            self._original_subprocess_run = original_subprocess.run
+            self._original_subprocess_run = subprocess.run
         
         def universal_subprocess_run(*args, **kwargs):
             """Универсальный subprocess.run с отправкой в UniversalProcessRunner"""
@@ -9588,7 +9621,7 @@ class UniversalProcessRunner(object):
                 return result
         
         # Подменяем subprocess.run
-        original_subprocess.run = universal_subprocess_run
+        subprocess.run = universal_subprocess_run
         
         # Отправляем сообщение о готовности перехвата subprocess
         if self.gui_callback:
@@ -9909,15 +9942,47 @@ class UniversalProcessRunner(object):
                 process_name = process_name[:20] + "..."
             
             # КРИТИЧНО: Изолируем переменные окружения для системных команд
-            # Если env=None, создаем копию os.environ
-            if env is None:
-                env = os.environ.copy()
-            
-            # Для системных команд (apt, dpkg, systemd и т.д.) удаляем LD_LIBRARY_PATH
-            # чтобы они не видели библиотеки из бинарника PyInstaller
+            # Для системных команд создаем минимальное окружение без переменных из PyInstaller
             system_commands = ['apt', 'apt-get', 'dpkg', 'systemd', 'systemctl', 'apt-cache']
             if process_name in system_commands:
-                env.pop('LD_LIBRARY_PATH', None)
+                # Создаем минимальное окружение только с критичными переменными
+                # Это полностью изолирует системные команды от переменных PyInstaller
+                env = {
+                    'PATH': os.environ.get('PATH', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'),
+                    'HOME': os.environ.get('HOME', '/root'),
+                    'USER': os.environ.get('USER', 'root'),
+                    'LANG': os.environ.get('LANG', 'C.UTF-8'),
+                    'DEBIAN_FRONTEND': 'noninteractive',
+                    'DEBIAN_PRIORITY': 'critical',
+                    'APT_LISTCHANGES_FRONTEND': 'none'
+                }
+                
+                # КРИТИЧНО: Явно гарантируем отсутствие всех переменных PyInstaller
+                # Это главное исправление, после которого все заработало
+                # Удаляем LD_LIBRARY_PATH - системные команды не должны видеть библиотеки бинарника
+                if 'LD_LIBRARY_PATH' in env:
+                    env.pop('LD_LIBRARY_PATH', None)
+                
+                # Удаляем переменные PyInstaller, если они случайно попали
+                pyinstaller_vars = ['_MEIPASS', '_PIP', '_FROZEN', 'PYINSTALLER']
+                for var in pyinstaller_vars:
+                    if var in env:
+                        env.pop(var, None)
+                
+                # КРИТИЧНО: Очищаем PATH от временных директорий PyInstaller
+                # PyInstaller может добавить _MEIPASS в PATH, что недопустимо для системных команд
+                if 'PATH' in env:
+                    path_parts = env['PATH'].split(':')
+                    # Фильтруем пути, содержащие временные директории PyInstaller
+                    clean_path_parts = [
+                        p for p in path_parts 
+                        if p and not ('_MEI' in p or '/tmp/pyinstaller' in p.lower() or '/tmp/_MEI' in p)
+                    ]
+                    env['PATH'] = ':'.join(clean_path_parts) if clean_path_parts else '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+                
+            elif env is None:
+                # Для несистемных команд используем копию os.environ
+                env = os.environ.copy()
             
             # Запускаем процесс
             process = subprocess.Popen(
@@ -10027,6 +10092,9 @@ class UniversalProcessRunner(object):
                         return -1
                 
                 # Читаем строку
+                # КРИТИЧНО: Проверяем, что process и process.stdout не None
+                if process is None or process.stdout is None:
+                    break
                 try:
                     line = process.stdout.readline()
                 except:
@@ -10134,10 +10202,15 @@ class UniversalProcessRunner(object):
                 # Проверяем на интерактивные запросы
                 if self._detect_interactive_prompt(output_buffer):
                     response = self._get_auto_response(output_buffer)
-                    if response:
-                        process.stdin.write(response + "\n")
-                        process.stdin.flush()
-                        print("  [AUTO] Автоматический ответ: %s" % response, "INFO", channels)
+                    # КРИТИЧНО: Проверяем, что process и process.stdin не None
+                    if response and process is not None and process.stdin is not None:
+                        try:
+                            process.stdin.write(response + "\n")
+                            process.stdin.flush()
+                            print("  [AUTO] Автоматический ответ: %s" % response, "INFO", channels)
+                        except (BrokenPipeError, OSError):
+                            # Процесс уже завершился или pipe закрыт
+                            break
             
             # КРИТИЧНО: Ждем завершения процесса с таймаутом
             if timeout and start_time:
@@ -10192,6 +10265,31 @@ class UniversalProcessRunner(object):
                     subprocess.run(['pkill', '-9', 'wineboot'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=5)
                 except:
                     pass
+            
+            # КРИТИЧНО: Для apt-get update анализируем вывод на наличие ошибок
+            # apt-get update может вернуть код 0 даже при наличии ошибок (недоступные репозитории)
+            if 'apt-get update' in cmd_str and return_code == 0:
+                # Анализируем вывод на наличие критических ошибок
+                output_lower = output_buffer.lower()
+                critical_errors = [
+                    'err:', 'error:', 'failed', 'e:',
+                    'не удалось', 'ошибка', 'failed to fetch',
+                    'temporary failure', 'connection failed',
+                    'certificate problem', 'gpg error',
+                    '404  not found', '403  forbidden'
+                ]
+                
+                has_critical_error = False
+                for error_pattern in critical_errors:
+                    if error_pattern in output_lower:
+                        has_critical_error = True
+                        print(f"[WARNING] Обнаружена ошибка в выводе apt-get update: {error_pattern}", "WARNING", channels)
+                        break
+                
+                # Если найдены критические ошибки, считаем обновление неуспешным
+                if has_critical_error:
+                    return_code = 1
+                    print("[ERROR] apt-get update завершился с ошибками в выводе, несмотря на код возврата 0", "ERROR", channels)
             
             # Логируем результат
             elapsed_total = time.time() - start_time if start_time else 0
@@ -12445,7 +12543,10 @@ class ComponentInstaller(object):
             return False
         
         config = get_component_data(component_id)
-        print(f"uninstall_component() конфигурация получена: name={config.get('name')}, category={config.get('category')}", level='DEBUG')
+        if config:
+            print(f"uninstall_component() конфигурация получена: name={config.get('name')}, category={config.get('category')}", level='DEBUG')
+        else:
+            print(f"uninstall_component() конфигурация не найдена для {component_id}", level='WARNING')
         
         category = get_component_field(component_id, 'category')
         if not category:
@@ -13152,7 +13253,6 @@ class AutomationGUI(object):
             error_msg += "  - Неправильная настройка DISPLAY\n"
             error_msg += "  - Проблемы с правами доступа к X серверу (xhost +)\n"
             print(f"[ERROR] {error_msg}", file=sys.stderr)
-            import traceback
             traceback.print_exc(file=sys.stderr)
             
             # Пытаемся записать в лог
@@ -13211,12 +13311,18 @@ class AutomationGUI(object):
         self.root.after(2000, lambda: self.root.attributes('-topmost', False))
         
         # Создаем стили для цветных прогресс-баров
-        style = ttk.Style()
+        if ttk:
+            style = ttk.Style()
+        else:
+            style = None  # type: ignore[assignment]
         # Настраиваем стили для прогресс-баров (упрощенная версия)
         
         # Инициализируем переменные для отслеживания прогресса
         self.current_download_size = 0
-        style = self.ttk.Style()
+        if self.ttk:
+            style = self.ttk.Style()
+        else:
+            style = None  # type: ignore[assignment]
         
         # Инициализируем переменную для хранения ссылки на контекстное меню
         self._current_context_menu = None
@@ -13226,12 +13332,6 @@ class AutomationGUI(object):
         
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
-        
-        # Инициализация системного трея (только для Linux)
-        self.tray_icon = None
-        self.tray_thread = None
-        if platform.system() == "Linux":
-            self._init_system_tray()
         
         # Размер окна
         window_width = 1000
@@ -13301,11 +13401,10 @@ class AutomationGUI(object):
         try:
             print("[DEBUG] Создание виджетов GUI...", gui_log=True)
             self.create_widgets()
-            print("[DEBUG] [OK] Виджеты созданы успешно", gui_log=True)
+            print("[DEBUG] [OK] Виджеты созданы успешно")
         except Exception as e:
             error_msg = f"Ошибка при создании виджетов GUI: {e}\n"
             print(f"[ERROR] {error_msg}", file=sys.stderr)
-            import traceback
             traceback.print_exc(file=sys.stderr)
             
             # Пытаемся записать в лог
@@ -13843,12 +13942,6 @@ class AutomationGUI(object):
             if not running_processes:
                 # Нет процессов - просто закрываем
                 print("[INFO] Нет запущенных процессов установки - закрываем GUI")
-                # Останавливаем трей перед закрытием
-                if self.tray_icon:
-                    try:
-                        self.tray_icon.stop()
-                    except:
-                        pass
                 self.root.destroy()
                 return
             
@@ -13941,7 +14034,7 @@ class AutomationGUI(object):
                 """Закрыть и убить все процессы"""
                 try:
                     # Блокируем кнопки
-                    for widget in button_frame.winfo_children():
+                    for widget in button_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                         widget.config(state=tk.DISABLED)
                     
                     # Показываем процесс закрытия
@@ -14028,7 +14121,7 @@ class AutomationGUI(object):
                         status_label.config(text=f"Не удалось убить {len(clean_processes)} процессов. Попробуйте еще раз?", fg="#ff0000")
                         
                         # Обновляем список процессов
-                        for widget in processes_frame.winfo_children():
+                        for widget in processes_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                             widget.destroy()
                         
                         for process_info in clean_processes:
@@ -14050,7 +14143,7 @@ class AutomationGUI(object):
                         force_close_button.pack(side=tk.LEFT, padx=5)
                         
                         # Разблокируем кнопки
-                        for widget in button_frame.winfo_children():
+                        for widget in button_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                             if isinstance(widget, tk.Button):
                                 widget.config(state=tk.NORMAL)
                         
@@ -14059,7 +14152,7 @@ class AutomationGUI(object):
                         status_label.config(text="Всех Победили! Процессы установки закрыты!", fg="#00aa00")
                         
                         # Очищаем список процессов
-                        for widget in processes_frame.winfo_children():
+                        for widget in processes_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                             widget.destroy()
                         
                         clean_label = tk.Label(processes_frame, text="OK: Все процессы установки закрыты", 
@@ -14079,7 +14172,7 @@ class AutomationGUI(object):
                 """Повторная попытка убить процессы"""
                 try:
                     # Блокируем кнопки
-                    for widget in button_frame.winfo_children():
+                    for widget in button_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                         if isinstance(widget, tk.Button):
                             widget.config(state=tk.DISABLED)
                     
@@ -14127,12 +14220,6 @@ class AutomationGUI(object):
                     dialog.destroy()
                     
                     # Закрываем терминал если есть PID
-                    # Останавливаем трей перед закрытием
-                    if self.tray_icon:
-                        try:
-                            self.tray_icon.stop()
-                        except:
-                            pass
                     # Закрываем основное приложение
                     self.root.destroy()
                     
@@ -14143,12 +14230,6 @@ class AutomationGUI(object):
                     self._close_dialog_open = False
                     try:
                         dialog.destroy()
-                        # Останавливаем трей перед закрытием
-                        if self.tray_icon:
-                            try:
-                                self.tray_icon.stop()
-                            except:
-                                pass
                         self.root.destroy()
                     except:
                         pass
@@ -14176,13 +14257,6 @@ class AutomationGUI(object):
                     # Закрываем модальное окно
                     dialog.grab_release()
                     dialog.destroy()
-                    
-                    # Останавливаем трей перед закрытием
-                    if self.tray_icon:
-                        try:
-                            self.tray_icon.stop()
-                        except:
-                            pass
                     self.root.destroy()
                     
                 except Exception as e:
@@ -14212,23 +14286,11 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[ERROR] Ошибка создания формы закрытия: {e}")
             # Fallback - просто закрываем
-            # Останавливаем трей перед закрытием
-            if self.tray_icon:
-                try:
-                    self.tray_icon.stop()
-                except:
-                    pass
             self.root.destroy()
     
     def _on_closing(self):
         """Обработчик закрытия окна GUI"""
-        # Для Linux: сворачиваем в трей вместо закрытия (если трей доступен)
-        if platform.system() == "Linux" and self.tray_icon:
-            print("[INFO] Окно сворачивается в системный трей", gui_log=True)
-            self.root.withdraw()  # Скрываем окно
-            return  # Не закрываем приложение
-        
-        # Для других ОС или если трей не доступен - обычное закрытие
+        # Обычное закрытие
         # Защита от повторного вызова
         if hasattr(self, '_closing_in_progress') and self._closing_in_progress:
             return
@@ -14278,88 +14340,6 @@ class AutomationGUI(object):
             except Exception as e:
                 # Игнорируем ошибки при изменении размера
                 pass
-    
-    def _init_system_tray(self):
-        """Инициализация системного трея (Linux)"""
-        try:
-            # Динамический импорт для избежания предупреждений линтера
-            pystray = __import__('pystray')
-            from PIL import Image, ImageDraw
-            
-            # Создаем простую иконку (синий квадрат на сером фоне)
-            image = Image.new('RGB', (64, 64), color='gray')
-            draw = ImageDraw.Draw(image)
-            # Рисуем синий квадрат в центре
-            draw.rectangle([16, 16, 48, 48], fill='blue')
-            # Добавляем текст "FSA" (упрощенно)
-            try:
-                draw.text((20, 20), "FSA", fill='white')
-            except:
-                pass  # Если шрифт недоступен, просто квадрат
-            
-            # Создаем меню трея
-            menu = pystray.Menu(
-                pystray.MenuItem('Показать', self._show_window),
-                pystray.MenuItem('Скрыть', self._hide_window),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem('Выход', self._quit_application)
-            )
-            
-            self.tray_icon = pystray.Icon("FSA-AstraInstall", image, 
-                                          f"{APP_NAME} {APP_VERSION}", menu)
-            
-            # Добавляем обработчик двойного клика на иконку (показать/скрыть окно)
-            def on_icon_clicked(icon, item):
-                if self.root.winfo_viewable():
-                    self._hide_window()
-                else:
-                    self._show_window()
-            
-            self.tray_icon.on_click = on_icon_clicked
-            
-            # Запускаем трей в отдельном потоке
-            self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
-            self.tray_thread.start()
-            
-            print("[INFO] Иконка системного трея создана", level='DEBUG')
-            
-        except ImportError as e:
-            print(f"[WARNING] Не удалось импортировать pystray или PIL: {e}", level='WARNING')
-            print("[INFO] Функция сворачивания в трей будет недоступна", level='INFO')
-            self.tray_icon = None
-        except Exception as e:
-            print(f"[WARNING] Не удалось создать иконку в трее: {e}", level='WARNING')
-            self.tray_icon = None
-    
-    def _show_window(self, icon=None, item=None):
-        """Показать окно из трея"""
-        try:
-            self.root.after(0, lambda: self.root.deiconify())
-            self.root.after(0, lambda: self.root.lift())
-            self.root.after(0, lambda: self.root.focus_force())
-            print("[INFO] Окно показано из системного трея", level='DEBUG')
-        except Exception as e:
-            print(f"[ERROR] Ошибка показа окна: {e}", level='ERROR')
-    
-    def _hide_window(self, icon=None, item=None):
-        """Скрыть окно в трей"""
-        try:
-            self.root.after(0, lambda: self.root.withdraw())
-            print("[INFO] Окно скрыто в системный трей", level='DEBUG')
-        except Exception as e:
-            print(f"[ERROR] Ошибка скрытия окна: {e}", level='ERROR')
-    
-    def _quit_application(self, icon=None, item=None):
-        """Полный выход из приложения"""
-        try:
-            # Останавливаем трей
-            if self.tray_icon:
-                self.tray_icon.stop()
-            # Вызываем обычное закрытие
-            self._closing_in_progress = False  # Сбрасываем флаг для возможности закрытия
-            self._close_parent_terminal()
-        except Exception as e:
-            print(f"[ERROR] Ошибка выхода из приложения: {e}", level='ERROR')
     
     def _redirect_output_to_terminal(self):
         """Перенаправление stdout и stderr на встроенный терминал GUI"""
@@ -14691,14 +14671,31 @@ class AutomationGUI(object):
         control_frame = self.tk.LabelFrame(self.main_frame, text="Управление")
         control_frame.pack(fill=self.tk.X, padx=10, pady=3)
         
-        # Чекбокс для dry-run
-        dry_run_check = self.tk.Checkbutton(control_frame, text="Режим тестирования (dry-run)", 
-                                           variable=self.dry_run)
+        # Кнопка синхронизации времени (слева)
+        self.sync_time_button = self.tk.Button(
+            control_frame, 
+            text="Синхронизировать время", 
+            command=self._sync_time_button_clicked
+        )
+        self.sync_time_button.pack(side=self.tk.LEFT, padx=5, pady=3)
+        ToolTip(self.sync_time_button, "Синхронизировать системное время через NTP (требуются права root)")
+        
+        # Кнопки управления и чекбокс Тест (справа)
+        right_frame = self.tk.Frame(control_frame)
+        right_frame.pack(side=self.tk.RIGHT, padx=5, pady=3)
+        
+        # Чекбокс для dry-run (справа, перед кнопками)
+        dry_run_check = self.tk.Checkbutton(
+            right_frame, 
+            text="Тест", 
+            variable=self.dry_run
+        )
         dry_run_check.pack(side=self.tk.LEFT, padx=5, pady=3)
+        ToolTip(dry_run_check, "Режим тестирования (dry-run)")
         
         # Кнопки управления
-        button_frame = self.tk.Frame(control_frame)
-        button_frame.pack(side=self.tk.RIGHT, padx=5, pady=3)
+        button_frame = self.tk.Frame(right_frame)
+        button_frame.pack(side=self.tk.LEFT, padx=5, pady=3)
         
         self.start_button = self.tk.Button(button_frame, text="Запустить", 
                                           command=self.start_automation)
@@ -16228,7 +16225,7 @@ class AutomationGUI(object):
         self.filesystem_accordion_sections = {}
         # Очищаем аккордеон от старых данных
         if hasattr(self, 'fs_accordion_frame'):
-            for widget in self.fs_accordion_frame.winfo_children():
+            for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                 widget.destroy()
         
         # Запускаем создание базового снимка в фоновом потоке (только в памяти)
@@ -16450,7 +16447,7 @@ class AutomationGUI(object):
         self.filesystem_accordion_sections = {}
         # Очищаем аккордеон
         if hasattr(self, 'fs_accordion_frame'):
-            for widget in self.fs_accordion_frame.winfo_children():
+            for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                 widget.destroy()
         
         # Сбрасываем счетчик времени
@@ -16552,7 +16549,7 @@ class AutomationGUI(object):
         self.filesystem_time_groups = {}
         self.filesystem_accordion_sections = {}
         # Очищаем аккордеон
-        for widget in self.fs_accordion_frame.winfo_children():
+        for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
             widget.destroy()
         self._update_filesystem_statistics()
         self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
@@ -16965,7 +16962,7 @@ class AutomationGUI(object):
         """Обновление отображения изменений"""
         # Сохраняем состояние развернутых секций перед обновлением
         expanded_sections = set()
-        for widget in self.fs_accordion_frame.winfo_children():
+        for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
             if hasattr(widget, '_toggle_var') and widget._toggle_var.get():
                 # Получаем уникальный ключ секции
                 section_key = getattr(widget, '_section_key', None)
@@ -16973,7 +16970,7 @@ class AutomationGUI(object):
                     expanded_sections.add(section_key)
         
         # Очищаем аккордеон
-        for widget in self.fs_accordion_frame.winfo_children():
+        for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
             widget.destroy()
         
         if not self.filesystem_changes_history:
@@ -17560,7 +17557,7 @@ class AutomationGUI(object):
         # При разворачивании заполняем содержимое
         def _populate_content():
             # Очищаем старое содержимое
-            for widget in content_frame.winfo_children():
+            for widget in content_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                 widget.destroy()
             
             # Сначала показываем поддиректории (рекурсивно) - отсортированные по возрастанию
@@ -17755,7 +17752,10 @@ class AutomationGUI(object):
             app_processes, total_cpu = self.process_monitor._get_app_processes_cached()
             
             # Получаем активные операции классов
-            active_operations = _global_activity_tracker.get_active_operations()
+            if _global_activity_tracker:
+                active_operations = _global_activity_tracker.get_active_operations()
+            else:
+                active_operations = []
             
             # Получаем процессы установки
             install_processes = self._get_running_installation_processes()
@@ -18347,9 +18347,12 @@ class AutomationGUI(object):
             text_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
             
             # Текстовая область с прокруткой
-            from tkinter import scrolledtext
-            text_widget = scrolledtext.ScrolledText(text_frame, wrap=self.tk.WORD, 
-                                                    font=('Courier', 10))
+            if scrolledtext:
+                text_widget = scrolledtext.ScrolledText(text_frame, wrap=self.tk.WORD, 
+                                                        font=('Courier', 10))
+            else:
+                text_widget = self.tk.Text(text_frame, wrap=self.tk.WORD, 
+                                          font=('Courier', 10))
             text_widget.pack(fill=self.tk.BOTH, expand=True)
             text_widget.insert(1.0, content)
             text_widget.config(state=self.tk.DISABLED)  # Только для чтения
@@ -19664,7 +19667,6 @@ class AutomationGUI(object):
                 if result:
                     # Пользователь согласился перезагрузить
                     print("[INFO] Пользователь согласился перезагрузить систему", gui_log=True)
-                    import subprocess
                     try:
                         subprocess.run(['reboot'], check=True)
                     except Exception as e:
@@ -19911,12 +19913,10 @@ class AutomationGUI(object):
         """Обработка двойного клика по таблице Wine компонентов - открытие папки компонента"""
         region = self.wine_tree.identify('region', event.x, event.y)
         if region == 'heading':
-            print("[DEBUG] Клик по заголовку - пропускаем", gui_log=True)
             return  # Заголовок не обрабатываем
         
         item = self.wine_tree.identify_row(event.y)
         if not item:
-            print("[DEBUG] Item не найден", gui_log=True)
             return
         
         # Получаем component_id из обратного словаря соответствия
@@ -19930,6 +19930,7 @@ class AutomationGUI(object):
         
         if check_method == 'system_config':
             # Для системных компонентов показываем содержимое файла
+            print(f"[DEBUG] Компонент {component_id} - системная настройка, показываем содержимое", level='DEBUG', gui_log=True)
             self._show_system_config_content(component_id, config)
         else:
             # Для остальных компонентов открываем папку/файл
@@ -19939,7 +19940,11 @@ class AutomationGUI(object):
                 return
             
             # Открываем папку компонента
-            self._open_component_path(target_path)
+            try:
+                self._open_component_path(target_path)
+            except Exception as e:
+                print(f"Ошибка при открытии папки компонента {component_id}: {e}", level='ERROR', gui_log=True)
+                print(f"Трассировка: {traceback.format_exc()}", level='ERROR', gui_log=True)
     
     def _show_system_config_content(self, component_id, config):
         """
@@ -20027,9 +20032,14 @@ class AutomationGUI(object):
         text_frame = tk.Frame(dialog)
         text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
-        text_widget = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, 
-                                               font=("Courier", 10),
-                                               bg="#f5f5f5", fg="#000000")
+        if scrolledtext:
+            text_widget = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, 
+                                                   font=("Courier", 10),
+                                                   bg="#f5f5f5", fg="#000000")
+        else:
+            text_widget = tk.Text(text_frame, wrap=tk.WORD, 
+                                 font=("Courier", 10),
+                                 bg="#f5f5f5", fg="#000000")
         text_widget.pack(fill=tk.BOTH, expand=True)
         text_widget.insert(tk.END, content if content else "Файл пуст или не существует")
         text_widget.config(state=tk.DISABLED)  # Только для чтения
@@ -20086,14 +20096,7 @@ class AutomationGUI(object):
             # Используем стандартный префикс
             wineprefix_path = self._get_wineprefix()
         
-        # Проверяем наличие source_dir в конфигурации
-        source_dir = config.get('source_dir')
-        if source_dir:
-            # Компонент имеет исходную директорию - открываем её
-            full_source_dir = self._get_source_dir(source_dir)
-            if full_source_dir and os.path.exists(full_source_dir):
-                return full_source_dir
-        
+        # ИСПРАВЛЕНИЕ: Используем check_paths напрямую (те же пути, по которым проверяется установка)
         # Получаем check_paths из конфигурации
         check_paths = config.get('check_paths', [])
         if not check_paths:
@@ -20129,8 +20132,6 @@ class AutomationGUI(object):
             full_path = os.path.abspath(full_path)
         elif path.startswith('drive_c/'):
             # Путь внутри WINEPREFIX
-            # КРИТИЧНО: Всегда возвращаем путь, даже если WINEPREFIX не существует
-            # (откроем папку, где должен быть WINEPREFIX)
             full_path = os.path.join(wineprefix_path, path)
             # КРИТИЧНО: Преобразуем в абсолютный путь
             full_path = os.path.abspath(full_path)
@@ -20142,43 +20143,34 @@ class AutomationGUI(object):
                 # Относительный путь - преобразуем в абсолютный
                 full_path = os.path.abspath(path)
         
-        # КРИТИЧНО: Всегда возвращаем путь, даже если компонент не установлен
-        # Это позволяет открыть папку, где должен быть компонент
+        # ИСПРАВЛЕНИЕ: Обработка glob-шаблонов (например, Astra.IDE_64_*)
+        if '*' in path or '?' in path:
+            # Путь содержит glob-шаблон - используем glob для поиска реального пути
+            matches = glob.glob(full_path)
+            if matches:
+                # Используем первый найденный путь
+                full_path = matches[0]
+            # Если glob не нашел совпадений, используем исходный путь (откроем родительскую папку)
         
-        # Если путь существует - возвращаем его
+        # Определяем, файл это или папка
         if os.path.exists(full_path):
-            # КРИТИЧНО: Если это файл - возвращаем полный путь к файлу (для выделения)
-            # Если это папка - возвращаем путь к папке
             if os.path.isfile(full_path):
-                return full_path  # Файл - возвращаем для выделения
+                # ИСПРАВЛЕНИЕ: Это файл - возвращаем родительскую папку (откроем папку с выделением файла)
+                return os.path.dirname(full_path)
             else:
-                return full_path  # Папка - возвращаем для открытия
+                # Это папка - возвращаем путь к папке
+                return full_path
         
-        # Если путь не существует:
-        # - Для файла: возвращаем полный путь к файлу (откроем папку с выделением)
-        # - Для папки: возвращаем родительскую папку (откроем папку, где должна быть папка)
-        parent_dir = os.path.dirname(full_path)
-        
-        # Определяем, файл это или папка по расширению или структуре пути
-        # Если путь заканчивается на расширение файла или содержит точку в последней части - это файл
+        # Если путь не существует, определяем по структуре пути
         path_parts = full_path.split('/')
         last_part = path_parts[-1] if path_parts else ''
         is_likely_file = '.' in last_part and not last_part.startswith('.')
         
         if is_likely_file:
-            # Это файл - возвращаем полный путь к файлу (откроем папку с выделением)
-            # КРИТИЧНО: Всегда возвращаем путь к файлу, даже если он не существует
-            # (команда выделения должна работать с несуществующими файлами)
-            # Но если родительская папка существует - возвращаем путь к файлу для выделения
-            if os.path.exists(parent_dir):
-                return full_path  # Возвращаем путь к файлу для выделения
-            # Если родительская папка не существует - возвращаем её (откроем папку)
-            return parent_dir
+            # ИСПРАВЛЕНИЕ: Это файл - возвращаем родительскую папку (откроем папку, где должен быть файл)
+            return os.path.dirname(full_path)
         else:
-            # Это папка - возвращаем родительскую папку (откроем папку, где должна быть папка)
-            if os.path.exists(parent_dir):
-                return parent_dir
-            # Если родительская папка не существует - возвращаем путь к папке (попробуем открыть)
+            # Это папка - возвращаем путь к папке (попробуем открыть)
             return full_path
     
     def _open_component_path(self, target_path):
@@ -20189,12 +20181,10 @@ class AutomationGUI(object):
             target_path: Полный путь к файлу/папке компонента
         """
         if not target_path:
-            print(f"Путь компонента не указан", level='WARNING', gui_log=True)
             return
         
         # КРИТИЧНО: Преобразуем путь в абсолютный путь (убираем ~ и относительные пути)
         # Это гарантирует, что файловый менеджер правильно откроет папку
-        original_path = target_path
         # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
         if '~' in target_path:
             target_path = expand_user_path(target_path)
@@ -20233,126 +20223,41 @@ class AutomationGUI(object):
             pass
         
         try:
-            # Linux: используем xdg-open и файловые менеджеры
+            # ИСПРАВЛЕНИЕ: Запускаем fly-fm от обычного пользователя (не от root)
+            # Определяем реального пользователя (если запущено от root через sudo)
+            real_user = os.environ.get('SUDO_USER')
+            if not real_user or real_user == 'root':
+                # Если нет SUDO_USER, значит код запущен не через sudo - используем текущего пользователя
+                real_user = getpass.getuser()
+            
+            # Определяем путь для открытия
             if is_file or file_path_for_selection:
-                # Для файла: открываем папку с выделением файла
-                # Используем nautilus, dolphin, thunar или другой файловый менеджер
                 file_to_select = file_path_for_selection if file_path_for_selection else target_path
-                
-                # КРИТИЧНО: Преобразуем путь к файлу в абсолютный путь
-                # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
                 if '~' in file_to_select:
                     file_to_select = expand_user_path(file_to_select)
                 file_to_select = os.path.abspath(file_to_select)
-                parent_dir = os.path.dirname(file_to_select)
-                
-                # КРИТИЧНО: Для выделения файла используем полный путь к файлу
-                # Пробуем открыть папку с выделением файла через nautilus
-                try:
-                    # Используем --select с полным путем к файлу
-                    # Это должно выделить файл, даже если он не существует
-                    subprocess.Popen(['nautilus', '--select', file_to_select], 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    return
-                except FileNotFoundError:
-                    # Если nautilus не найден, пробуем dolphin
-                    try:
-                        # Dolphin использует --select для выделения файла
-                        subprocess.Popen(['dolphin', '--select', file_to_select], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        # Если dolphin не найден, пробуем thunar
-                        try:
-                            # Thunar использует --select для выделения файла
-                            subprocess.Popen(['thunar', '--select', file_to_select], 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            return
-                        except FileNotFoundError:
-                            # Если thunar не найден, пробуем pcmanfm
-                            try:
-                                subprocess.Popen(['pcmanfm', '--select', file_to_select], 
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                return
-                            except FileNotFoundError:
-                                # Если ничего не работает, просто открываем папку
-                                subprocess.Popen(['xdg-open', parent_dir], 
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                path_to_open = os.path.dirname(file_to_select)
             else:
-                # Для папки: открываем напрямую (используем абсолютный путь)
-                # КРИТИЧНО: Для скрытых папок (начинающихся с .) используем специальную обработку
-                # Проверяем, является ли папка скрытой
-                is_hidden = os.path.basename(target_path).startswith('.')
-                
-                if is_hidden:
-                    # Для скрытых папок: пробуем разные способы открытия
-                    # 1. Пробуем использовать file:// URI с полным путем
-                    try:
-                        file_uri = 'file://' + target_path
-                        subprocess.Popen(['xdg-open', file_uri], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except Exception as e:
-                        pass
-                    
-                    # 2. Пробуем открыть через nautilus с параметром --new-window
-                    try:
-                        subprocess.Popen(['nautilus', '--new-window', target_path], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        pass
-                    
-                    # 3. Пробуем использовать gio (GNOME) - он лучше работает со скрытыми папками
-                    try:
-                        subprocess.Popen(['gio', 'open', target_path], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        pass
-                    
-                    # 4. Пробуем dolphin
-                    try:
-                        subprocess.Popen(['dolphin', '--new-window', target_path], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        pass
-                    
-                    # 5. Пробуем thunar
-                    try:
-                        subprocess.Popen(['thunar', target_path], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        pass
-                    
-                    # 6. Если ничего не работает, открываем родительскую папку
-                    parent_dir = os.path.dirname(target_path)
-                    subprocess.Popen(['xdg-open', parent_dir], 
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                else:
-                    # Для обычных папок: открываем напрямую
-                    try:
-                        subprocess.Popen(['nautilus', target_path], 
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        return
-                    except FileNotFoundError:
-                        try:
-                            subprocess.Popen(['dolphin', target_path], 
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            return
-                        except FileNotFoundError:
-                            try:
-                                subprocess.Popen(['thunar', target_path], 
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                return
-                            except FileNotFoundError:
-                                subprocess.Popen(['xdg-open', target_path], 
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                path_to_open = target_path
+                if '~' in path_to_open:
+                    path_to_open = expand_user_path(path_to_open)
+                path_to_open = os.path.abspath(path_to_open)
+            
+            # КРИТИЧНО: Для Astra Linux 1.7 используем fly-fm от обычного пользователя
+            # ИСПРАВЛЕНИЕ: Запускаем fly-fm от обычного пользователя через sudo -u
+            # sudo -u сохраняет переменные окружения X11 (DISPLAY, XAUTHORITY)
+            if os.geteuid() == 0 and real_user != 'root':
+                # Запущено от root - используем sudo -u
+                subprocess.Popen(['sudo', '-u', real_user, 'fly-fm', path_to_open], 
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                # Запущено от обычного пользователя - запускаем напрямую
+                subprocess.Popen(['fly-fm', path_to_open], 
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
         except Exception as e:
-            print(f"Ошибка открытия папки: {str(e)}", level='ERROR')
+            print(f"Ошибка открытия папки: {str(e)}", level='ERROR', gui_log=True)
+    
     
     def toggle_all_wine_components(self):
         """Переключить все чекбоксы (клик по заголовку)"""
@@ -20810,14 +20715,27 @@ class AutomationGUI(object):
             )
             return
         
-        # 5. Показываем кастомный диалог выбора пути, имени архива и уровня сжатия
-        default_name = f"{component_id}_template.tar.gz"
+        # 5. Показываем диалог выбора пути, имени архива и уровня сжатия
+        # ИСПРАВЛЕНИЕ: Используем имя архива из конфигурации компонента, если оно указано
+        default_name = config.get('archive_name') or f"{component_id}_template.tar.gz"
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
         astrapack_dir = os.path.join(script_dir, "AstraPack")
-        default_dir = os.path.join(astrapack_dir, 'WinePrefixes') if os.path.exists(astrapack_dir) else os.path.expanduser('~')
         
-        os.makedirs(default_dir, exist_ok=True)
+        # ИСПРАВЛЕНИЕ: Используем папку из конфигурации компонента, если она указана
+        config_output_dir = config.get('template_output_dir') or config.get('archive_output_dir')
+        if config_output_dir:
+            # Используем папку из конфигурации компонента
+            default_dir = expand_user_path(config_output_dir)
+        else:
+            # Используем папку, откуда распаковывается архив (source_dir)
+            source_dir = config.get('source_dir')
+            if source_dir and astrapack_dir and os.path.exists(astrapack_dir):
+                # Используем папку source_dir из конфигурации (как при установке)
+                default_dir = os.path.join(astrapack_dir, source_dir)
+            else:
+                # Если source_dir не указан, используем стандартную папку
+                default_dir = os.path.join(astrapack_dir, 'WinePrefixes') if os.path.exists(astrapack_dir) else expand_user_path('~')
         
         # Создаем кастомный диалог с выбором пути и уровня сжатия
         dialog = tk.Toplevel(self.root)
@@ -21034,6 +20952,14 @@ class AutomationGUI(object):
                 f"Образ Wine-префикса успешно создан:\n{result}\n\n"
                 f"Размер: {size_str}"
             )
+            
+            # ИСПРАВЛЕНИЕ: Открываем папку с архивом
+            archive_dir = os.path.dirname(result)
+            if os.path.exists(archive_dir):
+                try:
+                    self._open_folder_or_file(archive_dir, is_file=False, file_path_for_selection=result)
+                except Exception as e:
+                    print(f"Не удалось открыть папку с архивом: {e}", level='WARNING')
         else:
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Не удалось создать образ", fg='red')
@@ -21292,21 +21218,14 @@ class AutomationGUI(object):
         thread_name = threading.current_thread().name
         print(f"Поток {thread_name} начал выполнение (_run_apt_update_universal)", level='DEBUG')
         try:
-            # Подготавливаем переменные окружения для процесса (как в SystemUpdater)
-            env = os.environ.copy()
-            # КРИТИЧНО: Удаляем LD_LIBRARY_PATH чтобы системные команды не видели библиотеки из бинарника
-            # Это изолирует системные процессы (apt, dpkg, systemd) от библиотек PyInstaller
-            env.pop('LD_LIBRARY_PATH', None)
-            env['DEBIAN_FRONTEND'] = 'noninteractive'
-            env['DEBIAN_PRIORITY'] = 'critical'
-            env['APT_LISTCHANGES_FRONTEND'] = 'none'
-
+            # КРИТИЧНО: Не передаем env - run_process сам создаст минимальное окружение
+            # для системных команд (apt-get, apt, dpkg) без переменных из PyInstaller
             # Используем новый универсальный обработчик
             return_code = self.universal_runner.run_process(
                 ['apt-get', 'update'],
                 process_type="update",
                 channels=["file", "terminal", "gui"],
-                env=env
+                env=None  # run_process создаст минимальное окружение для apt-get
             )
             
             # Обновляем GUI в главном потоке
@@ -21326,6 +21245,107 @@ class AutomationGUI(object):
             print(f"Поток {thread_name} завершил выполнение (_run_apt_update_universal)", level='DEBUG')
             # Разблокируем кнопку
             self.root.after(0, lambda: self.update_repos_button.config(state=self.tk.NORMAL))
+    
+    def _sync_time_button_clicked(self):
+        """Обработчик нажатия кнопки синхронизации времени (простая синхронизация через ntpdate)"""
+        TIME_SYNC_FLAG = "/tmp/fsa-time-synced"
+        
+        # Блокируем кнопку во время синхронизации
+        self.sync_time_button.config(state=self.tk.DISABLED, text="Синхронизация...")
+        
+        try:
+            print("[INFO] Запуск синхронизации времени...", gui_log=True)
+            
+            # Проверяем наличие ntpdate
+            if not shutil.which('ntpdate'):
+                print("[ERROR] ntpdate не найден. Установите пакет ntpdate", gui_log=True)
+                # Удаляем флаг, если он есть (ntpdate недоступен)
+                if os.path.exists(TIME_SYNC_FLAG):
+                    try:
+                        os.remove(TIME_SYNC_FLAG)
+                        print("[INFO] Флаг синхронизации удалён (ntpdate недоступен)", gui_log=True)
+                    except Exception:
+                        pass
+                self.sync_time_button.config(text="Ошибка: ntpdate не найден")
+                return
+            
+            # Получаем список серверов с приоритетами
+            ntp_servers = _get_ntp_servers_list()
+            print(f"[INFO] Список NTP серверов для синхронизации ({len(ntp_servers)} серверов)", gui_log=True)
+            
+            sync_success = False
+            successful_server = None
+            for server in ntp_servers:
+                try:
+                    print(f"[INFO] Пробуем сервер: {server}", gui_log=True)
+                    result = subprocess.run(
+                        ['ntpdate', '-s', server],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=30
+                    )
+                    if result.returncode == 0:
+                        stdout_msg = result.stdout.decode('utf-8', errors='ignore').strip()
+                        print(f"[OK] Время синхронизировано через ntpdate ({server})", gui_log=True)
+                        if stdout_msg:
+                            print(f"[INFO] {stdout_msg}", gui_log=True)
+                        sync_success = True
+                        successful_server = server
+                        break  # Используем первый успешный сервер
+                    else:
+                        stderr_msg = result.stderr.decode('utf-8', errors='ignore').strip()
+                        print(f"[WARNING] ntpdate {server} вернул код {result.returncode}: {stderr_msg}", gui_log=True)
+                except subprocess.TimeoutExpired:
+                    print(f"[WARNING] Таймаут при синхронизации с {server}", gui_log=True)
+                    continue
+                except Exception as e:
+                    print(f"[WARNING] Ошибка ntpdate {server}: {e}", gui_log=True)
+                    continue
+            
+            # Обработка результата: создание/удаление флага и визуальная обратная связь
+            if sync_success:
+                # Создаём флаг успешной синхронизации
+                try:
+                    with open(TIME_SYNC_FLAG, 'w') as f:
+                        f.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                    print(f"[OK] Флаг синхронизации создан: {TIME_SYNC_FLAG}", gui_log=True)
+                except Exception as e:
+                    print(f"[WARNING] Не удалось создать флаг: {e}", gui_log=True)
+                
+                # Визуальная обратная связь: успех
+                self.sync_time_button.config(text=f"✓ Синхронизировано ({successful_server})")
+                # Через 3 секунды возвращаем обычный текст
+                self.root.after(3000, lambda: self.sync_time_button.config(text="Синхронизировать время"))
+            else:
+                # Удаляем флаг при неуспехе
+                if os.path.exists(TIME_SYNC_FLAG):
+                    try:
+                        os.remove(TIME_SYNC_FLAG)
+                        print("[INFO] Флаг синхронизации удалён (синхронизация неуспешна)", gui_log=True)
+                    except Exception as e:
+                        print(f"[WARNING] Не удалось удалить флаг: {e}", gui_log=True)
+                
+                print("[ERROR] Не удалось синхронизировать время ни с одним из серверов", gui_log=True)
+                # Визуальная обратная связь: ошибка
+                self.sync_time_button.config(text="✗ Ошибка синхронизации")
+                # Через 3 секунды возвращаем обычный текст
+                self.root.after(3000, lambda: self.sync_time_button.config(text="Синхронизировать время"))
+        
+        except Exception as e:
+            print(f"[ERROR] Ошибка синхронизации времени: {e}", gui_log=True)
+            # Удаляем флаг при ошибке
+            if os.path.exists(TIME_SYNC_FLAG):
+                try:
+                    os.remove(TIME_SYNC_FLAG)
+                    print("[INFO] Флаг синхронизации удалён (ошибка)", gui_log=True)
+                except Exception:
+                    pass
+            # Визуальная обратная связь: ошибка
+            self.sync_time_button.config(text="✗ Ошибка")
+            self.root.after(3000, lambda: self.sync_time_button.config(text="Синхронизировать время"))
+        finally:
+            # Разблокируем кнопку
+            self.sync_time_button.config(state=self.tk.NORMAL)
     
     def show_repo_context_menu(self, event):
         """Показать контекстное меню для репозитория"""
@@ -22177,9 +22197,12 @@ class AutomationGUI(object):
             log_frame.grid(row=2, column=0, sticky='nsew', padx=5, pady=5)
             
             # Текстовая область с прокруткой (ограниченная высота - 12 строк)
-            from tkinter import scrolledtext
-            log_text = scrolledtext.ScrolledText(log_frame, wrap=self.tk.WORD, 
-                                                 font=('Courier', 9), state=self.tk.DISABLED, height=12)
+            if scrolledtext:
+                log_text = scrolledtext.ScrolledText(log_frame, wrap=self.tk.WORD, 
+                                                     font=('Courier', 9), state=self.tk.DISABLED, height=12)
+            else:
+                log_text = self.tk.Text(log_frame, wrap=self.tk.WORD, 
+                                       font=('Courier', 9), state=self.tk.DISABLED, height=12)
             log_text.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
             
             # Статус-бар
@@ -23815,7 +23838,7 @@ class AutomationGUI(object):
                 """Убить процессы и закрыть диалог"""
                 try:
                     # Блокируем кнопки
-                    for widget in button_frame.winfo_children():
+                    for widget in button_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                         widget.config(state=tk.DISABLED)
                     
                     # Показываем процесс закрытия
@@ -24424,6 +24447,7 @@ class InteractiveHandler(object):
             
             # Читаем вывод построчно
             output_buffer = ""
+            assert process.stdout is not None  # type: ignore[reportUnnecessaryAssert]
             while True:
                 line = process.stdout.readline()
                 if not line:
@@ -24442,6 +24466,7 @@ class InteractiveHandler(object):
                     print("   [AUTO] Автоматический ответ: %s (для %s)" % (response, prompt_type))
                     
                     # Отправляем ответ
+                    assert process.stdin is not None  # type: ignore[reportUnnecessaryAssert]
                     process.stdin.write(response + '\n')
                     process.stdin.flush()
                     
@@ -24855,7 +24880,10 @@ class UniversalProgressManager:
                     gui.wine_cpu_progress['value'] = cpu_usage
                     
                     # Цветовая индикация CPU - применяем к прогресс-бару через стиль
-                    style = gui.ttk.Style()
+                    if gui.ttk:
+                        style = gui.ttk.Style()
+                    else:
+                        style = None  # type: ignore[assignment]
                     
                     # Определяем цвет в зависимости от загрузки
                     if cpu_usage < 30:
@@ -24866,13 +24894,14 @@ class UniversalProgressManager:
                         cpu_color = '#F44336'  # red
                     
                     # Создаем или обновляем стиль для CPU прогресс-бара
-                    style_name = 'CPUProgressbar.Horizontal.TProgressbar'
-                    try:
-                        style.configure(style_name, background=cpu_color, troughcolor='#E0E0E0')
-                        gui.wine_cpu_progress.configure(style=style_name)
-                    except:
-                        # Если стили не поддерживаются, оставляем без изменений
-                        pass
+                    if style:
+                        style_name = 'CPUProgressbar.Horizontal.TProgressbar'
+                        try:
+                            style.configure(style_name, background=cpu_color, troughcolor='#E0E0E0')
+                            gui.wine_cpu_progress.configure(style=style_name)
+                        except:
+                            # Если стили не поддерживаются, оставляем без изменений
+                            pass
                 
                 # Текст CPU без цвета (нейтральный)
                 if hasattr(gui, 'wine_cpu_label'):
@@ -24935,7 +24964,10 @@ class UniversalProgressManager:
                     gui.wine_net_progress['value'] = net_percent
                     
                     # Цветовая индикация сети - применяем к прогресс-бару через стиль
-                    style = gui.ttk.Style()
+                    if gui.ttk:
+                        style = gui.ttk.Style()
+                    else:
+                        style = None  # type: ignore[assignment]
                     
                     # Определяем цвет в зависимости от процента от максимума
                     if net_percent < 10:
@@ -24948,13 +24980,14 @@ class UniversalProgressManager:
                         net_color = '#F44336'  # red (очень высокая)
                     
                     # Создаем или обновляем стиль для сетевого прогресс-бара
-                    style_name = 'NetProgressbar.Horizontal.TProgressbar'
-                    try:
-                        style.configure(style_name, background=net_color, troughcolor='#E0E0E0')
-                        gui.wine_net_progress.configure(style=style_name)
-                    except:
-                        # Если стили не поддерживаются, оставляем без изменений
-                        pass
+                    if style:
+                        style_name = 'NetProgressbar.Horizontal.TProgressbar'
+                        try:
+                            style.configure(style_name, background=net_color, troughcolor='#E0E0E0')
+                            gui.wine_net_progress.configure(style=style_name)
+                        except:
+                            # Если стили не поддерживаются, оставляем без изменений
+                            pass
                 
                 # Текст сети без цвета (нейтральный)
                 if hasattr(gui, 'wine_net_label'):
@@ -24976,7 +25009,7 @@ class UniversalProgressManager:
             stats_data: Словарь со статистикой (cpu, memory, network, time, etc.)
         """
         # Отправляем статистику в GUI
-        if hasattr(self.universal_runner, 'send_message'):
+        if self.universal_runner and hasattr(self.universal_runner, 'send_message'):
             message = f"[STATISTICS] {process_type}: {stats_data}"
             self.universal_runner.send_message(message)
     
@@ -26853,18 +26886,9 @@ class SystemUpdater(object):
             return -1
         
         try:
-            # Подготавливаем переменные окружения для процесса
-            env = os.environ.copy()
-            # КРИТИЧНО: Удаляем LD_LIBRARY_PATH чтобы системные команды не видели библиотеки из бинарника
-            # Это изолирует системные процессы (apt, dpkg, systemd) от библиотек PyInstaller
-            env.pop('LD_LIBRARY_PATH', None)
-            env['DEBIAN_FRONTEND'] = 'noninteractive'
-            env['DEBIAN_PRIORITY'] = 'critical'
-            env['APT_LISTCHANGES_FRONTEND'] = 'none'
+            # КРИТИЧНО: Не передаем env - run_process сам создаст минимальное окружение
+            # для системных команд (apt-get, apt, dpkg) без переменных из PyInstaller
             # Явно НЕ устанавливаем UCF_FORCE_CONF* чтобы избежать конфликтов
-            env.pop('UCF_FORCE_CONFFOLD', None)
-            env.pop('UCF_FORCE_CONFFNEW', None)
-            
             # ИСПРАВЛЕНИЕ: Используем universal_runner вместо прямого subprocess.Popen
             # Это обеспечит передачу данных парсеру!
             return_code = self.universal_runner.run_process(
@@ -26872,7 +26896,7 @@ class SystemUpdater(object):
                 process_type="update",
                 channels=["file", "terminal", "gui"],
                 timeout=timeout,
-                env=env
+                env=None  # run_process создаст минимальное окружение для системных команд
             )
             
             # Возвращаем код сразу, так как universal_runner уже обработал все
@@ -27365,8 +27389,92 @@ class SystemUpdater(object):
         
         print("\n[OK] Симуляция завершена")
 
+def _get_ntp_servers_list():
+    """
+    Получает список NTP серверов с приоритетами:
+    1. Из конфигурации системы (/etc/systemd/timesyncd.conf)
+    2. Российские серверы по умолчанию
+    3. Зарубежные серверы как fallback
+    
+    Returns:
+        list: Список серверов в порядке приоритета
+    """
+    servers = []
+    
+    # Приоритет 1: Читаем из конфигурации системы
+    try:
+        timesyncd_conf = '/etc/systemd/timesyncd.conf'
+        if os.path.exists(timesyncd_conf):
+            with open(timesyncd_conf, 'r', encoding='utf-8') as f:
+                in_time_section = False
+                for line in f:
+                    line = line.strip()
+                    # Пропускаем комментарии и пустые строки
+                    if not line or line.startswith('#'):
+                        continue
+                    
+                    # Проверяем секцию [Time]
+                    if line == '[Time]':
+                        in_time_section = True
+                        continue
+                    elif line.startswith('[') and line.endswith(']'):
+                        in_time_section = False
+                        continue
+                    
+                    # Читаем только из секции [Time]
+                    if in_time_section:
+                        # Ищем NTP= или FallbackNTP=
+                        if line.startswith('NTP='):
+                            servers_str = line.split('=', 1)[1].strip()
+                            if servers_str:
+                                # Добавляем в начало списка (высший приоритет)
+                                servers = servers_str.split() + servers
+                        elif line.startswith('FallbackNTP='):
+                            servers_str = line.split('=', 1)[1].strip()
+                            if servers_str:
+                                # Добавляем после основных, но перед российскими
+                                servers.extend(servers_str.split())
+    except Exception as e:
+        print(f"[DEBUG] Ошибка чтения timesyncd.conf: {e}", gui_log=True)
+    
+    # Приоритет 2: Российские серверы по умолчанию (если не найдены в конфиге)
+    if not servers:
+        servers = [
+            'ntp1.vniiftri.ru',
+            'ntp2.vniiftri.ru',
+            'ntp3.vniiftri.ru',
+            'ntp4.vniiftri.ru',
+            'ntp21.vniiftri.ru',
+            'ntp2.niiftri.irkutsk.ru',
+            'vniiftri2.khv.ru'
+        ]
+    else:
+        # Если есть серверы из конфига, добавляем российские как резерв
+        servers.extend([
+            'ntp1.vniiftri.ru',
+            'ntp2.vniiftri.ru',
+            'ntp3.vniiftri.ru',
+            'ntp4.vniiftri.ru'
+        ])
+    
+    # Приоритет 3: Зарубежные серверы как fallback
+    servers.extend([
+        'time.nist.gov',
+        'pool.ntp.org'
+    ])
+    
+    # Удаляем дубликаты, сохраняя порядок
+    seen = set()
+    unique_servers = []
+    for server in servers:
+        if server not in seen:
+            seen.add(server)
+            unique_servers.append(server)
+    
+    return unique_servers
+
 def sync_system_time():
-    """Синхронизация системного времени (один раз за сеанс) с проверкой и запуском служб"""
+    """Синхронизация системного времени (один раз за сеанс) через ntpdate"""
     TIME_SYNC_FLAG = "/tmp/fsa-time-synced"
     
     # Проверяем флаг - если время уже синхронизировано, пропускаем
@@ -27376,134 +27484,51 @@ def sync_system_time():
     
     print("[~] Синхронизация системного времени...", gui_log=True)
     
-    # Список служб синхронизации времени (в порядке приоритета)
-    time_sync_services = [
-        'systemd-timesyncd',  # systemd (современные системы)
-        'ntpd',               # NTP daemon
-        'chronyd',            # Chrony daemon
-    ]
-    
-    # Проверяем и запускаем службы синхронизации времени
-    service_started = False
-    if shutil.which('systemctl'):
-        for service in time_sync_services:
+    # Проверяем наличие ntpdate
+    if not shutil.which('ntpdate'):
+        print("   [SKIP] ntpdate не найден", gui_log=True)
+        # Удаляем флаг, если он есть (ntpdate недоступен)
+        if os.path.exists(TIME_SYNC_FLAG):
             try:
-                # Проверяем, существует ли служба
-                check_result = subprocess.run(['systemctl', 'list-unit-files', '--type=service', f'{service}.service'],
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            timeout=5)
-                if check_result.returncode != 0:
-                    continue  # Служба не найдена, пробуем следующую
-                
-                # Проверяем статус службы
-                status_result = subprocess.run(['systemctl', 'is-active', f'{service}.service'],
-                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                              timeout=5)
-                is_active = status_result.stdout.decode('utf-8', errors='ignore').strip() == 'active'
-                
-                if not is_active:
-                    print(f"   [*] Служба {service} не запущена, запускаем...", gui_log=True)
-                    
-                    # Включаем автозапуск
-                    enable_result = subprocess.run(['systemctl', 'enable', f'{service}.service'],
-                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                  timeout=10)
-                    if enable_result.returncode == 0:
-                        print(f"   [OK] Автозапуск {service} включен", gui_log=True)
-                    
-                    # Запускаем службу
-                    start_result = subprocess.run(['systemctl', 'start', f'{service}.service'],
-                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                                 timeout=10)
-                    if start_result.returncode == 0:
-                        print(f"   [OK] Служба {service} запущена", gui_log=True)
-                        service_started = True
-                        
-                        # Ждём немного, чтобы служба инициализировалась
-                        time.sleep(2)
-                    else:
-                        stderr_msg = start_result.stderr.decode('utf-8', errors='ignore').strip()
-                        print(f"   [WARNING] Не удалось запустить {service}: {stderr_msg}", gui_log=True)
-                else:
-                    print(f"   [OK] Служба {service} уже запущена", gui_log=True)
-                    service_started = True
-                    break  # Нашли работающую службу
-                    
-            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
-                print(f"   [SKIP] Ошибка проверки {service}: {e}", gui_log=True)
-                continue
+                os.remove(TIME_SYNC_FLAG)
+                print("   [INFO] Флаг синхронизации удалён (ntpdate недоступен)", gui_log=True)
+            except Exception:
+                pass
+        return False
     
-    # Пробуем разные методы синхронизации времени
+    # Получаем список серверов с приоритетами
+    ntp_servers = _get_ntp_servers_list()
+    print(f"   [INFO] Список серверов для синхронизации ({len(ntp_servers)} серверов)", gui_log=True)
+    
+    # Пробуем синхронизацию через ntpdate
     time_synced = False
-    
-    # Метод 1: timedatectl (systemd) - включаем NTP синхронизацию
     try:
-        if shutil.which('timedatectl'):
-            print("   [TRY] Включаем NTP синхронизацию через timedatectl...", gui_log=True)
-            result = subprocess.run(['timedatectl', 'set-ntp', 'true'],
+        # Пробуем серверы по очереди до первого успешного
+        for server in ntp_servers:
+            print(f"   [TRY] Сервер: {server}", gui_log=True)
+            result = subprocess.run(['ntpdate', '-s', server],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   timeout=10)
+                                   timeout=30)
             if result.returncode == 0:
-                print("   [OK] NTP синхронизация включена (timedatectl)", gui_log=True)
-                
-                # Пробуем принудительную синхронизацию
-                sync_result = subprocess.run(['timedatectl', 'set-time', ''],
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            timeout=5)
-                # Игнорируем ошибку - это нормально, если время уже синхронизируется
-                
-                # Проверяем статус синхронизации
-                status_result = subprocess.run(['timedatectl', 'status'],
-                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                              timeout=5)
-                if status_result.returncode == 0:
-                    status_output = status_result.stdout.decode('utf-8', errors='ignore')
-                    if 'NTP synchronized: yes' in status_output or 'System clock synchronized: yes' in status_output:
-                        print("   [OK] Время синхронизировано через NTP (timedatectl)", gui_log=True)
-                        time_synced = True
-                    else:
-                        print("   [INFO] NTP синхронизация включена, ожидаем синхронизацию...", gui_log=True)
-                        time_synced = True  # Считаем успешным, если служба запущена
-                else:
-                    print("   [INFO] NTP синхронизация включена, ожидаем синхронизацию...", gui_log=True)
-                    time_synced = True  # Считаем успешным, если служба запущена
+                stdout_msg = result.stdout.decode('utf-8', errors='ignore').strip()
+                print(f"   [OK] Время синхронизировано через NTP (ntpdate: {server})", gui_log=True)
+                if stdout_msg:
+                    print(f"   [INFO] {stdout_msg}", gui_log=True)
+                time_synced = True
+                break  # Используем первый успешный сервер
             else:
                 stderr_msg = result.stderr.decode('utf-8', errors='ignore').strip()
-                print(f"   [WARNING] timedatectl вернул код {result.returncode}: {stderr_msg}", gui_log=True)
+                print(f"   [WARNING] ntpdate {server} вернул код {result.returncode}: {stderr_msg}", gui_log=True)
+            # Продолжаем пробовать следующий сервер
     except subprocess.TimeoutExpired:
-        print("   [WARNING] Таймаут при работе с timedatectl", gui_log=True)
+        print("   [WARNING] Таймаут при синхронизации через ntpdate", gui_log=True)
     except FileNotFoundError:
-        print("   [SKIP] timedatectl не найден", gui_log=True)
+        print("   [SKIP] ntpdate не найден", gui_log=True)
     except Exception as e:
-        print(f"   [WARNING] Ошибка timedatectl: {e}", gui_log=True)
+        print(f"   [WARNING] Ошибка ntpdate: {e}", gui_log=True)
     
-    # Метод 2: ntpdate (если первый не сработал и службы не запущены)
-    if not time_synced and not service_started:
-        try:
-            if shutil.which('ntpdate'):
-                print("   [TRY] Пробуем синхронизацию через ntpdate...", gui_log=True)
-                # Пробуем разные серверы
-                for server in ['time.nist.gov', 'pool.ntp.org']:
-                    print(f"   [TRY] Сервер: {server}", gui_log=True)
-                    result = subprocess.run(['ntpdate', '-s', server],
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                           timeout=30)
-                    if result.returncode == 0:
-                        print(f"   [OK] Время синхронизировано через NTP (ntpdate: {server})", gui_log=True)
-                        time_synced = True
-                        break
-                    else:
-                        stderr_msg = result.stderr.decode('utf-8', errors='ignore').strip()
-                        print(f"   [WARNING] ntpdate {server} вернул код {result.returncode}: {stderr_msg}", gui_log=True)
-        except subprocess.TimeoutExpired:
-            print("   [WARNING] Таймаут при синхронизации через ntpdate", gui_log=True)
-        except FileNotFoundError:
-            print("   [SKIP] ntpdate не найден", gui_log=True)
-        except Exception as e:
-            print(f"   [WARNING] Ошибка ntpdate: {e}", gui_log=True)
-    
-    # Создаем флаг успешной синхронизации (если служба запущена или синхронизация выполнена)
-    if time_synced or service_started:
+    # Создаём или удаляем флаг в зависимости от результата
+    if time_synced:
         try:
             with open(TIME_SYNC_FLAG, 'w') as f:
                 f.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -27511,9 +27536,16 @@ def sync_system_time():
         except Exception as e:
             print(f"   [WARNING] Не удалось создать флаг: {e}", gui_log=True)
     else:
+        # Удаляем флаг при неуспехе
+        if os.path.exists(TIME_SYNC_FLAG):
+            try:
+                os.remove(TIME_SYNC_FLAG)
+                print("   [INFO] Флаг синхронизации удалён (синхронизация неуспешна)", gui_log=True)
+            except Exception as e:
+                print(f"   [WARNING] Не удалось удалить флаг: {e}", gui_log=True)
         print("   [!] Не удалось синхронизировать время (продолжаем работу)", gui_log=True)
     
-    return time_synced or service_started
+    return time_synced
 
 def sync_system_time_async():
     """Асинхронная синхронизация времени в фоновом потоке"""
@@ -27681,8 +27713,7 @@ def run_system_updater(temp_dir, dry_run=False):
 def run_gui_monitor(temp_dir, dry_run=False):
     """Запуск GUI мониторинга через класс AutomationGUI"""
     # ОТЛАДКА: Отслеживаем вызовы run_gui_monitor
-    import traceback as tb  # Явный импорт для линтера
-    caller_info = ''.join(tb.format_stack()[-3:-1]) if len(tb.format_stack()) > 2 else "unknown"
+    caller_info = ''.join(traceback.format_stack()[-3:-1]) if len(traceback.format_stack()) > 2 else "unknown"
     print(f"[DEBUG_RUN_GUI] Вызов run_gui_monitor() из: {caller_info[:200]}", level='DEBUG', gui_log=False)
     
     # Защита от повторного вызова
@@ -27739,7 +27770,7 @@ def run_gui_monitor(temp_dir, dry_run=False):
         print("   [OK] Создаем экземпляр AutomationGUI...", gui_log=True)
         try:
             gui = AutomationGUI(console_mode=False)
-            print("   [OK] AutomationGUI создан успешно", gui_log=True)
+            print("[OK] AutomationGUI создан успешно", gui_log=True)
             
             # КРИТИЧНО: Запускаем синхронизацию времени асинхронно ПОСЛЕ создания GUI
             # чтобы не блокировать загрузку графических библиотек
@@ -27748,7 +27779,6 @@ def run_gui_monitor(temp_dir, dry_run=False):
         except Exception as gui_error:
             error_msg = f"Ошибка при создании AutomationGUI: {gui_error}\n"
             print(f"[ERROR] {error_msg}", file=sys.stderr)
-            import traceback
             traceback.print_exc(file=sys.stderr)
             
             # КРИТИЧНО: Записываем ошибку в файл лога
@@ -29489,7 +29519,7 @@ class SelfUpdater:
         
         # Проверяем доступность источника
         if source_type == 'smb':
-            server = self.current_source_params.get('server')
+            server = self.current_source_params.get('server') if self.current_source_params else None
             if not self.check_smb_available(server=server):
                 self.log(f"{source_name} недоступен", "WARNING", gui_log=True)
                 return result
@@ -29833,7 +29863,7 @@ class SelfUpdater:
                                         self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
                                     
                                     # Закрываем все дочерние окна
-                                    for widget in sys._gui_instance.root.winfo_children():
+                                    for widget in sys._gui_instance.root.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                                         try:
                                             if hasattr(widget, 'destroy'):
                                                 widget.destroy()
@@ -30374,7 +30404,6 @@ def _load_tcl_tk_libraries():
         
     except Exception as e:
         print(f"[WARNING] Ошибка загрузки библиотек Tcl/Tk: {e}")
-        import traceback
         traceback.print_exc()
 
 if __name__ == '__main__':
@@ -30726,7 +30755,6 @@ if __name__ == '__main__':
             # Игнорируем ошибки при установке переменных окружения
             # Но выводим для отладки
             print(f"[DEBUG] Ошибка установки переменных окружения Tcl/Tk: {e}")
-            import traceback
             traceback.print_exc()
             pass
     
@@ -30742,10 +30770,17 @@ if __name__ == '__main__':
         print("[DEBUG] Попытка импорта tkinter...")
         import tkinter  # NOQA: PyInstaller needs this
         print(f"[DEBUG] [OK] tkinter импортирован: {tkinter.__file__ if hasattr(tkinter, '__file__') else 'встроенный'}")
-        import tkinter as tk  # NOQA: PyInstaller needs this
-        from tkinter import ttk, messagebox, scrolledtext  # NOQA: PyInstaller needs this
+        import tkinter as _tk  # NOQA: PyInstaller needs this
+        from tkinter import ttk as _ttk, messagebox as _messagebox, scrolledtext as _scrolledtext  # NOQA: PyInstaller needs this
         import tkinter.messagebox  # NOQA: PyInstaller needs this
-        import tkinter.filedialog as filedialog  # NOQA: PyInstaller needs this
+        import tkinter.filedialog as _filedialog  # NOQA: PyInstaller needs this
+        
+        # КРИТИЧНО: Присваиваем импортированные модули глобальным переменным через globals()
+        globals()['tk'] = _tk
+        globals()['ttk'] = _ttk
+        globals()['messagebox'] = _messagebox
+        globals()['scrolledtext'] = _scrolledtext
+        globals()['filedialog'] = _filedialog
         
         # Проверяем доступность _tkinter C-модуля
         try:
@@ -30769,7 +30804,6 @@ if __name__ == '__main__':
         # Сохраняем детали ошибки для отладки
         TKINTER_IMPORT_ERROR = str(e)
         print(f"[ERROR] Не удалось импортировать tkinter: {e}")
-        import traceback
         traceback.print_exc()
         TKINTER_AVAILABLE = False
         tk = None
@@ -30828,6 +30862,7 @@ if __name__ == '__main__':
                         # Первый SMB источник - запрашиваем пароль до 3 раз
                         first_smb_processed = True
                         auth_success = False
+                        updater = None  # type: ignore[assignment]
                         for auth_attempt in range(1, max_auth_attempts + 1):
                             try:
                                 # Создаем/обновляем updater с учетными данными
@@ -30852,7 +30887,7 @@ if __name__ == '__main__':
                                 if auth_attempt < max_auth_attempts:
                                     # Запрашиваем пароль для первого SMB источника
                                     print(f"\n[WARNING] Ошибка авторизации для {error_source_name} (попытка {auth_attempt}/{max_auth_attempts})")
-                                    if updater._request_credentials_console(error_source_name, auth_attempt, max_auth_attempts):
+                                    if updater and updater._request_credentials_console(error_source_name, auth_attempt, max_auth_attempts):
                                         smb_user = updater.smb_user
                                         smb_password = updater.smb_password
                                         print(f"[INFO] Повторная попытка подключения с новыми учетными данными...")
@@ -31010,6 +31045,12 @@ if __name__ == '__main__':
                     response = input("\n[?] Обновить сейчас? (y/n): ").strip().lower()
                     if response in ('y', 'yes', 'д', 'да'):
                         print("[INFO] Начинаем обновление...")
+                        # КРИТИЧНО: Создаем updater если его нет, или используем из selected_source
+                        if 'updater' in selected_source and selected_source['updater'] is not None:
+                            updater = selected_source['updater']
+                        else:
+                            # Создаем новый updater с параметрами источника
+                            updater = SelfUpdater(APP_VERSION, smb_user=smb_user, smb_password=smb_password)
                         # КРИТИЧНО: Восстанавливаем параметры выбранного источника перед загрузкой
                         updater._restore_source_params(selected_source)
                         if updater.download_and_apply():

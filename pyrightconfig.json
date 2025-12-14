@@ -28,7 +28,7 @@
   "reportCallIssue": "none",
   "reportGeneralTypeIssues": "warning",
   "reportOptionalMemberAccess": "warning",
-  "reportPossiblyUnboundVariable": "warning",
+  "reportPossiblyUnboundVariable": "none",
   "reportArgumentType": "warning",
   "reportOptionalSubscript": "none",
   "reportOptionalOperand": "none",

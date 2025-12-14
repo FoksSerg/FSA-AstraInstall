@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем PyInstaller и psutil
-RUN pip3 install pyinstaller psutil pystray pillow
+RUN pip3 install pyinstaller psutil
 
 # Проверяем что tkinter работает
 RUN python3 -c "import tkinter; print('tkinter OK')"
