@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.177 (2025.12.15)
+Версия: V3.4.178 (2025.12.15)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.177 (2025.12.15)"
+APP_VERSION = "V3.4.178 (2025.12.15)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -1029,6 +1029,10 @@ def _init_logging_early():
 # Глобальные флаги и переменные
 CANCEL_OPERATION = False  # Прерывание запущенных операций
 GLOBAL_LOG_FILE = None  # Глобальная переменная для лог-файла (устанавливается в main())
+
+# Глобальные переменные состояния процессов
+PROCESS_STATE = 'idle'  # 'idle', 'installing', 'uninstalling', 'updating', 'automation'
+PROCESS_PAUSED = False  # Флаг паузы (может быть True в любом процессе)
 
 # Переменные для tkinter (инициализируются в блоке if __name__ == '__main__')
 TKINTER_AVAILABLE = False
@@ -2576,7 +2580,7 @@ class ComponentHandler(ABC):
         self.logger = logger
         self.callback = callback
         self.universal_runner = universal_runner or get_global_universal_runner()
-        self.progress_manager = progress_manager
+        self.progress_manager = progress_manager or get_global_progress_manager()
         self.dual_logger = dual_logger or (globals().get('_global_dual_logger') if '_global_dual_logger' in globals() else None)
         self.status_manager = status_manager  # КРИТИЧНО: для обновления статусов
         
@@ -4210,6 +4214,8 @@ class ComponentHandler(ABC):
         Returns:
             str или None: Путь к архиву (исходный или выбранный пользователем), или None если не выбран
         """
+        global PROCESS_STATE  # Объявляем global в начале функции
+        
         # Если архив найден - возвращаем его
         if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
             return archive_path
@@ -4227,8 +4233,8 @@ class ComponentHandler(ABC):
             if gui_instance and hasattr(gui_instance, 'root'):
                 gui_instance.root.update_idletasks()
             
-            if self.progress_manager:
-                self.progress_manager.pause_timer()
+            # Ставим текущий процесс на паузу
+            set_process_state(PROCESS_STATE, paused=True)
             
             try:
                 # Определяем начальную директорию для диалога
@@ -4312,8 +4318,8 @@ class ComponentHandler(ABC):
                     return None
             finally:
                 # ВОЗОБНОВЛЯЕМ СЧЁТЧИК ВРЕМЕНИ после диалога (всегда, даже если была ошибка)
-                if self.progress_manager:
-                    self.progress_manager.resume_timer()
+                # Снимаем паузу с текущего процесса
+                set_process_state(PROCESS_STATE, paused=False)
         
         # Если GUI недоступен - возвращаем None
         return None
@@ -19777,6 +19783,9 @@ class AutomationGUI(object):
             # Заменяем selected на final_selected
             selected = final_selected
         
+        # Устанавливаем состояние процесса
+        set_process_state('installing', paused=False)
+        
         # Блокируем кнопки во время установки
         self.install_wine_button.config(state=self.tk.DISABLED)
         self.uninstall_wine_button.config(state=self.tk.DISABLED)
@@ -19873,6 +19882,9 @@ class AutomationGUI(object):
     
     def _install_completed(self, success):
         """Завершение установки (вызывается в главном потоке)"""
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
+        
         # Разблокируем кнопки
         self.install_wine_button.config(state=self.tk.NORMAL)
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
@@ -20135,6 +20147,9 @@ class AutomationGUI(object):
                 details='Установка прервана'
             )
             print("[ERROR] Установка Wine и Astra.IDE прервана", gui_log=True)
+        
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
         
         # Включаем кнопки обратно
         self.check_wine_button.config(state=self.tk.NORMAL)
@@ -20662,6 +20677,9 @@ class AutomationGUI(object):
         if not messagebox.askyesno("Подтверждение удаления", message):
             return
         
+        # Устанавливаем состояние процесса
+        set_process_state('uninstalling', paused=False)
+        
         # Блокируем кнопки во время удаления
         self.install_wine_button.config(state=self.tk.DISABLED)
         self.uninstall_wine_button.config(state=self.tk.DISABLED)
@@ -20728,6 +20746,9 @@ class AutomationGUI(object):
     
     def _uninstall_completed(self, success):
         """Завершение удаления (вызывается в главном потоке)"""
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
+        
         # Разблокируем кнопки
         self.install_wine_button.config(state=self.tk.NORMAL)
         self.uninstall_wine_button.config(state=self.tk.NORMAL)
@@ -20743,6 +20764,9 @@ class AutomationGUI(object):
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
+        
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
         
         # Обновляем статус компонентов
         self._update_wine_status()
@@ -20774,6 +20798,9 @@ class AutomationGUI(object):
                 global_progress=0,
                 details='Операция прервана пользователем'
             )
+        
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
         
         # Синхронизируем UI состояние
         if hasattr(self, 'is_running'):
@@ -21274,6 +21301,9 @@ class AutomationGUI(object):
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
+        
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
         
         # КРИТИЧНО: Снимаем галочки с удаленных компонентов на основе фактического статуса
         # (независимо от флага success - компонент может быть удален даже при ошибках)
@@ -23995,6 +24025,9 @@ class AutomationGUI(object):
         self.start_button.config(state=self.tk.DISABLED)
         self.stop_button.config(state=self.tk.NORMAL)
         
+        # Устанавливаем состояние процесса
+        set_process_state('automation', paused=False)
+        
         # КОМАНДА СТАРТ: Начало автоматизации - запускаем таймер сразу при нажатии кнопки
         progress_manager = get_global_progress_manager()
         if progress_manager:
@@ -24036,6 +24069,9 @@ class AutomationGUI(object):
                 global_progress=0,
                 details='Операция прервана'
             )
+        
+        # Сбрасываем состояние процесса
+        set_process_state('idle', paused=False)
         
         # Даем время на мягкую остановку
         time.sleep(2)
@@ -24393,6 +24429,9 @@ class AutomationGUI(object):
             print("[SKIP] Тест интерактивных запросов отключен (избегаем падений)", gui_log=True)
             print("[INFO] Тест интерактивных запросов отключен для стабильности")
             
+            # Устанавливаем состояние процесса на 'updating' перед обновлением системы
+            set_process_state('updating', paused=False)
+            
             # КОМАНДА СТАРТ: Начало обновления системы - запускаем таймер сразу перед обновлением
             if hasattr(self, 'system_updater') and self.system_updater and hasattr(self.system_updater, 'universal_progress_manager'):
                 if self.system_updater.universal_progress_manager:
@@ -24434,6 +24473,8 @@ class AutomationGUI(object):
                 else:
                     print("[WARNING] РЕЖИМ ТЕСТИРОВАНИЯ: реальное обновление не выполняется", gui_log=True)
                     self.system_updater.update_system(self.dry_run.get())
+                    # Возвращаем состояние 'automation' после обновления системы
+                    set_process_state('automation', paused=False)
                     
             except Exception as update_error:
                 print(f"[ERROR] Критическая ошибка в модуле обновления: {update_error}", gui_log=True)
@@ -24451,6 +24492,9 @@ class AutomationGUI(object):
                 print("", gui_log=True)
                 print("[SUCCESS] Автоматизация завершена успешно!", gui_log=True)
                 print("[INFO] GUI автоматизация завершена успешно", gui_log=True)
+                
+                # Сбрасываем состояние процесса
+                set_process_state('idle', paused=False)
                 
         except Exception as e:
             print(f"[ERROR] Критическая ошибка в GUI автоматизации: {e}", gui_log=True)
@@ -25128,6 +25172,8 @@ class UniversalProgressManager:
     
     def _update_time_disk(self):
         """Обновление времени и диска каждую секунду (зависит от состояния процесса)"""
+        global PROCESS_STATE, PROCESS_PAUSED
+        
         gui = self._get_gui_instance()
         if not gui:
             return
@@ -25138,7 +25184,8 @@ class UniversalProgressManager:
                 # Процесс завершен ТОЛЬКО если финальные значения сохранены (значит была команда 'complete' или 'cancel')
                 is_process_completed = (self.final_elapsed_time is not None or self.final_disk_used_mb is not None)
                 
-                is_process_active = (not is_process_completed and 
+                # Используем глобальное состояние процесса для определения активности
+                is_process_active = (PROCESS_STATE != 'idle' and not PROCESS_PAUSED and not is_process_completed and 
                                     ((self.global_progress > 0 and self.global_progress < 100) or 
                                      (self.current_process is not None and 
                                       self.current_process != 'reset' and 
@@ -25182,8 +25229,9 @@ class UniversalProgressManager:
                     if hasattr(gui, 'wine_time_label'):
                         gui.wine_time_label.config(text="0 мин 0 сек")
                 
-                # ДИСК - обновляем только если мониторинг активен
-                if self.disk_monitoring_active and self.initial_disk_space is not None:
+                # ДИСК - обновляем только если мониторинг активен и процесс не на паузе
+                if (self.disk_monitoring_active and not PROCESS_PAUSED and 
+                    self.initial_disk_space is not None):
                     try:
                         current_disk_usage = shutil.disk_usage('/').used
                         disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
@@ -25404,6 +25452,89 @@ def set_global_progress_manager(progress_manager):
     """Установка глобального экземпляра UniversalProgressManager"""
     global _global_progress_manager
     _global_progress_manager = progress_manager
+
+def set_process_state(state: str, paused: bool = False):
+    """
+    Устанавливает состояние процесса и режим паузы
+    
+    Args:
+        state: 'idle', 'installing', 'uninstalling', 'updating', 'automation'
+        paused: True если процесс на паузе
+    """
+    global PROCESS_STATE, PROCESS_PAUSED
+    PROCESS_STATE = state
+    PROCESS_PAUSED = paused
+    
+    # Получаем progress_manager и управляем таймером/мониторингом
+    progress_manager = get_global_progress_manager()
+    if progress_manager:
+        if paused:
+            progress_manager.pause_timer()
+            progress_manager.disk_monitoring_active = False
+        else:
+            if state != 'idle':
+                progress_manager.resume_timer()
+                if progress_manager.start_time is not None:
+                    progress_manager.disk_monitoring_active = True
+    
+    # Обновляем состояние кнопок в GUI
+    _update_buttons_state()
+
+def get_process_state() -> tuple:
+    """Возвращает текущее состояние процесса и флаг паузы"""
+    global PROCESS_STATE, PROCESS_PAUSED
+    return PROCESS_STATE, PROCESS_PAUSED
+
+def is_process_running() -> bool:
+    """Проверяет, запущен ли какой-либо процесс"""
+    global PROCESS_STATE
+    return PROCESS_STATE != 'idle'
+
+def _update_buttons_state():
+    """Обновляет состояние кнопок в GUI на основе текущего состояния процесса"""
+    global PROCESS_STATE, PROCESS_PAUSED
+    
+    if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
+        return
+    
+    gui = sys._gui_instance
+    
+    # Определяем, какие кнопки должны быть заблокированы
+    is_running = PROCESS_STATE != 'idle'
+    
+    try:
+        # Блокируем кнопки установки/удаления если запущен любой процесс
+        if hasattr(gui, 'install_wine_button'):
+            gui.install_wine_button.config(
+                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+            )
+        if hasattr(gui, 'uninstall_wine_button'):
+            gui.uninstall_wine_button.config(
+                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+            )
+        if hasattr(gui, 'check_wine_button'):
+            gui.check_wine_button.config(
+                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+            )
+        
+        # Кнопка отмены активна только для установки/удаления компонентов
+        if hasattr(gui, 'cancel_operation_button'):
+            gui.cancel_operation_button.config(
+                state=gui.tk.NORMAL if (PROCESS_STATE == 'installing' or PROCESS_STATE == 'uninstalling') else gui.tk.DISABLED
+            )
+        
+        # Кнопки автоматизации
+        if hasattr(gui, 'start_button'):
+            gui.start_button.config(
+                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+            )
+        if hasattr(gui, 'stop_button'):
+            gui.stop_button.config(
+                state=gui.tk.NORMAL if PROCESS_STATE == 'automation' else gui.tk.DISABLED
+            )
+        
+    except Exception as e:
+        print(f"[ERROR] Ошибка обновления состояния кнопок: {e}", level='ERROR')
 
 class SystemUpdateParser:
 # ============================================================================
@@ -29643,9 +29774,14 @@ class SelfUpdater:
             raw_url = params['raw_url']
             branch = params['branch']
             
-            url = f"{raw_url}/{branch}/README.md"
+            # Добавляем timestamp к URL для обхода кэша GitHub CDN
+            timestamp = int(time.time())
+            url = f"{raw_url}/{branch}/README.md?t={timestamp}"
             result = subprocess.run(
-                ['curl', '-s', '-f', '--max-time', '5', '-I', url],
+                ['curl', '-s', '-f', '--max-time', '5', '-I',
+                 '-H', 'Cache-Control: no-cache',
+                 '-H', 'Pragma: no-cache',
+                 url],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
@@ -29680,9 +29816,14 @@ class SelfUpdater:
             version_file_variants = ["Version.txt", "version.txt", "VERSION.txt"]
             
             for version_file in version_file_variants:
-                url = f"{raw_url}/{branch}/{version_file}"
+                # Добавляем timestamp к URL для обхода кэша GitHub CDN
+                timestamp = int(time.time())
+                url = f"{raw_url}/{branch}/{version_file}?t={timestamp}"
                 result = subprocess.run(
-                    ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK), url],
+                    ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK),
+                     '-H', 'Cache-Control: no-cache',
+                     '-H', 'Pragma: no-cache',
+                     url],
                     capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
                 )
                 
@@ -29711,11 +29852,16 @@ class SelfUpdater:
             raw_url = params['raw_url']
             branch = params['branch']
             
-            url = f"{raw_url}/{branch}/{self.update_filename}"
+            # Добавляем timestamp к URL для обхода кэша GitHub CDN
+            timestamp = int(time.time())
+            url = f"{raw_url}/{branch}/{self.update_filename}?t={timestamp}"
             self.log(f"Скачивание с Git: {url}")
             
             result = subprocess.run(
-                ['curl', '-L', '-f', '-o', dest_path, '--max-time', str(TIMEOUT_DOWNLOAD), url],
+                ['curl', '-L', '-f', '-o', dest_path, '--max-time', str(TIMEOUT_DOWNLOAD),
+                 '-H', 'Cache-Control: no-cache',
+                 '-H', 'Pragma: no-cache',
+                 url],
                 capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD + 30
             )
             
