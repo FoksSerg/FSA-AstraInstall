@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.4.176 (2025.12.11)
+# Версия проекта: V3.4.177 (2025.12.15)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -27,9 +27,11 @@
 ```
 
 ### Правила обновления:
-1. **При изменении функциональности проекта** → обновляем версию проекта во ВСЕХ файлах
-2. **При изменении конкретного файла** → обновляем дату релиза ТОЛЬКО в этом файле
-3. **При изменении правил ASSISTANT_RULES.md или COMMIT_RULES.md** → обновляем версию проекта во ВСЕХ файлах
+1. **При изменении функциональности проекта** → обновляем версию проекта в ключевых файлах (FSA-AstraInstall.py, README.md, Version.txt)
+2. **При изменении конкретного файла** → обновляем дату релиза И версию проекта ТОЛЬКО в этом файле
+3. **При изменении правил ASSISTANT_RULES.md или COMMIT_RULES.md** → обновляем версию проекта в ключевых файлах
+4. **Ключевые файлы** (всегда обновляются при коммите): FSA-AstraInstall.py, README.md, Version.txt
+5. **Бинарные файлы** (FSA-AstraInstall-1-7, FSA-AstraInstall-1-8) пересобираются автоматически перед коммитом
 4. **MAJOR версия** (VMAJOR.X.X) - кардинальные изменения архитектуры
 5. **MINOR версия** (X.MINOR.X) - новые функции, улучшения
 6. **PATCH версия** (X.X.PATCH) - номер коммита (сохраненных изменений)
@@ -66,10 +68,11 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
   - Переменные сохраняются в `.commit_vars.sh` сразу после определения в шагах 1, 3, 4 (функция `save_vars_to_file()`)
   - Файлы проекта НЕ изменяются
   - Можно безопасно прервать в любой момент
-- **ПРЕРЫВАНИЕ С ИЗМЕНЕНИЕМ ФАЙЛОВ (требует отката):** После шага 9 или 11
-  - Шаг 9: изменяет даты релиза в файлах проекта (через `sed -i`)
-  - Шаг 11: изменяет версии во всех файлах проекта (через `sed -i`)
-   - Если прервать после этих шагов, нужно откатить изменения: `git checkout -- *.py *.sh *.md`
+- **ПРЕРЫВАНИЕ С ИЗМЕНЕНИЕМ ФАЙЛОВ (требует отката):** После шага 9, 11 или 11.5
+  - Шаг 9: изменяет даты релиза и версии в измененных файлах проекта (через `sed -i`)
+  - Шаг 11: изменяет версии в ключевых файлах проекта (через `sed -i`)
+  - Шаг 11.5: пересобирает бинарные файлы (может занять несколько минут)
+   - Если прервать после этих шагов, нужно откатить изменения: `git checkout -- *.py *.sh *.md FSA-AstraInstall-1-7 FSA-AstraInstall-1-8`
 - **БЕЗОПАСНО прервать ПЕРЕД СОЗДАНИЕМ КОММИТА:** До шага 14 (включительно шаг 13.5)
   - Шаг 13.5: показывает список файлов в индексе, ждет подтверждения пользователя
   - Файлы уже добавлены в индекс, но коммит еще не создан
@@ -98,12 +101,13 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Пользователь НЕ видит этот вывод
 
 3. **Определение текущей версии:** 
-   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
-   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
-     - Выполнить `head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+"` → сохранить в временный файл
+   - Объединить измененные и новые файлы: `ALL_FILES_TO_CHECK="$CHANGED_FILES $NEW_FILES"`
+   - Для каждого файла из `ALL_FILES_TO_CHECK` (использовать `echo "$ALL_FILES_TO_CHECK" | tr ' ' '\n' | while read file`), если файл имеет расширение `.py`, `.sh` или `.md`:
+     - Проверить существование файла: `[ -f "$file" ]`
+     - Выполнить `head -20 "$file" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+"` → сохранить в временный файл
    - Из временного файла извлечь все уникальные версии → сохранить в `ALL_VERSIONS` (строка через пробел)
    - Взять первую версию из `ALL_VERSIONS` → сохранить в `CURRENT_VERSION`
-   - Если `CURRENT_VERSION` пуста - остановиться с ошибкой "Не удалось найти версию в файлах проекта"
+   - Если `CURRENT_VERSION` пуста - остановиться с ошибкой "Не удалось найти версию в измененных или новых файлах проекта"
    - Вывести: "Найдены версии в файлах: $ALL_VERSIONS" и "Основная версия для замены: $CURRENT_VERSION"
    - **КРИТИЧНО:** Сохранить переменные в `.commit_vars.sh` через функцию `save_vars_to_file()` сразу после определения
 
@@ -117,12 +121,15 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Сформировать `NEW_VERSION = "V${MAJOR}.${MINOR}.${NEW_PATCH}"`
    - Если `NEW_VERSION` пуста или равна "V.." - остановиться с ошибкой
    - Вывести: "Новая версия: $NEW_VERSION (текущая: $CURRENT_VERSION)"
-
 5. **Сбор подробной информации об изменениях:** 
    - Сохранить данные во временный файл `.commit_analysis_data.txt` (НЕ выводить в stdout)
    - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - Выполнить `git diff --stat HEAD "$file"` → сохранить статистику в файл
      - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
+   - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
+     - Выполнить `wc -l "$file"` → сохранить статистику (количество строк) в файл
+     - Выполнить `head -100 "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
+     - Пометить как новый файл в данных анализа
    - Вывести ТОЛЬКО: "=== Сбор данных для анализа... ==="
    - Вывести: "=== Ассистент анализирует изменения и формирует описание коммита... ==="
    - Вывести маркер "⏸ ПАУЗА: Ассистент должен остановиться здесь"
@@ -184,13 +191,15 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - ТОЛЬКО после получения ответа пользователя в чате ассистент продолжает выполнение шага 9
    - **⚠️ ПОСЛЕДНЯЯ ТОЧКА БЕЗОПАСНОГО ПРЕРЫВАНИЯ БЕЗ ИЗМЕНЕНИЯ ФАЙЛОВ ПРОЕКТА**
 
-9. **Обновление дат релиза:** 
+9. **Обновление дат релиза и версий в измененных файлах:** 
    - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh`
    - Проверить: `[ -f "commit_message.txt" ]` - если нет, остановиться с ошибкой
    - Определить `TODAY = $(date +%Y.%m.%d)`
    - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки), если файл имеет расширение `.py`, `.sh` или `.md`:
      - Выполнить `sed -i '' "1,20s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file"` (ограничение первыми 20 строками)
      - Также обновить даты в кавычках: `sed -i '' "1,20s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file"` (ограничение первыми 20 строками)
+     - Если файл содержит версию в первых 20 строках (проверить через `head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"`): обновить версию на `NEW_VERSION` через `sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$file"`
+     - Если версии нет - пропустить обновление версии, но файл все равно будет добавлен в коммит
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
 10. **Проверка обновления дат:** 
@@ -200,29 +209,40 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Если есть ошибки - остановиться с ошибкой "Дата релиза не была обновлена в N файл(ах)"
    - Если все даты обновлены - вывести "✓ Все даты релиза успешно обновлены"
 
-11. **Обновление версий проекта:** 
+11. **Обновление версий проекта в ключевых файлах:** 
    - Загрузить переменные из `.commit_vars.sh`: `source .commit_vars.sh` (КРИТИЧНО: без переменных продолжать нельзя)
    - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `Version.txt`
-   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
-   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
+   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt"`
+   - Для каждого файла из `KEY_FILES`:
+     - Проверить существование файла: `[ -f "$file" ]`
      - **КРИТИЧНО:** Проверить, что `NEW_VERSION` не пуста перед выполнением замены (если пуста, пропустить файл с ошибкой)
-     - Заменить **ЛЮБУЮ** версию формата `V[0-9]+.[0-9]+.[0-9]+` на `NEW_VERSION` в первых 20 строках: `sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
-     - **КРИТИЧНО:** В macOS sed не поддерживает `\+`, используем `[0-9][0-9]*` для одного или более цифр
-     - **КРИТИЧНО:** Использовать паттерн напрямую в команде sed (не через переменную), чтобы избежать проблем с подстановкой переменных и экранированием
-     - Выводить прогресс обработки: `[N/Total] Обработка: $file`
+     - Если файл имеет расширение `.py` или `.md`: заменить **ЛЮБУЮ** версию формата `V[0-9]+.[0-9]+.[0-9]+` на `NEW_VERSION` в первых 20 строках: `sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$file"` (с подавлением ошибок `2>/dev/null || true`)
+     - Если файл `Version.txt`: обновить `APP_VERSION` на `NEW_VERSION` через `sed -i '' "s/^APP_VERSION=.*/APP_VERSION=${NEW_VERSION}/" Version.txt` (или добавить, если нет)
+     - Вывести: "✓ Версия обновлена в $file"
    - **⚠️ ИЗМЕНЯЕТ ФАЙЛЫ ПРОЕКТА**
 
+11.5. **Пересборка бинарных файлов:** 
+   - Вывести предупреждение: "⚠️ ВНИМАНИЕ: Начинается пересборка бинарных файлов. Это может занять несколько минут. Пожалуйста, подождите..."
+   - Удалить старые бинарники для гарантированного результата: `rm -f FSA-AstraInstall-1-7 FSA-AstraInstall-1-8`
+   - Запустить сборку: `python3 RunScript/docker_build_all.py`
+   - Проверить успешность сборки: если exit code != 0, остановиться с ошибкой "Не удалось пересобрать бинарные файлы"
+   - Проверить наличие новых файлов: `[ -f "FSA-AstraInstall-1-7" ] && [ -f "FSA-AstraInstall-1-8" ]` - если нет, остановиться с ошибкой
+   - Проверить, что файлы не пустые: `[ -s "FSA-AstraInstall-1-7" ] && [ -s "FSA-AstraInstall-1-8" ]` - если пустые, остановиться с ошибкой
+   - Вывести: "✓ Бинарные файлы успешно пересобраны"
+   - **⚠️ МОЖЕТ ЗАНЯТЬ НЕСКОЛЬКО МИНУТ**
+
 12. **Проверка обновления версий:** 
-   - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** - это автоматически исключает файлы из `.gitignore` и гарантирует работу только в текущем проекте
-   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`):
-     - Выполнить `head -20 "$file" | grep -q "$NEW_VERSION"`
+   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt"`
+   - Для каждого файла из `KEY_FILES`:
+     - Если файл `Version.txt`: проверить `APP_VERSION` через `grep -q "^APP_VERSION=${NEW_VERSION}" Version.txt`
+     - Если файл имеет расширение `.py` или `.md`: выполнить `head -20 "$file" | grep -q "$NEW_VERSION"`
      - Если найдено - вывести "✓ Версия обновлена в $file"
      - Если не найдено:
-       - Выполнить `head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"` (проверка наличия любой версии)
+       - Для `.py` или `.md`: выполнить `head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"` (проверка наличия любой версии)
        - Если найдена версия - зафиксировать ошибку с указанием найденной старой версии (извлечь через `grep -o "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"`)
-       - Если не найдено - вывести "ℹ Файл $file не содержит версию в начале файла (пропускаем)"
+       - Для `Version.txt`: проверить наличие `APP_VERSION` через `grep -q "^APP_VERSION=" Version.txt` - если нет, зафиксировать ошибку
    - Если есть ошибки - остановиться с ошибкой "Версия не обновлена в N файл(ах)"
    - Если все версии обновлены - продолжить
 
@@ -234,6 +254,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** для поиска измененных файлов с версиями
    - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"`
    - **КРИТИЧНО: Добавить Version.txt/version.txt в индекс, если он был изменен** (обновлен APP_VERSION в шаге 11)
+   - **КРИТИЧНО: Добавить пересобранные бинарные файлы FSA-AstraInstall-1-7 и FSA-AstraInstall-1-8 в индекс** (пересобраны в шаге 11.5)
    - ЗАПРЕЩЕНО использовать `git add .`
    - Выполнить `git status --short` для проверки
    - Если нет файлов в индексе - остановиться с ошибкой
@@ -468,12 +489,7 @@ done
 [ -f "$REAL_CHANGES_TEMP" ] && [ -s "$REAL_CHANGES_TEMP" ] && HAS_REAL_CHANGES=1 || true
 rm -f "$REAL_CHANGES_TEMP"
 [ $HAS_REAL_CHANGES -eq 0 ] && stop_on_error "Нет реальных изменений кода, только версии/даты" || true
-# КРИТИЧНО: Проверка успешности шага 2
-if [ $? -ne 0 ]; then
-    stop_on_error "ШАГ 2 не выполнен успешно"
-fi
-
-# ШАГ 3: Определяем текущую версию в файлах
+# ШАГ 3: Определяем текущую версию в измененных и новых файлах
 echo "=== ШАГ 3: Определение текущей версии ==="
 # КРИТИЧНО: Проверка директории проекта
 PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
@@ -481,10 +497,17 @@ PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
 echo "✓ Рабочая директория: $(pwd)"
 
+# Загружаем переменные из .commit_vars.sh (CHANGED_FILES и NEW_FILES уже определены в шаге 1)
+[ -f ".commit_vars.sh" ] && source .commit_vars.sh || true
+
 VERSION_TEMP=$(mktemp)
-# КРИТИЧНО: Используем git ls-files вместо find - это исключает .gitignore и гарантирует работу только в проекте
-git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
-  [ -f "$f" ] && head -20 "$f" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
+# Объединяем измененные и новые файлы для проверки версий
+ALL_FILES_TO_CHECK="$CHANGED_FILES $NEW_FILES"
+echo "$ALL_FILES_TO_CHECK" | tr ' ' '\n' | while read file; do
+    [ ! -z "$file" ] || continue
+    if [[ "$file" =~ \.(py|sh|md)$ ]] && [ -f "$file" ]; then
+        head -20 "$file" | grep "V[0-9]\+\.[0-9]\+\.[0-9]\+" >> "$VERSION_TEMP" 2>/dev/null || true
+    fi
 done
 ALL_VERSIONS=$(grep -o "V[0-9]\+\.[0-9]\+\.[0-9]\+" "$VERSION_TEMP" | sort -u | tr '\n' ' ')
 CURRENT_VERSION=$(echo "$ALL_VERSIONS" | awk '{print $1}')
@@ -497,7 +520,7 @@ if [ $? -ne 0 ]; then
 fi
 # КРИТИЧНО: Проверка что версии найдены
 if [ -z "$CURRENT_VERSION" ]; then
-    stop_on_error "Не удалось найти версию в файлах проекта"
+    stop_on_error "Не удалось найти версию в измененных или новых файлах проекта"
 fi
 # КРИТИЧНО: Сохраняем переменные сразу после определения
 save_vars_to_file
@@ -549,6 +572,24 @@ echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "$DIFF_TEMP3" 2>/dev/null || true
     [ -s "$DIFF_TEMP3" ] && echo "Изменения:" >> "$ANALYSIS_DATA_FILE" && head -100 "$DIFF_TEMP3" >> "$ANALYSIS_DATA_FILE" || true
     rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
+    echo "" >> "$ANALYSIS_DATA_FILE"
+
+done
+
+# Обрабатываем новые файлы
+echo "$NEW_FILES" | tr ' ' '\n' | while read file; do
+    [ ! -z "$file" ] || continue
+    [ ! -f "$file" ] && continue
+    echo "=== Файл: $file (новый) ===" >> "$ANALYSIS_DATA_FILE"
+    # Статистика для нового файла (количество строк)
+    LINE_COUNT=$(wc -l < "$file" 2>/dev/null || echo "0")
+    echo "Статистика: новый файл, строк: $LINE_COUNT" >> "$ANALYSIS_DATA_FILE"
+    # Содержимое нового файла (первые 100 строк, без версий/дат)
+    CONTENT_TEMP=$(mktemp)
+    head -100 "$file" > "$CONTENT_TEMP" 2>/dev/null || true
+    grep -v -E "Версия|Version|дата|Date" "$CONTENT_TEMP" > "${CONTENT_TEMP}2" 2>/dev/null || true
+    [ -s "${CONTENT_TEMP}2" ] && echo "Содержимое (первые 100 строк):" >> "$ANALYSIS_DATA_FILE" && cat "${CONTENT_TEMP}2" >> "$ANALYSIS_DATA_FILE" || true
+    rm -f "$CONTENT_TEMP" "${CONTENT_TEMP}2"
     echo "" >> "$ANALYSIS_DATA_FILE"
     echo "---" >> "$ANALYSIS_DATA_FILE"
     echo "" >> "$ANALYSIS_DATA_FILE"
@@ -679,7 +720,7 @@ if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 8.5 не выполнен успешно"
 fi
 
-# ШАГ 9: Обновляем дату релиза ТОЛЬКО в измененных файлах
+# ШАГ 9: Обновляем дату релиза и версии в измененных файлах
 echo "=== ШАГ 9: Загрузка переменных и проверка файла ==="
 [ ! -f ".commit_vars.sh" ] && stop_on_error "Файл .commit_vars.sh не найден. Переменные не были сохранены перед паузой." || true
 source .commit_vars.sh || stop_on_error "Не удалось загрузить переменные из .commit_vars.sh"
@@ -690,7 +731,7 @@ echo "  NEW_VERSION: $NEW_VERSION"
 [ ! -f "commit_message.txt" ] || [ ! -s "commit_message.txt" ] && stop_on_error "Файл commit_message.txt не найден или пуст. Пожалуйста, убедитесь что файл содержит сообщение коммита." || true
 echo "✓ Файл commit_message.txt готов к использованию"
 TODAY=$(date +%Y.%m.%d)
-echo "=== ШАГ 9: Обновление дат релиза ==="
+echo "=== ШАГ 9: Обновление дат релиза и версий в измененных файлах ==="
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd /Volumes/FSA-PRJ/Project/FSA-AstraInstall || true
 echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
@@ -698,6 +739,14 @@ echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
         echo "Обновляем дату релиза в: $file"
         sed -i '' "1,20s/([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})/($TODAY)/g" "$file" 2>/dev/null || true
         sed -i '' "1,20s/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ([0-9]\{4\}\.[0-9]\{2\}\.[0-9]\{2\})\"/\"V[0-9]\+\.[0-9]\+\.[0-9]\+ ($TODAY)\"/g" "$file" 2>/dev/null || true
+        # Проверяем наличие версии в первых 20 строках и обновляем, если есть
+        if head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"; then
+            echo "  Обновляем версию в: $file"
+            [ -z "$NEW_VERSION" ] && echo "  ✗ ОШИБКА: NEW_VERSION пуста, пропускаем обновление версии в $file" || \
+            sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$file" 2>/dev/null || true
+        else
+            echo "  ℹ Файл $file не содержит версию в начале (пропускаем обновление версии)"
+        fi
     fi
 done
 # КРИТИЧНО: Проверка успешности шага 9
@@ -729,8 +778,8 @@ if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 10 не выполнен успешно"
 fi
 
-# ШАГ 11: Обновляем версию проекта во ВСЕХ файлах
-echo "=== ШАГ 11: Обновление версий проекта ==="
+# ШАГ 11: Обновляем версию проекта в ключевых файлах
+echo "=== ШАГ 11: Обновление версий проекта в ключевых файлах ==="
 # КРИТИЧНО: Проверка директории проекта
 PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
@@ -746,45 +795,77 @@ MINOR=$(grep "^MINOR=" Version.txt | cut -d= -f2)
 [ -z "$MAJOR" ] || [ -z "$MINOR" ] && stop_on_error "Не удалось прочитать MAJOR или MINOR из Version.txt" || true
 
 echo "Обновление версий на: $NEW_VERSION"
-# КРИТИЧНО: Используем git ls-files вместо find
-# Обрабатываем каждый файл отдельно с выводом прогресса
-FILE_COUNT=$(git ls-files | grep -E '\.(py|sh|md)$' | wc -l | xargs)
-CURRENT_FILE=0
-# КРИТИЧНО: Используем process substitution вместо pipe для сохранения переменной CURRENT_FILE
-while IFS= read -r f; do
-  [ ! -f "$f" ] && continue
-  CURRENT_FILE=$((CURRENT_FILE + 1))
-  echo "[$CURRENT_FILE/$FILE_COUNT] Обработка: $f"
-  
-  # Заменяем ЛЮБУЮ версию формата VX.Y.Z на NEW_VERSION
-  # КРИТИЧНО: В macOS sed не поддерживает \+, используем [0-9][0-9]*
-  # КРИТИЧНО: Используем паттерн напрямую в команде sed для избежания проблем с подстановкой переменных
-  # КРИТИЧНО: Проверяем, что NEW_VERSION не пуста перед выполнением замены
-  [ -z "$NEW_VERSION" ] && echo "  ✗ ОШИБКА: NEW_VERSION пуста, пропускаем $f" && continue
-  sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$f" 2>/dev/null || true
-  
-  echo "  ✓ Обработан: $f"
-done < <(git ls-files | grep -E '\.(py|sh|md)$')
-echo "✓ Версии обновлены во всех файлах"
-
-# Обновляем APP_VERSION в Version.txt
-echo "Обновление APP_VERSION в Version.txt: $NEW_VERSION"
-if grep -q "^APP_VERSION=" Version.txt; then
-    # Заменяем существующее значение
-    sed -i '' "s/^APP_VERSION=.*/APP_VERSION=${NEW_VERSION}/" Version.txt
-else
-    # Добавляем после PATCH если нет APP_VERSION
-    sed -i '' "/^PATCH=/a\\
+# Определяем список ключевых файлов
+KEY_FILES="FSA-AstraInstall.py README.md Version.txt"
+for file in $KEY_FILES; do
+    [ ! -f "$file" ] && echo "⚠ ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден, пропускаем" && continue
+    echo "Обработка ключевого файла: $file"
+    if [[ "$file" =~ \.(py|md)$ ]]; then
+        # Для .py и .md файлов обновляем версию в первых 20 строках
+        [ -z "$NEW_VERSION" ] && echo "  ✗ ОШИБКА: NEW_VERSION пуста, пропускаем $file" && continue
+        sed -i '' "1,20s/V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*/${NEW_VERSION}/g" "$file" 2>/dev/null || true
+        echo "  ✓ Версия обновлена в $file"
+    elif [ "$file" = "Version.txt" ]; then
+        # Для Version.txt обновляем APP_VERSION
+        if grep -q "^APP_VERSION=" Version.txt; then
+            sed -i '' "s/^APP_VERSION=.*/APP_VERSION=${NEW_VERSION}/" Version.txt
+        else
+            sed -i '' "/^PATCH=/a\\
 APP_VERSION=${NEW_VERSION}" Version.txt
-fi
-echo "✓ APP_VERSION обновлен в Version.txt"
+        fi
+        echo "  ✓ APP_VERSION обновлен в Version.txt"
+    fi
+done
+echo "✓ Версии обновлены в ключевых файлах"
 
 # КРИТИЧНО: Проверка успешности шага 11
 if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 11 не выполнен успешно"
 fi
 
-# ШАГ 12: Проверяем обновление версий
+# ШАГ 11.5: Пересборка бинарных файлов
+echo "=== ШАГ 11.5: Пересборка бинарных файлов ==="
+# КРИТИЧНО: Проверка директории проекта
+PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
+[ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
+
+echo "⚠️ ВНИМАНИЕ: Начинается пересборка бинарных файлов."
+echo "Это может занять несколько минут. Пожалуйста, подождите..."
+echo ""
+
+# Удаляем старые бинарники для гарантированного результата
+echo "Удаление старых бинарных файлов..."
+rm -f FSA-AstraInstall-1-7 FSA-AstraInstall-1-8
+echo "✓ Старые бинарные файлы удалены"
+
+# Запускаем сборку
+echo "Запуск сборки бинарных файлов..."
+python3 RunScript/docker_build_all.py
+BUILD_EXIT_CODE=$?
+
+# Проверяем успешность сборки
+if [ $BUILD_EXIT_CODE -ne 0 ]; then
+    stop_on_error "Не удалось пересобрать бинарные файлы. Код выхода: $BUILD_EXIT_CODE"
+fi
+
+# Проверяем наличие новых файлов
+if [ ! -f "FSA-AstraInstall-1-7" ] || [ ! -f "FSA-AstraInstall-1-8" ]; then
+    stop_on_error "Бинарные файлы не были созданы после сборки"
+fi
+
+# Проверяем, что файлы не пустые
+if [ ! -s "FSA-AstraInstall-1-7" ] || [ ! -s "FSA-AstraInstall-1-8" ]; then
+    stop_on_error "Бинарные файлы пустые или повреждены"
+fi
+
+echo "✓ Бинарные файлы успешно пересобраны"
+# КРИТИЧНО: Проверка успешности шага 11.5
+if [ $? -ne 0 ]; then
+    stop_on_error "ШАГ 11.5 не выполнен успешно"
+fi
+
+# ШАГ 12: Проверяем обновление версий в ключевых файлах
 echo "=== ШАГ 12: Проверка обновления версий ==="
 # КРИТИЧНО: Проверка директории проекта
 PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
@@ -802,22 +883,40 @@ fi
 VERSION_ERRORS=0
 VERSION_ERROR_FILES=""
 VERSION_ERROR_TEMP=$(mktemp)
-# КРИТИЧНО: Используем git ls-files вместо find
-git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
-  [ -f "$f" ] && \
-    if head -20 "$f" | grep -q "$NEW_VERSION"; then
-        echo "✓ Версия обновлена в $f"
-    else
-        # Проверяем наличие любой версии формата VX.Y.Z
-        # КРИТИЧНО: В macOS grep/sed не поддерживают \+, используем [0-9][0-9]*
-        if head -20 "$f" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"; then
-            OLD_VER=$(head -20 "$f" | grep -o "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*" | head -1)
-            echo "✗ ОШИБКА: Версия НЕ обновлена в $f (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
-            echo "$f" >> "$VERSION_ERROR_TEMP"
+# Проверяем только ключевые файлы
+KEY_FILES="FSA-AstraInstall.py README.md Version.txt"
+for file in $KEY_FILES; do
+    [ ! -f "$file" ] && echo "⚠ ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден, пропускаем" && continue
+    if [ "$file" = "Version.txt" ]; then
+        # Для Version.txt проверяем APP_VERSION
+        if grep -q "^APP_VERSION=${NEW_VERSION}" Version.txt; then
+            echo "✓ Версия обновлена в $file (APP_VERSION=${NEW_VERSION})"
         else
-            echo "ℹ Файл $f не содержит версию в начале файла (пропускаем)"
-        fi || true
-    fi || true
+            if grep -q "^APP_VERSION=" Version.txt; then
+                OLD_VER=$(grep "^APP_VERSION=" Version.txt | cut -d= -f2)
+                echo "✗ ОШИБКА: Версия НЕ обновлена в $file (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
+                echo "$file" >> "$VERSION_ERROR_TEMP"
+            else
+                echo "✗ ОШИБКА: APP_VERSION не найден в $file"
+                echo "$file" >> "$VERSION_ERROR_TEMP"
+            fi
+        fi
+    elif [[ "$file" =~ \.(py|md)$ ]]; then
+        # Для .py и .md файлов проверяем версию в первых 20 строках
+        if head -20 "$file" | grep -q "$NEW_VERSION"; then
+            echo "✓ Версия обновлена в $file"
+        else
+            # Проверяем наличие любой версии формата VX.Y.Z
+            # КРИТИЧНО: В macOS grep/sed не поддерживают \+, используем [0-9][0-9]*
+            if head -20 "$file" | grep -q "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*"; then
+                OLD_VER=$(head -20 "$file" | grep -o "V[0-9][0-9]*\\.[0-9][0-9]*\\.[0-9][0-9]*" | head -1)
+                echo "✗ ОШИБКА: Версия НЕ обновлена в $file (найдена: $OLD_VER, ожидалось: $NEW_VERSION)"
+                echo "$file" >> "$VERSION_ERROR_TEMP"
+            else
+                echo "ℹ Файл $file не содержит версию в начале файла (пропускаем)"
+            fi
+        fi
+    fi
 done
 VERSION_ERRORS=$(wc -l < "$VERSION_ERROR_TEMP" 2>/dev/null | xargs || echo "0")
 # xargs удаляет пробелы и переводы строк для безопасности
@@ -827,7 +926,7 @@ rm -f "$VERSION_ERROR_TEMP"
 if [ "${VERSION_ERRORS:-0}" -gt 0 ] 2>/dev/null; then
     stop_on_error "Версия не обновлена в $VERSION_ERRORS файл(ах):$VERSION_ERROR_FILES"
 fi
-echo "✓ Все версии успешно обновлены"
+echo "✓ Все версии успешно обновлены в ключевых файлах"
 # КРИТИЧНО: Проверка успешности шага 12
 if [ $? -ne 0 ]; then
     stop_on_error "ШАГ 12 не выполнен успешно"
@@ -874,6 +973,13 @@ for version_file in Version.txt version.txt; do
     [ -f "$version_file" ] && \
     ! git diff --quiet HEAD -- "$version_file" 2>/dev/null && \
         (git add "$version_file" 2>/dev/null && echo "✓ Добавлен измененный: $version_file" || (echo "✗ ОШИБКА: Не удалось добавить $version_file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
+done
+# КРИТИЧНО: Добавляем пересобранные бинарные файлы (обновлены в шаге 11.5)
+for binary_file in FSA-AstraInstall-1-7 FSA-AstraInstall-1-8; do
+    [ -f "$binary_file" ] && \
+    ! git diff --quiet HEAD -- "$binary_file" 2>/dev/null && \
+        (git add "$binary_file" 2>/dev/null && echo "✓ Добавлен пересобранный: $binary_file" || (echo "✗ ОШИБКА: Не удалось добавить $binary_file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || \
+    ([ -f "$binary_file" ] && git add "$binary_file" 2>/dev/null && echo "✓ Добавлен новый бинарный: $binary_file" || true)
 done
 [ -f "$ADD_ERROR_FILE" ] && [ -s "$ADD_ERROR_FILE" ] && ADD_ERROR_COUNT=$(wc -l < "$ADD_ERROR_FILE") && rm "$ADD_ERROR_FILE" && stop_on_error "Не удалось добавить $ADD_ERROR_COUNT файл(ов) в индекс. Проверьте права доступа и состояние файлов." || rm -f "$ADD_ERROR_FILE"
 echo "=== Итоговый статус индекса ==="

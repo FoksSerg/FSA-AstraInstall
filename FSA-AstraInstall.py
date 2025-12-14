@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.176 (2025.12.14)
+Версия: V3.4.177 (2025.12.15)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.176 (2025.12.14)"
+APP_VERSION = "V3.4.177 (2025.12.15)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -2664,7 +2664,7 @@ class ComponentHandler(ABC):
         return START_DIR if START_DIR else _get_start_dir()
     
     def _resolve_single_file(self, file_path, config=None, script_dir=None, cleanup_temp=True, 
-                             source_priority=None, fallback=True):
+                             source_priority=None, fallback=True, component_id=None):
         """
         Вспомогательная функция для получения одного файла из различных источников
         
@@ -2831,7 +2831,18 @@ class ComponentHandler(ABC):
                         else:
                             archive_path = os.path.join(script_dir, archive_part)
                         
-                        if os.path.exists(archive_path):
+                        # Пытаемся разрешить путь через диалог, если архив не найден
+                        if not os.path.exists(archive_path):
+                            archive_name = os.path.basename(archive_path) if archive_path else None
+                            expected_location = os.path.dirname(archive_path) if archive_path else script_dir
+                            archive_path = self._resolve_archive_path_with_dialog(
+                                archive_path=archive_path,
+                                component_id=component_id or 'unknown',
+                                archive_name=archive_name,
+                                expected_location=expected_location
+                            )
+                        
+                        if archive_path and os.path.exists(archive_path):
                             try:
                                 temp_dir = tempfile.mkdtemp(prefix='astra_extract_')
                                 temp_dirs.append(temp_dir)
@@ -2935,7 +2946,7 @@ class ComponentHandler(ABC):
         package_file = config.get('package_file')
         if package_file:
             file_path, temp_dir, source = self._resolve_single_file(
-                package_file, config, script_dir, cleanup_temp, source_priority, fallback
+                package_file, config, script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
             )
             if file_path:
                 result_files['default'] = file_path
@@ -2953,7 +2964,7 @@ class ComponentHandler(ABC):
         download_url = config.get('download_url')
         if download_url:
             file_path, temp_dir, source = self._resolve_single_file(
-                download_url, config, script_dir, cleanup_temp, source_priority, fallback
+                download_url, config, script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
             )
             if file_path:
                 result_files['default'] = file_path
@@ -2976,7 +2987,7 @@ class ComponentHandler(ABC):
                     download_url_x86, 
                     {'download_sha256': config.get('download_sha256_x86'), 
                      'download_filename': config.get('download_filename_x86')},
-                    script_dir, cleanup_temp, source_priority, fallback
+                    script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
                 )
                 if file_path:
                     result_files['x86'] = file_path
@@ -2989,7 +3000,7 @@ class ComponentHandler(ABC):
                     download_url_x64,
                     {'download_sha256': config.get('download_sha256_x64'),
                      'download_filename': config.get('download_filename_x64')},
-                    script_dir, cleanup_temp, source_priority, fallback
+                    script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
                 )
                 if file_path:
                     result_files['x64'] = file_path
@@ -3017,7 +3028,7 @@ class ComponentHandler(ABC):
                     download_url_32,
                     {'download_sha256': config.get('download_sha256_32'),
                      'download_filename': config.get('download_filename_32')},
-                    script_dir, cleanup_temp, source_priority, fallback
+                    script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
                 )
                 if file_path:
                     result_files['32'] = file_path
@@ -3030,7 +3041,7 @@ class ComponentHandler(ABC):
                     download_url_64,
                     {'download_sha256': config.get('download_sha256_64'),
                      'download_filename': config.get('download_filename_64')},
-                    script_dir, cleanup_temp, source_priority, fallback
+                    script_dir, cleanup_temp, source_priority, fallback, component_id=component_id
                 )
                 if file_path:
                     result_files['64'] = file_path
@@ -3137,8 +3148,21 @@ class ComponentHandler(ABC):
                 component_id=component_id
             )
             
-            if archive_path and os.path.exists(archive_path):
-                print(f"[PREPARE FILES] Найден архив: {archive_path}", level='INFO')
+            # Пытаемся разрешить путь через диалог, если архив не найден
+            archive_path = self._resolve_archive_path_with_dialog(
+                archive_path=archive_path,
+                component_id=component_id,
+                archive_name=archive_name,
+                expected_location=os.path.join(self.astrapack_dir, source_dir) if source_dir and self.astrapack_dir else self.astrapack_dir
+            )
+            
+            # Функция-помощник для извлечения из архива
+            def extract_from_archive(archive_path_to_use):
+                """Извлекает файлы из указанного архива"""
+                if not archive_path_to_use or not os.path.exists(archive_path_to_use):
+                    return False
+                
+                print(f"[PREPARE FILES] Найден архив: {archive_path_to_use}", level='INFO')
                 
                 # Определяем что извлекать
                 extract_info = self._get_component_extract_info(config, component_id)
@@ -3168,11 +3192,11 @@ class ComponentHandler(ABC):
                     
                     # Проверяем структуру архива для определения strip_components
                     try:
-                        with open(archive_path, 'rb') as f:
+                        with open(archive_path_to_use, 'rb') as f:
                             first_bytes = f.read(2)
                             tar_mode = 'r:gz' if (first_bytes == b'\x1f\x8b') else 'r'
                         
-                        with tarfile.open(archive_path, tar_mode) as tar:
+                        with tarfile.open(archive_path_to_use, tar_mode) as tar:
                             members = tar.getmembers()
                             archive_files_by_name = {os.path.basename(m.name): m.name for m in members if m.isfile()}
                             
@@ -3206,17 +3230,25 @@ class ComponentHandler(ABC):
                     print(f"[PREPARE FILES] Извлечение в: {final_target_dir}", level='INFO')
                     
                     result = extract_archive(
-                        archive_path=archive_path,
+                        archive_path=archive_path_to_use,
                         extract_to=final_target_dir,
                         extract_items=extract_items,
                         progress_callback=None
                     )
                     
                     if result['success']:
-                        files_prepared = True
                         print(f"[PREPARE FILES] [OK] Извлечено файлов из архива: {result['extracted_count']}", level='INFO')
+                        return True
                     else:
                         print(f"[PREPARE FILES] [FAIL] Ошибка извлечения: {result.get('error', 'неизвестная ошибка')}", level='ERROR')
+                        return False
+                
+                return False
+            
+            # Пытаемся использовать автоматически найденный или выбранный пользователем архив
+            if archive_path and os.path.exists(archive_path):
+                if extract_from_archive(archive_path):
+                    files_prepared = True
             else:
                 print(f"[PREPARE FILES] [FAIL] Архив не найден", level='WARNING')
         
@@ -4160,6 +4192,130 @@ class ComponentHandler(ABC):
         else:
             print(f"[INSTALL LOG] [ERROR] .tar.gz файлы не найдены в {archive_dir}", level='ERROR')
         
+        return None
+    
+    def _resolve_archive_path_with_dialog(self, archive_path, component_id, archive_name=None, expected_location=None):
+        """
+        Разрешает путь к архиву, предлагая пользователю выбрать файл вручную, если архив не найден.
+        
+        Этот метод должен вызываться после _find_archive() или когда известен путь к архиву.
+        Если архив не найден и доступен GUI, показывается диалог выбора файла.
+        
+        Args:
+            archive_path: Путь к архиву (может быть None если не найден)
+            component_id: ID компонента (для формирования заголовка диалога)
+            archive_name: Ожидаемое имя архива (для отображения в диалоге)
+            expected_location: Ожидаемое местоположение архива (для начальной директории диалога)
+        
+        Returns:
+            str или None: Путь к архиву (исходный или выбранный пользователем), или None если не выбран
+        """
+        # Если архив найден - возвращаем его
+        if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
+            return archive_path
+        
+        # Если архив не найден и мы в GUI режиме - предлагаем выбрать вручную
+        if hasattr(sys, '_gui_instance') and sys._gui_instance and filedialog:
+            print(f"[INFO] Архив не найден автоматически", level='INFO')
+            if archive_path:
+                print(f"[INFO] Ожидался: {archive_path}", level='INFO')
+            print(f"[INFO] Открываем диалог выбора файла...", level='INFO')
+            
+            # ПРИОСТАНАВЛИВАЕМ СЧЁТЧИК ВРЕМЕНИ на время ожидания пользователя
+            # Сначала обновляем GUI для предотвращения "дёргания"
+            gui_instance = sys._gui_instance if hasattr(sys, '_gui_instance') else None
+            if gui_instance and hasattr(gui_instance, 'root'):
+                gui_instance.root.update_idletasks()
+            
+            if self.progress_manager:
+                self.progress_manager.pause_timer()
+            
+            try:
+                # Определяем начальную директорию для диалога
+                # Используем директорию, где мы искали архив (даже если файл не найден)
+                # Рекурсивно поднимаемся вверх, пока не найдем существующую директорию
+                if archive_path:
+                    # Берем директорию из пути к архиву
+                    current_dir = os.path.dirname(archive_path)
+                    
+                    # Рекурсивно поднимаемся вверх, пока не найдем существующую директорию
+                    while current_dir and current_dir != '/' and not os.path.exists(current_dir):
+                        current_dir = os.path.dirname(current_dir)
+                    
+                    # Если нашли существующую директорию - используем её
+                    if current_dir and current_dir != '/' and os.path.exists(current_dir):
+                        initial_dir = current_dir
+                    else:
+                        # Если ничего не нашли - используем fallback
+                        if expected_location and os.path.exists(expected_location):
+                            initial_dir = expected_location
+                        elif self.astrapack_dir and os.path.exists(self.astrapack_dir):
+                            initial_dir = self.astrapack_dir
+                        else:
+                            initial_dir = os.path.expanduser("~")
+                elif expected_location:
+                    # Аналогично для expected_location - поднимаемся вверх, если не существует
+                    current_dir = expected_location
+                    while current_dir and current_dir != '/' and not os.path.exists(current_dir):
+                        current_dir = os.path.dirname(current_dir)
+                    
+                    if current_dir and current_dir != '/' and os.path.exists(current_dir):
+                        initial_dir = current_dir
+                    elif self.astrapack_dir and os.path.exists(self.astrapack_dir):
+                        initial_dir = self.astrapack_dir
+                    else:
+                        initial_dir = os.path.expanduser("~")
+                elif self.astrapack_dir and os.path.exists(self.astrapack_dir):
+                    initial_dir = self.astrapack_dir
+                else:
+                    initial_dir = os.path.expanduser("~")
+                
+                # Формируем заголовок диалога
+                dialog_title = f"Выберите архив для компонента '{component_id}'"
+                if archive_name:
+                    dialog_title += f"\n(Ожидался: {archive_name})"
+                elif archive_path:
+                    dialog_title += f"\n(Ожидался: {os.path.basename(archive_path)})"
+                
+                # Показываем диалог выбора файла
+                try:
+                    # Получаем главное окно для привязки диалога
+                    gui_instance = sys._gui_instance if hasattr(sys, '_gui_instance') else None
+                    parent_window = None
+                    if gui_instance and hasattr(gui_instance, 'root'):
+                        parent_window = gui_instance.root
+                        # Обновляем GUI перед показом диалога для предотвращения "дёргания"
+                        parent_window.update_idletasks()
+                    
+                    selected_path = filedialog.askopenfilename(
+                        parent=parent_window,  # Привязываем к главному окну
+                        title=dialog_title,
+                        filetypes=[
+                            ("Архивы tar.gz", "*.tar.gz"),
+                            ("Архивы tar", "*.tar"),
+                            ("ZIP архивы", "*.zip"),
+                            ("Deb пакеты", "*.deb"),
+                            ("Все файлы", "*.*")
+                        ],
+                        initialdir=initial_dir
+                    )
+                    
+                    if selected_path and os.path.exists(selected_path):
+                        print(f"[OK] Пользователь выбрал архив: {selected_path}", level='INFO')
+                        return selected_path
+                    else:
+                        print(f"[INFO] Пользователь отменил выбор архива", level='INFO')
+                        return None
+                except Exception as e:
+                    print(f"[ERROR] Ошибка при показе диалога выбора файла: {e}", level='ERROR')
+                    traceback.print_exc()
+                    return None
+            finally:
+                # ВОЗОБНОВЛЯЕМ СЧЁТЧИК ВРЕМЕНИ после диалога (всегда, даже если была ошибка)
+                if self.progress_manager:
+                    self.progress_manager.resume_timer()
+        
+        # Если GUI недоступен - возвращаем None
         return None
     
     def _get_component_extract_info(self, config, component_id):
@@ -7238,6 +7394,14 @@ class WineApplicationHandler(ComponentHandler):
                         print(f"Источник папка не сработал, пробуем следующий...", level='WARNING')
             
             elif source_type == 'archive':
+                # Пытаемся разрешить путь через диалог, если архив не найден
+                archive_path = self._resolve_archive_path_with_dialog(
+                    archive_path=archive_path,
+                    component_id=component_id,
+                    archive_name=archive_name,
+                    expected_location=os.path.dirname(archive_path) if archive_path else self.astrapack_dir
+                )
+                
                 if archive_path and os.path.exists(archive_path) and os.path.isfile(archive_path):
                     print(f"Пробуем источник: архив {archive_path}")
                     # НОВОЕ: Передаем диапазон прогресса для распаковки
@@ -8468,6 +8632,14 @@ class ApplicationHandler(ComponentHandler):
                     archive_name=archive_name,
                     search_dir=source_dir,
                     component_id=component_id
+                )
+                
+                # Пытаемся разрешить путь через диалог, если архив не найден
+                archive_path = self._resolve_archive_path_with_dialog(
+                    archive_path=archive_path,
+                    component_id=component_id,
+                    archive_name=archive_name,
+                    expected_location=os.path.join(self.astrapack_dir, source_dir) if source_dir and self.astrapack_dir else self.astrapack_dir
                 )
                 
                 if archive_path and os.path.exists(archive_path):
@@ -12609,14 +12781,17 @@ class ComponentInstaller(object):
         print("Компоненты с учетом зависимостей: %s" % ', '.join(resolved_components))
         
         # КОМАНДА СТАРТ: Начало установки всех компонентов
+        # Проверяем, не запущен ли уже таймер (может быть запущен из GUI)
         if self.progress_manager:
-            self.progress_manager.update_progress(
-                process_type='start',
-                stage_name='Начало установки компонентов',
-                stage_progress=0,
-                global_progress=0,
-                details=f'Установка компонентов: {", ".join(resolved_components)}'
-            )
+            # Запускаем таймер только если он еще не запущен
+            if self.progress_manager.start_time is None:
+                self.progress_manager.update_progress(
+                    process_type='start',
+                    stage_name='Начало установки компонентов',
+                    stage_progress=0,
+                    global_progress=0,
+                    details=f'Установка компонентов: {", ".join(resolved_components)}'
+                )
         
         # КРИТИЧНО: Устанавливаем статус 'pending' для ВСЕХ компонентов, которые будут установлены
         # (и выбранных, и зависимостей), но еще не установлены
@@ -12925,14 +13100,17 @@ class ComponentInstaller(object):
         handler = self._get_any_handler()
         
         # КОМАНДА СТАРТ: Начало удаления всех компонентов
+        # Проверяем, не запущен ли уже таймер (может быть запущен из GUI)
         if self.progress_manager:
-            self.progress_manager.update_progress(
-                process_type='start',
-                stage_name='Начало удаления компонентов',
-                stage_progress=0,
-                global_progress=0,
-                details=f'Удаление компонентов: {", ".join(resolved_components)}'
-            )
+            # Запускаем таймер только если он еще не запущен
+            if self.progress_manager.start_time is None:
+                self.progress_manager.update_progress(
+                    process_type='start',
+                    stage_name='Начало удаления компонентов',
+                    stage_progress=0,
+                    global_progress=0,
+                    details=f'Удаление компонентов: {", ".join(resolved_components)}'
+                )
         
         # КРИТИЧНО: Если удаляется WINEPREFIX, собираем всех его детей заранее
         # Находим индекс wineprefix в списке (если он есть)
@@ -12953,6 +13131,21 @@ class ComponentInstaller(object):
         
         print(f"uninstall_components() начинаем цикл удаления компонентов", level='DEBUG')
         for idx, component_id in enumerate(resolved_components):
+            # НОВОЕ: Проверяем флаг отмены перед каждой итерацией
+            if CANCEL_OPERATION:
+                print("[INFO] Удаление прервано пользователем", level='WARNING')
+                print("Удаление прервано пользователем", gui_log=True)
+                # КОМАНДА CANCEL: Отмена процесса
+                if self.progress_manager:
+                    self.progress_manager.update_progress(
+                        process_type='cancel',
+                        stage_name='Удаление отменено',
+                        stage_progress=0,
+                        global_progress=0,
+                        details='Удаление прервано пользователем'
+                    )
+                success = False
+                break
             
             # КРИТИЧНО: Если текущий компонент - ребенок wineprefix, пропускаем его удаление
             if component_id in wineprefix_children:
@@ -12991,10 +13184,43 @@ class ComponentInstaller(object):
             
             # Если компонент установлен ИЛИ папка существует - удаляем
             print(f"uninstall_components() ПЕРЕД удалением {component_id}: установлен={self.check_component_status(component_id)}, папка_существует={folder_exists}", level='DEBUG')
+            
+            # НОВОЕ: Проверяем флаг отмены перед удалением компонента
+            if CANCEL_OPERATION:
+                print("[INFO] Удаление прервано пользователем перед удалением компонента", level='WARNING')
+                print("Удаление прервано пользователем", gui_log=True)
+                # КОМАНДА CANCEL: Отмена процесса
+                if self.progress_manager:
+                    self.progress_manager.update_progress(
+                        process_type='cancel',
+                        stage_name='Удаление отменено',
+                        stage_progress=0,
+                        global_progress=0,
+                        details='Удаление прервано пользователем'
+                    )
+                success = False
+                break
+            
             if self.check_component_status(component_id) or folder_exists:
                 print(f"uninstall_components() НАЧИНАЕМ удаление компонента {component_id}", level='DEBUG')
                 result = self.uninstall_component(component_id)
                 print(f"uninstall_components() удаление компонента {component_id} завершено: result={result}", level='DEBUG')
+                
+                # НОВОЕ: Проверяем флаг отмены после удаления компонента
+                if CANCEL_OPERATION:
+                    print("[INFO] Удаление прервано пользователем после удаления компонента", level='WARNING')
+                    print("Удаление прервано пользователем", gui_log=True)
+                    # КОМАНДА CANCEL: Отмена процесса
+                    if self.progress_manager:
+                        self.progress_manager.update_progress(
+                            process_type='cancel',
+                            stage_name='Удаление отменено',
+                            stage_progress=0,
+                            global_progress=0,
+                            details='Удаление прервано пользователем'
+                        )
+                    success = False
+                    break
                 
                 # КРИТИЧНО: После удаления компонента проверяем завершение всех процессов
                 if result and handler:
@@ -13060,8 +13286,27 @@ class ComponentInstaller(object):
         print(f"uninstall_components() завершение: success={success}", level='DEBUG')
         if success:
             print("Все компоненты удалены успешно")
+            # КОМАНДА COMPLETE: Завершение удаления
+            if self.progress_manager:
+                self.progress_manager.update_progress(
+                    process_type='complete',
+                    stage_name='Удаление завершено',
+                    stage_progress=100,
+                    global_progress=100,
+                    details='Все компоненты удалены успешно'
+                )
         else:
             print("Некоторые компоненты не удалены")
+            # Если была отмена, команда 'cancel' уже отправлена в цикле
+            # Если была ошибка, отправляем 'cancel' для остановки счетчика
+            if self.progress_manager and not CANCEL_OPERATION:
+                self.progress_manager.update_progress(
+                    process_type='cancel',
+                    stage_name='Удаление прервано',
+                    stage_progress=0,
+                    global_progress=0,
+                    details='Ошибка удаления компонентов'
+                )
         
         return success
 
@@ -19578,6 +19823,17 @@ class AutomationGUI(object):
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
         
+        # КОМАНДА СТАРТ: Начало установки - запускаем таймер сразу при нажатии кнопки
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='start',
+                stage_name='Подготовка к установке...',
+                stage_progress=0,
+                global_progress=0,
+                details=f'Установка компонентов: {", ".join(selected)}'
+            )
+        
         # Запускаем установку в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
         install_thread = threading.Thread(target=self._perform_wine_install, args=(selected,), name="WineInstallThread")
@@ -20450,6 +20706,17 @@ class AutomationGUI(object):
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
         # Дополнительная задержка не нужна - update_idletasks() уже обновил GUI
+        
+        # КОМАНДА СТАРТ: Начало удаления - запускаем таймер сразу при нажатии кнопки
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='start',
+                stage_name='Подготовка к удалению...',
+                stage_progress=0,
+                global_progress=0,
+                details=f'Удаление компонентов: {", ".join(selected)}'
+            )
         
         # Запускаем удаление в отдельном потоке
         # КРИТИЧНО: Передаем список как кортеж: args=(selected,)
@@ -22890,7 +23157,6 @@ class AutomationGUI(object):
             Выбранный источник или None
         """
         dialog = self.tk.Toplevel(parent_window)
-        dialog.title("Выбор источника обновления")
         
         # Вычисляем размер окна в зависимости от количества источников
         num_sources = len(sources)
@@ -22900,6 +23166,9 @@ class AutomationGUI(object):
         
         # Центрируем окно
         dialog.update_idletasks()
+        
+        # Устанавливаем заголовок после обновления окна
+        dialog.title("Выбор источника обновления")
         width = dialog.winfo_width()
         height = dialog.winfo_height()
         x = (dialog.winfo_screenwidth() // 2) - (width // 2)
@@ -22919,6 +23188,12 @@ class AutomationGUI(object):
         
         # Переменная для выбора
         selected_var = self.tk.StringVar()
+        
+        # Получаем размер текущего файла для вычисления разницы
+        try:
+            current_file_size = os.path.getsize(sys.executable)
+        except Exception:
+            current_file_size = 0
         
         # Создаем радиокнопки для каждого источника
         for idx, source in enumerate(sources):
@@ -22951,7 +23226,20 @@ class AutomationGUI(object):
                 info_text.append(f"Версия: {source['version']}")
             if source['file_size']:
                 size_mb = source['file_size'] / (1024 * 1024)
-                info_text.append(f"Размер: {size_mb:.2f} MB")
+                size_text = f"Размер: {size_mb:.2f} MB"
+                
+                # Добавляем разницу размеров, если есть локальный файл для сравнения
+                if current_file_size > 0:
+                    size_diff = source['file_size'] - current_file_size
+                    # Показываем разницу только если она >= 1 байта
+                    if abs(size_diff) >= 1:
+                        size_diff_mb = abs(size_diff) / (1024 * 1024)
+                        if size_diff > 0:
+                            size_text += f" (+{size_diff_mb:.4f} MB)"
+                        elif size_diff < 0:
+                            size_text += f" (-{size_diff_mb:.4f} MB)"
+                
+                info_text.append(size_text)
             
             if info_text:
                 info_label = self.tk.Label(info_frame, text=" | ".join(info_text), 
@@ -22960,15 +23248,41 @@ class AutomationGUI(object):
             
             # Причина обновления
             if source['needs_update']:
-                reason_text = {
-                    'new_version': 'Новая версия',
-                    'size_diff': 'Размер файла отличается',
-                    'forced': 'Принудительное обновление'
-                }.get(source['update_reason'], 'Требуется обновление')
-                reason_label = self.tk.Label(info_frame, text=reason_text, 
-                                            font=('Arial', 8, 'bold'), 
-                                            anchor='w', fg='green')
-                reason_label.pack(fill=self.tk.X)
+                # Для size_diff проверяем, есть ли реальная разница
+                if source['update_reason'] == 'size_diff' and source.get('file_size') and current_file_size > 0:
+                    new_size = source['file_size']
+                    size_diff = new_size - current_file_size
+                    
+                    # Если разница равна нулю (или очень мала, меньше 1 байта), не показываем сообщение
+                    if abs(size_diff) < 1:
+                        # Размеры одинаковые - не показываем причину обновления
+                        pass
+                    else:
+                        # Есть реальная разница - показываем с увеличенной точностью
+                        size_diff_mb = abs(size_diff) / (1024 * 1024)
+                        
+                        if size_diff > 0:
+                            diff_text = f" (+{size_diff_mb:.4f} MB больше)"
+                        else:
+                            diff_text = f" (-{size_diff_mb:.4f} MB меньше)"
+                        
+                        reason_text = f"Размер файла отличается{diff_text}"
+                        
+                        reason_label = self.tk.Label(info_frame, text=reason_text, 
+                                                    font=('Arial', 8, 'bold'), 
+                                                    anchor='w', fg='green')
+                        reason_label.pack(fill=self.tk.X)
+                else:
+                    # Для других причин обновления показываем как обычно
+                    reason_text = {
+                        'new_version': 'Новая версия',
+                        'forced': 'Принудительное обновление'
+                    }.get(source['update_reason'], 'Требуется обновление')
+                    
+                    reason_label = self.tk.Label(info_frame, text=reason_text, 
+                                                font=('Arial', 8, 'bold'), 
+                                                anchor='w', fg='green')
+                    reason_label.pack(fill=self.tk.X)
             
             # Выбираем первый источник по умолчанию
             if idx == 0:
@@ -23681,8 +23995,16 @@ class AutomationGUI(object):
         self.start_button.config(state=self.tk.DISABLED)
         self.stop_button.config(state=self.tk.NORMAL)
         
-        # Сбрасываем прогресс-бары в ноль сразу при нажатии кнопки
-        self.reset_progress_bars()
+        # КОМАНДА СТАРТ: Начало автоматизации - запускаем таймер сразу при нажатии кнопки
+        progress_manager = get_global_progress_manager()
+        if progress_manager:
+            progress_manager.update_progress(
+                process_type='start',
+                stage_name='Подготовка к автоматизации...',
+                stage_progress=0,
+                global_progress=0,
+                details='Запуск автоматизации...'
+            )
         
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
@@ -24070,6 +24392,19 @@ class AutomationGUI(object):
             # Временно отключаем тест интерактивных запросов из-за проблем с падением
             print("[SKIP] Тест интерактивных запросов отключен (избегаем падений)", gui_log=True)
             print("[INFO] Тест интерактивных запросов отключен для стабильности")
+            
+            # КОМАНДА СТАРТ: Начало обновления системы - запускаем таймер сразу перед обновлением
+            if hasattr(self, 'system_updater') and self.system_updater and hasattr(self.system_updater, 'universal_progress_manager'):
+                if self.system_updater.universal_progress_manager:
+                    # Запускаем таймер только если он еще не запущен
+                    if self.system_updater.universal_progress_manager.start_time is None:
+                        self.system_updater.universal_progress_manager.update_progress(
+                            process_type='start',
+                            stage_name='Начало обновления системы',
+                            stage_progress=0,
+                            global_progress=0,
+                            details='Обновление системы: загрузка, распаковка, настройка пакетов'
+                        )
             
             # 4. Обновление системы
             self.update_status("Обновление системы...", "Обновление")
@@ -24584,6 +24919,11 @@ class UniversalProgressManager:
         # Управление таймером
         self.start_time = None  # Время начала операции
         self.final_elapsed_time = None  # Финальное время после завершения процесса
+        self.paused_time = None  # Время начала паузы (если таймер на паузе)
+        self.total_paused_time = 0.0  # Общее время, проведенное в паузе (не учитывается в elapsed_time)
+        
+        # Управление мониторингом диска
+        self.disk_monitoring_active = False  # Флаг активности мониторинга диска
         
         # Управление диском
         self.initial_disk_space = None  # Начальное использование диска
@@ -24617,6 +24957,20 @@ class UniversalProgressManager:
             return sys._gui_instance
         return None
     
+    def pause_timer(self):
+        """Приостанавливает счётчик времени (для исключения времени ожидания пользователя)"""
+        if self.start_time is not None and self.paused_time is None:
+            self.paused_time = time.time()
+            print(f"[PROGRESS] Счётчик времени приостановлен", level='INFO')
+    
+    def resume_timer(self):
+        """Возобновляет счётчик времени после паузы"""
+        if self.paused_time is not None:
+            paused_duration = time.time() - self.paused_time
+            self.total_paused_time += paused_duration
+            self.paused_time = None
+            print(f"[PROGRESS] Счётчик времени возобновлен (пауза: {paused_duration:.1f} сек)", level='INFO')
+    
     def update_progress(self, process_type, stage_name, stage_progress, global_progress, details="", **kwargs):
         """
         Универсальный метод обновления прогресса
@@ -24640,22 +24994,31 @@ class UniversalProgressManager:
         
         # КОМАНДЫ УПРАВЛЕНИЯ ПРОЦЕССОМ: start, complete, cancel
         if process_type == 'start':
-            # КОМАНДА СТАРТ: Начало процесса - запускаем таймер и сбрасываем диск
+            # КОМАНДА СТАРТ: Начало процесса - запускаем таймер и мониторинг диска
             self.start_time = time.time()
             self.final_elapsed_time = None
             self.final_disk_used_mb = None
+            self.paused_time = None  # Сбрасываем паузу
+            self.total_paused_time = 0.0  # Сбрасываем общее время паузы
+            self.disk_monitoring_active = True  # Запускаем мониторинг диска
             try:
                 disk_usage = shutil.disk_usage('/')
                 self.initial_disk_space = disk_usage.used
-                print(f"[PROGRESS] Команда СТАРТ: таймер запущен, начальное использование диска: {self.initial_disk_space / (1024**3):.2f} ГБ")
+                print(f"[PROGRESS] Команда СТАРТ: таймер и мониторинг диска запущены, начальное использование диска: {self.initial_disk_space / (1024**3):.2f} ГБ")
             except Exception as e:
                 self.initial_disk_space = None
+                self.disk_monitoring_active = False
                 print(f"[WARNING] Не удалось получить начальное использование диска: {e}")
         elif process_type == 'complete' or process_type == 'cancel':
-            # КОМАНДЫ ЗАВЕРШЕНИЯ/ОТМЕНЫ: Сохраняем финальные значения времени и диска
+            # КОМАНДЫ ЗАВЕРШЕНИЯ/ОТМЕНЫ: Сохраняем финальные значения времени и диска, останавливаем мониторинг
             status_msg = "отменен" if process_type == 'cancel' else "завершен"
+            self.disk_monitoring_active = False  # Останавливаем мониторинг диска
             if self.start_time is not None and self.final_elapsed_time is None:
-                self.final_elapsed_time = time.time() - self.start_time
+                # Вычисляем финальное время с учетом пауз
+                self.final_elapsed_time = time.time() - self.start_time - self.total_paused_time
+                # Если таймер сейчас на паузе, вычитаем текущую паузу
+                if self.paused_time is not None:
+                    self.final_elapsed_time -= (time.time() - self.paused_time)
                 print(f"[PROGRESS] Процесс {status_msg}: финальное время сохранено ({self.final_elapsed_time:.1f} сек)")
             if self.initial_disk_space is not None and self.final_disk_used_mb is None:
                 try:
@@ -24665,17 +25028,24 @@ class UniversalProgressManager:
                 except Exception as e:
                     print(f"[WARNING] Не удалось сохранить финальное использование диска: {e}")
         elif global_progress == 0 and process_type == 'reset':
-            # Сброс процесса - останавливаем таймер и очищаем все значения
+            # Сброс процесса - останавливаем таймер и мониторинг диска, очищаем все значения
             self.start_time = None
             self.initial_disk_space = None
             self.final_elapsed_time = None
             self.final_disk_used_mb = None
+            self.disk_monitoring_active = False  # Останавливаем мониторинг диска
         
         # Вычисляем elapsed_time
         if 'elapsed_time' in kwargs:
             elapsed_time = kwargs['elapsed_time']
+        elif self.final_elapsed_time is not None:
+            # Если процесс завершен или отменен - используем сохраненное время
+            elapsed_time = self.final_elapsed_time
         elif self.start_time:
-            elapsed_time = time.time() - self.start_time
+            elapsed_time = time.time() - self.start_time - self.total_paused_time
+            # Если таймер сейчас на паузе, вычитаем текущую паузу
+            if self.paused_time is not None:
+                elapsed_time -= (time.time() - self.paused_time)
         else:
             elapsed_time = 0
         
@@ -24794,8 +25164,11 @@ class UniversalProgressManager:
                         elapsed_minutes = int(self.final_elapsed_time // 60)
                         elapsed_secs = int(self.final_elapsed_time % 60)
                     elif self.start_time is not None:
-                        # Если финальное время не сохранено, вычисляем один раз
-                        self.final_elapsed_time = time.time() - self.start_time
+                        # Если финальное время не сохранено, вычисляем один раз с учетом пауз
+                        self.final_elapsed_time = time.time() - self.start_time - self.total_paused_time
+                        # Если таймер сейчас на паузе, вычитаем текущую паузу
+                        if self.paused_time is not None:
+                            self.final_elapsed_time -= (time.time() - self.paused_time)
                         elapsed_minutes = int(self.final_elapsed_time // 60)
                         elapsed_secs = int(self.final_elapsed_time % 60)
                     else:
@@ -24809,8 +25182,8 @@ class UniversalProgressManager:
                     if hasattr(gui, 'wine_time_label'):
                         gui.wine_time_label.config(text="0 мин 0 сек")
                 
-                # ДИСК - обновляем только если процесс активен (не завершен и не сброшен)
-                if is_process_active and self.initial_disk_space is not None:
+                # ДИСК - обновляем только если мониторинг активен
+                if self.disk_monitoring_active and self.initial_disk_space is not None:
                     try:
                         current_disk_usage = shutil.disk_usage('/').used
                         disk_used_mb = (current_disk_usage - self.initial_disk_space) / (1024 * 1024)
@@ -24840,8 +25213,8 @@ class UniversalProgressManager:
                         # Форматируем с разделителем тысяч (пробел)
                         disk_text = f"{disk_used_mb:,.0f}".replace(',', ' ') + " MB"
                         gui.wine_size_label.config(text=disk_text)
-                elif is_process_reset:
-                    # Процесс сброшен - показываем 0
+                elif is_process_reset or not self.disk_monitoring_active:
+                    # Процесс сброшен или мониторинг остановлен - показываем 0
                     if hasattr(gui, 'wine_size_label'):
                         gui.wine_size_label.config(text="0 MB")
 
@@ -27097,14 +27470,17 @@ class SystemUpdater(object):
         self.configured_packages = 0
         
         # КОМАНДА СТАРТ: Начало обновления системы
+        # Проверяем, не запущен ли уже таймер (может быть запущен из GUI)
         if self.universal_progress_manager:
-            self.universal_progress_manager.update_progress(
-                process_type='start',
-                stage_name='Начало обновления системы',
-                stage_progress=0,
-                global_progress=0,
-                details='Обновление системы: загрузка, распаковка, настройка пакетов'
-            )
+            # Запускаем таймер только если он еще не запущен
+            if self.universal_progress_manager.start_time is None:
+                self.universal_progress_manager.update_progress(
+                    process_type='start',
+                    stage_name='Начало обновления системы',
+                    stage_progress=0,
+                    global_progress=0,
+                    details='Обновление системы: загрузка, распаковка, настройка пакетов'
+                )
         
         # Начинаем мониторинг времени и дискового пространства
         if hasattr(self, 'system_updater') and self.system_updater:
@@ -29565,7 +29941,9 @@ class SelfUpdater:
                 self.log(f"{source_name}: {version}, {remote_size_mb:.2f} MB ({remote_size}) → ⚠ Обновление: {version}", "INFO", gui_log=True)
             elif comparison == 0:
                 # Версия совпадает - проверяем размер
-                if remote_size and remote_size != local_size:
+                # Игнорируем очень маленькие различия (меньше 1 байта) - могут быть из-за метаданных файловой системы
+                # или из-за того, что файл был переименован (суффикс удалён), но содержимое одинаковое
+                if remote_size and abs(remote_size - local_size) >= 1:
                     result['needs_update'] = True
                     result['update_reason'] = 'size_diff'
                     size_diff = abs(remote_size - local_size) / (1024 * 1024)
@@ -29577,7 +29955,8 @@ class SelfUpdater:
                 self.log(f"{source_name}: {version}, {remote_size_mb:.2f} MB ({remote_size}) → ⚠ Старше ({local_version})", "WARNING", gui_log=True)
         else:
             # Если нет версии, но размер отличается - предлагаем обновление
-            if remote_size and remote_size != local_size:
+            # Игнорируем очень маленькие различия (меньше 1 байта)
+            if remote_size and abs(remote_size - local_size) >= 1:
                 result['needs_update'] = True
                 result['update_reason'] = 'size_diff'
                 size_diff = abs(remote_size - local_size) / (1024 * 1024)
