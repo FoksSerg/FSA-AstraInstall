@@ -253,7 +253,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** для поиска измененных файлов с версиями
    - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"`
-   - **КРИТИЧНО: Добавить Version.txt/version.txt в индекс, если он был изменен** (обновлен APP_VERSION в шаге 11)
+   - **КРИТИЧНО: Добавить Version.txt/version.txt в индекс явно** (всегда обновлен APP_VERSION в шаге 11)
    - **КРИТИЧНО: Добавить пересобранные бинарные файлы FSA-AstraInstall-1-7 и FSA-AstraInstall-1-8 в индекс** (пересобраны в шаге 11.5)
    - ЗАПРЕЩЕНО использовать `git add .`
    - Выполнить `git status --short` для проверки
@@ -968,11 +968,10 @@ git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
     ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
         (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
 done
-# КРИТИЧНО: Добавляем Version.txt/version.txt если он был изменен (обновлен APP_VERSION в шаге 11)
+# КРИТИЧНО: Добавляем Version.txt/version.txt явно (всегда обновлен APP_VERSION в шаге 11)
 for version_file in Version.txt version.txt; do
     [ -f "$version_file" ] && \
-    ! git diff --quiet HEAD -- "$version_file" 2>/dev/null && \
-        (git add "$version_file" 2>/dev/null && echo "✓ Добавлен измененный: $version_file" || (echo "✗ ОШИБКА: Не удалось добавить $version_file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
+        (git add "$version_file" 2>/dev/null && echo "✓ Добавлен: $version_file" || (echo "✗ ОШИБКА: Не удалось добавить $version_file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
 done
 # КРИТИЧНО: Добавляем пересобранные бинарные файлы (обновлены в шаге 11.5)
 for binary_file in FSA-AstraInstall-1-7 FSA-AstraInstall-1-8; do
