@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.4.177 (2025.12.15)
+# Версия проекта: V3.4.180 (2025.12.15)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -27,10 +27,10 @@
 ```
 
 ### Правила обновления:
-1. **При изменении функциональности проекта** → обновляем версию проекта в ключевых файлах (FSA-AstraInstall.py, README.md, Version.txt)
+1. **При изменении функциональности проекта** → обновляем версию проекта в ключевых файлах (FSA-AstraInstall.py, README.md, Version.txt, DocInstruction/WINE_INSTALL_GUIDE.md)
 2. **При изменении конкретного файла** → обновляем дату релиза И версию проекта ТОЛЬКО в этом файле
 3. **При изменении правил ASSISTANT_RULES.md или COMMIT_RULES.md** → обновляем версию проекта в ключевых файлах
-4. **Ключевые файлы** (всегда обновляются при коммите): FSA-AstraInstall.py, README.md, Version.txt
+4. **Ключевые файлы** (всегда обновляются при коммите): FSA-AstraInstall.py, README.md, Version.txt, DocInstruction/WINE_INSTALL_GUIDE.md
 5. **Бинарные файлы** (FSA-AstraInstall-1-7, FSA-AstraInstall-1-8) пересобираются автоматически перед коммитом
 4. **MAJOR версия** (VMAJOR.X.X) - кардинальные изменения архитектуры
 5. **MINOR версия** (X.MINOR.X) - новые функции, улучшения
@@ -214,7 +214,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - В файле `.commit_vars.sh` должны быть сохранены: `CHANGED_FILES`, `NEW_FILES`, `NEW_DIRS`, `DELETED_FILES`, `CURRENT_VERSION`, `NEW_VERSION`, `ALL_VERSIONS`
    - Проверить `NEW_VERSION` - если пуста, остановиться с ошибкой
    - Загрузить `MAJOR` и `MINOR` из `Version.txt`
-   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt"`
+   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt DocInstruction/WINE_INSTALL_GUIDE.md"`
    - Для каждого файла из `KEY_FILES`:
      - Проверить существование файла: `[ -f "$file" ]`
      - **КРИТИЧНО:** Проверить, что `NEW_VERSION` не пуста перед выполнением замены (если пуста, пропустить файл с ошибкой)
@@ -234,7 +234,7 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - **⚠️ МОЖЕТ ЗАНЯТЬ НЕСКОЛЬКО МИНУТ**
 
 12. **Проверка обновления версий:** 
-   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt"`
+   - Определить список ключевых файлов: `KEY_FILES="FSA-AstraInstall.py README.md Version.txt DocInstruction/WINE_INSTALL_GUIDE.md"`
    - Для каждого файла из `KEY_FILES`:
      - Если файл `Version.txt`: проверить `APP_VERSION` через `grep -q "^APP_VERSION=${NEW_VERSION}" Version.txt`
      - Если файл имеет расширение `.py` или `.md`: выполнить `head -20 "$file" | grep -q "$NEW_VERSION"`
@@ -796,7 +796,7 @@ MINOR=$(grep "^MINOR=" Version.txt | cut -d= -f2)
 
 echo "Обновление версий на: $NEW_VERSION"
 # Определяем список ключевых файлов
-KEY_FILES="FSA-AstraInstall.py README.md Version.txt"
+KEY_FILES="FSA-AstraInstall.py README.md Version.txt DocInstruction/WINE_INSTALL_GUIDE.md"
 for file in $KEY_FILES; do
     [ ! -f "$file" ] && echo "⚠ ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден, пропускаем" && continue
     echo "Обработка ключевого файла: $file"
@@ -884,7 +884,7 @@ VERSION_ERRORS=0
 VERSION_ERROR_FILES=""
 VERSION_ERROR_TEMP=$(mktemp)
 # Проверяем только ключевые файлы
-KEY_FILES="FSA-AstraInstall.py README.md Version.txt"
+KEY_FILES="FSA-AstraInstall.py README.md Version.txt DocInstruction/WINE_INSTALL_GUIDE.md"
 for file in $KEY_FILES; do
     [ ! -f "$file" ] && echo "⚠ ПРЕДУПРЕЖДЕНИЕ: Файл $file не найден, пропускаем" && continue
     if [ "$file" = "Version.txt" ]; then
