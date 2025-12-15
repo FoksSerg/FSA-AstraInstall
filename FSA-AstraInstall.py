@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.180 (2025.12.15)
+Версия: V3.4.181 (2025.12.16)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.180 (2025.12.15)"
+APP_VERSION = "V3.4.181 (2025.12.16)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -23065,9 +23065,10 @@ class AutomationGUI(object):
         message_parts.append("")
         message_parts.append("Хотите обновиться сейчас?")
         
+        # Используем стандартный messagebox.askyesno
         result = messagebox.askyesno(
             "Обновление доступно",
-            "\n".join(message_parts),
+            '\n'.join(message_parts),
             parent=parent_window
         )
         
@@ -29344,20 +29345,6 @@ def restart_with_path(new_path: str):
     print(f"[INFO] Перезапуск: {' '.join(args)}", level='INFO')
     os.execv(args[0], args)
 
-def cleanup_update_launcher_script():
-    """Удаляет скрипт-обертку для отложенного запуска обновления, если он существует"""
-    if not getattr(sys, 'frozen', False):
-        return  # Только для бинарника
-    
-    try:
-        binary_dir = os.path.dirname(os.path.abspath(sys.executable))
-        launcher_script = os.path.join(binary_dir, 'launch_update.sh')
-        if os.path.exists(launcher_script):
-            os.remove(launcher_script)
-            print(f"Удален скрипт-обертка обновления: {launcher_script}", level='DEBUG')
-    except Exception as e:
-        print(f"Не удалось удалить скрипт-обертку: {e}", level='DEBUG')
-
 def ensure_correct_binary_name():
     """
     Проверяет и переименовывает бинарник в правильное имя при необходимости.
@@ -30367,12 +30354,6 @@ class SelfUpdater:
         if not self.is_frozen:
             return  # Только для бинарника
         
-        args = [new_file_path]
-        # Сохраняем все аргументы
-        args.extend(sys.argv[1:])
-        
-        self.log(f"Запуск новой версии: {' '.join(args)}", "INFO")
-        
         # КРИТИЧНО: Переименовываем файл в правильное имя ПЕРЕД запуском
         binary_dir = os.path.dirname(os.path.abspath(sys.executable))
         final_path = os.path.join(binary_dir, BINARY_FILENAME)
@@ -30385,107 +30366,171 @@ class SelfUpdater:
             if os.path.exists(final_path):
                 try:
                     os.remove(final_path)
-                    self.log(f"Удален существующий файл {BINARY_FILENAME}", "DEBUG")
+                    print(f"Удален существующий файл {BINARY_FILENAME}", level="DEBUG")
                 except Exception as e:
-                    self.log(f"Не удалось удалить существующий файл: {e}", "WARNING")
+                    print(f"Не удалось удалить существующий файл: {e}", level="WARNING")
             
             try:
                 shutil.move(new_file_path, final_path)
                 os.chmod(final_path, 0o755)
-                self.log(f"Файл переименован: {os.path.basename(new_file_path)} -> {BINARY_FILENAME}", "DEBUG")
+                print(f"Файл переименован: {os.path.basename(new_file_path)} -> {BINARY_FILENAME}", level="DEBUG")
             except Exception as e:
-                self.log(f"Не удалось переименовать файл: {e}", "ERROR")
+                print(f"Не удалось переименовать файл: {e}", level="ERROR")
                 final_path = new_file_path  # Используем исходный путь
         
-        # Обновляем путь для запуска
-        args[0] = final_path
-        
-        # Создаем bash-скрипт для отложенного запуска
-        try:
-            launcher_script = os.path.join(binary_dir, 'launch_update.sh')
+        # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
+        if '--console' in sys.argv:
+            # КОНСОЛЬНЫЙ РЕЖИМ: заменяем процесс напрямую через os.execv
+            # Формируем args с аргументами
+            args = [final_path]
+            args.extend(sys.argv[1:])  # Сохраняем все аргументы (включая --console)
             
-            # Формируем команду запуска с правильным экранированием аргументов
-            escaped_args = [shlex.quote(arg) for arg in args]
-            command_line = ' '.join(escaped_args)
+            # Меняем рабочую директорию перед запуском
+            os.chdir(binary_dir)
             
-            # Создаем bash-скрипт с nohup для независимого выполнения
-            script_content = textwrap.dedent(f"""\
-			#!/bin/bash
-			# Скрипт для отложенного запуска обновления
-			cd {shlex.quote(binary_dir)}
-			sleep 3
-			exec {command_line} > /dev/null 2>&1
-			""")
-            with open(launcher_script, 'w', encoding='utf-8') as f:
-                f.write(script_content)
-            os.chmod(launcher_script, 0o755)
+            # Заменяем текущий процесс новым - терминал и вывод сохранятся
+            os.execv(final_path, args)
+        else:
+            # GUI РЕЖИМ: запускаем бинарник напрямую БЕЗ скрипта, но С флагом обновления
+            if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
+                print("GUI не найден, невозможно корректно завершить обновление", level="ERROR")
+                return
             
-            self.log(f"Создан скрипт-обертка: {launcher_script}", "DEBUG")
+            # Формируем аргументы для нового бинарника
+            # Новый процесс сам создаст свой лог-файл - не передаём --log-file
+            update_args = [final_path, '--update-restart']
             
-            # КРИТИЧНО для Astra 1.8: Упрощенная команда - запускаем скрипт напрямую через setsid
-            # Скрипт уже содержит cd, поэтому не нужно его в команде
-            script_cmd = f"setsid {shlex.quote(launcher_script)} < /dev/null > /dev/null 2>&1 &"
-            
-            # Запускаем в фоне (для GUI) или заменяем процесс (для консоли)
-            if '--console' in sys.argv:
-                # Консольный режим - запускаем скрипт напрямую
-                os.execv('/bin/bash', ['/bin/bash', launcher_script])
-            else:
-                # GUI режим - запускаем в фоне и закрываем текущее
+            # КРИТИЧНО: Закрываем все окна tkinter перед запуском нового процесса
+            def close_and_exit():
                 try:
-                    # КРИТИЧНО: Закрываем все окна tkinter перед запуском нового процесса
-                    # Это необходимо, чтобы старое приложение корректно завершилось
-                    if hasattr(sys, '_gui_instance') and sys._gui_instance:
+                    # Запускаем новый бинарник с флагом обновления
+                    # Новый процесс сам создаст свой лог-файл
+                    # КРИТИЧНО: Запускаем процесс НЕЗАВИСИМО от родителя через os.spawnv
+                    print(f"Запускаем обновлённый бинарник: {' '.join(update_args)}", level="DEBUG")
+                    
+                    # КРИТИЧНО: Очищаем переменные окружения, которые указывают на временные папки СТАРОГО процесса
+                    # Старый процесс: /tmp/_MEIXXXXX
+                    # Новый процесс: /tmp/_MEIYYYYY (другая папка!)
+                    # Если новый процесс наследует переменные со старыми путями - он не найдёт библиотеки
+                    
+                    # Удаляем наши специфические переменные
+                    if 'FSA_LOG_TIMESTAMP' in os.environ:
+                        del os.environ['FSA_LOG_TIMESTAMP']
+                    if 'FSA_LOG_WRITER_PID' in os.environ:
+                        del os.environ['FSA_LOG_WRITER_PID']
+                    
+                    # Удаляем переменные Tcl/Tk, которые указывают на временную папку СТАРОГО процесса
+                    # Новый процесс установит свои пути к СВОЕЙ временной папке при инициализации
+                    if 'TCL_LIBRARY' in os.environ and '/tmp/_MEI' in os.environ['TCL_LIBRARY']:
+                        del os.environ['TCL_LIBRARY']
+                    if 'TK_LIBRARY' in os.environ and '/tmp/_MEI' in os.environ['TK_LIBRARY']:
+                        del os.environ['TK_LIBRARY']
+                    
+                    # Очищаем LD_LIBRARY_PATH от путей к временным папкам PyInstaller
+                    # Оставляем только системные пути
+                    if 'LD_LIBRARY_PATH' in os.environ:
+                        paths = os.environ['LD_LIBRARY_PATH'].split(':')
+                        # Удаляем пути, которые содержат временные директории PyInstaller
+                        paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
+                        if paths:
+                            os.environ['LD_LIBRARY_PATH'] = ':'.join(paths)
+                        else:
+                            # Если остались только наши пути - удаляем переменную полностью
+                            del os.environ['LD_LIBRARY_PATH']
+                    
+                    # КРИТИЧНО: Создаём минимальное окружение БЕЗ ВСЕХ переменных PyInstaller
+                    # Копируем системное окружение и удаляем ВСЕ переменные, которые могут указывать на старую временную папку
+                    clean_env = os.environ.copy()
+                    
+                    # Удаляем наши специфические переменные
+                    for var in ['FSA_LOG_TIMESTAMP', 'FSA_LOG_WRITER_PID']:
+                        clean_env.pop(var, None)
+                    
+                    # КРИТИЧНО: Удаляем TCL_LIBRARY и TK_LIBRARY БЕЗУСЛОВНО
+                    # Новый процесс PyInstaller сам установит правильные пути к СВОЕЙ временной папке
+                    # Если мы оставим эти переменные - новый процесс может использовать старую папку
+                    clean_env.pop('TCL_LIBRARY', None)
+                    clean_env.pop('TK_LIBRARY', None)
+                    
+                    # Очищаем LD_LIBRARY_PATH от путей PyInstaller
+                    if 'LD_LIBRARY_PATH' in clean_env:
+                        paths = clean_env['LD_LIBRARY_PATH'].split(':')
+                        # Удаляем пути, которые содержат временные директории PyInstaller
+                        paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
+                        if paths:
+                            clean_env['LD_LIBRARY_PATH'] = ':'.join(paths)
+                        else:
+                            # Если остались только наши пути - удаляем переменную полностью
+                            clean_env.pop('LD_LIBRARY_PATH', None)
+                    
+                    # КРИТИЧНО: Также удаляем PATH от путей PyInstaller (на всякий случай)
+                    if 'PATH' in clean_env:
+                        paths = clean_env['PATH'].split(':')
+                        paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
+                        clean_env['PATH'] = ':'.join(paths)
+                    
+                    # КРИТИЧНО: Создаём минимальное окружение с системными переменными
+                    # НЕ передаём переменные PyInstaller, но передаём необходимые для X сервера
+                    minimal_env = {}
+                    
+                    # Передаём переменные, необходимые для работы с X сервером
+                    x_vars = ['DISPLAY', 'XAUTHORITY', 'HOME', 'USER']
+                    for var in x_vars:
+                        if var in os.environ:
+                            minimal_env[var] = os.environ[var]
+                    
+                    # Передаём системные переменные для работы приложения
+                    system_vars = ['PATH', 'LANG', 'LC_ALL', 'SHELL', 'TERM']
+                    for var in system_vars:
+                        if var in os.environ:
+                            minimal_env[var] = os.environ[var]
+                    
+                    # КРИТИЧНО: Очищаем PATH от путей PyInstaller (оставляем только системные)
+                    if 'PATH' in minimal_env:
+                        paths = minimal_env['PATH'].split(':')
+                        paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
+                        minimal_env['PATH'] = ':'.join(paths)
+                    
+                    # КРИТИЧНО: Запускаем через shell команду с минимальным окружением
+                    # Передаём только системные переменные, БЕЗ переменных PyInstaller
+                    # PyInstaller создаст свою временную папку и установит все нужные переменные
+                    escaped_args = [shlex.quote(arg) for arg in update_args]
+                    command = ' '.join(escaped_args)
+                    proc = subprocess.Popen(
+                        command,
+                        shell=True,
+                        cwd=binary_dir,
+                        start_new_session=True,
+                        env=minimal_env  # Минимальное окружение (системные переменные, БЕЗ PyInstaller)
+                    )
+                    print(f"PID нового процесса: {proc.pid}", level="INFO")
+                    
+                    # Небольшая задержка для гарантии запуска процесса
+                    time.sleep(0.5)
+                    
+                    # Закрываем все дочерние окна
+                    for widget in sys._gui_instance.root.winfo_children():  # type: ignore[reportGeneralTypeIssues]
                         try:
-                            # Закрываем главное окно через after, чтобы дать время на обработку
-                            def close_and_exit():
-                                try:
-                                    # КРИТИЧНО: Запускаем скрипт ПЕРЕД закрытием приложения
-                                    # Используем os.system для гарантированного запуска
-                                    try:
-                                        self.log(f"Запуск скрипта: {script_cmd}", "DEBUG")
-                                        result = os.system(script_cmd)
-                                        self.log(f"Результат запуска скрипта: {result}", "DEBUG")
-                                    except Exception as e:
-                                        self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
-                                    
-                                    # Закрываем все дочерние окна
-                                    for widget in sys._gui_instance.root.winfo_children():  # type: ignore[reportGeneralTypeIssues]
-                                        try:
-                                            if hasattr(widget, 'destroy'):
-                                                widget.destroy()
-                                        except:
-                                            pass
-                                    # Закрываем главное окно
-                                    sys._gui_instance.root.quit()
-                                    sys._gui_instance.root.destroy()
-                                except:
-                                    pass
-                                # Принудительно завершаем процесс
-                                os._exit(0)
-                            
-                            # Запускаем закрытие через after (скрипт запустится в close_and_exit)
-                            sys._gui_instance.root.after(100, close_and_exit)
-                            
-                        except Exception as e:
-                            self.log(f"Ошибка при закрытии GUI: {e}", "ERROR")
-                            # Пытаемся запустить скрипт в любом случае
-                            try:
-                                os.system(script_cmd)
-                            except Exception as e:
-                                self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
-                            os._exit(0)
-                    else:
-                        # GUI не найден - просто запускаем скрипт и выходим
-                        try:
-                            os.system(script_cmd)
-                        except Exception as e:
-                            self.log(f"Ошибка запуска скрипта: {e}", "ERROR")
-                        os._exit(0)
+                            if hasattr(widget, 'destroy'):
+                                widget.destroy()
+                        except:
+                            pass
+                    # Закрываем главное окно
+                    sys._gui_instance.root.quit()
+                    sys._gui_instance.root.destroy()
                 except Exception as e:
-                    self.log(f"Ошибка запуска новой версии: {e}", "ERROR")
-        except Exception as e:
-            self.log(f"Ошибка создания скрипта-обертки: {e}", "ERROR")
+                    print(f"Ошибка при запуске нового бинарника: {e}", level="ERROR")
+                    import traceback
+                    print(traceback.format_exc(), level="ERROR")
+                finally:
+                    # Небольшая задержка перед завершением старого процесса
+                    time.sleep(0.5)
+                    # Принудительно завершаем процесс
+                    # Новый процесс уже запущен независимо через os.spawnv и продолжит работу
+                    os._exit(0)
+            
+            # Запускаем закрытие через after (новый бинарник запустится в close_and_exit)
+            sys._gui_instance.root.after(100, close_and_exit)
 
     def download_and_apply(self) -> bool:
         """
@@ -31002,8 +31047,6 @@ if __name__ == '__main__':
     # ЭТАП 0: ПЕРЕИМЕНОВАНИЕ БИНАРНИКА (ПЕРВОЕ И ОБЯЗАТЕЛЬНОЕ)
     # АВТОМАТИЧЕСКИЙ ПЕРЕЗАПУСК С SUDO (если не root)
     # ═══════════════════════════════════════════════════════════════════════
-    # Очистка скрипта-обертки обновления (если остался от предыдущего запуска)
-    cleanup_update_launcher_script()
     
     # КРИТИЧНО: Переименование бинарника - ПЕРВОЕ действие перед всем остальным
     if ensure_correct_binary_name():
@@ -31015,8 +31058,8 @@ if __name__ == '__main__':
     is_macos = platform.system() == 'Darwin'
     
     # КРИТИЧНО: Проверка single instance ДО перезапуска через sudo
-    # Проверяем, не запущен ли уже процесс от root
-    if not is_macos:
+    # НО: пропускаем проверку, если запущены с флагом --update-restart (обновление)
+    if not is_macos and '--update-restart' not in sys.argv:
         existing_processes = find_running_instance()
         if existing_processes:
             pids = [p[0] for p in existing_processes]
@@ -31027,6 +31070,8 @@ if __name__ == '__main__':
                 print(f"[WARNING] Не удалось активировать окно: {e}")
             print("[INFO] Завершаем повторный запуск...")
             sys.exit(0)  # Завершаем процесс пользователя
+    elif '--update-restart' in sys.argv:
+        print("[INFO] Запуск после обновления, пропускаем проверку single instance", level="INFO")
     
     # Продолжаем только если процесс sudo не найден
     if not is_macos and os.geteuid() != 0:
@@ -31096,8 +31141,9 @@ if __name__ == '__main__':
     
     # КРИТИЧНО: Проверка single instance ПОСЛЕ перезапуска через sudo
     # Проверяем ТОЛЬКО процессы от root (UID=0), игнорируя процессы от пользователя
-    # На macOS пропускаем проверку single instance (не требуется)
-    if platform.system() == 'Linux' and os.geteuid() == 0:
+    # НО: пропускаем проверку, если запущены с флагом --update-restart (обновление)
+    # потому что старый процесс ещё работает и завершится через несколько миллисекунд
+    if platform.system() == 'Linux' and os.geteuid() == 0 and '--update-restart' not in sys.argv:
         print("[DEBUG] Проверка single instance после перезапуска через sudo...")
         existing_processes = find_running_instance()
         if existing_processes:
@@ -31107,6 +31153,13 @@ if __name__ == '__main__':
             sys.exit(0)
         else:
             print("[DEBUG] Существующие процессы не найдены, продолжаем запуск...")
+    elif '--update-restart' in sys.argv and platform.system() == 'Linux' and os.geteuid() == 0:
+        print("[INFO] Запуск после обновления (root), пропускаем проверку single instance", level="INFO")
+        # КРИТИЧНО: Удаляем флаг из sys.argv ТОЛЬКО здесь, после всех проверок single instance
+        # Это гарантирует, что флаг не будет влиять на дальнейшую работу программы
+        if '--update-restart' in sys.argv:
+            sys.argv.remove('--update-restart')
+            print("[DEBUG] Флаг --update-restart удалён из sys.argv после всех проверок", level="DEBUG")
     
     # КРИТИЧНО: Инициализация логирования ВНУТРИ блока if __name__ == '__main__'
     # Это гарантирует, что логирование инициализируется только один раз - в процессе sudo
