@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.181 (2025.12.16)
+Версия: V3.4.182 (2025.12.16)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.181 (2025.12.16)"
+APP_VERSION = "V3.4.182 (2025.12.16)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -30470,12 +30470,19 @@ class SelfUpdater:
                         clean_env['PATH'] = ':'.join(paths)
                     
                     # КРИТИЧНО: Создаём минимальное окружение с системными переменными
-                    # НЕ передаём переменные PyInstaller, но передаём необходимые для X сервера
+                    # НЕ передаём переменные PyInstaller, но передаём необходимые для X сервера и пользователя
                     minimal_env = {}
                     
                     # Передаём переменные, необходимые для работы с X сервером
-                    x_vars = ['DISPLAY', 'XAUTHORITY', 'HOME', 'USER']
+                    x_vars = ['DISPLAY', 'XAUTHORITY']
                     for var in x_vars:
+                        if var in os.environ:
+                            minimal_env[var] = os.environ[var]
+                    
+                    # КРИТИЧНО: Передаём переменные пользователя (необходимы для поиска установленных компонентов)
+                    # SUDO_USER критически важен - используется в expand_user_path() для определения реального пользователя
+                    user_vars = ['HOME', 'USER', 'USERNAME', 'LOGNAME', 'UID', 'GID', 'PWD', 'SUDO_USER', 'SUDO_UID', 'SUDO_GID', 'SUDO_COMMAND']
+                    for var in user_vars:
                         if var in os.environ:
                             minimal_env[var] = os.environ[var]
                     
