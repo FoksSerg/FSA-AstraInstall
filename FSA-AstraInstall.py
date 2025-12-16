@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.182 (2025.12.16)
+Версия: V3.4.183 (2025.12.16)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.182 (2025.12.16)"
+APP_VERSION = "V3.4.183 (2025.12.16)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -10123,43 +10123,43 @@ class UniversalProcessRunner(object):
                 process_name = process_name[:20] + "..."
             
             # КРИТИЧНО: Изолируем переменные окружения для системных команд
-            # Для системных команд создаем минимальное окружение без переменных из PyInstaller
+            # Для системных команд создаем МИНИМАЛЬНОЕ окружение БЕЗ переменных PyInstaller
             system_commands = ['apt', 'apt-get', 'dpkg', 'systemd', 'systemctl', 'apt-cache']
             if process_name in system_commands:
-                # Создаем минимальное окружение только с критичными переменными
-                # Это полностью изолирует системные команды от переменных PyInstaller
-                env = {
-                    'PATH': os.environ.get('PATH', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'),
-                    'HOME': os.environ.get('HOME', '/root'),
-                    'USER': os.environ.get('USER', 'root'),
-                    'LANG': os.environ.get('LANG', 'C.UTF-8'),
-                    'DEBIAN_FRONTEND': 'noninteractive',
-                    'DEBIAN_PRIORITY': 'critical',
-                    'APT_LISTCHANGES_FRONTEND': 'none'
-                }
+                # КРИТИЧНО: Создаём минимальное окружение с нуля (НЕ копируем os.environ)
+                # Это гарантирует, что системные команды НЕ увидят библиотеки бинарника
+                minimal_env = {}
                 
-                # КРИТИЧНО: Явно гарантируем отсутствие всех переменных PyInstaller
-                # Это главное исправление, после которого все заработало
-                # Удаляем LD_LIBRARY_PATH - системные команды не должны видеть библиотеки бинарника
-                if 'LD_LIBRARY_PATH' in env:
-                    env.pop('LD_LIBRARY_PATH', None)
+                # Передаём системные переменные для работы APT
+                system_vars = ['PATH', 'LANG', 'LC_ALL', 'SHELL', 'TERM']
+                for var in system_vars:
+                    if var in os.environ:
+                        minimal_env[var] = os.environ[var]
                 
-                # Удаляем переменные PyInstaller, если они случайно попали
-                pyinstaller_vars = ['_MEIPASS', '_PIP', '_FROZEN', 'PYINSTALLER']
-                for var in pyinstaller_vars:
-                    if var in env:
-                        env.pop(var, None)
+                # КРИТИЧНО: Очищаем PATH от путей PyInstaller (оставляем только системные)
+                if 'PATH' in minimal_env:
+                    paths = minimal_env['PATH'].split(':')
+                    paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
+                    minimal_env['PATH'] = ':'.join(paths) if paths else '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
                 
-                # КРИТИЧНО: Очищаем PATH от временных директорий PyInstaller
-                # PyInstaller может добавить _MEIPASS в PATH, что недопустимо для системных команд
-                if 'PATH' in env:
-                    path_parts = env['PATH'].split(':')
-                    # Фильтруем пути, содержащие временные директории PyInstaller
-                    clean_path_parts = [
-                        p for p in path_parts 
-                        if p and not ('_MEI' in p or '/tmp/pyinstaller' in p.lower() or '/tmp/_MEI' in p)
-                    ]
-                    env['PATH'] = ':'.join(clean_path_parts) if clean_path_parts else '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+                # Передаём переменные пользователя (необходимы для sudo и работы с файлами)
+                user_vars = ['HOME', 'USER', 'USERNAME', 'LOGNAME', 'UID', 'GID', 'PWD', 'SUDO_USER', 'SUDO_UID', 'SUDO_GID', 'SUDO_COMMAND']
+                for var in user_vars:
+                    if var in os.environ:
+                        minimal_env[var] = os.environ[var]
+                
+                # Передаём переменные прокси (необходимы для доступа к репозиториям в корпоративных сетях)
+                proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ftp_proxy', 'FTP_PROXY', 'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY']
+                for var in proxy_vars:
+                    if var in os.environ:
+                        minimal_env[var] = os.environ[var]
+                
+                # Устанавливаем обязательные переменные для APT
+                minimal_env['DEBIAN_FRONTEND'] = 'noninteractive'
+                minimal_env['DEBIAN_PRIORITY'] = 'critical'
+                minimal_env['APT_LISTCHANGES_FRONTEND'] = 'none'
+                
+                env = minimal_env
                 
             elif env is None:
                 # Для несистемных команд используем копию os.environ
@@ -12782,6 +12782,43 @@ class ComponentInstaller(object):
         
         print(f"install_components() начало установки: {component_ids}", level='DEBUG')
         print("Начало установки компонентов: %s" % ', '.join(component_ids))
+        
+        # КРИТИЧНО: Выполняем проверки системы перед установкой (если они включены)
+        if hasattr(self, 'check_dpkg_var'):
+            print("[INFO] Выполняем проверки системы перед установкой...", gui_log=True)
+            
+            # Проверяем, что system_updater доступен
+            if hasattr(self, 'system_updater') and self.system_updater:
+                # 1. Проверка dpkg
+                if self.check_dpkg_var.get():
+                    print("[INFO] Проверка состояния dpkg...", gui_log=True)
+                    if not self.system_updater._check_dpkg_status():
+                        print("[WARNING] Проблемы с dpkg обнаружены, но продолжаем установку...", gui_log=True)
+                
+                # 2. Исправление зависимостей
+                if self.check_dependencies_var.get():
+                    print("[INFO] Проверка и исправление зависимостей...", gui_log=True)
+                    if not self.system_updater._fix_broken_dependencies():
+                        print("[WARNING] Не удалось исправить зависимости, но продолжаем установку...", gui_log=True)
+                
+                # 3. Проверка свободного места
+                if self.check_disk_space_var.get():
+                    print("[INFO] Проверка свободного места...", gui_log=True)
+                    if not self.system_updater._check_disk_space():
+                        print("[ERROR] Недостаточно свободного места на диске", gui_log=True)
+                        return False
+                
+                # 4. Проверка памяти
+                if self.check_memory_var.get():
+                    print("[INFO] Проверка памяти...", gui_log=True)
+                    if not self.system_updater._check_memory():
+                        print("[ERROR] Недостаточно памяти", gui_log=True)
+                        return False
+                
+                # 5. Очистка APT кэша
+                if self.cleanup_apt_var.get():
+                    print("[INFO] Очистка APT кэша...", gui_log=True)
+                    self.system_updater._cleanup_apt_before_update()
         
         # Разрешаем зависимости (с поддержкой экземпляров)
         wine_app_manager = self.wine_app_manager if hasattr(self, 'wine_app_manager') else None
@@ -15770,16 +15807,7 @@ class AutomationGUI(object):
     
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
-        # Заголовок
-        title_frame = self.tk.LabelFrame(self.wine_frame, text="Статус установки Wine и Astra.IDE")
-        title_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        info_label = self.tk.Label(title_frame, 
-                                   text="Отметьте компоненты в таблице и выберите действие",
-                                   font=('Arial', 10))
-        info_label.pack(padx=10, pady=5)
-        
-        # Область статуса компонентов (перемещена вверх, перед кнопками)
+        # Область статуса компонентов
         status_frame = self.tk.LabelFrame(self.wine_frame, text="Статус компонентов (кликните для выбора)")
         status_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -15822,6 +15850,55 @@ class AutomationGUI(object):
         
         self.wine_tree.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True, padx=5, pady=5)
         wine_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=5, pady=5)
+        
+        # Фрейм с проверками перед установкой
+        check_frame = self.tk.LabelFrame(self.wine_frame, text="Проверки перед установкой")
+        check_frame.pack(fill=self.tk.X, padx=10, pady=5)
+        
+        # Переменные для чекбоксов (по умолчанию все включены)
+        self.check_dpkg_var = self.tk.BooleanVar(value=True)
+        self.check_dependencies_var = self.tk.BooleanVar(value=True)
+        self.check_disk_space_var = self.tk.BooleanVar(value=True)
+        self.check_memory_var = self.tk.BooleanVar(value=True)
+        self.cleanup_apt_var = self.tk.BooleanVar(value=True)
+        
+        # Одна строка: слева чекбоксы, справа кнопки
+        check_inner = self.tk.Frame(check_frame)
+        check_inner.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Левая часть: чекбоксы
+        left_checks = self.tk.Frame(check_inner)
+        left_checks.pack(side=self.tk.LEFT)
+        
+        self.tk.Checkbutton(left_checks, text="dpkg", 
+                       variable=self.check_dpkg_var).pack(side=self.tk.LEFT, padx=3)
+        self.tk.Checkbutton(left_checks, text="Зависимости", 
+                       variable=self.check_dependencies_var).pack(side=self.tk.LEFT, padx=3)
+        self.tk.Checkbutton(left_checks, text="Диск", 
+                       variable=self.check_disk_space_var).pack(side=self.tk.LEFT, padx=3)
+        self.tk.Checkbutton(left_checks, text="Память", 
+                       variable=self.check_memory_var).pack(side=self.tk.LEFT, padx=3)
+        self.tk.Checkbutton(left_checks, text="Очистка APT", 
+                       variable=self.cleanup_apt_var).pack(side=self.tk.LEFT, padx=3)
+        
+        # Правая часть: кнопки
+        right_buttons = self.tk.Frame(check_inner)
+        right_buttons.pack(side=self.tk.RIGHT)
+        
+        self.tk.Button(right_buttons, text="Все проверки", 
+                  command=self.enable_all_checks,
+                  font=('Arial', 8)).pack(side=self.tk.LEFT, padx=2)
+        self.tk.Button(right_buttons, text="Без проверок", 
+                  command=self.disable_all_checks,
+                  font=('Arial', 8)).pack(side=self.tk.LEFT, padx=2)
+        self.run_checks_button = self.tk.Button(right_buttons, 
+                                            text="Выполнить проверки", 
+                                            command=self.run_system_checks_only,
+                                            font=('Arial', 9, 'bold'),
+                                            bg='#4CAF50',
+                                            fg='white')
+        self.run_checks_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(self.run_checks_button, "Выполнить выбранные проверки без установки компонентов. Результаты будут показаны в логе.")
         
         # Фрейм с кнопками управления (перемещен вниз под таблицу)
         button_frame = self.tk.LabelFrame(self.wine_frame, text="Управление")
@@ -15883,6 +15960,30 @@ class AutomationGUI(object):
         ToolTip(self.cancel_operation_button, "Прервать текущую операцию установки/удаления")
         
         # Вторая строка удалена - статус перенесен в нижнее поле прогресса (wine_stage_label)
+    
+    def enable_all_checks(self):
+        """Включить все проверки"""
+        self.check_dpkg_var.set(True)
+        self.check_dependencies_var.set(True)
+        self.check_disk_space_var.set(True)
+        self.check_memory_var.set(True)
+        self.cleanup_apt_var.set(True)
+    
+    def enable_dpkg_only(self):
+        """Включить только проверку dpkg"""
+        self.check_dpkg_var.set(True)
+        self.check_dependencies_var.set(False)
+        self.check_disk_space_var.set(False)
+        self.check_memory_var.set(False)
+        self.cleanup_apt_var.set(False)
+    
+    def disable_all_checks(self):
+        """Отключить все проверки"""
+        self.check_dpkg_var.set(False)
+        self.check_dependencies_var.set(False)
+        self.check_disk_space_var.set(False)
+        self.check_memory_var.set(False)
+        self.cleanup_apt_var.set(False)
     
     def start_background_resource_update(self):
         """Запуск фонового обновления системных ресурсов"""
@@ -19237,6 +19338,111 @@ class AutomationGUI(object):
             
         except Exception as e:
             print(f"Ошибка при проверке системы: {str(e)}", gui_log=True)
+    
+    def run_system_checks_only(self):
+        """Выполнить только проверки системы без установки компонентов"""
+        print("[CHECKS] Запуск проверок системы...", gui_log=True)
+        print("[INFO] Начинаем выполнение выбранных проверок системы", gui_log=True)
+        
+        # Проверяем, что хотя бы одна проверка выбрана
+        if not (self.check_dpkg_var.get() or 
+                self.check_dependencies_var.get() or 
+                self.check_disk_space_var.get() or 
+                self.check_memory_var.get() or 
+                self.cleanup_apt_var.get()):
+            print("[WARNING] Не выбрано ни одной проверки", gui_log=True)
+            return
+        
+        # Блокируем кнопку на время выполнения
+        self.run_checks_button.config(state=self.tk.DISABLED)
+        
+        # Запускаем в отдельном потоке
+        check_thread = threading.Thread(target=self._run_checks_thread, name="SystemChecksThread")
+        check_thread.daemon = True
+        check_thread.start()
+    
+    def _run_checks_thread(self):
+        """Поток выполнения проверок"""
+        try:
+            # Получаем system_updater для выполнения проверок
+            if not hasattr(self, 'system_updater') or not self.system_updater:
+                print("[ERROR] SystemUpdater не инициализирован", gui_log=True)
+                self.root.after(0, lambda: self.run_checks_button.config(state=self.tk.NORMAL))
+                return
+            
+            print("=" * 60, gui_log=True)
+            print("[CHECKS] Начало выполнения проверок системы", gui_log=True)
+            print("=" * 60, gui_log=True)
+            
+            # 1. Проверка dpkg
+            if self.check_dpkg_var.get():
+                print("[CHECKS] Проверка состояния dpkg...", gui_log=True)
+                try:
+                    result = subprocess.run(['dpkg', '--audit'], 
+                                          capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        print("[OK] dpkg в нормальном состоянии", gui_log=True)
+                    else:
+                        print(f"[WARNING] Обнаружены проблемы с dpkg:", gui_log=True)
+                        print(result.stdout, gui_log=True)
+                        # Пробуем исправить
+                        print("[INFO] Запускаем dpkg --configure -a...", gui_log=True)
+                        fix_result = self.system_updater.universal_runner.run_process(
+                            ['dpkg', '--configure', '-a'],
+                            process_type="fix",
+                            channels=["file", "terminal", "gui"]
+                        )
+                        if fix_result == 0:
+                            print("[OK] dpkg восстановлен", gui_log=True)
+                except Exception as e:
+                    print(f"[ERROR] Ошибка проверки dpkg: {e}", gui_log=True)
+            
+            # 2. Исправление зависимостей
+            if self.check_dependencies_var.get():
+                print("[CHECKS] Проверка и исправление зависимостей...", gui_log=True)
+                if self.system_updater._fix_broken_dependencies():
+                    print("[OK] Зависимости проверены и исправлены", gui_log=True)
+                else:
+                    print("[WARNING] Не удалось исправить зависимости", gui_log=True)
+            
+            # 3. Проверка свободного места
+            if self.check_disk_space_var.get():
+                print("[CHECKS] Проверка свободного места на диске...", gui_log=True)
+                if self.system_updater._check_disk_space():
+                    print("[OK] Свободного места достаточно", gui_log=True)
+                else:
+                    print("[ERROR] Недостаточно свободного места", gui_log=True)
+            
+            # 4. Проверка памяти
+            if self.check_memory_var.get():
+                print("[CHECKS] Проверка доступной памяти...", gui_log=True)
+                if self.system_updater._check_memory():
+                    print("[OK] Памяти достаточно", gui_log=True)
+                else:
+                    print("[ERROR] Недостаточно памяти", gui_log=True)
+            
+            # 5. Очистка APT кэша
+            if self.cleanup_apt_var.get():
+                print("[CHECKS] Очистка APT кэша...", gui_log=True)
+                try:
+                    result = subprocess.run(['apt-get', 'clean'], 
+                                          capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0:
+                        print("[OK] APT кэш очищен", gui_log=True)
+                    else:
+                        print(f"[WARNING] Ошибка очистки кэша: {result.stderr}", gui_log=True)
+                except Exception as e:
+                    print(f"[ERROR] Ошибка очистки APT: {e}", gui_log=True)
+            
+            print("=" * 60, gui_log=True)
+            print("[CHECKS] Проверки завершены", gui_log=True)
+            print("=" * 60, gui_log=True)
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка выполнения проверок: {e}", gui_log=True)
+        finally:
+            # Разблокируем кнопку
+            self.root.after(0, lambda: self.run_checks_button.config(state=self.tk.NORMAL))
     
     def run_wine_check(self):
         """Запуск проверки Wine компонентов"""
@@ -30481,6 +30687,7 @@ class SelfUpdater:
                     
                     # КРИТИЧНО: Передаём переменные пользователя (необходимы для поиска установленных компонентов)
                     # SUDO_USER критически важен - используется в expand_user_path() для определения реального пользователя
+                    # Передаём все переменные пользователя, как в рабочей версии 2025_12_16_04_02
                     user_vars = ['HOME', 'USER', 'USERNAME', 'LOGNAME', 'UID', 'GID', 'PWD', 'SUDO_USER', 'SUDO_UID', 'SUDO_GID', 'SUDO_COMMAND']
                     for var in user_vars:
                         if var in os.environ:
@@ -30498,11 +30705,47 @@ class SelfUpdater:
                         paths = [p for p in paths if not p.startswith('/tmp/_MEI')]
                         minimal_env['PATH'] = ':'.join(paths)
                     
-                    # КРИТИЧНО: Запускаем через shell команду с минимальным окружением
-                    # Передаём только системные переменные, БЕЗ переменных PyInstaller
-                    # PyInstaller создаст свою временную папку и установит все нужные переменные
+                    # КРИТИЧНО: Определяем реального пользователя для запуска нового процесса
+                    # ЛОГИКА: Первый запуск - от обычного пользователя, затем система перезапускается через sudo
+                    # При обновлении мы ВСЕГДА запущены через sudo (от root)
+                    # Новый процесс после обновления должен запуститься снова от обычного пользователя
+                    real_user = None
+                    if os.getuid() == 0:
+                        # Запущено через sudo - определяем реального пользователя
+                        real_user = os.environ.get('SUDO_USER')
+                        if not real_user or real_user == 'root':
+                            # Если SUDO_USER не установлен или это root - используем USER из окружения
+                            # (на случай, если запущено не через sudo, а напрямую от root)
+                            real_user = os.environ.get('USER') or os.environ.get('USERNAME')
+                    else:
+                        # Запущено от обычного пользователя (не должно быть при обновлении, но на всякий случай)
+                        real_user = os.environ.get('USER') or os.environ.get('USERNAME')
+                    
+                    # КРИТИЧНО: Обновляем HOME и USER в minimal_env для реального пользователя
+                    # Это гарантирует, что новый процесс будет видеть правильные пользовательские пути
+                    # НЕ удаляем SUDO_USER - он нужен для expand_user_path() в новом процессе
+                    if real_user and real_user != 'root':
+                        try:
+                            import pwd
+                            user_info = pwd.getpwnam(real_user)
+                            minimal_env['HOME'] = user_info.pw_dir
+                            minimal_env['USER'] = real_user
+                            minimal_env['USERNAME'] = real_user
+                            minimal_env['LOGNAME'] = real_user
+                            # SUDO_USER оставляем - он нужен для expand_user_path() в новом процессе
+                        except (KeyError, ImportError):
+                            # Если не удалось получить информацию о пользователе - используем текущие значения
+                            pass
+                    
+                    # КРИТИЧНО: Запускаем новый процесс от реального пользователя
+                    # При обновлении мы ВСЕГДА запущены через sudo (root), поэтому ВСЕГДА запускаем через sudo -E -u
+                    # -E (preserve environment) сохраняет переменные, переданные через параметр env в subprocess.Popen
+                    # Это гарантирует, что новый процесс будет видеть пользовательские пути (~/.local/share/wineprefixes/cont)
+                    # И при этом НЕ увидит переменные PyInstaller, так как minimal_env уже очищен
                     escaped_args = [shlex.quote(arg) for arg in update_args]
-                    command = ' '.join(escaped_args)
+                    # Мы root, real_user определён (SUDO_USER всегда есть при запуске через sudo)
+                    command = f"sudo -E -u {shlex.quote(real_user)} {' '.join(escaped_args)}"
+                    
                     proc = subprocess.Popen(
                         command,
                         shell=True,
