@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.183 (2025.12.16)
+Версия: V3.4.184 (2025.12.16)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.183 (2025.12.16)"
+APP_VERSION = "V3.4.184 (2025.12.16)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -13624,6 +13624,9 @@ class AutomationGUI(object):
         # Обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
         
+        # Переменная для хранения загруженных настроек (для последующей загрузки ширины колонок)
+        self._saved_settings = {}
+        
         # Размер окна
         window_width = 1000
         window_height = 600
@@ -13724,8 +13727,18 @@ class AutomationGUI(object):
         # КРИТИЧНО: Обновляем размеры окна после создания всех виджетов
         self.root.update_idletasks()
         
-        # КРИТИЧНО: Центрируем окно после создания всех компонентов
-        self._center_window()
+        # КРИТИЧНО: Загружаем настройки (геометрию окна) если они есть
+        # Если настройки загружены успешно - не центрируем окно
+        settings_loaded = self.load_settings()
+        
+        # КРИТИЧНО: Применяем настройки ширины колонок после загрузки
+        # (таблицы уже созданы в create_widgets(), но настройки загружены только сейчас)
+        if hasattr(self, '_saved_settings') and self._saved_settings:
+            self._load_column_widths_from_settings(self._saved_settings, table_name=None)
+        
+        # КРИТИЧНО: Центрируем окно только если настройки не были загружены
+        if not settings_loaded:
+            self._center_window()
         
         # КРИТИЧНО: Обновляем размеры окна после центрирования
         self.root.update_idletasks()
@@ -14615,11 +14628,420 @@ class AutomationGUI(object):
             except Exception as e:
                 print(f"Ошибка очистки мониторинга файловой системы: {e}", level='DEBUG')
         
+        # Сохраняем геометрию окна перед закрытием
+        try:
+            self.save_window_geometry()
+        except Exception as e:
+            print(f"[WARNING] Ошибка сохранения геометрии окна: {e}", level='DEBUG')
+        
         # ВСЕГДА показываем форму подтверждения при закрытии GUI
         self._close_parent_terminal()
         
         # НЕ останавливаем DualStreamLogger здесь - это делается в finally блоке run()
         # чтобы все логи успели записаться
+    
+    def _get_settings_file_path(self):
+        """Получить путь к файлу настроек (.settings.json рядом с бинарником)"""
+        # Используем START_DIR для определения директории бинарника
+        settings_dir = START_DIR if START_DIR else _get_start_dir()
+        return os.path.join(settings_dir, '.settings.json')
+    
+    def load_settings(self):
+        """Загружает настройки из файла .settings.json"""
+        try:
+            settings_file = self._get_settings_file_path()
+            
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                
+                # Восстанавливаем геометрию окна
+                geometry_loaded = False
+                if 'window_geometry' in settings:
+                    try:
+                        self.root.geometry(settings['window_geometry'])
+                        print(f"[INFO] Восстановлена геометрия окна из настроек: {settings['window_geometry']}", level='DEBUG')
+                        geometry_loaded = True
+                    except Exception as e:
+                        print(f"[WARNING] Не удалось восстановить геометрию окна: {e}", level='DEBUG')
+                
+                # Сохраняем настройки для последующей загрузки ширины колонок
+                # (таблицы будут созданы позже, поэтому загрузим ширины после их создания)
+                self._saved_settings = settings
+                
+                return geometry_loaded
+        except Exception as e:
+            print(f"[WARNING] Не удалось загрузить настройки: {e}", level='DEBUG')
+        return False
+    
+    def save_window_geometry(self):
+        """Сохраняет текущую геометрию окна в файл настроек"""
+        try:
+            # Обновляем информацию о размерах окна
+            self.root.update_idletasks()
+            
+            # Получаем текущую геометрию окна
+            geometry = self.root.geometry()
+            # Формат: "widthxheight+x+y" или "widthxheight"
+            
+            # Загружаем существующие настройки (если есть)
+            settings = {}
+            settings_file = self._get_settings_file_path()
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                except Exception:
+                    pass
+            
+            # Сохраняем геометрию окна
+            settings['window_geometry'] = geometry
+            
+            # Парсим геометрию для сохранения отдельных значений
+            if '+' in geometry:
+                size_pos = geometry.split('+')
+                size = size_pos[0]
+                x = int(size_pos[1])
+                y = int(size_pos[2])
+                width, height = map(int, size.split('x'))
+                
+                settings['window_x'] = x
+                settings['window_y'] = y
+                settings['window_width'] = width
+                settings['window_height'] = height
+            else:
+                # Только размер без позиции
+                width, height = map(int, geometry.split('x'))
+                settings['window_width'] = width
+                settings['window_height'] = height
+            
+            # Сохраняем ширину колонок таблиц
+            self._save_column_widths_to_settings(settings)
+            
+            # Сохраняем настройки в файл
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+            
+            print(f"[INFO] Геометрия окна сохранена: {geometry}", level='DEBUG')
+        except Exception as e:
+            print(f"[WARNING] Не удалось сохранить геометрию окна: {e}", level='DEBUG')
+    
+    def _load_dialog_geometry(self, settings, dialog_key, default_size):
+        """Загружает геометрию диалога из настроек
+        
+        Args:
+            settings: Словарь с настройками
+            dialog_key: Ключ в настройках (например, 'markdown_dialog_geometry')
+            default_size: Размер по умолчанию в формате "WIDTHxHEIGHT"
+            
+        Returns:
+            Строка геометрии для установки или None
+        """
+        try:
+            if dialog_key in settings:
+                saved_geometry = settings[dialog_key]
+                # Если сохранена только позиция (формат "+x+y"), объединяем с размером по умолчанию
+                if saved_geometry.startswith('+'):
+                    # Извлекаем позицию
+                    pos_part = saved_geometry
+                    # Объединяем размер по умолчанию с сохраненной позицией
+                    return f"{default_size}{pos_part}"
+                else:
+                    # Полная геометрия (размер + позиция)
+                    return saved_geometry
+        except Exception:
+            pass
+        return None
+    
+    def _setup_window_defaults(self, dialog, default_width, default_height, 
+                              min_width=None, min_height=None, 
+                              resizable=True, center=True):
+        """Устанавливает начальные значения для окна
+        
+        Args:
+            dialog: Окно (Toplevel или Tk)
+            default_width: Ширина по умолчанию
+            default_height: Высота по умолчанию
+            min_width: Минимальная ширина (опционально)
+            min_height: Минимальная высота (опционально)
+            resizable: Можно ли изменять размер (True/False)
+            center: Центрировать ли окно (True/False)
+        """
+        try:
+            # Устанавливаем минимальный размер (если указан)
+            if min_width is not None and min_height is not None:
+                dialog.minsize(min_width, min_height)
+            
+            # Устанавливаем размер по умолчанию
+            dialog.geometry(f"{default_width}x{default_height}")
+            
+            # Устанавливаем возможность изменения размера
+            dialog.resizable(resizable, resizable)
+            
+            # Центрируем окно (если нужно)
+            if center:
+                dialog.update_idletasks()
+                screen_width = dialog.winfo_screenwidth()
+                screen_height = dialog.winfo_screenheight()
+                x = (screen_width // 2) - (default_width // 2)
+                y = (screen_height // 2) - (default_height // 2)
+                dialog.geometry(f"{default_width}x{default_height}+{x}+{y}")
+        except Exception as e:
+            print(f"[WARNING] Ошибка установки значений по умолчанию для окна: {e}", level='DEBUG')
+    
+    def _save_dialog_geometry(self, dialog, dialog_key):
+        """Сохраняет геометрию диалога в настройки
+        
+        Args:
+            dialog: Окно диалога
+            dialog_key: Ключ для сохранения в настройках
+        """
+        try:
+            if not dialog.winfo_exists():
+                return
+            
+            # Обновляем окно перед получением геометрии
+            dialog.update_idletasks()
+            
+            # Получаем геометрию через winfo для более надежного получения актуальных значений
+            try:
+                width = dialog.winfo_width()
+                height = dialog.winfo_height()
+                x = dialog.winfo_x()
+                y = dialog.winfo_y()
+                
+                # Проверяем, является ли окно изменяемым по размеру
+                # Если окно не изменяемое, сохраняем только позицию
+                resizable = dialog.resizable()
+                if isinstance(resizable, tuple):
+                    resizable = resizable[0] or resizable[1]
+                
+                if not resizable:
+                    # Для фиксированных окон сохраняем только позицию
+                    geometry = f"+{x}+{y}"
+                else:
+                    # Для изменяемых окон сохраняем размер и позицию
+                    geometry = f"{width}x{height}+{x}+{y}"
+            except Exception:
+                # Fallback: используем стандартный метод
+                geometry = dialog.geometry()
+                if not geometry:
+                    return
+                # Проверяем resizable для fallback случая
+                try:
+                    resizable = dialog.resizable()
+                    if isinstance(resizable, tuple):
+                        resizable = resizable[0] or resizable[1]
+                    if not resizable:
+                        # Извлекаем только позицию из geometry строки
+                        if '+' in geometry:
+                            pos_part = geometry.split('+', 1)[1] if '+' in geometry else ''
+                            if pos_part:
+                                geometry = f"+{pos_part}"
+                except Exception:
+                    pass
+            
+            settings_file = self._get_settings_file_path()
+            settings = {}
+            
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                except Exception:
+                    pass
+            
+            settings[dialog_key] = geometry
+            
+            with open(settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[WARNING] Не удалось сохранить геометрию диалога {dialog_key}: {e}", level='DEBUG')
+    
+    def reset_all_settings(self):
+        """Сброс всех пользовательских настроек"""
+        try:
+            # Показываем диалог подтверждения
+            result = self.tk.messagebox.askyesno(
+                "Сброс настроек",
+                "Вы уверены, что хотите сбросить все пользовательские настройки?\n\n"
+                "Будут удалены:\n"
+                "- Размер и положение всех окон\n"
+                "- Ширина колонок таблиц\n"
+                "- Все остальные пользовательские настройки\n\n"
+                "Это действие нельзя отменить.",
+                icon='warning'
+            )
+            
+            if not result:
+                return
+            
+            # Удаляем файл настроек
+            settings_file = self._get_settings_file_path()
+            if os.path.exists(settings_file):
+                try:
+                    os.remove(settings_file)
+                    print("[INFO] Файл настроек удален", level='DEBUG')
+                except Exception as e:
+                    self.tk.messagebox.showerror(
+                        "Ошибка",
+                        f"Не удалось удалить файл настроек:\n{e}"
+                    )
+                    return
+            
+            # Очищаем сохраненные настройки
+            self._saved_settings = {}
+            
+            # Сбрасываем геометрию главного окна к центру
+            # Используем тот же метод, что и при создании окна
+            self.root.geometry("1200x800")
+            self.root.update_idletasks()
+            self._center_window()
+            
+            # Сбрасываем ширину колонок таблиц к значениям по умолчанию
+            self._set_packages_columns_default()
+            self._set_wine_columns_default()
+            self._set_processes_columns_default()
+            self._set_repos_columns_default()
+            
+            # Примечание: Для сброса геометрии других окон нужно их пересоздать
+            # или вызвать соответствующие методы _set_<window>_defaults() если окна открыты
+            
+            # Показываем сообщение об успехе
+            self.tk.messagebox.showinfo(
+                "Настройки сброшены",
+                "Все пользовательские настройки успешно сброшены.\n"
+                "Изменения вступят в силу после перезапуска приложения."
+            )
+        except Exception as e:
+            self.tk.messagebox.showerror(
+                "Ошибка",
+                f"Ошибка при сбросе настроек:\n{e}"
+            )
+            print(f"[ERROR] Ошибка сброса настроек: {e}", level='DEBUG')
+    
+    def _save_column_widths_to_settings(self, settings):
+        """Сохраняет ширину колонок таблиц в настройки"""
+        try:
+            # Обновляем виджеты перед получением ширины колонок
+            self.root.update_idletasks()
+            
+            # Сохраняем ширину колонок таблицы пакетов
+            if hasattr(self, 'packages_tree') and self.packages_tree:
+                packages_columns = {}
+                for col in ("name", "size", "status", "downloaded", "unpacked", "configured"):
+                    try:
+                        col_info = self.packages_tree.column(col)
+                        width = col_info.get('width', None)
+                        if width:
+                            packages_columns[col] = int(width)
+                    except Exception:
+                        pass
+                if packages_columns:
+                    settings['packages_table_columns'] = packages_columns
+            
+            # Сохраняем ширину колонок таблицы установки программ
+            if hasattr(self, 'wine_tree') and self.wine_tree:
+                wine_columns = {}
+                for col in ("selected", "component", "status", "path"):
+                    try:
+                        col_info = self.wine_tree.column(col)
+                        width = col_info.get('width', None)
+                        if width:
+                            wine_columns[col] = int(width)
+                    except Exception:
+                        pass
+                if wine_columns:
+                    settings['wine_table_columns'] = wine_columns
+            
+            # Сохраняем ширину колонок таблицы мониторинга процессов
+            if hasattr(self, 'processes_tree') and self.processes_tree:
+                processes_columns = {}
+                for col in ("pid", "name", "cpu", "memory", "status", "cmdline"):
+                    try:
+                        col_info = self.processes_tree.column(col)
+                        width = col_info.get('width', None)
+                        if width:
+                            processes_columns[col] = int(width)
+                    except Exception:
+                        pass
+                if processes_columns:
+                    settings['processes_table_columns'] = processes_columns
+            
+            # Сохраняем ширину колонок таблицы репозиториев
+            if hasattr(self, 'repos_tree') and self.repos_tree:
+                repos_columns = {}
+                for col in ("status", "type", "uri", "distribution", "components"):
+                    try:
+                        col_info = self.repos_tree.column(col)
+                        width = col_info.get('width', None)
+                        if width:
+                            repos_columns[col] = int(width)
+                    except Exception:
+                        pass
+                if repos_columns:
+                    settings['repos_table_columns'] = repos_columns
+        except Exception as e:
+            print(f"[WARNING] Ошибка сохранения ширины колонок: {e}", level='DEBUG')
+    
+    def _load_column_widths_from_settings(self, settings, table_name=None):
+        """Загружает и применяет ширину колонок таблиц из настроек
+        
+        Args:
+            settings: Словарь с настройками
+            table_name: Имя таблицы для загрузки ('packages', 'wine', 'processes' или 'repos'). 
+                       Если None, загружает для всех доступных таблиц.
+        """
+        try:
+            # Загружаем ширину колонок таблицы пакетов
+            if (table_name is None or table_name == 'packages') and \
+               'packages_table_columns' in settings and \
+               hasattr(self, 'packages_tree') and self.packages_tree:
+                packages_columns = settings['packages_table_columns']
+                for col, width in packages_columns.items():
+                    if width and width > 0:
+                        try:
+                            self.packages_tree.column(col, width=width)
+                        except Exception:
+                            pass
+            
+            # Загружаем ширину колонок таблицы установки программ
+            if (table_name is None or table_name == 'wine') and \
+               'wine_table_columns' in settings and \
+               hasattr(self, 'wine_tree') and self.wine_tree:
+                wine_columns = settings['wine_table_columns']
+                for col, width in wine_columns.items():
+                    if width and width > 0:
+                        try:
+                            self.wine_tree.column(col, width=width)
+                        except Exception:
+                            pass
+            
+            # Загружаем ширину колонок таблицы мониторинга процессов
+            if (table_name is None or table_name == 'processes') and \
+               'processes_table_columns' in settings and \
+               hasattr(self, 'processes_tree') and self.processes_tree:
+                processes_columns = settings['processes_table_columns']
+                for col, width in processes_columns.items():
+                    if width and width > 0:
+                        try:
+                            self.processes_tree.column(col, width=width)
+                        except Exception:
+                            pass
+            
+            # Загружаем ширину колонок таблицы репозиториев
+            if (table_name is None or table_name == 'repos') and \
+               'repos_table_columns' in settings and \
+               hasattr(self, 'repos_tree') and self.repos_tree:
+                repos_columns = settings['repos_table_columns']
+                for col, width in repos_columns.items():
+                    if width and width > 0:
+                        try:
+                            self.repos_tree.column(col, width=width)
+                        except Exception:
+                            pass
+        except Exception as e:
+            print(f"[WARNING] Ошибка загрузки ширины колонок: {e}", level='DEBUG')
     
     def _on_window_resize(self, event):
         """Обработчик изменения размера окна"""
@@ -15121,11 +15543,8 @@ class AutomationGUI(object):
         self.repos_tree.heading('distribution', text='Дистрибутив')
         self.repos_tree.heading('components', text='Компоненты')
         
-        self.repos_tree.column('status', width=100)
-        self.repos_tree.column('type', width=80)
-        self.repos_tree.column('uri', width=400)
-        self.repos_tree.column('distribution', width=180)
-        self.repos_tree.column('components', width=250)
+        # Устанавливаем значения по умолчанию для колонок
+        self._set_repos_columns_default()
         
         # Добавляем скроллбар
         repos_scrollbar = self.tk.Scrollbar(repos_list_frame, orient=self.tk.VERTICAL, 
@@ -15805,6 +16224,17 @@ class AutomationGUI(object):
                 dual_logger = globals()['_global_dual_logger']
                 dual_logger.write_analysis(f"[REPLAY] Воспроизведение завершено: {total} строк")
     
+    def _set_wine_columns_default(self):
+        """Устанавливает значения по умолчанию для колонок таблицы Wine"""
+        if hasattr(self, 'wine_tree') and self.wine_tree:
+            columns_config = [
+                {'name': 'selected', 'width': 50, 'anchor': 'center', 'minwidth': 50},
+                {'name': 'component', 'width': 200, 'minwidth': 150},
+                {'name': 'status', 'width': 100, 'minwidth': 80, 'anchor': 'center'},
+                {'name': 'path', 'width': 300, 'minwidth': 200}
+            ]
+            self._setup_table_columns(self.wine_tree, columns_config)
+    
     def create_wine_tab(self):
         """Создание вкладки проверки Wine компонентов"""
         # Область статуса компонентов
@@ -15821,10 +16251,8 @@ class AutomationGUI(object):
         self.wine_tree.heading('status', text='Статус')
         self.wine_tree.heading('path', text='Путь/Детали')
         
-        self.wine_tree.column('selected', width=50, anchor='center', minwidth=50)
-        self.wine_tree.column('component', width=200, minwidth=150)
-        self.wine_tree.column('status', width=100, minwidth=80, anchor='center')
-        self.wine_tree.column('path', width=300, minwidth=200)
+        # Устанавливаем значения по умолчанию для колонок
+        self._set_wine_columns_default()
         
         # Словарь для хранения состояния чекбоксов (item_id -> True/False)
         self.wine_checkboxes = {}
@@ -16155,6 +16583,21 @@ class AutomationGUI(object):
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         self.tk.Label(row2_about, text=python_version, font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
         self.tk.Label(row2_about, text="|", font=('Arial', 9)).pack(side=self.tk.LEFT, padx=5)
+        
+        # Кнопка сброса настроек с иконкой корзины (слева от README)
+        reset_settings_button = self.tk.Button(
+            row2_about, 
+            text="[X] Сброс настроек",
+            command=self.reset_all_settings,
+            width=18,
+            bg='#ff6b6b',
+            fg='white',
+            activebackground='#ff5252',
+            activeforeground='white',
+            font=('Arial', 9, 'bold')
+        )
+        reset_settings_button.pack(side=self.tk.LEFT, padx=2)
+        ToolTip(reset_settings_button, "Сбросить все пользовательские настройки (размеры окон, ширина колонок и т.д.)")
         
         readme_button = self.tk.Button(row2_about, text="README.md", 
                                       command=self.open_readme, width=12)
@@ -18016,6 +18459,31 @@ class AutomationGUI(object):
         self.fs_canvas.update_idletasks()
         self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
         
+    def _set_processes_columns_default(self):
+        """Устанавливает значения по умолчанию для колонок таблицы мониторинга процессов"""
+        if hasattr(self, 'processes_tree') and self.processes_tree:
+            columns_config = [
+                {'name': 'pid', 'width': 80, 'anchor': 'center'},
+                {'name': 'name', 'width': 150, 'anchor': 'w'},
+                {'name': 'cpu', 'width': 80, 'anchor': 'center'},
+                {'name': 'memory', 'width': 100, 'anchor': 'center'},
+                {'name': 'status', 'width': 120, 'anchor': 'center'},
+                {'name': 'cmdline', 'width': 400, 'anchor': 'w'}
+            ]
+            self._setup_table_columns(self.processes_tree, columns_config)
+    
+    def _set_repos_columns_default(self):
+        """Устанавливает значения по умолчанию для колонок таблицы репозиториев"""
+        if hasattr(self, 'repos_tree') and self.repos_tree:
+            columns_config = [
+                {'name': 'status', 'width': 100},
+                {'name': 'type', 'width': 80, 'anchor': 'center'},
+                {'name': 'uri', 'width': 400},
+                {'name': 'distribution', 'width': 180, 'anchor': 'center'},
+                {'name': 'components', 'width': 250}
+            ]
+            self._setup_table_columns(self.repos_tree, columns_config)
+    
     def create_processes_monitor_tab(self):
         """Создание вкладки Мониторинг"""
         # Фрейм для вкладки уже создан в create_widgets
@@ -18045,12 +18513,8 @@ class AutomationGUI(object):
         self.processes_tree.heading('status', text='Статус')
         self.processes_tree.heading('cmdline', text='Команда')
         
-        self.processes_tree.column('pid', width=80, anchor='center')
-        self.processes_tree.column('name', width=150, anchor='w')
-        self.processes_tree.column('cpu', width=80, anchor='center')
-        self.processes_tree.column('memory', width=100, anchor='center')
-        self.processes_tree.column('status', width=120, anchor='center')
-        self.processes_tree.column('cmdline', width=400, anchor='w')
+        # Устанавливаем значения по умолчанию для колонок
+        self._set_processes_columns_default()
         
         # Скроллбары
         processes_scrollbar_y = self.tk.Scrollbar(processes_frame, orient=self.tk.VERTICAL, 
@@ -18437,6 +18901,40 @@ class AutomationGUI(object):
             self._refresh_processes_monitor()
             self.root.after(7000, self._auto_refresh_processes_monitor)
     
+    def _setup_table_columns(self, tree, columns_config):
+        """Устанавливает колонки таблицы по конфигурации
+        
+        Args:
+            tree: Treeview виджет
+            columns_config: Список словарей с параметрами колонок
+                [{'name': 'col1', 'width': 200, 'anchor': 'w', 'minwidth': 100}, ...]
+        """
+        if not tree:
+            return
+        try:
+            for col_config in columns_config:
+                col_name = col_config.get('name')
+                if not col_name:
+                    continue
+                # Копируем конфигурацию без ключа 'name'
+                col_params = {k: v for k, v in col_config.items() if k != 'name'}
+                tree.column(col_name, **col_params)
+        except Exception as e:
+            print(f"[WARNING] Ошибка установки колонок таблицы: {e}", level='DEBUG')
+    
+    def _set_packages_columns_default(self):
+        """Устанавливает значения по умолчанию для колонок таблицы пакетов"""
+        if hasattr(self, 'packages_tree') and self.packages_tree:
+            columns_config = [
+                {'name': 'name', 'width': 200, 'anchor': 'w'},
+                {'name': 'size', 'width': 100, 'anchor': 'e'},
+                {'name': 'status', 'width': 120, 'anchor': 'center'},
+                {'name': 'downloaded', 'width': 80, 'anchor': 'center'},
+                {'name': 'unpacked', 'width': 80, 'anchor': 'center'},
+                {'name': 'configured', 'width': 80, 'anchor': 'center'}
+            ]
+            self._setup_table_columns(self.packages_tree, columns_config)
+    
     def create_packages_tab(self):
         """Создание вкладки Пакеты с динамическим обновлением"""
         # Создаем Treeview для отображения таблицы пакетов
@@ -18459,12 +18957,8 @@ class AutomationGUI(object):
         self.packages_tree.heading("unpacked", text="Распакован", command=lambda: self._sort_packages_table("unpacked"))
         self.packages_tree.heading("configured", text="Настроен", command=lambda: self._sort_packages_table("configured"))
 
-        self.packages_tree.column("name", width=200, anchor="w")
-        self.packages_tree.column("size", width=100, anchor="e")
-        self.packages_tree.column("status", width=120, anchor="w")
-        self.packages_tree.column("downloaded", width=80, anchor="center")
-        self.packages_tree.column("unpacked", width=80, anchor="center")
-        self.packages_tree.column("configured", width=80, anchor="center")
+        # Устанавливаем значения по умолчанию для колонок
+        self._set_packages_columns_default()
 
         packages_scrollbar_y.config(command=self.packages_tree.yview)
         packages_scrollbar_x.config(command=self.packages_tree.xview)
@@ -18677,6 +19171,15 @@ class AutomationGUI(object):
             except Exception as e:
                 print(f"[ERROR] open_help: Ошибка при открытии файла: {e}")
     
+    def _set_markdown_dialog_defaults(self, dialog):
+        """Устанавливает начальные значения для диалога markdown"""
+        self._setup_window_defaults(
+            dialog,
+            default_width=900, default_height=700,
+            min_width=600, min_height=400,
+            resizable=True, center=True
+        )
+    
     def _show_markdown_in_dialog(self, file_path, title):
         """Показать содержимое Markdown файла в диалоговом окне"""
         try:
@@ -18691,15 +19194,29 @@ class AutomationGUI(object):
             # Создаем диалоговое окно
             dialog = self.tk.Toplevel(self.root)
             dialog.title(title)
-            dialog.geometry("900x700")
             
-            # Центрируем окно
-            dialog.update_idletasks()
-            width = dialog.winfo_width()
-            height = dialog.winfo_height()
-            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-            y = (dialog.winfo_screenheight() // 2) - (height // 2)
-            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            # Скрываем окно пока не настроим
+            dialog.withdraw()
+            
+            # Определяем ключ для сохранения геометрии на основе title
+            # Для README.md -> 'markdown_readme_dialog_geometry'
+            # Для HELPME.md -> 'markdown_helpme_dialog_geometry'
+            title_lower = title.lower().replace('.md', '').replace('.', '_')
+            geometry_key = f'markdown_{title_lower}_dialog_geometry'
+            
+            # Загружаем сохраненную геометрию или используем по умолчанию
+            saved_geometry = self._load_dialog_geometry(
+                self._saved_settings if hasattr(self, '_saved_settings') else {},
+                geometry_key,
+                '900x700'
+            )
+            
+            if saved_geometry:
+                dialog.geometry(saved_geometry)
+                dialog.update_idletasks()  # Обновляем окно после установки геометрии
+            else:
+                # Устанавливаем начальные значения
+                self._set_markdown_dialog_defaults(dialog)
             
             # Фрейм для текста
             text_frame = self.tk.Frame(dialog)
@@ -18716,10 +19233,21 @@ class AutomationGUI(object):
             text_widget.insert(1.0, content)
             text_widget.config(state=self.tk.DISABLED)  # Только для чтения
             
+            # Обработка закрытия - сохраняем геометрию
+            def on_close():
+                self._save_dialog_geometry(dialog, geometry_key)
+                dialog.destroy()
+            
+            dialog.protocol("WM_DELETE_WINDOW", on_close)
+            
             # Обработка закрытия по Escape
             dialog.focus_set()  # Устанавливаем фокус на окно для получения событий клавиатуры
-            dialog.bind('<Escape>', lambda e: dialog.destroy())  # Закрытие по Escape на уровне окна
-            text_widget.bind('<Escape>', lambda e: dialog.destroy())  # Закрытие по Escape когда фокус в тексте
+            dialog.bind('<Escape>', lambda e: on_close())  # Закрытие по Escape на уровне окна
+            text_widget.bind('<Escape>', lambda e: on_close())  # Закрытие по Escape когда фокус в тексте
+            
+            # Показываем окно после настройки
+            dialog.update_idletasks()
+            dialog.deiconify()
             
         except Exception as e:
             print(f"[ERROR] _show_markdown_in_dialog: Ошибка при открытии файла: {e}")
@@ -21158,6 +21686,15 @@ class AutomationGUI(object):
         # Во всех остальных случаях кнопка неактивна
         self.create_template_button.config(state=self.tk.DISABLED)
     
+    def _set_wine_image_dialog_defaults(self, dialog):
+        """Устанавливает начальные значения для диалога создания образа Wine"""
+        self._setup_window_defaults(
+            dialog,
+            default_width=650, default_height=420,
+            min_width=500, min_height=350,
+            resizable=False, center=True  # Фиксированный размер
+        )
+    
     def create_wineprefix_template_from_selected(self):
         """Создать образ Wine-префикса из выбранного компонента"""
         
@@ -21247,16 +21784,25 @@ class AutomationGUI(object):
         # Создаем кастомный диалог с выбором пути и уровня сжатия
         dialog = tk.Toplevel(self.root)
         dialog.title("Создание образа Wine-префикса")
-        dialog.geometry("650x420")
-        dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Центрируем окно
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (650 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (420 // 2)
-        dialog.geometry(f"650x420+{x}+{y}")
+        # Скрываем окно пока не настроим
+        dialog.withdraw()
+        
+        # Загружаем сохраненную геометрию или используем по умолчанию
+        saved_geometry = self._load_dialog_geometry(
+            self._saved_settings if hasattr(self, '_saved_settings') else {},
+            'wine_image_dialog_geometry',
+            '650x420'
+        )
+        
+        if saved_geometry:
+            dialog.geometry(saved_geometry)
+            dialog.update_idletasks()  # Обновляем окно после установки геометрии
+        else:
+            # Устанавливаем начальные значения
+            self._set_wine_image_dialog_defaults(dialog)
         
         # Результат диалога
         result = {'archive_path': None, 'compression_level': 6, 'confirmed': False}
@@ -21352,6 +21898,10 @@ class AutomationGUI(object):
         button_frame = tk.Frame(dialog)
         button_frame.pack(pady=15, padx=20)
         
+        def on_close():
+            self._save_dialog_geometry(dialog, 'wine_image_dialog_geometry')
+            dialog.destroy()
+        
         def confirm():
             archive_path = archive_path_var.get().strip()
             if not archive_path:
@@ -21361,10 +21911,12 @@ class AutomationGUI(object):
             result['archive_path'] = archive_path
             result['compression_level'] = compression_var.get()
             result['confirmed'] = True
-            dialog.destroy()
+            on_close()
         
         def cancel():
-            dialog.destroy()
+            on_close()
+        
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
         
         create_btn = tk.Button(button_frame, text="Создать", command=confirm, 
                  width=10, font=('TkDefaultFont', 11, 'bold'),
@@ -21380,6 +21932,9 @@ class AutomationGUI(object):
                  cursor='hand2')
         cancel_btn.pack(side=tk.LEFT, padx=8, ipady=7, ipadx=2)
         
+        # Показываем окно после настройки
+        dialog.update_idletasks()
+        dialog.deiconify()
         dialog.wait_window()
         
         if not result['confirmed']:
@@ -21403,6 +21958,19 @@ class AutomationGUI(object):
         
         # 7. Активируем кнопку "Отменить"
         self.cancel_operation_button.config(state=self.tk.NORMAL)
+        
+        # Устанавливаем состояние процесса для блокировки кнопок
+        set_process_state('installing', paused=False)
+        
+        # Сбрасываем и запускаем счетчики времени и диска
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='start',  # КОМАНДА СТАРТ: Начало процесса
+            stage_name='Создание образа Wine-префикса...',
+            stage_progress=0,
+            global_progress=0,  # Сброс таймера и диска
+            details='Подготовка к созданию образа...'
+        )
         
         # 8. Запускаем создание архива в отдельном потоке
         if hasattr(self, 'wine_stage_label'):
@@ -21435,6 +22003,19 @@ class AutomationGUI(object):
     
     def _on_wineprefix_template_created(self, result, archive_path, component_id):
         """Обработчик успешного создания образа"""
+        # Останавливаем счетчики времени и диска
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='complete',  # КОМАНДА COMPLETE: Завершение создания образа
+            stage_name='Образ создан',
+            stage_progress=100,
+            global_progress=100,
+            details='Создание образа завершено успешно'
+        )
+        
+        # Сбрасываем состояние процесса для разблокировки кнопок
+        set_process_state('idle', paused=False)
+        
         self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
         self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
         
@@ -21474,6 +22055,19 @@ class AutomationGUI(object):
     
     def _on_wineprefix_template_error(self, error_msg, component_id):
         """Обработчик ошибки создания образа"""
+        # Останавливаем счетчики времени и диска
+        progress_manager = get_global_progress_manager()
+        progress_manager.update_progress(
+            process_type='cancel',  # КОМАНДА CANCEL: Отмена создания образа
+            stage_name='Ошибка создания образа',
+            stage_progress=0,
+            global_progress=0,
+            details=f'Ошибка: {error_msg[:100]}'
+        )
+        
+        # Сбрасываем состояние процесса для разблокировки кнопок
+        set_process_state('idle', paused=False)
+        
         self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
         self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
         if hasattr(self, 'wine_stage_label'):
@@ -22165,6 +22759,15 @@ class AutomationGUI(object):
         except:
             pass
     
+    def _set_repo_edit_dialog_defaults(self, dialog):
+        """Устанавливает начальные значения для окна редактирования репозитория"""
+        self._setup_window_defaults(
+            dialog,
+            default_width=700, default_height=280,
+            min_width=550, min_height=250,
+            resizable=True, center=True
+        )
+    
     def show_repo_details(self, event):
         """Показать детали выбранного репозитория с возможностью редактирования"""
         selection = self.repos_tree.selection()
@@ -22249,17 +22852,22 @@ class AutomationGUI(object):
         detail_window = self.tk.Toplevel(self.root)
         detail_window.title("Редактирование репозитория")
         
-        # Размеры окна
-        window_width = 700
-        window_height = 280
+        # Скрываем окно пока не настроим
+        detail_window.withdraw()
         
-        # Центрируем окно на экране
-        detail_window.update_idletasks()
-        screen_width = detail_window.winfo_screenwidth()
-        screen_height = detail_window.winfo_screenheight()
-        x = (screen_width // 2) - (window_width // 2)
-        y = (screen_height // 2) - (window_height // 2)
-        detail_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        # Загружаем сохраненную геометрию или используем по умолчанию
+        saved_geometry = self._load_dialog_geometry(
+            self._saved_settings if hasattr(self, '_saved_settings') else {},
+            'repo_edit_dialog_geometry',
+            '700x280'
+        )
+        
+        if saved_geometry:
+            detail_window.geometry(saved_geometry)
+            detail_window.update_idletasks()  # Обновляем окно после установки геометрии
+        else:
+            # Устанавливаем начальные значения
+            self._set_repo_edit_dialog_defaults(detail_window)
         
         # Фрейм для формы
         form_frame = self.tk.Frame(detail_window)
@@ -22311,6 +22919,12 @@ class AutomationGUI(object):
         button_frame = self.tk.Frame(detail_window)
         button_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
+        def on_close():
+            self._save_dialog_geometry(detail_window, 'repo_edit_dialog_geometry')
+            detail_window.destroy()
+        
+        detail_window.protocol("WM_DELETE_WINDOW", on_close)
+        
         def save_changes():
             """Сохранить изменения в sources.list"""
             # Получаем значения из формы
@@ -22352,7 +22966,7 @@ class AutomationGUI(object):
                         f.writelines(lines)
                     
                     messagebox.showinfo("Успех", "Репозиторий обновлен")
-                    detail_window.destroy()
+                    on_close()
                     # Перезагружаем список репозиториев
                     self.load_repositories()
                 else:
@@ -22368,9 +22982,13 @@ class AutomationGUI(object):
                                      bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'))
         save_button.pack(side=self.tk.LEFT, padx=5)
         
-        cancel_button = self.tk.Button(button_frame, text="Отмена", command=detail_window.destroy,
+        cancel_button = self.tk.Button(button_frame, text="Отмена", command=on_close,
                                       bg='#f44336', fg='white', font=('Arial', 10, 'bold'))
         cancel_button.pack(side=self.tk.LEFT, padx=5)
+        
+        # Показываем окно после настройки
+        detail_window.update_idletasks()
+        detail_window.deiconify()
         
         print(f"[REPOS] Редактирование репозитория: {uri}", gui_log=True)
     
@@ -22634,6 +23252,15 @@ class AutomationGUI(object):
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Ошибка запуска монитора", fg='red')
     
+    def _set_update_check_dialog_defaults(self, dialog):
+        """Устанавливает начальные значения для диалога проверки обновлений"""
+        self._setup_window_defaults(
+            dialog,
+            default_width=700, default_height=500,
+            min_width=600, min_height=400,
+            resizable=True, center=True
+        )
+    
     def open_update_check_window(self):
         """Открыть окно проверки обновлений"""
         try:
@@ -22653,21 +23280,30 @@ class AutomationGUI(object):
             # Создаем диалоговое окно
             dialog = self.tk.Toplevel(self.root)
             dialog.title("Проверка обновлений")
-            dialog.geometry("700x500")
             
-            # Центрируем окно
-            dialog.update_idletasks()
-            width = dialog.winfo_width()
-            height = dialog.winfo_height()
-            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-            y = (dialog.winfo_screenheight() // 2) - (height // 2)
-            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            # Скрываем окно пока не настроим
+            dialog.withdraw()
+            
+            # Загружаем сохраненную геометрию или используем по умолчанию
+            saved_geometry = self._load_dialog_geometry(
+                self._saved_settings if hasattr(self, '_saved_settings') else {},
+                'update_check_dialog_geometry',
+                '700x500'
+            )
+            
+            if saved_geometry:
+                dialog.geometry(saved_geometry)
+                dialog.update_idletasks()  # Обновляем окно после установки геометрии
+            else:
+                # Устанавливаем начальные значения
+                self._set_update_check_dialog_defaults(dialog)
 
             # Сохраняем ссылку на окно
             self.update_check_window = dialog
             
-            # Обработчик закрытия окна - очищаем ссылку
+            # Обработчик закрытия окна - очищаем ссылку и сохраняем геометрию
             def on_close():
+                self._save_dialog_geometry(dialog, 'update_check_dialog_geometry')
                 self.update_check_window = None
                 dialog.destroy()
             
@@ -22728,6 +23364,10 @@ class AutomationGUI(object):
                 log_text.insert(self.tk.END, text + '\n')
                 log_text.see(self.tk.END)
                 log_text.config(state=self.tk.DISABLED)
+            
+            # Показываем окно после настройки
+            dialog.update_idletasks()
+            dialog.deiconify()
             
             # Функция проверки обновлений
             def check_updates():
@@ -23389,6 +24029,22 @@ class AutomationGUI(object):
             return result['user'], result['password']
         return None, None
     
+    def _set_source_selection_dialog_defaults(self, dialog, num_sources=1):
+        """Устанавливает начальные значения для диалога выбора источника обновления
+        
+        Args:
+            dialog: Окно диалога
+            num_sources: Количество источников (для расчета высоты)
+        """
+        # Вычисляем высоту окна в зависимости от количества источников
+        dialog_height = min(400, 150 + num_sources * 80)
+        self._setup_window_defaults(
+            dialog,
+            default_width=600, default_height=dialog_height,
+            min_width=500, min_height=300,
+            resizable=False, center=True  # Фиксированный размер
+        )
+    
     def _show_source_selection_dialog(self, parent_window, sources: List[Dict]) -> Optional[Dict]:
         """
         Показать диалог выбора источника обновления.
@@ -23401,23 +24057,31 @@ class AutomationGUI(object):
             Выбранный источник или None
         """
         dialog = self.tk.Toplevel(parent_window)
+        dialog.title("Выбор источника обновления")
+        dialog.transient(parent_window)
+        dialog.grab_set()
+        
+        # Скрываем окно пока не настроим
+        dialog.withdraw()
         
         # Вычисляем размер окна в зависимости от количества источников
         num_sources = len(sources)
-        dialog_height = min(400, 150 + num_sources * 80)
-        dialog.geometry(f"600x{dialog_height}")
-        dialog.resizable(False, False)
+        default_height = min(400, 150 + num_sources * 80)
+        default_size = f"600x{default_height}"
         
-        # Центрируем окно
-        dialog.update_idletasks()
+        # Загружаем сохраненную геометрию или используем по умолчанию
+        saved_geometry = self._load_dialog_geometry(
+            self._saved_settings if hasattr(self, '_saved_settings') else {},
+            'source_selection_dialog_geometry',
+            default_size
+        )
         
-        # Устанавливаем заголовок после обновления окна
-        dialog.title("Выбор источника обновления")
-        width = dialog.winfo_width()
-        height = dialog.winfo_height()
-        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (dialog.winfo_screenheight() // 2) - (height // 2)
-        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        if saved_geometry:
+            dialog.geometry(saved_geometry)
+            dialog.update_idletasks()  # Обновляем окно после установки геометрии
+        else:
+            # Устанавливаем начальные значения
+            self._set_source_selection_dialog_defaults(dialog, num_sources)
         
         result: Dict[str, Optional[str]] = {'selected': None}
         
@@ -23536,14 +24200,20 @@ class AutomationGUI(object):
         button_frame = self.tk.Frame(dialog)
         button_frame.pack(fill=self.tk.X, padx=10, pady=10)
         
+        def on_close():
+            self._save_dialog_geometry(dialog, 'source_selection_dialog_geometry')
+            dialog.destroy()
+        
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+        
         def on_ok():
             selected_value = selected_var.get()
             result['selected'] = selected_value if selected_value is not None else None
-            dialog.destroy()
+            on_close()
         
         def on_cancel():
             result['selected'] = None
-            dialog.destroy()
+            on_close()
         
         ok_button = self.tk.Button(button_frame, text="Обновить", command=on_ok, 
                                   bg='#4CAF50', fg='white', font=('Arial', 10, 'bold'), width=12)
@@ -23556,6 +24226,10 @@ class AutomationGUI(object):
         # Обработка Enter и Escape
         dialog.bind('<Return>', lambda e: on_ok())
         dialog.bind('<Escape>', lambda e: on_cancel())
+        
+        # Показываем окно после настройки
+        dialog.update_idletasks()
+        dialog.deiconify()
         
         # Модальное окно
         dialog.transient(parent_window)
@@ -30744,6 +31418,9 @@ class SelfUpdater:
                     # И при этом НЕ увидит переменные PyInstaller, так как minimal_env уже очищен
                     escaped_args = [shlex.quote(arg) for arg in update_args]
                     # Мы root, real_user определён (SUDO_USER всегда есть при запуске через sudo)
+                    if not real_user:
+                        # Критическая ошибка: не удалось определить пользователя
+                        raise RuntimeError("Не удалось определить реального пользователя для запуска нового процесса")
                     command = f"sudo -E -u {shlex.quote(real_user)} {' '.join(escaped_args)}"
                     
                     proc = subprocess.Popen(
