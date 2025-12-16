@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.184 (2025.12.16)
+Версия: V3.4.185 (2025.12.17)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.184 (2025.12.16)"
+APP_VERSION = "V3.4.185 (2025.12.17)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -49,6 +49,7 @@ import gzip
 import fnmatch
 import urllib.request
 import urllib.parse
+import random
 
 # from импорты
 from abc import ABC, abstractmethod
@@ -30703,13 +30704,15 @@ class SelfUpdater:
             raw_url = params['raw_url']
             branch = params['branch']
             
-            # Добавляем timestamp к URL для обхода кэша GitHub CDN
-            timestamp = int(time.time())
-            url = f"{raw_url}/{branch}/README.md?t={timestamp}"
+            # Добавляем уникальный timestamp с миллисекундами и случайным числом для обхода кэша GitHub CDN
+            timestamp_ms = int(time.time() * 1000)
+            random_num = random.randint(1000, 9999)
+            url = f"{raw_url}/{branch}/README.md?t={timestamp_ms}&r={random_num}"
             result = subprocess.run(
                 ['curl', '-s', '-f', '--max-time', '5', '-I',
-                 '-H', 'Cache-Control: no-cache',
+                 '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
+                 '-H', 'Expires: 0',
                  url],
                 capture_output=True, text=True, timeout=10
             )
@@ -30745,13 +30748,15 @@ class SelfUpdater:
             version_file_variants = ["Version.txt", "version.txt", "VERSION.txt"]
             
             for version_file in version_file_variants:
-                # Добавляем timestamp к URL для обхода кэша GitHub CDN
-                timestamp = int(time.time())
-                url = f"{raw_url}/{branch}/{version_file}?t={timestamp}"
+                # Добавляем уникальный timestamp с миллисекундами и случайным числом для обхода кэша GitHub CDN
+                timestamp_ms = int(time.time() * 1000)
+                random_num = random.randint(1000, 9999)
+                url = f"{raw_url}/{branch}/{version_file}?t={timestamp_ms}&r={random_num}"
                 result = subprocess.run(
                     ['curl', '-s', '-f', '--max-time', str(TIMEOUT_CHECK),
-                     '-H', 'Cache-Control: no-cache',
+                     '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                      '-H', 'Pragma: no-cache',
+                     '-H', 'Expires: 0',
                      url],
                     capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
                 )
@@ -30781,15 +30786,17 @@ class SelfUpdater:
             raw_url = params['raw_url']
             branch = params['branch']
             
-            # Добавляем timestamp к URL для обхода кэша GitHub CDN
-            timestamp = int(time.time())
-            url = f"{raw_url}/{branch}/{self.update_filename}?t={timestamp}"
+            # Добавляем уникальный timestamp с миллисекундами и случайным числом для обхода кэша GitHub CDN
+            timestamp_ms = int(time.time() * 1000)
+            random_num = random.randint(1000, 9999)
+            url = f"{raw_url}/{branch}/{self.update_filename}?t={timestamp_ms}&r={random_num}"
             self.log(f"Скачивание с Git: {url}")
             
             result = subprocess.run(
                 ['curl', '-L', '-f', '-o', dest_path, '--max-time', str(TIMEOUT_DOWNLOAD),
-                 '-H', 'Cache-Control: no-cache',
+                 '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
+                 '-H', 'Expires: 0',
                  url],
                 capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD + 30
             )
@@ -30891,9 +30898,16 @@ class SelfUpdater:
                 raw_url = params['raw_url']
                 branch = params['branch']
                 
-                url = f"{raw_url}/{branch}/{self.update_filename}"
+                # Добавляем уникальный timestamp с миллисекундами и случайным числом для обхода кэша GitHub CDN
+                timestamp_ms = int(time.time() * 1000)
+                random_num = random.randint(1000, 9999)
+                url = f"{raw_url}/{branch}/{self.update_filename}?t={timestamp_ms}&r={random_num}"
                 result = subprocess.run(
-                    ['curl', '-s', '-I', '--max-time', str(TIMEOUT_CHECK), url],
+                    ['curl', '-s', '-I', '--max-time', str(TIMEOUT_CHECK),
+                     '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
+                     '-H', 'Pragma: no-cache',
+                     '-H', 'Expires: 0',
+                     url],
                     capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
                 )
                 
