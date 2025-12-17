@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.186 (2025.12.17)
+Версия: V3.4.187 (2025.12.17)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.186 (2025.12.17)"
+APP_VERSION = "V3.4.187 (2025.12.17)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -14656,38 +14656,32 @@ class AutomationGUI(object):
                 with open(settings_file, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
                 
-                # Восстанавливаем геометрию окна
-                geometry_loaded = False
-                if 'window_geometry' in settings:
+                # Восстанавливаем геометрию главного окна
+                saved_geometry = self._load_window_geometry(settings, 'window_geometry')
+                if saved_geometry:
                     try:
-                        self.root.geometry(settings['window_geometry'])
-                        print(f"[INFO] Восстановлена геометрия окна из настроек: {settings['window_geometry']}", level='DEBUG')
-                        geometry_loaded = True
+                        self.root.geometry(saved_geometry)
+                        self.root.update_idletasks()
                     except Exception as e:
                         print(f"[WARNING] Не удалось восстановить геометрию окна: {e}", level='DEBUG')
                 
                 # Сохраняем настройки для последующей загрузки ширины колонок
-                # (таблицы будут созданы позже, поэтому загрузим ширины после их создания)
                 self._saved_settings = settings
                 
-                return geometry_loaded
+                return saved_geometry is not None
         except Exception as e:
             print(f"[WARNING] Не удалось загрузить настройки: {e}", level='DEBUG')
         return False
     
     def save_window_geometry(self):
-        """Сохраняет текущую геометрию окна в файл настроек"""
+        """Сохраняет текущую геометрию главного окна в файл настроек"""
         try:
-            # Обновляем информацию о размерах окна
-            self.root.update_idletasks()
+            # Сохраняем геометрию главного окна
+            self._save_window_geometry(self.root, 'window_geometry')
             
-            # Получаем текущую геометрию окна
-            geometry = self.root.geometry()
-            # Формат: "widthxheight+x+y" или "widthxheight"
-            
-            # Загружаем существующие настройки (если есть)
-            settings = {}
+            # Загружаем настройки для добавления ширины колонок
             settings_file = self._get_settings_file_path()
+            settings = {}
             if os.path.exists(settings_file):
                 try:
                     with open(settings_file, 'r', encoding='utf-8') as f:
@@ -14695,60 +14689,46 @@ class AutomationGUI(object):
                 except Exception:
                     pass
             
-            # Сохраняем геометрию окна
-            settings['window_geometry'] = geometry
-            
-            # Парсим геометрию для сохранения отдельных значений
-            if '+' in geometry:
-                size_pos = geometry.split('+')
-                size = size_pos[0]
-                x = int(size_pos[1])
-                y = int(size_pos[2])
-                width, height = map(int, size.split('x'))
-                
-                settings['window_x'] = x
-                settings['window_y'] = y
-                settings['window_width'] = width
-                settings['window_height'] = height
-            else:
-                # Только размер без позиции
-                width, height = map(int, geometry.split('x'))
-                settings['window_width'] = width
-                settings['window_height'] = height
-            
             # Сохраняем ширину колонок таблиц
             self._save_column_widths_to_settings(settings)
             
-            # Сохраняем настройки в файл
+            # Сохраняем геометрии диалогов из self._saved_settings
+            if hasattr(self, '_saved_settings') and self._saved_settings:
+                for key, value in self._saved_settings.items():
+                    if 'dialog_geometry' in key or 'dialog_geometry' in str(key):
+                        settings[key] = value
+            
+            # Сохраняем все настройки в файл
             with open(settings_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
             
-            print(f"[INFO] Геометрия окна сохранена: {geometry}", level='DEBUG')
+            # Обновляем self._saved_settings
+            if not hasattr(self, '_saved_settings'):
+                self._saved_settings = {}
+            self._saved_settings.update(settings)
         except Exception as e:
             print(f"[WARNING] Не удалось сохранить геометрию окна: {e}", level='DEBUG')
     
-    def _load_dialog_geometry(self, settings, dialog_key, default_size):
-        """Загружает геометрию диалога из настроек
+    def _load_window_geometry(self, settings, window_key, default_size=None):
+        """Универсальный метод загрузки геометрии любого окна из настроек
         
         Args:
             settings: Словарь с настройками
-            dialog_key: Ключ в настройках (например, 'markdown_dialog_geometry')
-            default_size: Размер по умолчанию в формате "WIDTHxHEIGHT"
+            window_key: Ключ в настройках
+            default_size: Размер по умолчанию в формате "WIDTHxHEIGHT" (для диалогов)
             
         Returns:
             Строка геометрии для установки или None
         """
         try:
-            if dialog_key in settings:
-                saved_geometry = settings[dialog_key]
-                # Если сохранена только позиция (формат "+x+y"), объединяем с размером по умолчанию
+            if window_key in settings:
+                saved_geometry = settings[window_key]
                 if saved_geometry.startswith('+'):
-                    # Извлекаем позицию
-                    pos_part = saved_geometry
-                    # Объединяем размер по умолчанию с сохраненной позицией
-                    return f"{default_size}{pos_part}"
+                    if default_size:
+                        return f"{default_size}{saved_geometry}"
+                    else:
+                        return saved_geometry
                 else:
-                    # Полная геометрия (размер + позиция)
                     return saved_geometry
         except Exception:
             pass
@@ -14790,57 +14770,37 @@ class AutomationGUI(object):
         except Exception as e:
             print(f"[WARNING] Ошибка установки значений по умолчанию для окна: {e}", level='DEBUG')
     
-    def _save_dialog_geometry(self, dialog, dialog_key):
-        """Сохраняет геометрию диалога в настройки
+    def _save_window_geometry(self, window, window_key):
+        """Универсальный метод сохранения геометрии любого окна
         
         Args:
-            dialog: Окно диалога
-            dialog_key: Ключ для сохранения в настройках
+            window: Окно (Tk или Toplevel)
+            window_key: Ключ для сохранения в настройках
         """
         try:
-            if not dialog.winfo_exists():
+            if not window.winfo_exists():
                 return
             
-            # Обновляем окно перед получением геометрии
-            dialog.update_idletasks()
+            window.update_idletasks()
             
-            # Получаем геометрию через winfo для более надежного получения актуальных значений
-            try:
-                width = dialog.winfo_width()
-                height = dialog.winfo_height()
-                x = dialog.winfo_x()
-                y = dialog.winfo_y()
-                
-                # Проверяем, является ли окно изменяемым по размеру
-                # Если окно не изменяемое, сохраняем только позицию
-                resizable = dialog.resizable()
-                if isinstance(resizable, tuple):
-                    resizable = resizable[0] or resizable[1]
-                
-                if not resizable:
-                    # Для фиксированных окон сохраняем только позицию
-                    geometry = f"+{x}+{y}"
+            # Получаем геометрию напрямую через geometry() для корректного формата
+            geometry = window.geometry()
+            if not geometry:
+                return
+            
+            # Для фиксированных окон сохраняем только позицию
+            resizable = window.resizable()
+            if isinstance(resizable, tuple):
+                resizable = resizable[0] or resizable[1]
+            
+            if not resizable:
+                # Извлекаем только позицию из geometry строки
+                if '+' in geometry:
+                    pos_part = geometry.split('+', 1)[1]
+                    geometry = f"+{pos_part}"
                 else:
-                    # Для изменяемых окон сохраняем размер и позицию
-                    geometry = f"{width}x{height}+{x}+{y}"
-            except Exception:
-                # Fallback: используем стандартный метод
-                geometry = dialog.geometry()
-                if not geometry:
+                    # Если нет позиции, не сохраняем
                     return
-                # Проверяем resizable для fallback случая
-                try:
-                    resizable = dialog.resizable()
-                    if isinstance(resizable, tuple):
-                        resizable = resizable[0] or resizable[1]
-                    if not resizable:
-                        # Извлекаем только позицию из geometry строки
-                        if '+' in geometry:
-                            pos_part = geometry.split('+', 1)[1] if '+' in geometry else ''
-                            if pos_part:
-                                geometry = f"+{pos_part}"
-                except Exception:
-                    pass
             
             settings_file = self._get_settings_file_path()
             settings = {}
@@ -14852,12 +14812,16 @@ class AutomationGUI(object):
                 except Exception:
                     pass
             
-            settings[dialog_key] = geometry
+            settings[window_key] = geometry
+            
+            if not hasattr(self, '_saved_settings'):
+                self._saved_settings = {}
+            self._saved_settings[window_key] = geometry
             
             with open(settings_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"[WARNING] Не удалось сохранить геометрию диалога {dialog_key}: {e}", level='DEBUG')
+            print(f"[WARNING] Не удалось сохранить геометрию окна {window_key}: {e}", level='DEBUG')
     
     def reset_all_settings(self):
         """Сброс всех пользовательских настроек"""
@@ -16588,20 +16552,16 @@ class AutomationGUI(object):
         # Кнопка сброса настроек с иконкой корзины (слева от README)
         reset_settings_button = self.tk.Button(
             row2_about, 
-            text="[X] Сброс настроек",
+            text="Сброс настроек",
             command=self.reset_all_settings,
             width=18,
-            bg='#ff6b6b',
-            fg='white',
-            activebackground='#ff5252',
-            activeforeground='white',
             font=('Arial', 9, 'bold')
         )
         reset_settings_button.pack(side=self.tk.LEFT, padx=2)
         ToolTip(reset_settings_button, "Сбросить все пользовательские настройки (размеры окон, ширина колонок и т.д.)")
         
-        readme_button = self.tk.Button(row2_about, text="README.md", 
-                                      command=self.open_readme, width=12)
+        readme_button = self.tk.Button(row2_about, text="О Программе", 
+                                      command=self.open_readme, width=15)
         readme_button.pack(side=self.tk.LEFT, padx=2)
         ToolTip(readme_button, "Открыть документацию проекта")
         
@@ -19184,6 +19144,19 @@ class AutomationGUI(object):
     def _show_markdown_in_dialog(self, file_path, title):
         """Показать содержимое Markdown файла в диалоговом окне"""
         try:
+            # Определяем ключ для сохранения геометрии на основе title
+            title_lower = title.lower().replace('.md', '').replace('.', '_')
+            dialog_key = f'_markdown_{title_lower}_dialog'
+            
+            # Проверяем, не открыто ли уже окно
+            if hasattr(self, dialog_key):
+                existing_dialog = getattr(self, dialog_key)
+                if existing_dialog and existing_dialog.winfo_exists():
+                    # Окно уже открыто - поднимаем его на передний план
+                    existing_dialog.lift()
+                    existing_dialog.focus_set()
+                    return
+            
             # Читаем содержимое файла
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -19196,17 +19169,17 @@ class AutomationGUI(object):
             dialog = self.tk.Toplevel(self.root)
             dialog.title(title)
             
+            # Сохраняем ссылку на окно
+            setattr(self, dialog_key, dialog)
+            
             # Скрываем окно пока не настроим
             dialog.withdraw()
             
-            # Определяем ключ для сохранения геометрии на основе title
-            # Для README.md -> 'markdown_readme_dialog_geometry'
-            # Для HELPME.md -> 'markdown_helpme_dialog_geometry'
-            title_lower = title.lower().replace('.md', '').replace('.', '_')
+            # Ключ для сохранения геометрии (уже определен выше)
             geometry_key = f'markdown_{title_lower}_dialog_geometry'
             
             # Загружаем сохраненную геометрию или используем по умолчанию
-            saved_geometry = self._load_dialog_geometry(
+            saved_geometry = self._load_window_geometry(
                 self._saved_settings if hasattr(self, '_saved_settings') else {},
                 geometry_key,
                 '900x700'
@@ -19234,9 +19207,12 @@ class AutomationGUI(object):
             text_widget.insert(1.0, content)
             text_widget.config(state=self.tk.DISABLED)  # Только для чтения
             
-            # Обработка закрытия - сохраняем геометрию
+            # Обработка закрытия - сохраняем геометрию и очищаем ссылку
             def on_close():
-                self._save_dialog_geometry(dialog, geometry_key)
+                self._save_window_geometry(dialog, geometry_key)
+                # Очищаем ссылку на окно
+                if hasattr(self, dialog_key):
+                    setattr(self, dialog_key, None)
                 dialog.destroy()
             
             dialog.protocol("WM_DELETE_WINDOW", on_close)
@@ -21792,7 +21768,7 @@ class AutomationGUI(object):
         dialog.withdraw()
         
         # Загружаем сохраненную геометрию или используем по умолчанию
-        saved_geometry = self._load_dialog_geometry(
+        saved_geometry = self._load_window_geometry(
             self._saved_settings if hasattr(self, '_saved_settings') else {},
             'wine_image_dialog_geometry',
             '650x420'
@@ -21900,7 +21876,7 @@ class AutomationGUI(object):
         button_frame.pack(pady=15, padx=20)
         
         def on_close():
-            self._save_dialog_geometry(dialog, 'wine_image_dialog_geometry')
+            self._save_window_geometry(dialog, 'wine_image_dialog_geometry')
             dialog.destroy()
         
         def confirm():
@@ -22857,7 +22833,7 @@ class AutomationGUI(object):
         detail_window.withdraw()
         
         # Загружаем сохраненную геометрию или используем по умолчанию
-        saved_geometry = self._load_dialog_geometry(
+        saved_geometry = self._load_window_geometry(
             self._saved_settings if hasattr(self, '_saved_settings') else {},
             'repo_edit_dialog_geometry',
             '700x280'
@@ -22921,7 +22897,7 @@ class AutomationGUI(object):
         button_frame.pack(fill=self.tk.X, padx=10, pady=5)
         
         def on_close():
-            self._save_dialog_geometry(detail_window, 'repo_edit_dialog_geometry')
+            self._save_window_geometry(detail_window, 'repo_edit_dialog_geometry')
             detail_window.destroy()
         
         detail_window.protocol("WM_DELETE_WINDOW", on_close)
@@ -23286,7 +23262,7 @@ class AutomationGUI(object):
             dialog.withdraw()
             
             # Загружаем сохраненную геометрию или используем по умолчанию
-            saved_geometry = self._load_dialog_geometry(
+            saved_geometry = self._load_window_geometry(
                 self._saved_settings if hasattr(self, '_saved_settings') else {},
                 'update_check_dialog_geometry',
                 '700x500'
@@ -23304,7 +23280,7 @@ class AutomationGUI(object):
             
             # Обработчик закрытия окна - очищаем ссылку и сохраняем геометрию
             def on_close():
-                self._save_dialog_geometry(dialog, 'update_check_dialog_geometry')
+                self._save_window_geometry(dialog, 'update_check_dialog_geometry')
                 self.update_check_window = None
                 dialog.destroy()
             
@@ -24071,7 +24047,7 @@ class AutomationGUI(object):
         default_size = f"600x{default_height}"
         
         # Загружаем сохраненную геометрию или используем по умолчанию
-        saved_geometry = self._load_dialog_geometry(
+        saved_geometry = self._load_window_geometry(
             self._saved_settings if hasattr(self, '_saved_settings') else {},
             'source_selection_dialog_geometry',
             default_size
@@ -24202,7 +24178,7 @@ class AutomationGUI(object):
         button_frame.pack(fill=self.tk.X, padx=10, pady=10)
         
         def on_close():
-            self._save_dialog_geometry(dialog, 'source_selection_dialog_geometry')
+            self._save_window_geometry(dialog, 'source_selection_dialog_geometry')
             dialog.destroy()
         
         dialog.protocol("WM_DELETE_WINDOW", on_close)
