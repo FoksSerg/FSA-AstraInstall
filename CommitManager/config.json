@@ -1,6 +1,6 @@
 {
     "version": "1.0.0",
-    "last_updated": "2025-12-17T00:35:22.446060",
+    "last_updated": "2025-12-17T14:46:03.162965",
     "projects": {
         "FSA-AstraInstall": {
             "name": "FSA-AstraInstall",
@@ -67,15 +67,15 @@
     },
     "current_project": "FSA-AstraInstall",
     "ui": {
-        "window_width": 1359,
-        "window_height": 764,
+        "window_width": 1500,
+        "window_height": 840,
         "theme": "default",
-        "window_geometry": "1359x764+422+292",
-        "window_x": 422,
-        "window_y": 292,
+        "window_geometry": "1500x840+533+155",
+        "window_x": 533,
+        "window_y": 155,
         "paned_positions": {
-            "main_paned": 327,
-            "main_paned_2": 922
+            "main_paned": 382,
+            "main_paned_2": 1036
         }
     }
 }

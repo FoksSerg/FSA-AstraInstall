@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 GUI для CommitManager - Универсальный инструмент создания коммитов
-Версия: V3.4.184 (2025.12.16)
+Версия: V3.4.186 (2025.12.17)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -17,6 +17,8 @@ from .config_manager import ConfigManager
 from .project_config import ProjectConfig
 from .commit_executor import CommitExecutor
 from .commit_analyzer import CommitAnalyzer
+from .test_environment import TestEnvironment
+from .logger import CommitLogger, LoggingOutputCallback
 
 
 class CommitManagerGUI:
@@ -41,6 +43,8 @@ class CommitManagerGUI:
         # Исполнитель и анализатор
         self.executor: Optional[CommitExecutor] = None
         self.analyzer: Optional[CommitAnalyzer] = None
+        self.test_env: Optional[TestEnvironment] = None
+        self.logger: Optional[CommitLogger] = None
         
         # Состояние процесса
         self.process_thread: Optional[threading.Thread] = None
@@ -151,15 +155,15 @@ class CommitManagerGUI:
         )
         self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Кнопки управления
+        # Фрейм для управления (внизу)
         control_frame = ttk.Frame(center_frame)
-        control_frame.pack(fill=tk.X, padx=5, pady=5)
+        control_frame.pack(fill=tk.X, padx=5, pady=5, side=tk.BOTTOM)
         
-        # Переключатель тестового режима
+        # Первая строка: Переключатель тестового режима
         test_mode_frame = ttk.Frame(control_frame)
-        test_mode_frame.pack(side=tk.LEFT, padx=5)
+        test_mode_frame.pack(fill=tk.X, pady=2)
         
-        self.test_mode_var = tk.BooleanVar(value=True)  # По умолчанию включен
+        self.test_mode_var = tk.BooleanVar(value=False)  # По умолчанию выключен
         test_mode_check = ttk.Checkbutton(
             test_mode_frame,
             text="🧪 Тестовый режим (dry-run)",
@@ -168,25 +172,48 @@ class CommitManagerGUI:
         )
         test_mode_check.pack(side=tk.LEFT)
         
+        self.full_test_mode_var = tk.BooleanVar(value=True)  # По умолчанию включен
+        full_test_mode_check = ttk.Checkbutton(
+            test_mode_frame,
+            text="🔬 Полный тестовый режим",
+            variable=self.full_test_mode_var,
+            state=tk.NORMAL,
+            command=self.on_full_test_mode_toggle
+        )
+        full_test_mode_check.pack(side=tk.LEFT, padx=5)
+        
+        self.use_persistent_test_dir_var = tk.BooleanVar(value=True)  # По умолчанию включен
+        persistent_dir_check = ttk.Checkbutton(
+            test_mode_frame,
+            text="📁 Использовать CommitTest/",
+            variable=self.use_persistent_test_dir_var,
+            state=tk.NORMAL
+        )
+        persistent_dir_check.pack(side=tk.LEFT, padx=5)
+        
         # Информация о тестовом режиме
-        test_info_label = ttk.Label(
+        self.test_info_label = ttk.Label(
             test_mode_frame,
             text="(команды выводятся, файлы не изменяются)",
             foreground='gray',
             font=('Arial', 10)
         )
-        test_info_label.pack(side=tk.LEFT, padx=5)
+        self.test_info_label.pack(side=tk.LEFT, padx=5)
         
-        # Разделитель
-        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        # Вторая строка: Кнопки управления
+        buttons_frame = ttk.Frame(control_frame)
+        buttons_frame.pack(fill=tk.X, pady=2)
         
-        self.start_btn = ttk.Button(control_frame, text="▶ Старт", command=self.start_process)
+        self.start_btn = ttk.Button(buttons_frame, text="▶ Старт", command=self.start_process)
         self.start_btn.pack(side=tk.LEFT, padx=5)
         
-        self.pause_btn = ttk.Button(control_frame, text="⏸ Пауза", command=self.pause_process, state=tk.DISABLED)
+        self.pause_btn = ttk.Button(buttons_frame, text="⏸ Пауза", command=self.pause_process, state=tk.DISABLED)
         self.pause_btn.pack(side=tk.LEFT, padx=5)
         
-        self.stop_btn = ttk.Button(control_frame, text="⏹ Стоп", command=self.stop_process, state=tk.DISABLED)
+        self.resume_btn = ttk.Button(buttons_frame, text="▶▶ Продолжить", command=self.resume_process, state=tk.DISABLED)
+        self.resume_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_btn = ttk.Button(buttons_frame, text="⏹ Стоп", command=self.stop_process, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=5)
         
         # Правая панель: Информация
@@ -368,6 +395,7 @@ class CommitManagerGUI:
         self.is_paused = False
         self.start_btn.config(state=tk.DISABLED)
         self.pause_btn.config(state=tk.NORMAL)
+        self.resume_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         
         # Очищаем вывод
@@ -381,6 +409,19 @@ class CommitManagerGUI:
         """Пауза процесса"""
         self.is_paused = True
         self.pause_btn.config(state=tk.DISABLED)
+        # Кнопка "Продолжить" активируется автоматически при паузе
+        if hasattr(self, 'resume_btn'):
+            self.resume_btn.config(state=tk.NORMAL)
+    
+    def resume_process(self):
+        """Продолжение процесса после паузы"""
+        self.is_paused = False
+        # Также снимаем паузу в executor
+        if hasattr(self, 'executor') and self.executor is not None and hasattr(self.executor, 'is_paused'):
+            self.executor.is_paused = False
+        self.resume_btn.config(state=tk.DISABLED)
+        self.pause_btn.config(state=tk.NORMAL)
+        self.output("▶▶ Процесс продолжен")
     
     def stop_process(self):
         """Остановка процесса"""
@@ -388,18 +429,127 @@ class CommitManagerGUI:
         self.is_paused = False
         self.start_btn.config(state=tk.NORMAL)
         self.pause_btn.config(state=tk.DISABLED)
+        self.resume_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.DISABLED)
         self.output("⏹ Процесс остановлен пользователем")
+        
+        # Очищаем тестовую среду если была создана
+        if self.test_env:
+            self.test_env.cleanup(keep=False)
+            self.test_env = None
+    
+    def on_full_test_mode_toggle(self):
+        """Обработчик переключения полного тестового режима"""
+        if self.full_test_mode_var.get():
+            # Если включен полный тестовый режим, отключаем обычный
+            self.test_mode_var.set(False)
+            use_persistent = self.use_persistent_test_dir_var.get()
+            if use_persistent:
+                self.test_info_label.config(text="(работа в CommitTest/, реальные файлы не изменяются)")
+            else:
+                self.test_info_label.config(text="(работа в временной директории, реальные файлы не изменяются)")
+        else:
+            self.test_info_label.config(text="(команды выводятся, файлы не изменяются)")
     
     def run_process(self):
         """Выполнение процесса создания коммита"""
         try:
-            # Получаем режим тестирования
+            # Получаем режимы тестирования
             test_mode = self.test_mode_var.get()
+            full_test_mode = self.full_test_mode_var.get()
             
-            # Создаем исполнитель и анализатор
-            self.executor = CommitExecutor(self.current_project_config, self.output, test_mode=test_mode)
-            self.analyzer = CommitAnalyzer(self.current_project_config, self.output)
+            # Если полный тестовый режим, создаем тестовую среду
+            test_env_dir = None
+            if full_test_mode:
+                use_persistent = self.use_persistent_test_dir_var.get()
+                
+                if use_persistent:
+                    # Используем постоянную директорию CommitTest внутри проекта
+                    from pathlib import Path
+                    if self.current_project_config is None:
+                        self.output("❌ Ошибка: Конфигурация проекта не выбрана")
+                        messagebox.showerror("Ошибка", "Конфигурация проекта не выбрана", parent=self.root)
+                        self.is_running = False
+                        return
+                    config_path = Path(self.current_project_config.path)
+                    
+                    # Проверяем, не является ли уже config_path директорией CommitTest
+                    if config_path.name == "CommitTest":
+                        # Если уже в CommitTest, используем его напрямую
+                        test_commit_dir = config_path
+                        self.output(f"🔬 Использование текущей тестовой директории: {test_commit_dir}")
+                    else:
+                        # Если это корень проекта, добавляем CommitTest
+                        project_root = config_path
+                        test_commit_dir = project_root / "CommitTest"
+                        self.output(f"🔬 Использование постоянной тестовой директории: {test_commit_dir}")
+                    
+                    self.test_env = TestEnvironment(self.output, persistent_dir=str(test_commit_dir))
+                else:
+                    # Создаем временную директорию
+                    self.output("🔬 Создание временной тестовой среды...")
+                    self.test_env = TestEnvironment(self.output)
+                
+                if not self.test_env.setup():
+                    self.output("❌ Ошибка: Не удалось создать тестовую среду")
+                    messagebox.showerror("Ошибка", "Не удалось создать тестовую среду", parent=self.root)
+                    self.is_running = False
+                    return
+                test_env_dir = self.test_env.get_temp_dir()
+                self.output(f"✓ Тестовая среда готова: {test_env_dir}")
+            
+            # Создаем логгер - логи сохраняем ВНУТРИ проекта
+            # Определяем правильную директорию для логов
+            from pathlib import Path
+            if self.current_project_config is None:
+                self.output("❌ Ошибка: Конфигурация проекта не выбрана")
+                messagebox.showerror("Ошибка", "Конфигурация проекта не выбрана", parent=self.root)
+                self.is_running = False
+                return
+            project_root = Path(self.current_project_config.path)
+            
+            if test_env_dir:
+                # Для тестовой среды логи сохраняем в CommitTest/Logs внутри проекта
+                if Path(test_env_dir).name == 'CommitTest' or 'CommitTest' in str(test_env_dir):
+                    # Это CommitTest - логи внутри проекта
+                    log_dir = os.path.join(test_env_dir, 'Logs')
+                else:
+                    # Временная директория - логи в самой временной директории
+                    log_dir = os.path.join(test_env_dir, 'Logs')
+                project_dir = test_env_dir
+            else:
+                # Для реального проекта логи в проекте/Logs
+                log_dir = os.path.join(project_root, 'Logs')
+                project_dir = str(project_root)
+            
+            # Убеждаемся, что логи создаются внутри проекта
+            self.logger = CommitLogger(project_dir, log_dir=log_dir)
+            log_path = self.logger.get_log_file_path()
+            self.output(f"📝 Логирование в файл: {log_path}")
+            
+            # Проверяем, что лог внутри проекта
+            if not str(log_path).startswith(str(project_root)):
+                self.output(f"⚠️ ВНИМАНИЕ: Лог создан вне проекта: {log_path}")
+            
+            # Создаем callback для одновременного вывода в GUI и в лог
+            logging_callback = LoggingOutputCallback(self.output, self.logger)
+            
+            # Проверяем наличие конфигурации проекта
+            if self.current_project_config is None:
+                self.output("❌ Ошибка: Конфигурация проекта не выбрана")
+                messagebox.showerror("Ошибка", "Конфигурация проекта не выбрана", parent=self.root)
+                self.is_running = False
+                return
+            
+            # Создаем исполнитель и анализатор с логированием
+            self.executor = CommitExecutor(
+                self.current_project_config,
+                logging_callback,
+                test_mode=test_mode,
+                full_test_mode=full_test_mode,
+                test_env_dir=test_env_dir
+            )
+            self.analyzer = CommitAnalyzer(self.current_project_config, logging_callback)
             
             # Выполняем шаги
             steps = [
@@ -409,7 +559,7 @@ class CommitManagerGUI:
                 (3, self.executor.step_3_determine_current_version),
                 (4, self.executor.step_4_determine_new_version),
                 (5, self.executor.step_5_collect_analysis_data),
-                (6, lambda: self.executor.step_6_analyze_changes(self.analyzer)),
+                (6, lambda: self.executor.step_6_analyze_changes(self.analyzer) if self.executor is not None else False),
                 (7, self.executor.step_7_save_description),
                 (8, self.executor.step_8_check_message_file),
                 (8.5, self.executor.step_8_5_pause_for_review),
@@ -429,6 +579,8 @@ class CommitManagerGUI:
                 (20, self.executor.step_20_final_report)
             ]
             
+            commit_created = False  # Флаг успешного создания коммита
+            
             for step_num, step_func in steps:
                 if not self.is_running:
                     break
@@ -446,12 +598,33 @@ class CommitManagerGUI:
                     # Обновляем статус на успех
                     self.root.after(0, lambda n=step_num: self.update_step_status(int(n), 'success'))
                     
-                    # Проверяем паузу
-                    if step_num in [8.5, 13.5]:
+                    # Отмечаем успешное создание коммита
+                    if step_num == 14:
+                        commit_created = True
+                    
+                    # Проверяем паузу - синхронизируем флаг из executor
+                    if step_num in [8.5, 13.5] or (hasattr(self.executor, 'is_paused') and self.executor.is_paused):
+                        # Синхронизируем флаг паузы из executor в GUI
+                        self.is_paused = True
                         self.root.after(0, lambda: self.update_step_status(int(step_num), 'paused'))
-                        # Ждем снятия паузы
+                        # Активируем кнопку "Продолжить" при паузе
+                        self.root.after(0, lambda: self.resume_btn.config(state=tk.NORMAL))
+                        self.root.after(0, lambda: self.pause_btn.config(state=tk.DISABLED))
+                        self.output("⏸ ПАУЗА: Нажмите '▶▶ Продолжить' для продолжения процесса")
+                        # Ждем снятия паузы пользователем (реальное ожидание)
                         while self.is_paused and self.is_running:
+                            # Синхронизируем флаги - если executor снял паузу, снимаем и в GUI
+                            if hasattr(self.executor, 'is_paused') and not self.executor.is_paused:
+                                self.is_paused = False
+                                break
                             threading.Event().wait(0.5)
+                        # После снятия паузы снимаем флаг и в executor
+                        if hasattr(self.executor, 'is_paused'):
+                            self.executor.is_paused = False
+                        # Деактивируем кнопку "Продолжить"
+                        self.root.after(0, lambda: self.resume_btn.config(state=tk.DISABLED))
+                        self.root.after(0, lambda: self.pause_btn.config(state=tk.NORMAL))
+                        self.output("▶▶ Процесс продолжен")
                 else:
                     # Обновляем статус на ошибку
                     self.root.after(0, lambda n=step_num: self.update_step_status(int(n), 'error'))
@@ -462,12 +635,17 @@ class CommitManagerGUI:
                 self.root.after(0, lambda p=progress: self.progress_bar.config(value=p))
                 self.root.after(0, lambda p=progress: self.progress_var.set(f"{p}%"))
             
-            # Завершение
-            if self.is_running:
-                self.root.after(0, lambda: self.progress_bar.config(value=100))
-                self.root.after(0, lambda: self.progress_var.set("100%"))
-                # Поднимаем окно наверх перед показом диалога
-                self.root.after(0, lambda: self.show_success_dialog())
+                # Завершение
+                if self.is_running:
+                    self.root.after(0, lambda: self.progress_bar.config(value=100))
+                    self.root.after(0, lambda: self.progress_var.set("100%"))
+                    
+                    # Процесс завершен
+                    if commit_created:
+                        self.output("✓ Коммит успешно создан")
+                    else:
+                        # Процесс завершен, но коммит не был создан (возможно, остановлен на паузе или ошибке)
+                        self.output("ℹ️ Процесс завершен")
             
         except Exception as e:
             self.output(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
@@ -477,7 +655,22 @@ class CommitManagerGUI:
             self.is_running = False
             self.root.after(0, lambda: self.start_btn.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.pause_btn.config(state=tk.DISABLED))
+            self.root.after(0, lambda: self.resume_btn.config(state=tk.DISABLED))
             self.root.after(0, lambda: self.stop_btn.config(state=tk.DISABLED))
+            
+            # Очищаем тестовую среду если была создана
+            if self.test_env:
+                self.output("🧹 Очистка тестовой среды...")
+                self.test_env.cleanup(keep=False)
+                self.test_env = None
+                self.output("✓ Тестовая среда очищена")
+            
+            # Закрываем логгер
+            if self.logger:
+                log_file_path = self.logger.get_log_file_path()
+                self.logger.close()
+                self.logger = None
+                self.output(f"📝 Лог сохранен: {log_file_path}")
     
     def load_window_geometry(self):
         """Загрузить сохраненную геометрию окна и позиции разделителей"""
@@ -586,15 +779,6 @@ class CommitManagerGUI:
         # Через 5 секунд убираем флаг topmost
         self.root.after(5000, lambda: self.root.attributes('-topmost', False))
     
-    def show_success_dialog(self):
-        """Показать диалог успеха поверх главного окна"""
-        # Поднимаем главное окно наверх
-        self.root.lift()
-        self.root.focus_force()
-        self.root.update()
-        
-        # Показываем диалог
-        messagebox.showinfo("Успех", "Коммит успешно создан!", parent=self.root)
     
     def run(self):
         """Запуск GUI"""

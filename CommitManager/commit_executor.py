@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Исполнитель алгоритма создания коммитов
-Версия: V3.4.184 (2025.12.16)
+Версия: V3.4.186 (2025.12.17)
 Компания: ООО "НПА Вира-Реалтайм"
 Разработчик: @FoksSegr & AI Assistant (@LLM)
 """
@@ -19,7 +19,7 @@ from .project_config import ProjectConfig
 class CommitExecutor:
     """Класс для выполнения алгоритма создания коммитов"""
     
-    def __init__(self, config: ProjectConfig, output_callback: Optional[Callable[[str], None]] = None, test_mode: bool = False):
+    def __init__(self, config: ProjectConfig, output_callback: Optional[Callable[[str], None]] = None, test_mode: bool = False, full_test_mode: bool = False, test_env_dir: Optional[str] = None):
         """
         Инициализация исполнителя
         
@@ -27,11 +27,24 @@ class CommitExecutor:
             config: Конфигурация проекта
             output_callback: Функция для вывода сообщений (принимает строку)
             test_mode: Режим тестирования (dry-run) - не выполняет реальные действия
+            full_test_mode: Полный тестовый режим - работает в временной директории
+            test_env_dir: Путь к временной тестовой директории (если full_test_mode=True)
         """
         self.config = config
         self.output_callback = output_callback or print
         self.test_mode = test_mode
-        self.project_dir = config.path
+        self.full_test_mode = full_test_mode
+        self.test_env_dir = test_env_dir
+        self.is_paused = False  # Флаг паузы для ожидания подтверждения пользователя
+        
+        # Если полный тестовый режим, используем временную директорию
+        if self.full_test_mode and self.test_env_dir:
+            self.project_dir = self.test_env_dir
+            # Обновляем конфигурацию для работы с временной директорией
+            config.path = self.test_env_dir
+        else:
+            self.project_dir = config.path
+        
         self.vars_file = os.path.join(self.project_dir, '.commit_vars.sh')
         self.analysis_data_file = os.path.join(self.project_dir, '.commit_analysis_data.txt')
         self.commit_message_file = os.path.join(self.project_dir, 'commit_message.txt')
@@ -48,7 +61,12 @@ class CommitExecutor:
         self.is_paused = False
         self.is_stopped = False
         
-        if self.test_mode:
+        if self.full_test_mode:
+            self._output("🧪 ПОЛНЫЙ ТЕСТОВЫЙ РЕЖИМ ВКЛЮЧЕН")
+            self._output(f"🧪 Работа в временной директории: {self.project_dir}")
+            self._output("🧪 Все операции выполняются в тестовой среде")
+            self._output("=" * 60)
+        elif self.test_mode:
             self._output("🧪 ТЕСТОВЫЙ РЕЖИМ ВКЛЮЧЕН - реальные действия не выполняются")
             self._output("=" * 60)
     
@@ -264,23 +282,46 @@ class CommitExecutor:
         """ШАГ 3: Определение текущей версии"""
         self.current_step = 3
         self._output("=== ШАГ 3: Определение текущей версии ===")
-        
+
         all_files_to_check = self.changed_files + self.new_files
         versions_found = set()
-        
+
+        # Всегда проверяем файл версии, даже если он не изменен
+        version_file_path = self.config.get_version_file_path()
+        if os.path.exists(version_file_path):
+            # Читаем APP_VERSION из Version.txt
+            try:
+                with open(version_file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('APP_VERSION='):
+                            version_str = line.split('=', 1)[1].strip()
+                            # Извлекаем версию формата VX.Y.Z
+                            match = re.search(r'V(\d+)\.(\d+)\.(\d+)', version_str)
+                            if match:
+                                version = f"V{match.group(1)}.{match.group(2)}.{match.group(3)}"
+                                versions_found.add(version)
+                                self._output(f"✓ Найдена версия в {os.path.basename(version_file_path)}: {version}")
+            except Exception as e:
+                self._output(f"⚠️ Предупреждение: Не удалось прочитать версию из {version_file_path}: {e}")
+
+        # Также проверяем измененные и новые файлы
         for file in all_files_to_check:
             if not file:
                 continue
-            
+
+            # Пропускаем файл версии, если он уже проверен
+            if file == self.config.version_file or file.endswith('Version.txt'):
+                continue
+
             # Проверяем расширение файла
             ext = os.path.splitext(file)[1].lower()
             if ext not in self.config.file_extensions:
                 continue
-            
+
             full_path = os.path.join(self.project_dir, file)
             if not os.path.isfile(full_path):
                 continue
-            
+
             # Читаем первые 20 строк и ищем версию
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
@@ -301,6 +342,7 @@ class CommitExecutor:
             self.current_version = self.all_versions[0]
         else:
             self._output("❌ ОШИБКА: Не удалось найти версию в измененных или новых файлах проекта")
+            self._output(f"   Проверены файлы: {', '.join(all_files_to_check[:5])}")
             return False
         
         self._output(f"Найдены версии в файлах: {' '.join(self.all_versions)}")
@@ -647,10 +689,18 @@ class CommitExecutor:
                     lines = f.readlines()[:20]
                     content = ''.join(lines)
                     
-                    if f"({today})" not in content:
-                        errors.append(file)
+                    # Проверяем, была ли дата в файле изначально (любая дата в формате YYYY.MM.DD)
+                    has_date_pattern = bool(re.search(r'\(\d{4}\.\d{2}\.\d{2}\)', content))
+                    
+                    if has_date_pattern:
+                        # Если дата была, проверяем что она обновлена
+                        if f"({today})" not in content:
+                            errors.append(file)
+                        else:
+                            self._output(f"✓ Дата обновлена в {file}")
                     else:
-                        self._output(f"✓ Дата обновлена в {file}")
+                        # Если даты не было изначально, пропускаем проверку
+                        self._output(f"ℹ Файл {file} не содержит дату в формате (YYYY.MM.DD) - пропускаем проверку")
             except Exception:
                 errors.append(file)
         
@@ -733,6 +783,49 @@ class CommitExecutor:
         """ШАГ 11.5: Пересборка бинарных файлов"""
         self.current_step = 11.5
         self._output("=== ШАГ 11.5: Пересборка бинарных файлов ===")
+        
+        # В полном тестовом режиме используем упрощенную сборку
+        if self.full_test_mode:
+            self._output("🧪 ТЕСТОВЫЙ РЕЖИМ: Использование упрощенной сборки бинарных файлов")
+            self._output("")
+            
+            # Ищем скрипт для создания тестовых бинарников
+            test_build_script = os.path.join(self.project_dir, 'test_build_binaries.py')
+            if os.path.exists(test_build_script):
+                self._output(f"✓ Найден скрипт для тестовой сборки: {os.path.basename(test_build_script)}")
+                self._output("Запуск тестовой сборки...")
+                
+                exit_code, output = self._run_command(['python3', test_build_script], capture_output=False)
+                
+                if exit_code != 0:
+                    self._output(f"⚠️ Предупреждение: Тестовая сборка завершилась с кодом {exit_code}")
+                    self._output("Продолжаем без бинарных файлов (тестовый режим)")
+                    return True
+                
+                # Проверяем наличие файлов
+                binaries_created = 0
+                for binary in self.config.binary_files:
+                    if not binary.get('auto_rebuild', False):
+                        continue
+                    binary_name = binary.get('name', '')
+                    binary_path = os.path.join(self.project_dir, binary_name)
+                    
+                    if os.path.exists(binary_path) and os.path.getsize(binary_path) > 0:
+                        self._output(f"✓ Бинарный файл создан: {binary_name}")
+                        binaries_created += 1
+                
+                if binaries_created > 0:
+                    self._output(f"✓ Создано бинарных файлов: {binaries_created}/{len([b for b in self.config.binary_files if b.get('auto_rebuild', False)])}")
+                    self._output("✓ Бинарные файлы успешно пересобраны (тестовый режим)")
+                    return True
+                else:
+                    self._output("⚠️ Предупреждение: Бинарные файлы не созданы, но продолжаем (тестовый режим)")
+                    return True
+            else:
+                self._output("ℹ Скрипт тестовой сборки не найден, пропускаем пересборку (тестовый режим)")
+                return True
+        
+        # Обычный режим
         self._output("⚠️ ВНИМАНИЕ: Начинается пересборка бинарных файлов.")
         self._output("Это может занять несколько минут. Пожалуйста, подождите...")
         self._output("")
@@ -777,7 +870,6 @@ class CommitExecutor:
                     for binary in self.config.binary_files:
                         if not binary.get('auto_rebuild', False):
                             continue
-                        
                         binary_name = binary.get('name', '')
                         binary_path = os.path.join(self.project_dir, binary_name)
                         
@@ -788,8 +880,11 @@ class CommitExecutor:
                         if os.path.getsize(binary_path) == 0:
                             self._output(f"❌ ОШИБКА: Бинарный файл пуст: {binary_name}")
                             return False
+                        
+                        self._output(f"✓ Бинарный файл создан: {binary_name}")
                     
                     self._output("✓ Бинарные файлы успешно пересобраны")
+                    return True
         
         return True
     
@@ -817,8 +912,8 @@ class CommitExecutor:
                             self._output(f"✓ Версия обновлена в {file}")
                         else:
                             # Проверяем наличие любой версии
-                            if re.search(r'V\d+\.\d+\.\d+', content):
-                                match = re.search(r'V\d+\.\d+\.\d+', content)
+                            match = re.search(r'V\d+\.\d+\.\d+', content)
+                            if match:
                                 old_ver = match.group(0)
                                 errors.append(f"{file} (найдена: {old_ver}, ожидалось: {self.new_version})")
                             else:
@@ -924,7 +1019,12 @@ class CommitExecutor:
         
         # Добавляем пересобранные бинарные файлы
         for binary in self.config.binary_files:
-            binary_name = binary.get('name', '')
+            # Поддерживаем и строки, и словари
+            if isinstance(binary, str):
+                binary_name = binary
+            else:
+                binary_name = binary.get('name', '') if isinstance(binary, dict) else str(binary)
+            
             if binary_name and os.path.exists(os.path.join(self.project_dir, binary_name)):
                 if self.test_mode:
                     self._output(f"🧪 [ТЕСТ] БЫЛО БЫ выполнено: git add {binary_name}")

@@ -148,3 +148,10 @@ Archive/
 # shc intermediate files (temporary compilation files)
 *.x.c
 *.x
+
+# Тестовая директория для CommitManager
+CommitTest/
+
+# Логи CommitManager
+Logs/
+*.log
