@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.188 (2025.12.17)
+Версия: V3.4.189 (2025.12.18)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.188 (2025.12.17)"
+APP_VERSION = "V3.4.189 (2025.12.18)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -13507,30 +13507,34 @@ class AutomationGUI(object):
         # КРИТИЧНО: Библиотеки Tcl/Tk уже загружены перед импортом tkinter
         # Дополнительная загрузка не требуется
         
-        # Проверяем наличие X11 дисплея
-        display = os.environ.get('DISPLAY')
-        if not display:
-            error_msg = "X11 дисплей недоступен (переменная DISPLAY не установлена).\n"
-            error_msg += "GUI режим требует активного X11 дисплея.\n"
-            error_msg += "Проверьте:\n"
-            error_msg += "  - Запущен ли X сервер (startx, gdm, lightdm и т.д.)\n"
-            error_msg += "  - Установлена ли переменная DISPLAY (обычно :0 или :0.0)\n"
-            error_msg += "  - Если запускаете через SSH, используйте X11 forwarding: ssh -X\n"
-            print(f"[ERROR] {error_msg}", file=sys.stderr)
-            # Пытаемся записать в лог, если логгер доступен
-            try:
-                if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
-                    logger = globals()['_global_dual_logger']
-                    if logger._analysis_file:
-                        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                        logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
-                        logger._analysis_file.flush()
-                        os.fsync(logger._analysis_file.fileno())
-            except Exception:
-                pass
-            raise RuntimeError(error_msg)
-        
-        print(f"[DEBUG] DISPLAY={display}, создаем tk.Tk()...", gui_log=True)
+        # Проверяем наличие X11 дисплея (только для Linux, на macOS не требуется)
+        is_macos = platform.system() == 'Darwin'
+        if not is_macos:
+            display = os.environ.get('DISPLAY')
+            if not display:
+                error_msg = "X11 дисплей недоступен (переменная DISPLAY не установлена).\n"
+                error_msg += "GUI режим требует активного X11 дисплея.\n"
+                error_msg += "Проверьте:\n"
+                error_msg += "  - Запущен ли X сервер (startx, gdm, lightdm и т.д.)\n"
+                error_msg += "  - Установлена ли переменная DISPLAY (обычно :0 или :0.0)\n"
+                error_msg += "  - Если запускаете через SSH, используйте X11 forwarding: ssh -X\n"
+                print(f"[ERROR] {error_msg}", file=sys.stderr)
+                # Пытаемся записать в лог, если логгер доступен
+                try:
+                    if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
+                        logger = globals()['_global_dual_logger']
+                        if logger._analysis_file:
+                            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                            logger._analysis_file.write(f"[{timestamp}] [ERROR] {error_msg}\n")
+                            logger._analysis_file.flush()
+                            os.fsync(logger._analysis_file.fileno())
+                except Exception:
+                    pass
+                raise RuntimeError(error_msg)
+            print(f"[DEBUG] DISPLAY={display}, создаем tk.Tk()...", gui_log=True)
+        else:
+            print(f"[DEBUG] macOS: пропускаем проверку DISPLAY (tkinter использует Cocoa), создаем tk.Tk()...", gui_log=True)
+            display = None  # На macOS DISPLAY не используется
         
         # Создаем главное окно с обработкой ошибок
         try:
@@ -13539,11 +13543,16 @@ class AutomationGUI(object):
             print("[DEBUG] [OK] tk.Tk() создан успешно", gui_log=True)
         except Exception as e:
             error_msg = f"Не удалось создать главное окно Tkinter: {e}\n"
-            error_msg += f"DISPLAY={display}\n"
-            error_msg += "Возможные причины:\n"
-            error_msg += "  - X сервер не запущен или недоступен\n"
-            error_msg += "  - Неправильная настройка DISPLAY\n"
-            error_msg += "  - Проблемы с правами доступа к X серверу (xhost +)\n"
+            if not is_macos:
+                error_msg += f"DISPLAY={display}\n"
+                error_msg += "Возможные причины:\n"
+                error_msg += "  - X сервер не запущен или недоступен\n"
+                error_msg += "  - Неправильная настройка DISPLAY\n"
+                error_msg += "  - Проблемы с правами доступа к X серверу (xhost +)\n"
+            else:
+                error_msg += "Возможные причины:\n"
+                error_msg += "  - Проблемы с библиотеками Tcl/Tk на macOS\n"
+                error_msg += "  - Недостаточно прав для создания окна\n"
             print(f"[ERROR] {error_msg}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             
