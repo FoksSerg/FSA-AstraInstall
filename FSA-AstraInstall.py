@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.5.191 (2025.12.20)
+Версия: V3.5.192 (2025.12.20)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.5.191 (2025.12.20)"
+APP_VERSION = "V3.5.192 (2025.12.20)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -86,6 +86,9 @@ sys._gui_instance = None
 # Глобальный путь к директории бинарника/скрипта (стартовая директория)
 # Инициализируется при запуске приложения
 START_DIR = None  # Директория, где находится бинарник или скрипт
+
+# Имя базовой директории проекта (можно переопределить через конфигурацию)
+ASTRAPACK_DIR_NAME = 'AstraPack'
 
 def _get_start_dir():
     """
@@ -1230,6 +1233,7 @@ COMPONENTS_CONFIG = {
         'uninstall_paths': ['drive_c/Program Files/CONT-Designer 3.0.0.0'],
         'wineprefix_path': '~/.local/share/wineprefixes/cont',
         'source_dir': 'CountPack',
+        'archive_group': 'Cont',  # Группа для размещения архива в AstraPack
         'copy_method': 'replace',
         'source_priority': 'archive',  # Приоритет источника: 'archive' или 'directory'
         'source_fallback': False,  # Не использовать fallback на другой источник
@@ -1351,6 +1355,7 @@ COMPONENTS_CONFIG = {
         ],
         'wineprefix_path': '~/.wine-astraregul',
         'source_dir': 'AstraPack',
+        'archive_group': 'Astra',  # Группа для размещения архива в AstraPack
         'archive_name': None,  # Имя архива (если None, используется {source_dir}.tar.gz)
         'copy_method': 'replace',
         'source_priority': 'archive',
@@ -1778,7 +1783,7 @@ def extract_archive(
                     else:
                         progress = 0
                     
-                    progress_callback(progress, f"Извлечено файлов: {extracted_count}")
+                    progress_callback(progress, f"Извлечено: {extracted_count}")
                     time.sleep(1)  # Обновляем раз в секунду
             
             # Ждем завершения
@@ -1933,9 +1938,9 @@ def check_component_status(component_id, wineprefix_path=None):
         if config_wineprefix_path:
             wineprefix_path = expand_user_path(config_wineprefix_path)
         else:
-            # Используем стандартный префикс
-            # КРИТИЧНО: Используем expand_user_path для учета SUDO_USER
-            wineprefix_path = expand_user_path("~/.wine-astraregul")
+            # Используем стандартный префикс из конфигурации или fallback
+            default_wineprefix = config.get('default_wineprefix_path', '~/.wine-astraregul')
+            wineprefix_path = expand_user_path(default_wineprefix)
     
     # Специальная проверка для wineprefix
     if check_method == 'wineprefix':
@@ -3859,7 +3864,8 @@ class ComponentHandler(ABC):
                 print(f"[INSTALL LOG] ========== КОПИРОВАНИЕ WINE-GECKO ==========", level='INFO')
                 print(f"[INSTALL LOG] AstraPack директория: {self.astrapack_dir}", level='INFO')
                 
-                wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
+                wine_gecko_dir_name = config.get('wine_gecko_dir', 'wine-gecko')
+                wine_gecko_dir = os.path.join(self.astrapack_dir, wine_gecko_dir_name)
                 print(f"[INSTALL LOG] Ищем wine-gecko в: {wine_gecko_dir}", level='INFO')
                 
                 if os.path.exists(wine_gecko_dir):
@@ -5479,15 +5485,21 @@ class SystemConfigHandler(ComponentHandler):
             # Получаем путь к AstraPack
             astrapack_dir = getattr(self, 'astrapack_dir', None)
             if not astrapack_dir:
-                # Пытаемся найти AstraPack относительно текущего скрипта
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                astrapack_dir = os.path.join(script_dir, 'AstraPack')
+                # Используем метод получения astrapack_dir если доступен
+                if hasattr(self, '_get_astrapack_dir'):
+                    astrapack_dir = self._get_astrapack_dir()
+                else:
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    # Получаем имя директории из конфигурации или используем константу
+                    astrapack_dir_name = config.get('astrapack_dir_name', ASTRAPACK_DIR_NAME)
+                    astrapack_dir = os.path.join(script_dir, astrapack_dir_name)
             
             # Получаем имя архива из конфигурации
             archive_name = config.get('winetricks_archive_name', 'winetricks_packages.tar.gz')
             
-            # Ищем архив в папке Winetricks
-            winetricks_dir = os.path.join(astrapack_dir, "Winetricks")
+            # Получаем папку Winetricks из конфигурации компонента
+            winetricks_dir_name = config.get('winetricks_dir', 'Winetricks')
+            winetricks_dir = os.path.join(astrapack_dir, winetricks_dir_name)
             archive_path = os.path.join(winetricks_dir, archive_name)
             
             if not os.path.exists(archive_path):
@@ -6052,7 +6064,8 @@ class WineEnvironmentHandler(ComponentHandler):
                 print(f"[INSTALL LOG] ========== КОПИРОВАНИЕ WINE-GECKO ==========", level='INFO')
                 print(f"[INSTALL LOG] AstraPack директория: {self.astrapack_dir}", level='INFO')
                 
-                wine_gecko_dir = os.path.join(self.astrapack_dir, "wine-gecko")
+                wine_gecko_dir_name = config.get('wine_gecko_dir', 'wine-gecko')
+                wine_gecko_dir = os.path.join(self.astrapack_dir, wine_gecko_dir_name)
                 print(f"[INSTALL LOG] Ищем wine-gecko в: {wine_gecko_dir}", level='INFO')
                 
                 if os.path.exists(wine_gecko_dir):
@@ -6465,11 +6478,18 @@ class WineEnvironmentHandler(ComponentHandler):
         
         # 4. Определяем путь для сохранения архива
         if not output_dir:
-            if self.astrapack_dir:
-                output_dir = os.path.join(self.astrapack_dir, 'WinePrefixes')
+            # Получаем путь из конфигурации компонента
+            output_dir = config.get('template_output_dir') or config.get('wineprefixes_output_dir')
+            if output_dir:
+                output_dir = expand_user_path(output_dir)
+            elif self.astrapack_dir:
+                # Если не указано в конфигурации, используем значение по умолчанию из конфигурации
+                default_output_dir = config.get('default_template_output_dir', 'WinePrefixes')
+                output_dir = os.path.join(self.astrapack_dir, default_output_dir)
             else:
                 script_dir = self._get_script_dir()
-                output_dir = os.path.join(script_dir, 'WinePrefixes')
+                default_output_dir = config.get('default_template_output_dir', 'WinePrefixes')
+                output_dir = os.path.join(script_dir, default_output_dir)
         
         # КРИТИЧНО: output_dir теперь гарантированно не None
         assert output_dir is not None, "output_dir должен быть определен"
@@ -7794,17 +7814,12 @@ class WineApplicationHandler(ComponentHandler):
                 # Если не указано, используем старое поведение: {source_dir}.tar.gz
                 archive_name = f"{source_dir}.tar.gz"
             
-            # Определяем группу по component_id (cont -> Cont, astra -> Astra)
-            group_name = None
-            if 'cont' in component_id.lower():
-                group_name = 'Cont'
-            elif 'astra' in component_id.lower():
-                group_name = 'Astra'
+            # Получаем группу из конфигурации компонента
+            group_name = config.get('archive_group')
             
             if group_name:
                 archive_path = os.path.join(self.astrapack_dir, group_name, archive_name)
             else:
-                # Если группа не определена, ищем в корне AstraPack
                 archive_path = os.path.join(self.astrapack_dir, archive_name)
         
         # Определяем порядок проверки источников
@@ -8120,23 +8135,29 @@ class WineApplicationHandler(ComponentHandler):
             
             Args:
                 extract_progress: Прогресс распаковки (0-100)
-                details: Детали распаковки
+                details: Детали распаковки (содержит "Извлечено: N")
             """
             # Преобразуем прогресс распаковки (0-100) в диапазон общего прогресса
             scaled_progress = EXTRACT_START + (extract_progress / 100) * (EXTRACT_END - EXTRACT_START)
             
+            # Формируем stage_name с количеством файлов из details
+            stage_name = f"Архив {os.path.basename(archive_path)}"
+            if details and "Извлечено:" in details:
+                # Извлекаем количество файлов из details и добавляем в stage_name
+                stage_name = f"Архив {os.path.basename(archive_path)} - {details}"
+            
             self._update_progress(
-                stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+                stage_name=stage_name,
                 stage_progress=extract_progress,  # Прогресс этапа распаковки (0-100)
                 global_progress=int(scaled_progress),  # Масштабированный общий прогресс
-                details=details,
+                details="",  # Очищаем details, чтобы не дублировать на вкладке обновления
                 elapsed_time=int(time.time() - install_start_time)
             )
         
         # Обновляем прогресс: начало распаковки
         print(f"[INSTALL LOG] Начало распаковки...", level='INFO')
         self._update_progress(
-            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_name=f"Архив {os.path.basename(archive_path)}",
             stage_progress=0,
             global_progress=int(EXTRACT_START),
             details="Начало распаковки архива...",
@@ -8160,10 +8181,10 @@ class WineApplicationHandler(ComponentHandler):
         
         # Обновляем прогресс: завершение распаковки
         self._update_progress(
-            stage_name=f"Распаковка архива {os.path.basename(archive_path)}",
+            stage_name=f"Архив {os.path.basename(archive_path)} - Извлечено: {result['extracted_count']}",
             stage_progress=100,
             global_progress=int(EXTRACT_END),
-            details=f"Распаковка завершена: {result['extracted_count']} элементов",
+            details="",  # Очищаем details, чтобы не дублировать на вкладке обновления
             elapsed_time=int(time.time() - install_start_time)
         )
         
@@ -12805,12 +12826,16 @@ class ComponentInstaller(object):
     
     def _get_wineprefix(self):
         """
-        Получить путь к wineprefix
+        Получить путь к wineprefix по умолчанию
         
         Returns:
-            str: Полный путь к wineprefix (~/.wine-astraregul)
+            str: Полный путь к wineprefix по умолчанию
         """
-        return expand_user_path('~/.wine-astraregul')
+        # Получаем путь из конфигурации компонента astra_wineprefix или используем fallback
+        default_wineprefix = '~/.wine-astraregul'
+        if 'astra_wineprefix' in COMPONENTS_CONFIG:
+            default_wineprefix = COMPONENTS_CONFIG['astra_wineprefix'].get('wineprefix_path', default_wineprefix)
+        return expand_user_path(default_wineprefix)
     
     def _get_astrapack_dir(self):
         """
@@ -12820,7 +12845,14 @@ class ComponentInstaller(object):
             str: Полный путь к директории AstraPack
         """
         script_dir = self._get_script_dir()
-        return os.path.join(script_dir, "AstraPack")
+        # Получаем имя директории из конфигурации или используем константу
+        astrapack_dir_name = ASTRAPACK_DIR_NAME
+        # Пытаемся получить из конфигурации компонента, который использует astrapack
+        for component_id, component_config in COMPONENTS_CONFIG.items():
+            if component_config.get('source_dir') == astrapack_dir_name:
+                # Если нашли компонент с таким source_dir, используем его
+                break
+        return os.path.join(script_dir, astrapack_dir_name)
     
     def _get_source_dir(self, source_dir_name):
         """
@@ -12894,12 +12926,8 @@ class ComponentInstaller(object):
                 if not archive_name:
                     archive_name = f"{source_dir}.tar.gz"
                 
-                # Определяем группу по component_id
-                group_name = None
-                if 'cont' in component_id.lower():
-                    group_name = 'Cont'
-                elif 'astra' in component_id.lower():
-                    group_name = 'Astra'
+                # Получаем группу из конфигурации компонента
+                group_name = config.get('archive_group')
                 
                 # Пробуем найти архив (.tar.gz и .tar)
                 if group_name:
@@ -14262,6 +14290,9 @@ class AutomationGUI(object):
             print("[DEBUG] Создание виджетов GUI...", gui_log=True)
             self.create_widgets()
             print("[DEBUG] [OK] Виджеты созданы успешно")
+            
+            # Регистрируем кнопки для реактивного управления состоянием
+            self._register_reactive_buttons()
         except Exception as e:
             error_msg = f"Ошибка при создании виджетов GUI: {e}\n"
             print(f"[ERROR] {error_msg}", file=sys.stderr)
@@ -14358,13 +14389,19 @@ class AutomationGUI(object):
         return START_DIR if START_DIR else _get_start_dir()
     
     def _get_wineprefix(self):
-        """Получить путь к WINEPREFIX"""
-        return expand_user_path('~/.wine-astraregul')
+        """Получить путь к WINEPREFIX по умолчанию"""
+        # Получаем путь из конфигурации компонента astra_wineprefix или используем fallback
+        default_wineprefix = '~/.wine-astraregul'
+        if 'astra_wineprefix' in COMPONENTS_CONFIG:
+            default_wineprefix = COMPONENTS_CONFIG['astra_wineprefix'].get('wineprefix_path', default_wineprefix)
+        return expand_user_path(default_wineprefix)
     
     def _get_astrapack_dir(self):
         """Получить путь к директории AstraPack"""
         script_dir = self._get_script_dir()
-        return os.path.join(script_dir, "AstraPack")
+        # Получаем имя директории из конфигурации или используем константу
+        astrapack_dir_name = ASTRAPACK_DIR_NAME
+        return os.path.join(script_dir, astrapack_dir_name)
     
     def _get_source_dir(self, source_dir_name):
         """
@@ -17512,17 +17549,15 @@ class AutomationGUI(object):
             '/usr/bin',  # wine, winetricks
         ]
         
-        # Добавляем весь drive_c для основного WINEPREFIX
-        wineprefix_main = os.path.expanduser('~/.wine-astraregul')
-        drive_c_main = os.path.join(wineprefix_main, 'drive_c')
-        if os.path.exists(drive_c_main):
-            monitored_dirs.append(drive_c_main)
-        
-        # Добавляем весь drive_c для CONT wineprefix (CountPack)
-        cont_wineprefix = os.path.expanduser('~/.local/share/wineprefixes/cont')
-        drive_c_cont = os.path.join(cont_wineprefix, 'drive_c')
-        if os.path.exists(drive_c_cont):
-            monitored_dirs.append(drive_c_cont)
+        # Добавляем drive_c для всех wineprefix из конфигурации компонентов
+        for component_id, component_config in COMPONENTS_CONFIG.items():
+            if component_config.get('category') == 'wine_environment':
+                wineprefix_path = component_config.get('wineprefix_path')
+                if wineprefix_path:
+                    wineprefix_path = expand_user_path(wineprefix_path)
+                    drive_c_path = os.path.join(wineprefix_path, 'drive_c')
+                    if os.path.exists(drive_c_path) and drive_c_path not in monitored_dirs:
+                        monitored_dirs.append(drive_c_path)
         
         # Добавляем drive_c для всех остальных wineprefix'ов в ~/.local/share/wineprefixes
         wineprefixes_dir = os.path.expanduser('~/.local/share/wineprefixes')
@@ -20975,19 +21010,23 @@ class AutomationGUI(object):
         self.wine_tree.update()
         self.root.update()
         
-        # Управляем доступностью кнопок
-        self.check_wine_button.config(state=self.tk.NORMAL)
-        
-        # Активируем кнопку установки если есть компоненты со статусом 'missing'
-        all_status = self.component_status_manager.get_all_components_status()
-        has_missing = any(status_tag == 'missing' for status_text, status_tag in all_status.values())
-        if has_missing:
-            self.install_wine_button.config(state=self.tk.NORMAL)
-        else:
-            self.install_wine_button.config(state=self.tk.DISABLED)
-        
-        # Обновляем состояние кнопки "Создать Образ"
-        self._update_create_template_button_state()
+        # КРИТИЧНО: Управляем доступностью кнопок ТОЛЬКО если процесс не активен
+        # Во время установки/удаления/обновления кнопки управляются через _update_buttons_state()
+        global PROCESS_STATE
+        if PROCESS_STATE == 'idle':
+            # Управляем доступностью кнопок
+            self.check_wine_button.config(state=self.tk.NORMAL)
+            
+            # Активируем кнопку установки если есть компоненты со статусом 'missing'
+            all_status = self.component_status_manager.get_all_components_status()
+            has_missing = any(status_tag == 'missing' for status_text, status_tag in all_status.values())
+            if has_missing:
+                self.install_wine_button.config(state=self.tk.NORMAL)
+            else:
+                self.install_wine_button.config(state=self.tk.DISABLED)
+            
+            # Обновляем состояние кнопки "Создать Образ"
+            self._update_create_template_button_state()
     
     def run_wine_install(self):
         """Запуск установки Wine компонентов"""
@@ -21067,15 +21106,9 @@ class AutomationGUI(object):
             # Заменяем selected на final_selected
             selected = final_selected
         
-        # Устанавливаем состояние процесса
+        # Устанавливаем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('installing', paused=False)
         
-        # Блокируем кнопки во время установки
-        self.install_wine_button.config(state=self.tk.DISABLED)
-        self.uninstall_wine_button.config(state=self.tk.DISABLED)
-        self.check_wine_button.config(state=self.tk.DISABLED)
-        # Активируем кнопку отмены
-        self.cancel_operation_button.config(state=self.tk.NORMAL)
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         self.operation_cancelled = False
@@ -21116,9 +21149,17 @@ class AutomationGUI(object):
         self._update_wine_status()
         self.root.update_idletasks()  # Принудительное обновление GUI
         
-        # КОМАНДА СТАРТ: Начало установки - запускаем таймер сразу при нажатии кнопки
+        # КОМАНДА СТАРТ: Сбрасываем и запускаем таймер СРАЗУ при нажатии кнопки
         progress_manager = get_global_progress_manager()
         if progress_manager:
+            # КРИТИЧНО: Сбрасываем таймер и счётчик СРАЗУ при нажатии кнопки
+            progress_manager.update_progress(
+                process_type='reset',
+                stage_name='',
+                stage_progress=0,
+                global_progress=0,
+                details=''
+            )
             progress_manager.update_progress(
                 process_type='start',
                 stage_name='Подготовка к установке...',
@@ -21166,15 +21207,15 @@ class AutomationGUI(object):
     
     def _install_completed(self, success):
         """Завершение установки (вызывается в главном потоке)"""
-        # Сбрасываем состояние процесса
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
         
-        # Разблокируем кнопки
-        self.install_wine_button.config(state=self.tk.NORMAL)
-        self.uninstall_wine_button.config(state=self.tk.NORMAL)
-        self.check_wine_button.config(state=self.tk.NORMAL)
-        # Деактивируем кнопку отмены
-        self.cancel_operation_button.config(state=self.tk.DISABLED)
+        # КРИТИЧНО: Обновляем статусы компонентов для восстановления чекбоксов
+        # Это нужно для правильной активации кнопок через _update_wine_buttons()
+        self._update_wine_status()
+        
+        # Обновляем кнопку "Создать Образ" с локальными проверками
+        self._update_create_template_button_state()
         
         # Проверяем, есть ли компоненты, требующие перезагрузки
         pending_reboot_components = []
@@ -21271,13 +21312,15 @@ class AutomationGUI(object):
         """Сброс панели прогресса перед началом установки"""
         # Используем глобальный progress_manager для обновления прогресса
         progress_manager = get_global_progress_manager()
-        progress_manager.update_progress(
-            process_type='start',  # КОМАНДА СТАРТ: Начало процесса
-            stage_name='Подготовка...',
-            stage_progress=0,
-            global_progress=0,  # Сброс таймера и диска
-            details='Подготовка к установке...'
-        )
+        # КРИТИЧНО: Не сбрасываем таймер, если он уже запущен
+        if progress_manager and progress_manager.start_time is None:
+            progress_manager.update_progress(
+                process_type='start',  # КОМАНДА СТАРТ: Начало процесса
+                stage_name='Подготовка...',
+                stage_progress=0,
+                global_progress=0,  # Сброс таймера и диска
+                details='Подготовка к установке...'
+            )
         # Обновляем только wine_proc_label (не относится к прогрессу)
         if hasattr(self, 'wine_proc_label'):
             self.wine_proc_label.config(text="неактивны", fg='gray')
@@ -21432,14 +21475,16 @@ class AutomationGUI(object):
             )
             print("[ERROR] Установка Wine и Astra.IDE прервана", gui_log=True)
         
-        # Сбрасываем состояние процесса
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
-        
-        # Включаем кнопки обратно
-        self.check_wine_button.config(state=self.tk.NORMAL)
     
     def on_wine_tree_click(self, event):
         """Обработка клика по таблице Wine компонентов"""
+        # КРИТИЧНО: Блокируем обработку кликов во время активного процесса
+        global PROCESS_STATE
+        if PROCESS_STATE != 'idle':
+            return  # Игнорируем клики во время установки/удаления/обновления
+        
         region = self.wine_tree.identify('region', event.x, event.y)
         if region == 'heading':
             return  # Заголовок обрабатывается отдельно
@@ -21853,8 +21898,52 @@ class AutomationGUI(object):
         # Обновляем кнопки
         self._update_wine_buttons()
     
+    def _register_reactive_buttons(self):
+        """Регистрация кнопок для реактивного обновления на основе PROCESS_STATE"""
+        self.reactive_buttons = {
+            # Кнопки, которые блокируются при любом процессе (is_running = True)
+            'blocked_on_any_process': [
+                'sync_time_button',
+                'start_button',
+                'check_wine_button',
+                'install_wine_button',
+                'uninstall_wine_button',
+                'run_checks_button',
+                'load_repos_button',
+                'check_repos_button2',
+                'auto_check_repos_button',
+                'update_repos_button',
+                'refresh_button',
+            ],
+            
+            # Кнопки с особыми правилами (словарь с enabled_states/disabled_states)
+            'special_rules': {
+                'cancel_operation_button': {
+                    'enabled_states': ['installing', 'uninstalling', 'updating'],
+                    'disabled_states': ['idle', 'automation']
+                },
+                'stop_button': {
+                    'enabled_states': ['automation'],
+                    'disabled_states': ['idle', 'installing', 'uninstalling', 'updating']
+                }
+            },
+            
+            # Кнопки с локальной логикой (обновляются через отдельные методы)
+            'local_logic': [
+                'create_template_button',  # Обновляется через _update_create_template_button_state()
+            ]
+        }
+    
     def _update_wine_buttons(self):
         """Обновление состояния кнопок установки/удаления"""
+        # КРИТИЧНО: Проверяем состояние процесса - не разблокируем кнопки во время выполнения
+        global PROCESS_STATE
+        is_running = PROCESS_STATE != 'idle'
+        
+        if is_running:
+            # Во время процесса кнопки должны быть заблокированы
+            return
+        
         selected_count = sum(1 for checked in self.wine_checkboxes.values() if checked)
         
         if selected_count > 0:
@@ -21979,15 +22068,9 @@ class AutomationGUI(object):
         if not messagebox.askyesno("Подтверждение удаления", message):
             return
         
-        # Устанавливаем состояние процесса
+        # Устанавливаем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('uninstalling', paused=False)
         
-        # Блокируем кнопки во время удаления
-        self.install_wine_button.config(state=self.tk.DISABLED)
-        self.uninstall_wine_button.config(state=self.tk.DISABLED)
-        self.check_wine_button.config(state=self.tk.DISABLED)
-        # Активируем кнопку отмены
-        self.cancel_operation_button.config(state=self.tk.NORMAL)
         global CANCEL_OPERATION
         CANCEL_OPERATION = False
         self.operation_cancelled = False
@@ -22027,9 +22110,17 @@ class AutomationGUI(object):
         self.root.update_idletasks()  # Принудительное обновление GUI
         # Дополнительная задержка не нужна - update_idletasks() уже обновил GUI
         
-        # КОМАНДА СТАРТ: Начало удаления - запускаем таймер сразу при нажатии кнопки
+        # КОМАНДА СТАРТ: Сбрасываем и запускаем таймер СРАЗУ при нажатии кнопки
         progress_manager = get_global_progress_manager()
         if progress_manager:
+            # КРИТИЧНО: Сбрасываем таймер и счётчик СРАЗУ при нажатии кнопки
+            progress_manager.update_progress(
+                process_type='reset',
+                stage_name='',
+                stage_progress=0,
+                global_progress=0,
+                details=''
+            )
             progress_manager.update_progress(
                 process_type='start',
                 stage_name='Подготовка к удалению...',
@@ -22048,15 +22139,8 @@ class AutomationGUI(object):
     
     def _uninstall_completed(self, success):
         """Завершение удаления (вызывается в главном потоке)"""
-        # Сбрасываем состояние процесса
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
-        
-        # Разблокируем кнопки
-        self.install_wine_button.config(state=self.tk.NORMAL)
-        self.uninstall_wine_button.config(state=self.tk.NORMAL)
-        self.check_wine_button.config(state=self.tk.NORMAL)
-        # Деактивируем кнопку отмены
-        self.cancel_operation_button.config(state=self.tk.DISABLED)
         
         if success:
             if hasattr(self, 'wine_stage_label'):
@@ -22066,9 +22150,6 @@ class AutomationGUI(object):
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
-        
-        # Сбрасываем состояние процесса
-        set_process_state('idle', paused=False)
         
         # Обновляем статус компонентов
         self._update_wine_status()
@@ -22150,11 +22231,8 @@ class AutomationGUI(object):
             self.wine_stage_label.config(text="Операция отменена", fg='orange')
         print("[INFO] Операция отменена пользователем", gui_log=True)
         
-        # Восстанавливаем кнопки
-        self.install_wine_button.config(state=self.tk.NORMAL)
-        self.uninstall_wine_button.config(state=self.tk.NORMAL)
-        self.check_wine_button.config(state=self.tk.NORMAL)
-        self.cancel_operation_button.config(state=self.tk.DISABLED)
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
+        set_process_state('idle', paused=False)
         
         # Обновляем статусы компонентов
         self._update_wine_status()
@@ -22210,8 +22288,7 @@ class AutomationGUI(object):
                 self.root.after(0, lambda: self.wine_stage_label.config(text=error_msg, fg='red'))
             self.root.after(0, lambda: print(f"[ERROR] {error_msg}", gui_log=True))
             traceback.print_exc()
-            self.root.after(0, lambda: self.uninstall_wine_button.config(state=self.tk.NORMAL))
-            self.root.after(0, lambda: self.check_wine_button.config(state=self.tk.NORMAL))
+            # КРИТИЧНО: Не разблокируем кнопки здесь - они обновятся через set_process_state('idle')
         finally:
             thread_name = threading.current_thread().name
             print(f"Поток {thread_name} завершил выполнение (_perform_wine_uninstall)", level='DEBUG')
@@ -22321,26 +22398,119 @@ class AutomationGUI(object):
             return
         
         # 5. Показываем диалог выбора пути, имени архива и уровня сжатия
-        # ИСПРАВЛЕНИЕ: Используем имя архива из конфигурации компонента, если оно указано
-        default_name = config.get('archive_name') or f"{component_id}_template.tar.gz"
+        # НОВОЕ: Ищем дочерний компонент от выбранного wine_environment
+        child_component_id = None
+        child_config = None
         
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        astrapack_dir = os.path.join(script_dir, "AstraPack")
+        # Ищем компонент, который зависит от выбранного wine_environment (дочерний компонент)
+        for candidate_id, candidate_config in COMPONENTS_CONFIG.items():
+            dependencies = candidate_config.get('dependencies', [])
+            if component_id in dependencies:
+                # Найден дочерний компонент
+                child_component_id = candidate_id
+                child_config = candidate_config
+                break
         
-        # ИСПРАВЛЕНИЕ: Используем папку из конфигурации компонента, если она указана
-        config_output_dir = config.get('template_output_dir') or config.get('archive_output_dir')
-        if config_output_dir:
-            # Используем папку из конфигурации компонента
-            default_dir = expand_user_path(config_output_dir)
-        else:
-            # Используем папку, откуда распаковывается архив (source_dir)
-            source_dir = config.get('source_dir')
-            if source_dir and astrapack_dir and os.path.exists(astrapack_dir):
-                # Используем папку source_dir из конфигурации (как при установке)
-                default_dir = os.path.join(astrapack_dir, source_dir)
+        # Определяем astrapack_dir через метод GUI (единообразно с остальным кодом)
+        astrapack_dir = self._get_astrapack_dir()
+        
+        # Используем значения из дочернего компонента, если они указаны, иначе из самого wine_environment
+        if child_config:
+            # Имя архива из дочернего компонента
+            default_name = child_config.get('archive_name') or child_config.get('template_name') or config.get('archive_name')
+            
+            # Если имя архива не указано, генерируем из source_dir
+            if not default_name:
+                source_dir = child_config.get('source_dir')
+                if source_dir:
+                    default_name = f"{source_dir}.tar.gz"
+                else:
+                    default_name = f"{component_id}_template.tar.gz"
+            
+            # Папка из дочернего компонента
+            config_output_dir = child_config.get('template_output_dir') or child_config.get('archive_output_dir')
+            
+            # КРИТИЧНО: Если нет явного пути вывода, но есть source_dir и source_priority == 'archive',
+            # строим путь к архиву на основе source_dir и группы (как при установке)
+            if not config_output_dir:
+                source_dir = child_config.get('source_dir')
+                source_priority = child_config.get('source_priority', 'archive')
+                
+                if source_dir and source_priority == 'archive' and astrapack_dir:
+                    # Определяем имя архива
+                    archive_name = child_config.get('archive_name') or f"{source_dir}.tar.gz"
+                    
+                    # Получаем группу из конфигурации дочернего компонента
+                    group_name = child_config.get('archive_group')
+                    
+                    # Строим путь к архиву
+                    if group_name:
+                        archive_path = os.path.join(astrapack_dir, group_name, archive_name)
+                    else:
+                        archive_path = os.path.join(astrapack_dir, archive_name)
+                    
+                    # Используем директорию архива как путь по умолчанию
+                    archive_dir = os.path.dirname(archive_path)
+                    default_dir = archive_dir if archive_dir else astrapack_dir
+                    # Имя архива уже установлено выше
+                else:
+                    # Fallback: используем source_dir как папку
+                    if source_dir and astrapack_dir and os.path.exists(astrapack_dir):
+                        default_dir = os.path.join(astrapack_dir, source_dir)
+                    else:
+                        default_output_dir = child_config.get('default_template_output_dir', 'WinePrefixes') if child_config else config.get('default_template_output_dir', 'WinePrefixes')
+                        default_dir = os.path.join(astrapack_dir, default_output_dir) if os.path.exists(astrapack_dir) else expand_user_path('~')
             else:
-                # Если source_dir не указан, используем стандартную папку
-                default_dir = os.path.join(astrapack_dir, 'WinePrefixes') if os.path.exists(astrapack_dir) else expand_user_path('~')
+                # Если есть явный путь вывода, обрабатываем его
+                if isinstance(config_output_dir, list):
+                    selected_path = None
+                    # Ищем путь, который указывает на архив (содержит .tar.gz или .tar)
+                    for path in config_output_dir:
+                        if '.tar.gz' in path or '.tar' in path:
+                            # Если это путь к архиву, берем директорию архива
+                            selected_path = os.path.dirname(path) if os.path.dirname(path) else path
+                            break
+                    
+                    # Если не нашли путь к архиву, ищем папку с архивами
+                    if not selected_path:
+                        for path in config_output_dir:
+                            path_lower = path.lower()
+                            if 'archive' in path_lower or 'wineprefix' in path_lower:
+                                selected_path = path
+                                break
+                    
+                    # Если ничего не найдено, берем первый путь
+                    if not selected_path:
+                        selected_path = config_output_dir[0] if config_output_dir else None
+                    
+                    config_output_dir = selected_path
+                
+                if config_output_dir:
+                    default_dir = expand_user_path(config_output_dir)
+                else:
+                    default_output_dir = child_config.get('default_template_output_dir', 'WinePrefixes') if child_config else config.get('default_template_output_dir', 'WinePrefixes')
+                    default_dir = os.path.join(astrapack_dir, default_output_dir) if os.path.exists(astrapack_dir) else expand_user_path('~')
+        else:
+            # Используем значения из самого wine_environment
+            default_name = config.get('archive_name') or f"{component_id}_template.tar.gz"
+            config_output_dir = config.get('template_output_dir') or config.get('archive_output_dir')
+            
+            if config_output_dir:
+                if isinstance(config_output_dir, list):
+                    config_output_dir = config_output_dir[0] if config_output_dir else None
+                
+                if config_output_dir:
+                    default_dir = expand_user_path(config_output_dir)
+                else:
+                    default_output_dir = config.get('default_template_output_dir', 'WinePrefixes')
+                    default_dir = os.path.join(astrapack_dir, default_output_dir) if os.path.exists(astrapack_dir) else expand_user_path('~')
+            else:
+                source_dir = config.get('source_dir')
+                if source_dir and astrapack_dir and os.path.exists(astrapack_dir):
+                    default_dir = os.path.join(astrapack_dir, source_dir)
+                else:
+                    default_output_dir = config.get('default_template_output_dir', 'WinePrefixes')
+                    default_dir = os.path.join(astrapack_dir, default_output_dir) if os.path.exists(astrapack_dir) else expand_user_path('~')
         
         # Создаем кастомный диалог с выбором пути и уровня сжатия
         dialog = tk.Toplevel(self.root)
@@ -22523,15 +22693,24 @@ class AutomationGUI(object):
         # Устанавливаем состояние процесса для блокировки кнопок
         set_process_state('installing', paused=False)
         
-        # Сбрасываем и запускаем счетчики времени и диска
+        # Сбрасываем и запускаем счетчики времени и диска СРАЗУ при нажатии кнопки
         progress_manager = get_global_progress_manager()
-        progress_manager.update_progress(
-            process_type='start',  # КОМАНДА СТАРТ: Начало процесса
-            stage_name='Создание образа Wine-префикса...',
-            stage_progress=0,
-            global_progress=0,  # Сброс таймера и диска
-            details='Подготовка к созданию образа...'
-        )
+        if progress_manager:
+            # КРИТИЧНО: Сбрасываем таймер и счётчик СРАЗУ при нажатии кнопки
+            progress_manager.update_progress(
+                process_type='reset',
+                stage_name='',
+                stage_progress=0,
+                global_progress=0,
+                details=''
+            )
+            progress_manager.update_progress(
+                process_type='start',  # КОМАНДА СТАРТ: Начало процесса
+                stage_name='Создание образа Wine-префикса...',
+                stage_progress=0,
+                global_progress=0,  # Сброс таймера и диска
+                details='Подготовка к созданию образа...'
+            )
         
         # 8. Запускаем создание архива в отдельном потоке
         if hasattr(self, 'wine_stage_label'):
@@ -22574,11 +22753,10 @@ class AutomationGUI(object):
             details='Создание образа завершено успешно'
         )
         
-        # Сбрасываем состояние процесса для разблокировки кнопок
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
         
         self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
-        self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
         
         if result:
             try:
@@ -22626,11 +22804,10 @@ class AutomationGUI(object):
             details=f'Ошибка: {error_msg[:100]}'
         )
         
-        # Сбрасываем состояние процесса для разблокировки кнопок
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
         
         self._update_create_template_button_state()  # Восстанавливаем состояние кнопки
-        self.cancel_operation_button.config(state=self.tk.DISABLED)  # Деактивируем кнопку отмены
         if hasattr(self, 'wine_stage_label'):
             self.wine_stage_label.config(text=f"Ошибка создания образа: {error_msg[:50]}...", fg='red')
         messagebox.showerror("Ошибка", f"Ошибка при создании образа:\n{error_msg}")
@@ -22657,10 +22834,6 @@ class AutomationGUI(object):
                             if removed_instances:
                                 print(f"Удалены экземпляры из менеджера после удаления {wineprefix_id}: {', '.join(removed_instances)}", gui_log=True)
         
-        # Разблокируем кнопки
-        self.uninstall_wine_button.config(state=self.tk.NORMAL)
-        self.check_wine_button.config(state=self.tk.NORMAL)
-        
         if success:
             if hasattr(self, 'wine_stage_label'):
                 self.wine_stage_label.config(text="Удаление завершено успешно!", fg='green')
@@ -22670,8 +22843,11 @@ class AutomationGUI(object):
                 self.wine_stage_label.config(text="Ошибка удаления", fg='red')
             print("[ERROR] Ошибка удаления компонентов", gui_log=True)
         
-        # Сбрасываем состояние процесса
+        # Сбрасываем состояние процесса - ВСЕ кнопки обновятся автоматически!
         set_process_state('idle', paused=False)
+        
+        # Обновляем кнопку "Создать Образ" с локальными проверками
+        self._update_create_template_button_state()
         
         # КРИТИЧНО: Снимаем галочки с удаленных компонентов на основе фактического статуса
         # (независимо от флага success - компонент может быть удален даже при ошибках)
@@ -25477,16 +25653,18 @@ class AutomationGUI(object):
         # Устанавливаем состояние процесса
         set_process_state('automation', paused=False)
         
-        # КОМАНДА СТАРТ: Начало автоматизации - запускаем таймер сразу при нажатии кнопки
+        # КОМАНДА СТАРТ: Начало автоматизации - запускаем таймер только если он еще не запущен
         progress_manager = get_global_progress_manager()
         if progress_manager:
-            progress_manager.update_progress(
-                process_type='start',
-                stage_name='Подготовка к автоматизации...',
-                stage_progress=0,
-                global_progress=0,
-                details='Запуск автоматизации...'
-            )
+            # КРИТИЧНО: Не сбрасываем таймер, если он уже запущен
+            if progress_manager.start_time is None:
+                progress_manager.update_progress(
+                    process_type='start',
+                    stage_name='Подготовка к автоматизации...',
+                    stage_progress=0,
+                    global_progress=0,
+                    details='Запуск автоматизации...'
+                )
         
         # Очищаем лог
         self.log_text.delete(1.0, self.tk.END)
@@ -26634,13 +26812,14 @@ class UniversalProgressManager:
                 is_process_completed = (self.final_elapsed_time is not None or self.final_disk_used_mb is not None)
                 
                 # Используем глобальное состояние процесса для определения активности
+                # КРИТИЧНО: Процесс активен если PROCESS_STATE != 'idle' и таймер запущен
+                # Исключаем только завершенные/отмененные/сброшенные процессы
                 is_process_active = (PROCESS_STATE != 'idle' and not PROCESS_PAUSED and not is_process_completed and 
-                                    ((self.global_progress > 0 and self.global_progress < 100) or 
-                                     (self.current_process is not None and 
-                                      self.current_process != 'reset' and 
+                                    self.start_time is not None and
+                                    (self.current_process is None or 
+                                     (self.current_process != 'reset' and 
                                       self.current_process != 'complete' and 
-                                      self.current_process != 'cancel' and
-                                      self.current_process != 'start')))
+                                      self.current_process != 'cancel')))
                 is_process_reset = (not is_process_completed and
                                    self.global_progress == 0 and 
                                    (self.current_process is None or self.current_process == 'reset'))
@@ -26940,50 +27119,96 @@ def is_process_running() -> bool:
     return PROCESS_STATE != 'idle'
 
 def _update_buttons_state():
-    """Обновляет состояние кнопок в GUI на основе текущего состояния процесса"""
+    """Реактивное обновление состояния кнопок на основе PROCESS_STATE"""
     global PROCESS_STATE, PROCESS_PAUSED
     
     if not hasattr(sys, '_gui_instance') or not sys._gui_instance:
         return
     
     gui = sys._gui_instance
-    
-    # Определяем, какие кнопки должны быть заблокированы
     is_running = PROCESS_STATE != 'idle'
     
     try:
-        # Блокируем кнопки установки/удаления если запущен любой процесс
-        if hasattr(gui, 'install_wine_button'):
-            gui.install_wine_button.config(
-                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
-            )
-        if hasattr(gui, 'uninstall_wine_button'):
-            gui.uninstall_wine_button.config(
-                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
-            )
-        if hasattr(gui, 'check_wine_button'):
-            gui.check_wine_button.config(
-                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
-            )
+        # Проверяем наличие зарегистрированных правил
+        if not hasattr(gui, 'reactive_buttons'):
+            # Fallback на старую логику если правила не зарегистрированы
+            # Блокируем кнопки установки/удаления если запущен любой процесс
+            if hasattr(gui, 'install_wine_button'):
+                gui.install_wine_button.config(
+                    state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+                )
+            if hasattr(gui, 'uninstall_wine_button'):
+                gui.uninstall_wine_button.config(
+                    state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+                )
+            if hasattr(gui, 'check_wine_button'):
+                gui.check_wine_button.config(
+                    state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+                )
+            
+            # Кнопка отмены активна только для установки/удаления компонентов
+            if hasattr(gui, 'cancel_operation_button'):
+                gui.cancel_operation_button.config(
+                    state=gui.tk.NORMAL if (PROCESS_STATE == 'installing' or PROCESS_STATE == 'uninstalling') else gui.tk.DISABLED
+                )
+            
+            # Кнопки автоматизации
+            if hasattr(gui, 'start_button'):
+                gui.start_button.config(
+                    state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
+                )
+            if hasattr(gui, 'stop_button'):
+                gui.stop_button.config(
+                    state=gui.tk.NORMAL if PROCESS_STATE == 'automation' else gui.tk.DISABLED
+                )
+            return
         
-        # Кнопка отмены активна только для установки/удаления компонентов
-        if hasattr(gui, 'cancel_operation_button'):
-            gui.cancel_operation_button.config(
-                state=gui.tk.NORMAL if (PROCESS_STATE == 'installing' or PROCESS_STATE == 'uninstalling') else gui.tk.DISABLED
-            )
+        # 1. БЛОКИРУЕМ кнопки при любом процессе
+        blocked_buttons = gui.reactive_buttons.get('blocked_on_any_process', [])
+        for button_name in blocked_buttons:
+            if hasattr(gui, button_name):
+                button = getattr(gui, button_name)
+                button.config(state=gui.tk.DISABLED if is_running else gui.tk.NORMAL)
         
-        # Кнопки автоматизации
-        if hasattr(gui, 'start_button'):
-            gui.start_button.config(
-                state=gui.tk.DISABLED if is_running else gui.tk.NORMAL
-            )
-        if hasattr(gui, 'stop_button'):
-            gui.stop_button.config(
-                state=gui.tk.NORMAL if PROCESS_STATE == 'automation' else gui.tk.DISABLED
-            )
+        # 2. ОСОБЫЕ ПРАВИЛА для специфичных кнопок
+        special_rules = gui.reactive_buttons.get('special_rules', {})
+        for button_name, rule in special_rules.items():
+            if hasattr(gui, button_name):
+                button = getattr(gui, button_name)
+                enabled = PROCESS_STATE in rule.get('enabled_states', [])
+                button.config(state=gui.tk.NORMAL if enabled else gui.tk.DISABLED)
+        
+        # 3. КНОПКИ С ЛОКАЛЬНОЙ ЛОГИКОЙ (вызываем их методы обновления)
+        if not is_running:  # Только когда процесс не активен
+            # Обновляем кнопки Wine с проверкой выбранных компонентов
+            if hasattr(gui, '_update_wine_buttons'):
+                gui._update_wine_buttons()
+            
+            # Обновляем кнопку "Создать Образ" с локальными проверками
+            if hasattr(gui, '_update_create_template_button_state'):
+                gui._update_create_template_button_state()
+        
+        # 4. БЛОКИРОВКА ТАБЛИЦ (отключение обработчиков кликов)
+        if hasattr(gui, 'wine_tree'):
+            if is_running:
+                # Отключаем обработчики кликов
+                gui.wine_tree.unbind('<Button-1>')
+                gui.wine_tree.unbind('<Double-Button-1>')
+            else:
+                # Включаем обработчики кликов
+                gui.wine_tree.bind('<Button-1>', gui.on_wine_tree_click)
+                gui.wine_tree.bind('<Double-Button-1>', gui.on_wine_tree_double_click)
+        
+        if hasattr(gui, 'repos_tree'):
+            if is_running:
+                gui.repos_tree.unbind('<Button-3>')
+                gui.repos_tree.unbind('<Double-1>')
+            else:
+                gui.repos_tree.bind('<Button-3>', gui.show_repo_context_menu)
+                gui.repos_tree.bind('<Double-1>', gui.show_repo_details)
         
     except Exception as e:
-        print(f"[ERROR] Ошибка обновления состояния кнопок: {e}", level='ERROR')
+        print(f"[ERROR] Ошибка реактивного обновления кнопок: {e}", level='ERROR')
 
 class SystemUpdateParser:
 # ============================================================================
@@ -32221,7 +32446,9 @@ def main():
                     
                     def _get_astrapack_dir():
                         script_dir = _get_script_dir()
-                        return os.path.join(script_dir, "AstraPack")
+                        # Получаем имя директории из конфигурации или используем константу
+                        astrapack_dir_name = ASTRAPACK_DIR_NAME
+                        return os.path.join(script_dir, astrapack_dir_name)
                     
                     # Создаем handlers для всех категорий компонентов
                     component_handlers = {}
