@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.5.195 (2025.12.20)
-Дата сборки: 2025.12.20
+Версия: V3.5.196 (2025.12.21)
+Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.5.195 (2025.12.20)"
+APP_VERSION = "V3.5.196 (2025.12.21)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -20389,7 +20389,7 @@ class AutomationGUI(object):
                     self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
             else:
                 if hasattr(self, 'resources_warning_label'):
-                    self.resources_warning_label.config(text="Системные ресурсы достаточны для установки Wine + Astra.IDE")
+                    self.resources_warning_label.config(text="Системные ресурсы достаточны для установки компонентов")
                     self.resources_warning_label.config(fg='green')
                     self.resources_warning_label.pack(fill=self.tk.X, padx=5, pady=2)
                 
@@ -25386,7 +25386,7 @@ class AutomationGUI(object):
                 self.stage_label.config(text=progress_data['stage_name'])
             
             if hasattr(self, 'detail_label'):
-                self.detail_label.config(text=progress_data['details'])
+                self.detail_label.config(text=progress_data.get('details', ''))
                 # Принудительно обновляем GUI только если открыта вкладка "Управление"
                 if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
                     self.root.update_idletasks()
@@ -25460,7 +25460,7 @@ class AutomationGUI(object):
             if hasattr(self, 'stage_label'):
                 self.stage_label.config(text=progress_data['stage_name'])
             if hasattr(self, 'detail_label'):
-                self.detail_label.config(text=progress_data['details'])
+                self.detail_label.config(text=progress_data.get('details', ''))
                 if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
                     self.root.update_idletasks()
             if hasattr(self, 'status_label'):
@@ -25498,7 +25498,7 @@ class AutomationGUI(object):
             # Не обновляем их здесь, чтобы избежать конфликтов
             
             if hasattr(self, 'detail_label'):
-                self.detail_label.config(text=progress_data['details'])
+                self.detail_label.config(text=progress_data.get('details', ''))
                 # Принудительно обновляем GUI только если открыта вкладка "Управление"
                 if hasattr(self, 'notebook') and self.notebook.index(self.notebook.select()) == 1:
                     self.root.update_idletasks()
@@ -27851,22 +27851,18 @@ class SystemUpdateParser:
             # Обновляем общий прогресс через UniversalProgressManager
             if self.universal_manager:
                 global_progress = (configured_count / total_packages) * 100 if total_packages > 0 else 0
+                # Формируем stage_name с информацией о количестве пакетов для отображения в общем прогресс-баре (wine_stage_label)
+                stage_name_with_packages = f"Обновление системы - Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}"
                 self.universal_manager.update_progress(
                     "system_update",
-                    "Обновление системы",
+                    stage_name_with_packages,
                     global_progress,
                     global_progress,
-                    f"Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}",
+                    "",  # Пустая строка - детали не нужны, информация в stage_name
                     **detailed_progress
                 )
                 
-                # Обновляем статус в нижнем общем фрейме (виден из всех вкладок)
-                if self.system_updater and hasattr(self.system_updater, 'gui_instance'):
-                    gui = self.system_updater.gui_instance
-                    if gui and hasattr(gui, 'wine_stage_label'):
-                        gui.wine_stage_label.config(
-                            text=f"Скачано: {downloaded_count}, Распаковано: {unpacked_count}, Настроено: {configured_count} из {total_packages}"
-                )
+                # Убираем обновление статуса в нижнем общем фрейме - информация только в общем прогресс-баре
             
         except Exception as e:
             print(f"[ERROR] Ошибка обновления прогресс-баров: {e}", gui_log=True)
@@ -31498,7 +31494,6 @@ class SelfUpdater:
                  '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
                  '-H', 'Expires: 0',
-                 '-H', 'If-None-Match: *',
                  '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
                  '-H', 'X-Requested-With: XMLHttpRequest',
                  '-H', 'Accept: */*',
@@ -31546,7 +31541,6 @@ class SelfUpdater:
                      '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                      '-H', 'Pragma: no-cache',
                      '-H', 'Expires: 0',
-                     '-H', 'If-None-Match: *',
                      '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
                      '-H', 'X-Requested-With: XMLHttpRequest',
                      '-H', 'Accept: text/plain, */*',
@@ -31590,7 +31584,6 @@ class SelfUpdater:
                  '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
                  '-H', 'Expires: 0',
-                 '-H', 'If-None-Match: *',
                  '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
                  '-H', 'X-Requested-With: XMLHttpRequest',
                  '-H', 'Accept: application/octet-stream, */*',
