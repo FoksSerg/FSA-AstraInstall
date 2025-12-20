@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.5.193 (2025.12.20)
+Версия: V3.5.195 (2025.12.20)
 Дата сборки: 2025.12.20
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.5.193 (2025.12.20)"
+APP_VERSION = "V3.5.195 (2025.12.20)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -31498,6 +31498,10 @@ class SelfUpdater:
                  '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
                  '-H', 'Expires: 0',
+                 '-H', 'If-None-Match: *',
+                 '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
+                 '-H', 'X-Requested-With: XMLHttpRequest',
+                 '-H', 'Accept: */*',
                  url],
                 capture_output=True, text=True, timeout=10
             )
@@ -31542,6 +31546,10 @@ class SelfUpdater:
                      '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                      '-H', 'Pragma: no-cache',
                      '-H', 'Expires: 0',
+                     '-H', 'If-None-Match: *',
+                     '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
+                     '-H', 'X-Requested-With: XMLHttpRequest',
+                     '-H', 'Accept: text/plain, */*',
                      url],
                     capture_output=True, text=True, timeout=TIMEOUT_CHECK + 5
                 )
@@ -31582,6 +31590,10 @@ class SelfUpdater:
                  '-H', 'Cache-Control: no-cache, no-store, must-revalidate',
                  '-H', 'Pragma: no-cache',
                  '-H', 'Expires: 0',
+                 '-H', 'If-None-Match: *',
+                 '-H', 'User-Agent: FSA-AstraInstall-Updater/1.0',
+                 '-H', 'X-Requested-With: XMLHttpRequest',
+                 '-H', 'Accept: application/octet-stream, */*',
                  url],
                 capture_output=True, text=True, timeout=TIMEOUT_DOWNLOAD + 30
             )
