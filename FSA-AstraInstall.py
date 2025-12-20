@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.4.189 (2025.12.18)
+Версия: V3.5.191 (2025.12.20)
 Дата сборки: 2025.12.03
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.4.189 (2025.12.18)"
+APP_VERSION = "V3.5.191 (2025.12.20)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -13086,6 +13086,70 @@ class ComponentInstaller(object):
         # Если есть зависимости - это дочерний элемент
         return len(dependencies) > 0
     
+    def _check_dependencies_status(self, component_id):
+        """
+        Проверяет статус всех зависимостей компонента
+        
+        Args:
+            component_id: ID компонента для проверки
+            
+        Returns:
+            tuple: (all_ok: bool, failed_dependencies: list)
+                   all_ok = True если все зависимости установлены успешно
+                   failed_dependencies = список ID зависимостей в статусе 'error'
+        """
+        # Получаем конфигурацию компонента
+        config = None
+        
+        # ПРОВЕРКА 1: Динамический экземпляр из менеджера
+        if hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+            instance_config = self.wine_app_manager.get_instance_config(component_id)
+            if instance_config:
+                config = instance_config
+        
+        # ПРОВЕРКА 2: Существующий компонент из COMPONENTS_CONFIG
+        if not config:
+            if component_id not in COMPONENTS_CONFIG:
+                return (True, [])  # Если компонент не найден - считаем зависимости OK
+            config = COMPONENTS_CONFIG[component_id]
+        
+        # Получаем список зависимостей
+        dependencies = config.get('dependencies', [])
+        if not dependencies:
+            return (True, [])  # Нет зависимостей - все OK
+        
+        # Проверяем статус каждой зависимости
+        failed_dependencies = []
+        
+        if not self.status_manager:
+            # Если status_manager недоступен - не можем проверить, считаем все OK
+            return (True, [])
+        
+        for dep_id in dependencies:
+            # Получаем имя зависимости для status_manager
+            dep_config = None
+            if dep_id in COMPONENTS_CONFIG:
+                dep_config = COMPONENTS_CONFIG[dep_id]
+            elif hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+                dep_config = self.wine_app_manager.get_instance_config(dep_id)
+            
+            if not dep_config:
+                # Зависимость не найдена - пропускаем
+                continue
+            
+            dep_name = dep_config.get('name', dep_id)
+            
+            # Получаем статус зависимости
+            dep_status = self.status_manager.get_component_status(dep_id, dep_name)
+            dep_status_tag = dep_status[1] if isinstance(dep_status, tuple) and len(dep_status) >= 2 else None
+            
+            # Если зависимость в статусе 'error' - добавляем в список
+            if dep_status_tag == 'error':
+                failed_dependencies.append(dep_id)
+        
+        all_ok = len(failed_dependencies) == 0
+        return (all_ok, failed_dependencies)
+    
     def start_monitoring(self):
         """Начать мониторинг времени и дискового пространства (как в SystemUpdater)"""
         self.start_time = time.time()
@@ -13413,6 +13477,35 @@ class ComponentInstaller(object):
                         )
                     success = False
                     break
+                
+                # НОВОЕ: Проверяем статус зависимостей перед установкой компонента
+                dependencies_ok, failed_deps = self._check_dependencies_status(component_id)
+                if not dependencies_ok:
+                    # Есть зависимости в статусе 'error' - пропускаем установку дочернего компонента
+                    failed_deps_names = []
+                    for dep_id in failed_deps:
+                        dep_config = get_component_data(dep_id)
+                        if dep_config:
+                            failed_deps_names.append(dep_config.get('name', dep_id))
+                        elif hasattr(self, 'wine_app_manager') and self.wine_app_manager:
+                            dep_instance_config = self.wine_app_manager.get_instance_config(dep_id)
+                            if dep_instance_config:
+                                failed_deps_names.append(dep_instance_config.get('name', dep_id))
+                            else:
+                                failed_deps_names.append(dep_id)
+                        else:
+                            failed_deps_names.append(dep_id)
+                    
+                    print(f"Пропускаем установку {component_id}: зависимости не установлены: {', '.join(failed_deps_names)}", level='WARNING')
+                    print(f"Пропускаем установку компонента {component_id}: зависимости не установлены", gui_log=True)
+                    
+                    # Устанавливаем статус 'error' для пропущенного компонента
+                    if self.status_manager:
+                        self.status_manager.update_component_status(component_id, 'error')
+                        print(f"install_components() статус {component_id} обновлен на 'error' (зависимости не установлены)", level='DEBUG')
+                    
+                    success = False
+                    continue  # Пропускаем этот компонент, продолжаем со следующим
                 
                 # НОВОЕ: Получаем диапазон прогресса для этого компонента
                 progress_range = progress_ranges.get(component_id, (0.0, 100.0))
