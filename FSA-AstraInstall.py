@@ -1379,6 +1379,24 @@ COMPONENTS_CONFIG = {
         'description': 'Ярлык Astra.IDE на рабочем столе',
         'sort_order': 14
     },
+    'dxvk_disable_intel': {
+        'name': 'Отключение DXVK для Intel',
+        'category': 'wine_config',
+        'dependencies': ['astra_wineprefix'],
+        'wineprefix_path': '~/.wine-astraregul',
+        'operation_type': 'dxvk_toggle',
+        'operation_mode': 'disable',
+        'dll_list': ['d3d9.dll', 'd3d11.dll', 'dxgi.dll'],
+        'dll_directory': 'system32',
+        'disabled_suffix': '.dxvk_disabled',
+        'min_size': 512000,  # 500 КБ - безопасный порог для всех версий DXVK (встроенные DLL Wine обычно < 100 КБ)
+        'backup_dir': 'dxvk_backup',
+        'library_path': 'drive_c/windows/system32',
+        'check_paths': ['drive_c/windows/system32/d3d9.dll.dxvk_disabled', 'drive_c/windows/system32/d3d11.dll.dxvk_disabled', 'drive_c/windows/system32/dxgi.dll.dxvk_disabled'],
+        'gui_selectable': True,
+        'description': 'Отключение DXVK для Intel HD Graphics (решает проблему запуска Astra.IDE)',
+        'sort_order': 15,
+    },
 }
 
 
@@ -1935,6 +1953,31 @@ def check_component_status(component_id, wineprefix_path=None):
             return True
         
         return False
+    
+    # Специальная проверка для компонентов wine_config (используем handler)
+    if category == 'wine_config':
+        # НОВОЕ: Для компонентов wine_config используем handler для проверки статуса
+        # Создаем временный handler для проверки статуса
+        try:
+            # Получаем глобальный экземпляр GUI для доступа к handlers
+            gui_instance = sys._gui_instance if hasattr(sys, '_gui_instance') else None
+            if gui_instance and hasattr(gui_instance, 'component_handlers'):
+                handler = gui_instance.component_handlers.get('wine_config')
+                if handler:
+                    return handler.check_status(component_id, config)
+            
+            # Если GUI недоступен, создаем временный handler
+            handler = WineConfigHandler(
+                status_manager=None,
+                progress_manager=None,
+                universal_runner=None,
+                dual_logger=None,
+                home=os.path.expanduser('~')
+            )
+            return handler.check_status(component_id, config)
+        except Exception as e:
+            # Fallback на простую проверку через check_paths
+            pass
     
     # Специальная проверка для системных настроек (проверка значения файла)
     if check_method == 'system_config':
@@ -5519,6 +5562,426 @@ class SystemConfigHandler(ComponentHandler):
                     print(f"[DEBUG] {line}", level='DEBUG')
             self._update_status(component_id, 'error')
             return False
+
+class WineConfigHandler(ComponentHandler):
+# ============================================================================
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК НАСТРОЕК WINE
+# ============================================================================
+    """
+    Универсальный обработчик настроек Wine
+    
+    Поддерживает различные типы операций через конфигурацию компонентов.
+    Все параметры берутся из COMPONENTS_CONFIG, никаких жестко закодированных значений.
+    """
+    
+    def get_category(self) -> str:
+        return 'wine_config'
+    
+    @track_class_activity('WineConfigHandler')
+    def install(self, component_id: str, config: dict) -> bool:
+        """
+        Установка настройки Wine (применение изменения)
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+            
+        Returns:
+            bool: True если установка успешна
+        """
+        # Проверяем статус перед установкой
+        if self.check_status(component_id, config):
+            return True
+        
+        # Устанавливаем статус 'installing'
+        self._update_status(component_id, 'installing')
+        
+        operation_type = config.get('operation_type')
+        if not operation_type:
+            print(f"Ошибка: компонент {component_id} не имеет operation_type", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        # Диспетчеризация по типу операции
+        if operation_type == 'dxvk_toggle':
+            operation_mode = config.get('operation_mode', 'disable')
+            enable = (operation_mode == 'enable')
+            return self._handle_dll_toggle(component_id, config, enable=enable)
+        elif operation_type == 'dll_override':
+            return self._handle_dll_override(component_id, config, apply=True)
+        elif operation_type == 'registry_setting':
+            return self._handle_registry_setting(component_id, config, apply=True)
+        elif operation_type == 'wine_env_var':
+            return self._handle_wine_env_var(component_id, config, apply=True)
+        else:
+            print(f"Неизвестный тип операции: {operation_type}", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+    
+    @track_class_activity('WineConfigHandler')
+    def uninstall(self, component_id: str, config: dict) -> bool:
+        """
+        Удаление настройки Wine (откат изменения)
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+            
+        Returns:
+            bool: True если удаление успешно
+        """
+        # Устанавливаем статус 'removing'
+        self._update_status(component_id, 'removing')
+        
+        operation_type = config.get('operation_type')
+        if not operation_type:
+            print(f"Ошибка: компонент {component_id} не имеет operation_type", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        # Обратная операция
+        if operation_type == 'dxvk_toggle':
+            operation_mode = config.get('operation_mode', 'disable')
+            enable = (operation_mode == 'enable')
+            return self._handle_dll_toggle(component_id, config, enable=not enable)
+        elif operation_type == 'dll_override':
+            return self._handle_dll_override(component_id, config, apply=False)
+        elif operation_type == 'registry_setting':
+            return self._handle_registry_setting(component_id, config, apply=False)
+        elif operation_type == 'wine_env_var':
+            return self._handle_wine_env_var(component_id, config, apply=False)
+        else:
+            print(f"Неизвестный тип операции: {operation_type}", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+    
+    def check_status(self, component_id: str, config: dict) -> bool:
+        """
+        Проверка статуса настройки Wine
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+            
+        Returns:
+            bool: True если настройка применена, False если нет
+        """
+        operation_type = config.get('operation_type')
+        if not operation_type:
+            return False
+        
+        if operation_type == 'dxvk_toggle':
+            return self._check_dll_toggle_status(component_id, config)
+        elif operation_type == 'dll_override':
+            return self._check_dll_override_status(component_id, config)
+        elif operation_type == 'registry_setting':
+            return self._check_registry_setting_status(component_id, config)
+        elif operation_type == 'wine_env_var':
+            return self._check_wine_env_var_status(component_id, config)
+        else:
+            return False
+    
+    # ========================================================================
+    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # ========================================================================
+    
+    def _get_wineprefix_path(self, config: dict) -> Optional[str]:
+        """
+        Получить путь к WINEPREFIX из конфигурации
+        
+        Args:
+            config: Конфигурация компонента
+            
+        Returns:
+            Optional[str]: Полный путь к WINEPREFIX или None
+        """
+        wineprefix_path = config.get('wineprefix_path')
+        if not wineprefix_path:
+            print("Ошибка: wineprefix_path не указан в конфигурации", level='ERROR')
+            return None
+        return expand_user_path(wineprefix_path)
+    
+    def _create_backup_dir(self, component_id: str, config: dict) -> Optional[str]:
+        """
+        Создать директорию для резервных копий
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+            
+        Returns:
+            Optional[str]: Путь к директории резервных копий или None
+        """
+        wineprefix = self._get_wineprefix_path(config)
+        if not wineprefix:
+            return None
+        
+        backup_dir_name = config.get('backup_dir', f'{component_id}_backup')
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = os.path.join(wineprefix, f"{backup_dir_name}_{timestamp}")
+        os.makedirs(backup_dir, exist_ok=True)
+        return backup_dir
+    
+    def _update_status(self, component_id: str, status: str):
+        """Обновить статус компонента"""
+        if self.status_manager:
+            self.status_manager.update_component_status(component_id, status)
+    
+    # ========================================================================
+    # МЕТОДЫ ДЛЯ ОПЕРАЦИИ dxvk_toggle (универсальное переключение DLL)
+    # ========================================================================
+    
+    def _handle_dll_toggle(self, component_id: str, config: dict, enable: bool) -> bool:
+        """
+        Универсальное управление DLL (включение/отключение через переименование)
+        
+        Все параметры берутся из конфигурации:
+        - dll_list: список DLL для управления
+        - dll_directory: директория с DLL (по умолчанию system32)
+        - disabled_suffix: суффикс для отключенных файлов (по умолчанию .dxvk_disabled)
+        - min_size: минимальный размер файла для обработки (по умолчанию 1MB)
+        
+        Args:
+            component_id: ID компонента
+            config: Конфигурация компонента
+            enable: True для включения, False для отключения
+            
+        Returns:
+            bool: True если операция успешна
+        """
+        wineprefix = self._get_wineprefix_path(config)
+        if not wineprefix:
+            print(f"Ошибка: WINEPREFIX не получен для {component_id}", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        # Все параметры из конфигурации
+        dll_list = config.get('dll_list', [])
+        if not dll_list:
+            print(f"Ошибка: dll_list не указан в конфигурации компонента {component_id}", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        dll_directory = config.get('dll_directory', 'system32')
+        disabled_suffix = config.get('disabled_suffix', '.dxvk_disabled')
+        min_size = config.get('min_size', 1048576)  # 1MB по умолчанию
+        
+        # Формируем путь к директории с DLL
+        if dll_directory.startswith('drive_c'):
+            dll_dir = os.path.join(wineprefix, dll_directory)
+        else:
+            dll_dir = os.path.join(wineprefix, 'drive_c/windows', dll_directory)
+        
+        if not os.path.exists(dll_dir):
+            print(f"Директория с DLL не найдена: {dll_dir}", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        if enable:
+            # Включение: восстановление из резервной копии
+            return self._restore_dlls(component_id, config, dll_dir, dll_list, disabled_suffix)
+        else:
+            # Отключение: переименование DLL
+            return self._disable_dlls(component_id, config, dll_dir, dll_list, disabled_suffix, min_size)
+    
+    def _disable_dlls(self, component_id: str, config: dict, 
+                     dll_dir: str, dll_list: list, disabled_suffix: str, min_size: int) -> bool:
+        """Отключение DLL (переименование)"""
+        backup_dir = self._create_backup_dir(component_id, config)
+        if not backup_dir:
+            print(f"Не удалось создать директорию для резервных копий", level='ERROR')
+            return False
+        
+        disabled_count = 0
+        skipped_count = 0
+        error_count = 0
+        
+        for dll_name in dll_list:
+            dll_path = os.path.join(dll_dir, dll_name)
+            disabled_path = f"{dll_path}{disabled_suffix}"
+            
+            if os.path.exists(dll_path):
+                # Проверяем размер файла, если указан min_size
+                try:
+                    size = os.path.getsize(dll_path)
+                    if min_size > 0 and size < min_size:
+                        skipped_count += 1
+                        continue  # Пропускаем файлы меньше минимального размера
+                    
+                    # Проверяем, не отключен ли уже
+                    if os.path.exists(disabled_path):
+                        disabled_count += 1
+                        continue
+                    
+                    # Создаем резервную копию
+                    backup_path = os.path.join(backup_dir, dll_name)
+                    shutil.copy2(dll_path, backup_path)
+                    
+                    # Переименовываем
+                    os.rename(dll_path, disabled_path)
+                    
+                    # Проверяем результат
+                    if os.path.exists(disabled_path) and not os.path.exists(dll_path):
+                        disabled_count += 1
+                        print(f"DLL отключен: {dll_name}", gui_log=True)
+                    else:
+                        print(f"Ошибка: файл {dll_name} не переименован корректно", level='ERROR')
+                        error_count += 1
+                except Exception as e:
+                    print(f"Ошибка при отключении {dll_name}: {e}", level='ERROR')
+                    error_count += 1
+        
+        if disabled_count > 0:
+            print(f"Отключено DLL: {disabled_count} из {len(dll_list)}", level='INFO')
+            self._update_status(component_id, 'ok')
+            return True
+        else:
+            if skipped_count > 0:
+                print(f"DLL не найдены для отключения (пропущено {skipped_count} файлов)", level='WARNING')
+            else:
+                print(f"DLL не найдены для отключения", level='WARNING')
+            self._update_status(component_id, 'missing')
+            return False
+
+    def _restore_dlls(self, component_id: str, config: dict,
+                     dll_dir: str, dll_list: list, disabled_suffix: str) -> bool:
+        """Восстановление DLL из резервной копии"""
+        wineprefix = self._get_wineprefix_path(config)
+        if not wineprefix:
+            print(f"Ошибка: WINEPREFIX не получен для восстановления", level='ERROR')
+            return False
+        
+        backup_dir_name = config.get('backup_dir', f'{component_id}_backup')
+        
+        # Ищем последнюю резервную копию
+        backup_dirs = []
+        if os.path.exists(wineprefix):
+            for item in os.listdir(wineprefix):
+                item_path = os.path.join(wineprefix, item)
+                if item.startswith(backup_dir_name) and os.path.isdir(item_path):
+                    backup_dirs.append(item)
+        
+        if not backup_dirs:
+            print("Резервные копии не найдены", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+        
+        # Используем последнюю резервную копию
+        latest_backup = sorted(backup_dirs)[-1]
+        backup_dir = os.path.join(wineprefix, latest_backup)
+        
+        restored_count = 0
+        error_count = 0
+        
+        for dll_name in dll_list:
+            disabled_path = os.path.join(dll_dir, f"{dll_name}{disabled_suffix}")
+            backup_path = os.path.join(backup_dir, dll_name)
+            dll_path = os.path.join(dll_dir, dll_name)
+            
+            if os.path.exists(disabled_path) and os.path.exists(backup_path):
+                try:
+                    # Восстанавливаем из резервной копии
+                    shutil.copy2(backup_path, dll_path)
+                    
+                    # Проверяем результат копирования
+                    if not os.path.exists(dll_path):
+                        print(f"Ошибка: файл {dll_name} не восстановлен", level='ERROR')
+                        error_count += 1
+                        continue
+                    
+                    # Удаляем отключенный файл
+                    os.remove(disabled_path)
+                    
+                    # Проверяем результат
+                    if not os.path.exists(disabled_path) and os.path.exists(dll_path):
+                        restored_count += 1
+                        print(f"DLL восстановлен: {dll_name}", gui_log=True)
+                    else:
+                        print(f"Ошибка: файл {dll_name} не восстановлен корректно", level='ERROR')
+                        error_count += 1
+                except Exception as e:
+                    print(f"Ошибка при восстановлении {dll_name}: {e}", level='ERROR')
+                    error_count += 1
+        
+        if restored_count > 0:
+            print(f"Восстановлено DLL: {restored_count} из {len(dll_list)}", level='INFO')
+            self._update_status(component_id, 'missing')
+            return True
+        else:
+            print(f"Не удалось восстановить DLL", level='ERROR')
+            self._update_status(component_id, 'error')
+            return False
+    
+    def _check_dll_toggle_status(self, component_id: str, config: dict) -> bool:
+        """
+        Проверка статуса DLL (отключены ли)
+        
+        Returns:
+            bool: True если DLL отключены (есть файлы с суффиксом)
+        """
+        wineprefix = self._get_wineprefix_path(config)
+        if not wineprefix:
+            return False
+        
+        dll_list = config.get('dll_list', [])
+        if not dll_list:
+            return False
+        
+        dll_directory = config.get('dll_directory', 'system32')
+        disabled_suffix = config.get('disabled_suffix', '.dxvk_disabled')
+        
+        # Формируем путь к директории с DLL
+        if dll_directory.startswith('drive_c'):
+            dll_dir = os.path.join(wineprefix, dll_directory)
+        else:
+            dll_dir = os.path.join(wineprefix, 'drive_c/windows', dll_directory)
+        
+        if not os.path.exists(dll_dir):
+            return False
+        
+        # Проверяем наличие файлов с суффиксом
+        disabled_count = 0
+        for dll_name in dll_list:
+            disabled_path = os.path.join(dll_dir, f"{dll_name}{disabled_suffix}")
+            if os.path.exists(disabled_path):
+                disabled_count += 1
+        
+        # Если хотя бы один DLL отключен - считаем, что настройка применена
+        return disabled_count > 0
+    
+    # ========================================================================
+    # МЕТОДЫ ДЛЯ ДРУГИХ ОПЕРАЦИЙ (заглушки для будущей реализации)
+    # ========================================================================
+    
+    def _handle_dll_override(self, component_id: str, config: dict, apply: bool) -> bool:
+        """Управление DLL overrides (будущая реализация)"""
+        print(f"DLL override операция пока не реализована для {component_id}", level='WARNING')
+        self._update_status(component_id, 'error')
+        return False
+    
+    def _handle_registry_setting(self, component_id: str, config: dict, apply: bool) -> bool:
+        """Управление настройками реестра (будущая реализация)"""
+        print(f"Registry setting операция пока не реализована для {component_id}", level='WARNING')
+        self._update_status(component_id, 'error')
+        return False
+    
+    def _handle_wine_env_var(self, component_id: str, config: dict, apply: bool) -> bool:
+        """Управление переменными окружения (будущая реализация)"""
+        print(f"Wine env var операция пока не реализована для {component_id}", level='WARNING')
+        self._update_status(component_id, 'error')
+        return False
+    
+    def _check_dll_override_status(self, component_id: str, config: dict) -> bool:
+        """Проверка статуса DLL overrides"""
+        return False
+    
+    def _check_registry_setting_status(self, component_id: str, config: dict) -> bool:
+        """Проверка статуса настроек реестра"""
+        return False
+    
+    def _check_wine_env_var_status(self, component_id: str, config: dict) -> bool:
+        """Проверка статуса переменных окружения"""
+        return False
 
 class WineEnvironmentHandler(ComponentHandler):
 # ============================================================================
@@ -13859,6 +14322,7 @@ class AutomationGUI(object):
         self.component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
         self.component_handlers['apt_packages'] = AptPackageHandler(**common_params)
         self.component_handlers['wine_application'] = WineApplicationHandler(**common_params)
+        self.component_handlers['wine_config'] = WineConfigHandler(**common_params)
         
         print("Handlers зарегистрированы: %s" % ', '.join(self.component_handlers.keys()))
         
@@ -21093,6 +21557,24 @@ class AutomationGUI(object):
         else:
             # Используем стандартный префикс
             wineprefix_path = self._get_wineprefix()
+        
+        # НОВОЕ: Для компонентов категории wine_config используем library_path
+        if config.get('category') == 'wine_config':
+            library_path = config.get('library_path')
+            if library_path:
+                # Путь к библиотеке относительно WINEPREFIX
+                if library_path.startswith('drive_c/'):
+                    full_path = os.path.join(wineprefix_path, library_path)
+                else:
+                    full_path = os.path.join(wineprefix_path, 'drive_c/windows', library_path)
+                full_path = os.path.abspath(full_path)
+                if os.path.exists(full_path):
+                    return full_path
+                # Если путь не существует, возвращаем родительскую директорию
+                parent_dir = os.path.dirname(full_path)
+                if os.path.exists(parent_dir):
+                    return parent_dir
+                return full_path  # Возвращаем путь даже если не существует (пользователь увидит ошибку)
         
         # ИСПРАВЛЕНИЕ: Используем check_paths напрямую (те же пути, по которым проверяется установка)
         # Получаем check_paths из конфигурации
@@ -31446,7 +31928,6 @@ class SelfUpdater:
                     sys._gui_instance.root.destroy()
                 except Exception as e:
                     print(f"Ошибка при запуске нового бинарника: {e}", level="ERROR")
-                    import traceback
                     print(traceback.format_exc(), level="ERROR")
                 finally:
                     # Небольшая задержка перед завершением старого процесса
@@ -31670,6 +32151,7 @@ def main():
                     component_handlers['desktop_shortcut'] = DesktopShortcutHandler(**common_params)
                     component_handlers['apt_packages'] = AptPackageHandler(**common_params)
                     component_handlers['wine_application'] = WineApplicationHandler(**common_params)
+                    component_handlers['wine_config'] = WineConfigHandler(**common_params)
                     
                     print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
                     
