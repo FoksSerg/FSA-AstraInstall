@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.5.196 (2025.12.21)
+Версия: V3.5.197 (2025.12.22)
 Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.5.196 (2025.12.21)"
+APP_VERSION = "V3.5.197 (2025.12.22)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -15490,6 +15490,8 @@ class AutomationGUI(object):
     
     def _save_column_widths_to_settings(self, settings):
         """Сохраняет ширину колонок таблиц в настройки"""
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[DEBUG] _save_column_widths_to_settings вызван")
         try:
             # Обновляем виджеты перед получением ширины колонок
             self.root.update_idletasks()
@@ -15549,6 +15551,16 @@ class AutomationGUI(object):
                         pass
                 if repos_columns:
                     settings['repos_table_columns'] = repos_columns
+            
+            # Сохраняем позицию sash панели со снимками файловой системы
+            if hasattr(self, 'fs_main_paned') and self.fs_main_paned:
+                try:
+                    self.root.update_idletasks()
+                    sash_pos = self.fs_main_paned.sashpos(0)
+                    if sash_pos is not None and sash_pos > 0:
+                        settings['fs_snapshots_panel_width'] = int(sash_pos)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[WARNING] Ошибка сохранения ширины колонок: {e}", level='DEBUG')
     
@@ -15560,6 +15572,8 @@ class AutomationGUI(object):
             table_name: Имя таблицы для загрузки ('packages', 'wine', 'processes' или 'repos'). 
                        Если None, загружает для всех доступных таблиц.
         """
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[DEBUG] _load_column_widths_from_settings вызван, table_name = {table_name}")
         try:
             # Загружаем ширину колонок таблицы пакетов
             if (table_name is None or table_name == 'packages') and \
@@ -15608,6 +15622,15 @@ class AutomationGUI(object):
                             self.repos_tree.column(col, width=width)
                         except Exception:
                             pass
+            
+            # Загружаем позицию sash панели со снимками файловой системы
+            if (table_name is None or table_name == 'fs_snapshots') and \
+               'fs_snapshots_panel_width' in settings and \
+               hasattr(self, 'fs_main_paned') and self.fs_main_paned:
+                saved_width = settings['fs_snapshots_panel_width']
+                if saved_width and saved_width > 0:
+                    # Сохраняем ширину для применения через событие <Configure>
+                    self._pending_fs_panel_width = int(saved_width)
         except Exception as e:
             print(f"[WARNING] Ошибка загрузки ширины колонок: {e}", level='DEBUG')
     
@@ -17399,9 +17422,16 @@ class AutomationGUI(object):
         self.filesystem_filter = FilesystemFilter()
         self.filesystem_baseline_snapshot = None
         self.filesystem_scan_thread = None
-        self.filesystem_baseline_just_created = False  # Флаг первой проверки после создания baseline
+        # УБИРАЕМ неиспользуемый флаг первой проверки - baseline должен создаваться полностью с первого раза
+        # self.filesystem_baseline_just_created = False
         self.filesystem_check_thread_running = False  # Флаг работы потока проверки (предотвращает множественные потоки)
         self.filesystem_time_update_timer = None  # Таймер для обновления счетчика времени
+        self.filesystem_auto_check_enabled = False  # ВРЕМЕННО ОТКЛЮЧЕНО: автоматические проверки (включать после отладки создания снимков)
+        
+        # Система множественных снимков
+        self.filesystem_snapshots = []  # Список всех снимков: [{'id': int, 'name': str, 'timestamp': datetime, 'snapshot': DirectorySnapshot, 'files_count': int, 'is_baseline': bool}, ...]
+        self.filesystem_next_snapshot_id = 1  # Счетчик ID для новых снимков
+        self.filesystem_selected_snapshot = None  # Выбранный снимок для отображения (если None, используется baseline)
         
         # Панель управления (2 строки, 2 колонки)
         control_frame = self.tk.Frame(self.filesystem_monitor_frame)
@@ -17460,6 +17490,14 @@ class AutomationGUI(object):
                                                    font=('Arial', 8), fg='gray')
         self.fs_baseline_label.pack(side=self.tk.LEFT)
         
+        # Разделитель
+        self.tk.Label(row3_control, text="|", font=('Arial', 9), fg='gray').pack(side=self.tk.LEFT, padx=5)
+        
+        # Поле прогресса сканирования (более заметное)
+        self.fs_progress_label = self.tk.Label(row3_control, text="Прогресс: ожидание...", 
+                                               font=('Arial', 9, 'bold'), fg='blue')
+        self.fs_progress_label.pack(side=self.tk.LEFT, padx=(5, 0))
+        
         # Вкладки представлений
         view_tabs_frame = self.tk.Frame(self.filesystem_monitor_frame)
         view_tabs_frame.pack(fill=self.tk.X, padx=10, pady=5)
@@ -17490,9 +17528,108 @@ class AutomationGUI(object):
                                                       command=self._switch_filesystem_view)
         self.fs_time_view_btn.pack(side=self.tk.LEFT, padx=2)
         
-        # Прокручиваемая область для аккордеона
-        canvas_frame = self.tk.Frame(self.filesystem_monitor_frame)
-        canvas_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        # Основной контейнер с двумя колонками (PanedWindow для изменения ширины)
+        main_container = self.tk.Frame(self.filesystem_monitor_frame)
+        main_container.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаем PanedWindow для изменения ширины левой панели
+        self.fs_main_paned = self.ttk.PanedWindow(main_container, orient=self.tk.HORIZONTAL)
+        self.fs_main_paned.pack(fill=self.tk.BOTH, expand=True)
+        
+        # Применяем сохраненную ширину когда PanedWindow получит реальный размер
+        def apply_saved_width_on_configure(event):
+            if hasattr(self, '_pending_fs_panel_width') and event.width > 100:
+                try:
+                    self.fs_main_paned.sashpos(0, self._pending_fs_panel_width)
+                    delattr(self, '_pending_fs_panel_width')
+                except Exception:
+                    pass
+        self.fs_main_paned.bind('<Configure>', apply_saved_width_on_configure)
+        
+        # Левая колонка: боковая панель со снимками
+        left_panel = self.tk.Frame(self.fs_main_paned, bg='#f0f0f0')
+        left_panel.config(width=250)  # Ширина по умолчанию (будет переопределена из настроек)
+        left_panel.pack_propagate(False)  # Фиксированная ширина
+        self.fs_main_paned.add(left_panel, weight=0)
+        
+        # Сохраняем ссылку на left_panel для сохранения ширины
+        self.fs_left_panel = left_panel
+        
+        # Кнопка создания снимка
+        create_snapshot_btn = self.tk.Button(
+            left_panel,
+            text="[Снимок] Создать снимок",
+            command=self._create_manual_snapshot,
+            width=25
+        )
+        create_snapshot_btn.pack(pady=10, padx=5)
+        
+        # Разделитель
+        separator = self.tk.Frame(left_panel, height=2, bg='#ccc')
+        separator.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        # Выбор снимка для сравнения
+        compare_label = self.tk.Label(left_panel, text="Сравнить с:", font=('Arial', 9, 'bold'))
+        compare_label.pack(anchor='w', padx=5, pady=(5, 2))
+        
+        self.fs_compare_var = self.tk.StringVar()
+        self.fs_compare_dropdown = self.ttk.Combobox(
+            left_panel,
+            textvariable=self.fs_compare_var,
+            state='readonly',
+            width=22
+        )
+        self.fs_compare_dropdown.pack(padx=5, pady=2)
+        self.fs_compare_dropdown.bind('<<ComboboxSelected>>', self._on_compare_snapshot_selected)
+        
+        # Разделитель
+        separator2 = self.tk.Frame(left_panel, height=2, bg='#ccc')
+        separator2.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        # Список контрольных точек
+        snapshots_label = self.tk.Label(
+            left_panel,
+            text="Контрольные точки:",
+            font=('Arial', 9, 'bold')
+        )
+        snapshots_label.pack(anchor='w', padx=5, pady=(5, 2))
+        
+        # Прокручиваемый список снимков
+        snapshots_frame = self.tk.Frame(left_panel)
+        snapshots_frame.pack(fill=self.tk.BOTH, expand=True, padx=5, pady=5)
+        
+        snapshots_scrollbar = self.ttk.Scrollbar(snapshots_frame)
+        snapshots_scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+        
+        self.fs_snapshots_listbox = self.tk.Listbox(
+            snapshots_frame,
+            yscrollcommand=snapshots_scrollbar.set,
+            font=('Arial', 8),
+            selectmode=self.tk.SINGLE
+        )
+        self.fs_snapshots_listbox.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+        snapshots_scrollbar.config(command=self.fs_snapshots_listbox.yview)
+        self.fs_snapshots_listbox.bind('<<ListboxSelect>>', self._on_snapshot_selected)
+        
+        # Добавляем прокрутку мышкой для Linux (Button-4 и Button-5)
+        def _on_listbox_mousewheel(event):
+            if event.num == 4:  # Прокрутка вверх (Linux)
+                self.fs_snapshots_listbox.yview_scroll(-1, "units")
+            elif event.num == 5:  # Прокрутка вниз (Linux)
+                self.fs_snapshots_listbox.yview_scroll(1, "units")
+            elif hasattr(event, 'delta'):  # Windows/macOS
+                self.fs_snapshots_listbox.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        self.fs_snapshots_listbox.bind("<Button-4>", _on_listbox_mousewheel)
+        self.fs_snapshots_listbox.bind("<Button-5>", _on_listbox_mousewheel)
+        self.fs_snapshots_listbox.bind("<MouseWheel>", _on_listbox_mousewheel)
+        
+        # Правая колонка: прокручиваемая область с аккордеоном
+        right_frame = self.tk.Frame(self.fs_main_paned)
+        self.fs_main_paned.add(right_frame, weight=1)
+        
+        canvas_frame = self.tk.Frame(right_frame)
+        canvas_frame.pack(fill=self.tk.BOTH, expand=True)
         
         self.fs_canvas = self.tk.Canvas(canvas_frame, bg='white')
         self.fs_scrollbar = self.ttk.Scrollbar(canvas_frame, orient=self.tk.VERTICAL, 
@@ -17532,22 +17669,37 @@ class AutomationGUI(object):
     
     def _get_monitored_directories(self):
         """Возвращает список директорий для мониторинга (все директории компонентов)"""
+        # ВАЖНО: Для полного сканирования файловой системы сканируем корень "/"
+        # Это позволит получить все файлы, как в тестовом скрипте scan_full_filesystem.py
+        # ВРЕМЕННО: ограничиваем сканирование несколькими папками для тестирования
         monitored_dirs = [
-            # Кэш Wine и Winetricks
-            os.path.expanduser('~/.cache/wine'),
-            os.path.expanduser('~/.cache/winetricks'),
-            
-            # Wine установки
-            '/opt/wine-9.0',
-            '/opt/wine-astraregul',
-            
-            # Системные директории
-            '/var/cache/apt',
-            '/usr/local',
+            '/home',
             '/opt',
-            '/etc',
-            '/usr/bin',  # wine, winetricks
+            '/usr/bin',
         ]
+        
+        # ПОЛНОЕ СКАНИРОВАНИЕ (раскомментировать когда нужно):
+        # monitored_dirs = [
+        #     '/',  # Корневая директория - сканируем всю файловую систему
+        # ]
+        
+        # Старый список директорий (закомментирован для полного сканирования):
+        # monitored_dirs = [
+        #     # Кэш Wine и Winetricks
+        #     os.path.expanduser('~/.cache/wine'),
+        #     os.path.expanduser('~/.cache/winetricks'),
+        #     
+        #     # Wine установки
+        #     '/opt/wine-9.0',
+        #     '/opt/wine-astraregul',
+        #     
+        #     # Системные директории
+        #     '/var/cache/apt',
+        #     '/usr/local',
+        #     '/opt',
+        #     '/etc',
+        #     '/usr/bin',  # wine, winetricks
+        # ]
         
         # Добавляем drive_c для всех wineprefix из конфигурации компонентов
         for component_id, component_config in COMPONENTS_CONFIG.items():
@@ -17591,44 +17743,133 @@ class AutomationGUI(object):
         # Запускаем создание базового снимка в фоновом потоке (только в памяти)
         self.fs_start_button.config(state=self.tk.DISABLED, text="... Сканирование...")
         self.fs_baseline_label.config(text="Создание базового снимка...", fg='orange')
+        if hasattr(self, 'fs_progress_label'):
+            self.fs_progress_label.config(text="Инициализация...", fg='blue')
         
         def _scan_in_background():
             try:
+                print(f"[FilesystemMonitor] === НАЧАЛО СОЗДАНИЯ BASELINE ===")
+                start_time = time.time()
+                
                 # ВСЕГДА создаем новый снимок в памяти (без кеша на диск)
                 # Получаем список директорий для мониторинга
                 monitored_dirs = self._get_monitored_directories()
+                print(f"[FilesystemMonitor] Найдено директорий для сканирования: {len(monitored_dirs)}")
+                for i, dir_path in enumerate(monitored_dirs, 1):
+                    print(f"[FilesystemMonitor]   {i}. {dir_path}")
                 
-                # Создаем объединенный снимок только для этих директорий
+                # ПАРАЛЛЕЛЬНОЕ сканирование директорий для ускорения
+                results = {}
+                threads = []
+                lock = threading.Lock()
+                completed_dirs = [0]  # Используем список для изменения из lambda
+                
+                def scan_dir(dir_path):
+                    """Функция сканирования одной директории в отдельном потоке"""
+                    thread_start_time = time.time()
+                    try:
+                        if not os.path.exists(dir_path):
+                            print(f"[FilesystemMonitor] Пропуск несуществующей директории: {dir_path}")
+                            return
+                        
+                        print(f"[FilesystemMonitor] [ПОТОК] Начало сканирования: {dir_path}")
+                        
+                        # Callback для обновления прогресса
+                        def update_progress(dir_path_inner, files_count, current_dir):
+                            """Обновление прогресса сканирования в UI"""
+                            progress_text = f"{os.path.basename(dir_path_inner)}: {files_count:,} файлов"
+                            if current_dir and current_dir != dir_path_inner:
+                                current_rel = os.path.relpath(current_dir, dir_path_inner)
+                                # Ограничиваем длину пути (максимум 50 символов) для предотвращения слишком длинных строк
+                                if len(current_rel) > 50:
+                                    # Берем только последние 50 символов и добавляем "..."
+                                    current_rel = "..." + current_rel[-47:]
+                                progress_text += f" | {current_rel}"
+                            self.root.after(0, lambda t=progress_text: self.fs_progress_label.config(text=f"Прогресс: {t}", fg='blue') if hasattr(self, 'fs_progress_label') else None)
+                        
+                        # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                        dir_snapshot = DirectorySnapshot(
+                            dir_path, 
+                            max_depth=None,  # Без ограничения глубины для baseline
+                            max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
+                            calculate_hashes=False,  # Не вычисляем хеши для производительности
+                            progress_callback=update_progress  # Callback для обновления прогресса
+                        )
+                        
+                        thread_elapsed = time.time() - thread_start_time
+                        files_in_dir = len(dir_snapshot.files)
+                        print(f"[FilesystemMonitor] [ПОТОК] Завершено: {dir_path} | Файлов: {files_in_dir:,} | Время: {thread_elapsed:.2f}с")
+                        
+                        with lock:
+                            results[dir_path] = dir_snapshot
+                            completed_dirs[0] += 1
+                            # Обновляем прогресс
+                            progress_text = f"Сканирование: {completed_dirs[0]}/{len(monitored_dirs)} директорий"
+                            self.root.after(0, lambda t=progress_text: self.fs_progress_label.config(text=t, fg='blue') if hasattr(self, 'fs_progress_label') else None)
+                    except Exception as e:
+                        print(f"[FilesystemMonitor] [ОШИБКА] Ошибка сканирования {dir_path}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Запускаем потоки для каждой директории
+                print(f"[FilesystemMonitor] Запуск {len(monitored_dirs)} потоков сканирования...")
+                for dir_path in monitored_dirs:
+                    thread = threading.Thread(
+                        target=scan_dir,
+                        args=(dir_path,),
+                        name=f"ScanThread-{os.path.basename(dir_path)}"
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                
+                print(f"[FilesystemMonitor] Ожидание завершения всех потоков...")
+                # Ждём завершения всех потоков
+                for i, thread in enumerate(threads, 1):
+                    thread.join()
+                    print(f"[FilesystemMonitor] Поток {i}/{len(threads)} завершен")
+                
+                scan_elapsed = time.time() - start_time
+                print(f"[FilesystemMonitor] Все потоки завершены за {scan_elapsed:.2f}с")
+                
+                # Объединяем результаты из всех потоков
+                print(f"[FilesystemMonitor] Начало объединения результатов из {len(results)} директорий...")
+                merge_start_time = time.time()
                 all_files = {}
                 all_directories = set()
                 total_files = 0
                 
-                for dir_path in monitored_dirs:
-                    if os.path.exists(dir_path):
-                        try:
-                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
-                            dir_snapshot = DirectorySnapshot(
-                                dir_path, 
-                                max_depth=None,  # Без ограничения глубины для baseline
-                                max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
-                                calculate_hashes=False  # Не вычисляем хеши для производительности
-                            )
-                            # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
-                            for rel_path, file_info in dir_snapshot.files.items():
-                                if rel_path == '.':
-                                    prefixed_path = dir_path
-                                else:
-                                    prefixed_path = os.path.join(dir_path, rel_path)
-                                all_files[prefixed_path] = file_info
-                            for rel_dir in dir_snapshot.directories:
-                                if rel_dir == '.':
-                                    prefixed_dir = dir_path
-                                else:
-                                    prefixed_dir = os.path.join(dir_path, rel_dir)
-                                all_directories.add(prefixed_dir)
-                            total_files += dir_snapshot.files_scanned
-                        except Exception as e:
-                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                for dir_path, dir_snapshot in results.items():
+                    files_before = len(all_files)
+                    dirs_before = len(all_directories)
+                    
+                    # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
+                    for rel_path, file_info in dir_snapshot.files.items():
+                        if rel_path == '.':
+                            prefixed_path = dir_path
+                        else:
+                            prefixed_path = os.path.join(dir_path, rel_path)
+                        all_files[prefixed_path] = file_info
+                    for rel_dir in dir_snapshot.directories:
+                        if rel_dir == '.':
+                            prefixed_dir = dir_path
+                        else:
+                            prefixed_dir = os.path.join(dir_path, rel_dir)
+                        all_directories.add(prefixed_dir)
+                    total_files += dir_snapshot.files_scanned
+                    
+                    files_added = len(all_files) - files_before
+                    dirs_added = len(all_directories) - dirs_before
+                    print(f"[FilesystemMonitor] Объединение {dir_path}: +{files_added:,} файлов, +{dirs_added:,} папок (всего: {len(all_files):,} файлов)")
+                
+                merge_elapsed = time.time() - merge_start_time
+                # Проверяем количество файлов после объединения
+                actual_files_count = len(all_files)
+                print(f"[FilesystemMonitor] === ОБЪЕДИНЕНИЕ ЗАВЕРШЕНО ===")
+                print(f"[FilesystemMonitor] Время объединения: {merge_elapsed:.2f}с")
+                print(f"[FilesystemMonitor] ИТОГО: {actual_files_count:,} файлов, {len(all_directories):,} папок из {len(results)} директорий")
+                print(f"[FilesystemMonitor] Сумма files_scanned из снимков: {total_files:,}")
+                print(f"[FilesystemMonitor] Реальное количество в словаре: {actual_files_count:,}")
                 
                 # Создаем виртуальный снимок для корня
                 snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
@@ -17636,20 +17877,81 @@ class AutomationGUI(object):
                 snapshot.timestamp = datetime.datetime.now()
                 snapshot.files = all_files
                 snapshot.directories = all_directories
-                snapshot.files_scanned = total_files
+                # Используем реальное количество файлов из словаря, а не сумму из files_scanned
+                snapshot.files_scanned = actual_files_count
                 snapshot.directories_scanned = len(all_directories)
                 snapshot.scan_duration = 0.0
                 snapshot.hash_calculation_time = 0.0
                 snapshot.memory_usage = 0
                 snapshot.scan_start_time = None
                 
+                total_elapsed = time.time() - start_time
+                print(f"[FilesystemMonitor] === BASELINE СОЗДАН ===")
+                print(f"[FilesystemMonitor] Общее время создания: {total_elapsed:.2f}с")
+                print(f"[FilesystemMonitor] Финальное количество файлов: {actual_files_count:,}")
+                
+                # ПРИНУДИТЕЛЬНО: вызываем отображение структуры сразу после создания baseline
+                def _force_display_after_baseline():
+                    try:
+                        if hasattr(self, 'dual_logger') and self.dual_logger:
+                            self.dual_logger.write_analysis("[FS_DISPLAY] === ПРИНУДИТЕЛЬНЫЙ ВЫЗОВ ПОСЛЕ BASELINE ===")
+                            self.dual_logger.write_analysis(f"[FS_DISPLAY] baseline создан: {actual_files_count:,} файлов")
+                        
+                        # Устанавливаем режим "structure"
+                        if hasattr(self, 'fs_view_var'):
+                            self.fs_view_var.set("structure")
+                        if hasattr(self, 'fs_structure_view_btn'):
+                            self.fs_structure_view_btn.select()
+                        
+                        # Очищаем аккордеон
+                        if hasattr(self, 'fs_accordion_frame') and self.fs_accordion_frame:
+                            for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
+                                widget.destroy()
+                        
+                        # ПРИНУДИТЕЛЬНО вызываем отображение структуры
+                        if hasattr(self, 'dual_logger') and self.dual_logger:
+                            self.dual_logger.write_analysis("[FS_DISPLAY] Вызываю _display_structure() ПРИНУДИТЕЛЬНО")
+                        self._display_structure()
+                        
+                        if hasattr(self, 'dual_logger') and self.dual_logger:
+                            self.dual_logger.write_analysis("[FS_DISPLAY] _display_structure() завершен")
+                        
+                        # Обновляем статистику и прокрутку
+                        if hasattr(self, '_update_filesystem_statistics'):
+                            self._update_filesystem_statistics()
+                        if hasattr(self, 'fs_canvas'):
+                            self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+                    except Exception as e:
+                        if hasattr(self, 'dual_logger') and self.dual_logger:
+                            self.dual_logger.write_analysis(f"[FS_DISPLAY] ОШИБКА при принудительном отображении: {e}")
+                            import traceback
+                            self.dual_logger.write_analysis(f"[FS_DISPLAY] Трассировка: {traceback.format_exc()}")
+                
+                # Вызываем принудительно через root.after
+                self.root.after(0, _force_display_after_baseline)
+                
                 # НЕ сохраняем на диск - работаем только в памяти
-                self.root.after(0, lambda: self.fs_baseline_label.config(
-                    text=f"Базовый снимок: / ({snapshot.files_scanned:,} файлов)".replace(',', ' ') + " | В памяти", 
+                # Фиксируем значение в lambda для правильного захвата
+                files_count_for_ui = actual_files_count
+                self.root.after(0, lambda count=files_count_for_ui: self.fs_baseline_label.config(
+                    text=f"Базовый снимок: / ({count:,} файлов)".replace(',', ' ') + " | В памяти", 
                     fg='green'))
+                self.root.after(0, lambda: self.fs_progress_label.config(text="Готово", fg='green') if hasattr(self, 'fs_progress_label') else None)
                 
                 # Устанавливаем базовый снимок в памяти
                 self.filesystem_baseline_snapshot = snapshot
+                
+                # Добавляем baseline в список снимков как "Стартовый"
+                baseline_snapshot_entry = {
+                    'id': 0,  # ID 0 зарезервирован для baseline
+                    'name': 'Стартовый',
+                    'timestamp': snapshot.timestamp,
+                    'snapshot': snapshot,
+                    'files_count': actual_files_count,
+                    'is_baseline': True
+                }
+                self.filesystem_snapshots = [baseline_snapshot_entry]  # Заменяем список (baseline всегда первый)
+                self.filesystem_next_snapshot_id = 1  # Следующий ID начинается с 1
                 
                 # Создаем монитор
                 self.filesystem_monitor = DirectoryMonitor()
@@ -17660,7 +17962,11 @@ class AutomationGUI(object):
                 # Запускаем мониторинг
                 self.filesystem_monitoring_active = True
                 self.filesystem_start_time = datetime.datetime.now()
-                self.filesystem_baseline_just_created = True  # Флаг первой проверки после создания baseline
+                # УБИРАЕМ флаг первой проверки - baseline должен создаваться полностью с первого раза
+                # self.filesystem_baseline_just_created = True
+                
+                # Обновляем список снимков в UI
+                self.root.after(0, self._update_snapshots_list)
                 
                 # Обновляем GUI
                 self.root.after(0, self._update_filesystem_controls_after_start)
@@ -17670,8 +17976,9 @@ class AutomationGUI(object):
                 # Запускаем отдельный таймер для обновления счетчика времени (независимо от проверки)
                 self._start_filesystem_time_update_timer()
                 
-                # Запускаем автоматическое обновление (первая проверка пропустит поиск новых файлов)
-                self.root.after(2000, self._auto_refresh_filesystem_monitor)
+                # Запускаем автоматическое обновление через 5 секунд (даем время baseline полностью создаться)
+                # УБИРАЕМ первую проверку - она не нужна, если baseline создается правильно
+                self.root.after(5000, self._auto_refresh_filesystem_monitor)
                 
             except Exception as e:
                 print(f"[FilesystemMonitor] Ошибка при создании базового снимка: {e}")
@@ -17729,42 +18036,73 @@ class AutomationGUI(object):
                 # Получаем список директорий для мониторинга
                 monitored_dirs = self._get_monitored_directories()
                 
+                # ПАРАЛЛЕЛЬНОЕ сканирование директорий для ускорения
+                results = {}
+                threads = []
+                lock = threading.Lock()
+                
+                def scan_dir(dir_path):
+                    """Функция сканирования одной директории в отдельном потоке"""
+                    try:
+                        if not os.path.exists(dir_path):
+                            return
+                        
+                        # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                        dir_snapshot = DirectorySnapshot(
+                            dir_path,
+                            max_depth=None,  # Без ограничения глубины для baseline
+                            max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
+                            calculate_hashes=False  # Не вычисляем хеши для производительности
+                        )
+                        
+                        with lock:
+                            results[dir_path] = dir_snapshot
+                    except Exception as e:
+                        print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                
+                # Запускаем потоки для каждой директории
+                for dir_path in monitored_dirs:
+                    thread = threading.Thread(
+                        target=scan_dir,
+                        args=(dir_path,),
+                        name=f"ScanThread-{os.path.basename(dir_path)}"
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                
+                # Ждём завершения всех потоков
+                for thread in threads:
+                    thread.join()
+                
+                # Объединяем результаты из всех потоков
                 all_files = {}
                 all_directories = set()
                 total_files = 0
                 
-                for dir_path in monitored_dirs:
-                    if os.path.exists(dir_path):
-                        try:
-                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
-                            dir_snapshot = DirectorySnapshot(
-                                dir_path,
-                                max_depth=None,  # Без ограничения глубины для baseline
-                                max_files=1000000,  # Очень большой лимит для baseline
-                                calculate_hashes=False
-                            )
-                            for rel_path, file_info in dir_snapshot.files.items():
-                                if rel_path == '.':
-                                    prefixed_path = dir_path
-                                else:
-                                    prefixed_path = os.path.join(dir_path, rel_path)
-                                all_files[prefixed_path] = file_info
-                            for rel_dir in dir_snapshot.directories:
-                                if rel_dir == '.':
-                                    prefixed_dir = dir_path
-                                else:
-                                    prefixed_dir = os.path.join(dir_path, rel_dir)
-                                all_directories.add(prefixed_dir)
-                            total_files += dir_snapshot.files_scanned
-                        except Exception as e:
-                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                for dir_path, dir_snapshot in results.items():
+                    # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
+                    for rel_path, file_info in dir_snapshot.files.items():
+                        if rel_path == '.':
+                            prefixed_path = dir_path
+                        else:
+                            prefixed_path = os.path.join(dir_path, rel_path)
+                        all_files[prefixed_path] = file_info
+                    for rel_dir in dir_snapshot.directories:
+                        if rel_dir == '.':
+                            prefixed_dir = dir_path
+                        else:
+                            prefixed_dir = os.path.join(dir_path, rel_dir)
+                        all_directories.add(prefixed_dir)
+                    total_files += dir_snapshot.files_scanned
                 
                 snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
                 snapshot.directory_path = '/'
                 snapshot.timestamp = datetime.datetime.now()
                 snapshot.files = all_files
                 snapshot.directories = all_directories
-                snapshot.files_scanned = total_files
+                # Используем реальное количество файлов из словаря, а не сумму из files_scanned
+                snapshot.files_scanned = len(all_files)
                 snapshot.directories_scanned = len(all_directories)
                 snapshot.scan_duration = 0.0
                 snapshot.hash_calculation_time = 0.0
@@ -17773,13 +18111,30 @@ class AutomationGUI(object):
                 
                 # НЕ сохраняем на диск - работаем только в памяти
                 self.filesystem_baseline_snapshot = snapshot
+                
+                # Добавляем baseline в список снимков как "Стартовый"
+                baseline_snapshot_entry = {
+                    'id': 0,  # ID 0 зарезервирован для baseline
+                    'name': 'Стартовый',
+                    'timestamp': snapshot.timestamp,
+                    'snapshot': snapshot,
+                    'files_count': snapshot.files_scanned,
+                    'is_baseline': True
+                }
+                self.filesystem_snapshots = [baseline_snapshot_entry]  # Заменяем список (baseline всегда первый)
+                self.filesystem_next_snapshot_id = 1  # Следующий ID начинается с 1
+                
                 if self.filesystem_monitor:
                     self.filesystem_monitor.baseline = snapshot
                     self.filesystem_monitor.last_snapshot = snapshot
                 
+                # Обновляем список снимков в UI
+                self.root.after(0, self._update_snapshots_list)
+                
                 # Очищаем историю изменений
                 self.filesystem_changes_history = []
-                self.filesystem_baseline_just_created = True  # Флаг первой проверки после сброса
+                # УБИРАЕМ флаг первой проверки - baseline должен создаваться полностью с первого раза
+                # self.filesystem_baseline_just_created = True
                 
                 self.root.after(0, lambda: self.fs_baseline_label.config(
                     text=f"Базовый снимок: / ({snapshot.files_scanned:,} файлов)".replace(',', ' ') + " | Обновлен в памяти", 
@@ -17825,42 +18180,73 @@ class AutomationGUI(object):
                 # Получаем список директорий для мониторинга
                 monitored_dirs = self._get_monitored_directories()
                 
+                # ПАРАЛЛЕЛЬНОЕ сканирование директорий для ускорения
+                results = {}
+                threads = []
+                lock = threading.Lock()
+                
+                def scan_dir(dir_path):
+                    """Функция сканирования одной директории в отдельном потоке"""
+                    try:
+                        if not os.path.exists(dir_path):
+                            return
+                        
+                        # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                        dir_snapshot = DirectorySnapshot(
+                            dir_path,
+                            max_depth=None,  # Без ограничения глубины для baseline
+                            max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
+                            calculate_hashes=False  # Не вычисляем хеши для производительности
+                        )
+                        
+                        with lock:
+                            results[dir_path] = dir_snapshot
+                    except Exception as e:
+                        print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                
+                # Запускаем потоки для каждой директории
+                for dir_path in monitored_dirs:
+                    thread = threading.Thread(
+                        target=scan_dir,
+                        args=(dir_path,),
+                        name=f"ScanThread-{os.path.basename(dir_path)}"
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                
+                # Ждём завершения всех потоков
+                for thread in threads:
+                    thread.join()
+                
+                # Объединяем результаты из всех потоков
                 all_files = {}
                 all_directories = set()
                 total_files = 0
                 
-                for dir_path in monitored_dirs:
-                    if os.path.exists(dir_path):
-                        try:
-                            # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
-                            dir_snapshot = DirectorySnapshot(
-                                dir_path,
-                                max_depth=None,  # Без ограничения глубины для baseline
-                                max_files=1000000,  # Очень большой лимит для baseline
-                                calculate_hashes=False
-                            )
-                            for rel_path, file_info in dir_snapshot.files.items():
-                                if rel_path == '.':
-                                    prefixed_path = dir_path
-                                else:
-                                    prefixed_path = os.path.join(dir_path, rel_path)
-                                all_files[prefixed_path] = file_info
-                            for rel_dir in dir_snapshot.directories:
-                                if rel_dir == '.':
-                                    prefixed_dir = dir_path
-                                else:
-                                    prefixed_dir = os.path.join(dir_path, rel_dir)
-                                all_directories.add(prefixed_dir)
-                            total_files += dir_snapshot.files_scanned
-                        except Exception as e:
-                            print(f"[FilesystemMonitor] Ошибка сканирования {dir_path}: {e}")
+                for dir_path, dir_snapshot in results.items():
+                    # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
+                    for rel_path, file_info in dir_snapshot.files.items():
+                        if rel_path == '.':
+                            prefixed_path = dir_path
+                        else:
+                            prefixed_path = os.path.join(dir_path, rel_path)
+                        all_files[prefixed_path] = file_info
+                    for rel_dir in dir_snapshot.directories:
+                        if rel_dir == '.':
+                            prefixed_dir = dir_path
+                        else:
+                            prefixed_dir = os.path.join(dir_path, rel_dir)
+                        all_directories.add(prefixed_dir)
+                    total_files += dir_snapshot.files_scanned
                 
                 snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
                 snapshot.directory_path = '/'
                 snapshot.timestamp = datetime.datetime.now()
                 snapshot.files = all_files
                 snapshot.directories = all_directories
-                snapshot.files_scanned = total_files
+                # Используем реальное количество файлов из словаря, а не сумму из files_scanned
+                snapshot.files_scanned = len(all_files)
                 snapshot.directories_scanned = len(all_directories)
                 snapshot.scan_duration = 0.0
                 snapshot.hash_calculation_time = 0.0
@@ -17869,6 +18255,18 @@ class AutomationGUI(object):
                 
                 # Устанавливаем базовый снимок в памяти
                 self.filesystem_baseline_snapshot = snapshot
+                
+                # Добавляем baseline в список снимков как "Стартовый"
+                baseline_snapshot_entry = {
+                    'id': 0,  # ID 0 зарезервирован для baseline
+                    'name': 'Стартовый',
+                    'timestamp': snapshot.timestamp,
+                    'snapshot': snapshot,
+                    'files_count': snapshot.files_scanned,
+                    'is_baseline': True
+                }
+                self.filesystem_snapshots = [baseline_snapshot_entry]  # Заменяем список (baseline всегда первый)
+                self.filesystem_next_snapshot_id = 1  # Следующий ID начинается с 1
                 
                 # Создаем новый монитор
                 self.filesystem_monitor = DirectoryMonitor()
@@ -17879,7 +18277,11 @@ class AutomationGUI(object):
                 # Запускаем мониторинг заново
                 self.filesystem_monitoring_active = True
                 self.filesystem_start_time = datetime.datetime.now()  # НОВОЕ время начала
-                self.filesystem_baseline_just_created = True  # Флаг первой проверки после перезапуска
+                # УБИРАЕМ флаг первой проверки - baseline должен создаваться полностью с первого раза
+                # self.filesystem_baseline_just_created = True
+                
+                # Обновляем список снимков в UI
+                self.root.after(0, self._update_snapshots_list)
                 
                 # Обновляем GUI
                 self.root.after(0, lambda: self.fs_baseline_label.config(
@@ -17892,8 +18294,8 @@ class AutomationGUI(object):
                 # Запускаем отдельный таймер для обновления счетчика времени (независимо от проверки)
                 self._start_filesystem_time_update_timer()
                 
-                # Запускаем автоматическое обновление (первая проверка пропустит поиск новых файлов)
-                self.root.after(2000, self._auto_refresh_filesystem_monitor)
+                # Запускаем автоматическое обновление через 5 секунд (даем время baseline полностью создаться)
+                self.root.after(5000, self._auto_refresh_filesystem_monitor)
             except Exception as e:
                 print(f"[FilesystemMonitor] Ошибка при перезапуске: {e}")
                 self.root.after(0, lambda: self.fs_start_button.config(
@@ -17902,6 +18304,333 @@ class AutomationGUI(object):
                     text="Ошибка при перезапуске", fg='red'))
         
         threading.Thread(target=_restart_in_background, daemon=True).start()
+    
+    def _create_manual_snapshot(self):
+        """Создание снимка по требованию пользователя"""
+        if not self.filesystem_monitoring_active:
+            # Показываем сообщение, что мониторинг не запущен
+            self.root.after(0, lambda: self.fs_baseline_label.config(
+                text="Сначала запустите мониторинг", fg='orange'))
+            return
+        
+        # Обновляем GUI - показываем, что создается снимок
+        self.root.after(0, lambda: self.fs_baseline_label.config(
+            text="Создание снимка...", fg='orange'))
+        
+        def _create_snapshot_in_background():
+            try:
+                print(f"[FilesystemMonitor] === НАЧАЛО СОЗДАНИЯ РУЧНОГО СНИМКА ===")
+                start_time = time.time()
+                
+                # Получаем список директорий для мониторинга
+                monitored_dirs = self._get_monitored_directories()
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Найдено директорий: {len(monitored_dirs)}")
+                
+                # ПАРАЛЛЕЛЬНОЕ сканирование директорий для ускорения
+                results = {}
+                threads = []
+                lock = threading.Lock()
+                completed_dirs = [0]
+                
+                def scan_dir(dir_path):
+                    """Функция сканирования одной директории в отдельном потоке"""
+                    thread_start_time = time.time()
+                    try:
+                        if not os.path.exists(dir_path):
+                            print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Пропуск несуществующей директории: {dir_path}")
+                            return
+                        
+                        print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] [ПОТОК] Начало сканирования: {dir_path}")
+                        
+                        # Callback для обновления прогресса
+                        def update_progress(dir_path_inner, files_count, current_dir):
+                            """Обновление прогресса сканирования в UI"""
+                            progress_text = f"{os.path.basename(dir_path_inner)}: {files_count:,} файлов"
+                            if current_dir and current_dir != dir_path_inner:
+                                current_rel = os.path.relpath(current_dir, dir_path_inner)
+                                # Ограничиваем длину пути (максимум 50 символов) для предотвращения слишком длинных строк
+                                if len(current_rel) > 50:
+                                    # Берем только последние 50 символов и добавляем "..."
+                                    current_rel = "..." + current_rel[-47:]
+                                progress_text += f" | {current_rel}"
+                            self.root.after(0, lambda t=progress_text: self.fs_progress_label.config(text=f"Прогресс: {t}", fg='blue') if hasattr(self, 'fs_progress_label') else None)
+                        
+                        # УБИРАЕМ ограничения для baseline - нужно захватить ВСЕ файлы!
+                        dir_snapshot = DirectorySnapshot(
+                            dir_path,
+                            max_depth=None,  # Без ограничения глубины для baseline
+                            max_files=1000000,  # Очень большой лимит для baseline (практически без ограничений)
+                            calculate_hashes=False,  # Не вычисляем хеши для производительности
+                            progress_callback=update_progress  # Callback для обновления прогресса
+                        )
+                        
+                        thread_elapsed = time.time() - thread_start_time
+                        files_in_dir = len(dir_snapshot.files)
+                        print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] [ПОТОК] Завершено: {dir_path} | Файлов: {files_in_dir:,} | Время: {thread_elapsed:.2f}с")
+                        
+                        with lock:
+                            results[dir_path] = dir_snapshot
+                            completed_dirs[0] += 1
+                    except Exception as e:
+                        print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] [ОШИБКА] Ошибка сканирования {dir_path}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Запускаем потоки для каждой директории
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Запуск {len(monitored_dirs)} потоков...")
+                for dir_path in monitored_dirs:
+                    thread = threading.Thread(
+                        target=scan_dir,
+                        args=(dir_path,),
+                        name=f"ManualSnapshotThread-{os.path.basename(dir_path)}"
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                
+                # Ждём завершения всех потоков
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Ожидание завершения потоков...")
+                for i, thread in enumerate(threads, 1):
+                    thread.join()
+                    print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Поток {i}/{len(threads)} завершен")
+                
+                scan_elapsed = time.time() - start_time
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Все потоки завершены за {scan_elapsed:.2f}с")
+                
+                # Объединяем результаты из всех потоков
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Начало объединения результатов из {len(results)} директорий...")
+                merge_start_time = time.time()
+                all_files = {}
+                all_directories = set()
+                total_files = 0
+                
+                for dir_path, dir_snapshot in results.items():
+                    files_before = len(all_files)
+                    dirs_before = len(all_directories)
+                    
+                    # Добавляем файлы с префиксом директории (используем os.path.join для правильного формирования путей)
+                    for rel_path, file_info in dir_snapshot.files.items():
+                        if rel_path == '.':
+                            prefixed_path = dir_path
+                        else:
+                            prefixed_path = os.path.join(dir_path, rel_path)
+                        all_files[prefixed_path] = file_info
+                    for rel_dir in dir_snapshot.directories:
+                        if rel_dir == '.':
+                            prefixed_dir = dir_path
+                        else:
+                            prefixed_dir = os.path.join(dir_path, rel_dir)
+                        all_directories.add(prefixed_dir)
+                    total_files += dir_snapshot.files_scanned
+                    
+                    files_added = len(all_files) - files_before
+                    dirs_added = len(all_directories) - dirs_before
+                    print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Объединение {dir_path}: +{files_added:,} файлов, +{dirs_added:,} папок (всего: {len(all_files):,} файлов)")
+                
+                merge_elapsed = time.time() - merge_start_time
+                actual_files_count = len(all_files)
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] === ОБЪЕДИНЕНИЕ ЗАВЕРШЕНО ===")
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Время объединения: {merge_elapsed:.2f}с")
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] ИТОГО: {actual_files_count:,} файлов, {len(all_directories):,} папок")
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Сумма files_scanned: {total_files:,}, Реальное количество: {actual_files_count:,}")
+                
+                # Создаем виртуальный снимок для корня
+                snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
+                snapshot.directory_path = '/'
+                snapshot.timestamp = datetime.datetime.now()
+                snapshot.files = all_files
+                snapshot.directories = all_directories
+                # Используем реальное количество файлов из словаря, а не сумму из files_scanned
+                snapshot.files_scanned = actual_files_count
+                snapshot.directories_scanned = len(all_directories)
+                snapshot.scan_duration = 0.0
+                snapshot.hash_calculation_time = 0.0
+                snapshot.memory_usage = 0
+                snapshot.scan_start_time = None
+                
+                total_elapsed = time.time() - start_time
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] === СНИМОК СОЗДАН ===")
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Общее время: {total_elapsed:.2f}с")
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] Финальное количество файлов: {actual_files_count:,}")
+                
+                # Создаем запись снимка
+                snapshot_entry = {
+                    'id': self.filesystem_next_snapshot_id,
+                    'name': f'Снимок #{self.filesystem_next_snapshot_id}',
+                    'timestamp': snapshot.timestamp,
+                    'snapshot': snapshot,
+                    'files_count': actual_files_count,
+                    'is_baseline': False
+                }
+                
+                # Добавляем в список снимков
+                with threading.Lock():  # Защита от одновременного доступа
+                    self.filesystem_snapshots.append(snapshot_entry)
+                    self.filesystem_next_snapshot_id += 1
+                
+                # Обновляем UI
+                files_count_for_ui = actual_files_count
+                self.root.after(0, lambda count=files_count_for_ui: self.fs_baseline_label.config(
+                    text=f"Снимок создан: {count:,} файлов".replace(',', ' '), fg='green'))
+                
+                # Обновляем список снимков в UI (если метод существует)
+                if hasattr(self, '_update_snapshots_list'):
+                    self.root.after(0, self._update_snapshots_list)
+                
+            except Exception as e:
+                print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] [ОШИБКА] Ошибка при создании снимка: {e}")
+                import traceback
+                traceback.print_exc()
+                self.root.after(0, lambda: self.fs_baseline_label.config(
+                    text="Ошибка при создании снимка", fg='red'))
+        
+        # Запускаем создание снимка в фоновом потоке
+        snapshot_thread = threading.Thread(target=_create_snapshot_in_background, daemon=True, name="ManualSnapshotThread")
+        snapshot_thread.start()
+    
+    def _update_snapshots_list(self):
+        """Обновление списка снимков в UI"""
+        if not hasattr(self, 'fs_snapshots_listbox'):
+            return  # UI еще не создан
+        
+        # Очищаем список
+        self.fs_snapshots_listbox.delete(0, self.tk.END)
+        
+        # Добавляем все снимки
+        for snapshot_entry in self.filesystem_snapshots:
+            name = snapshot_entry['name']
+            timestamp = snapshot_entry['timestamp']
+            files_count = snapshot_entry['files_count']
+            is_baseline = snapshot_entry.get('is_baseline', False)
+            
+            # Форматируем дату
+            date_str = timestamp.strftime('%Y.%m.%d %H:%M')
+            
+            # Форматируем строку для отображения
+            if is_baseline:
+                display_text = f"[Старт] {name} | {date_str} | {files_count:,} файлов"
+            else:
+                display_text = f"[Снимок] {name} | {date_str} | {files_count:,} файлов"
+            
+            self.fs_snapshots_listbox.insert(self.tk.END, display_text)
+        
+        # Обновляем выпадающий список для сравнения
+        if hasattr(self, 'fs_compare_dropdown'):
+            compare_values = [entry['name'] for entry in self.filesystem_snapshots]
+            self.fs_compare_dropdown['values'] = compare_values
+    
+    def _on_snapshot_selected(self, event):
+        """Обработка выбора снимка из списка - ПРИНУДИТЕЛЬНОЕ ОТОБРАЖЕНИЕ"""
+        if not hasattr(self, 'fs_snapshots_listbox'):
+            return
+        
+        selection = self.fs_snapshots_listbox.curselection()
+        if not selection:
+            return
+        
+        index = selection[0]
+        if index >= len(self.filesystem_snapshots):
+            return
+        
+        snapshot_entry = self.filesystem_snapshots[index]
+        snapshot = snapshot_entry['snapshot']
+        
+        # Сохраняем выбранный снимок
+        self.filesystem_selected_snapshot = snapshot
+        
+        # Обновляем информацию о выбранном снимке
+        info_text = f"Выбран: {snapshot_entry['name']} | {snapshot_entry['files_count']:,} файлов | {snapshot_entry['timestamp'].strftime('%Y.%m.%d %H:%M')}"
+        if hasattr(self, 'fs_baseline_label'):
+            self.fs_baseline_label.config(text=info_text, fg='blue')
+        
+        # ПРИНУДИТЕЛЬНО: устанавливаем режим "structure" и отображаем структуру
+        if hasattr(self, 'fs_view_var'):
+            self.fs_view_var.set("structure")
+        if hasattr(self, 'fs_structure_view_btn'):
+            self.fs_structure_view_btn.select()
+        
+        # ПРИНУДИТЕЛЬНО: очищаем аккордеон и отображаем структуру
+        if hasattr(self, 'fs_accordion_frame') and self.fs_accordion_frame:
+            children = self.fs_accordion_frame.winfo_children()
+            if children:
+                for widget in children:  # type: ignore[reportGeneralTypeIssues]
+                    widget.destroy()
+        
+        # ПРИНУДИТЕЛЬНО: вызываем отображение структуры напрямую
+        self._display_structure()
+        
+        # Обновляем статистику и прокрутку
+        if hasattr(self, '_update_filesystem_statistics'):
+            self._update_filesystem_statistics()
+        if hasattr(self, 'fs_canvas'):
+            self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+    
+    def _on_compare_snapshot_selected(self, event=None):
+        """Обработка выбора снимка для сравнения"""
+        if not hasattr(self, 'fs_compare_dropdown'):
+            return
+        
+        selected_name = self.fs_compare_var.get() if hasattr(self, 'fs_compare_var') else None
+        if not selected_name:
+            return
+        
+        # Находим выбранный снимок
+        selected_snapshot_entry = None
+        for entry in self.filesystem_snapshots:
+            if entry['name'] == selected_name:
+                selected_snapshot_entry = entry
+                break
+        
+        if not selected_snapshot_entry:
+            return
+        
+        # Получаем текущий выбранный снимок из списка
+        if hasattr(self, 'fs_snapshots_listbox'):
+            selection = self.fs_snapshots_listbox.curselection()
+            if selection:
+                current_index = selection[0]
+                if current_index < len(self.filesystem_snapshots):
+                    current_snapshot_entry = self.filesystem_snapshots[current_index]
+                    # Показываем изменения между текущим и выбранным для сравнения
+                    self._show_snapshot_changes(current_snapshot_entry, selected_snapshot_entry)
+    
+    def _show_snapshot_changes(self, snapshot1_entry, snapshot2_entry):
+        """Показ изменений между двумя снимками"""
+        try:
+            snapshot1 = snapshot1_entry['snapshot']
+            snapshot2 = snapshot2_entry['snapshot']
+            
+            # Используем DirectoryMonitor для сравнения
+            if not hasattr(self, 'filesystem_monitor') or not self.filesystem_monitor:
+                self.filesystem_monitor = DirectoryMonitor()
+            
+            # Временно устанавливаем снимки для сравнения
+            old_baseline = self.filesystem_monitor.baseline
+            old_last = self.filesystem_monitor.last_snapshot
+            
+            self.filesystem_monitor.baseline = snapshot1
+            self.filesystem_monitor.last_snapshot = snapshot2
+            
+            # Сравниваем снимки
+            changes = self.filesystem_monitor._compare_snapshots(snapshot1, snapshot2)
+            
+            # Восстанавливаем оригинальные снимки
+            self.filesystem_monitor.baseline = old_baseline
+            self.filesystem_monitor.last_snapshot = old_last
+            
+            # Обновляем отображение изменений
+            if hasattr(self, '_update_filesystem_display'):
+                # Сохраняем изменения для отображения
+                self.filesystem_changes_history = [{
+                    'timestamp': datetime.datetime.now(),
+                    'changes': changes,
+                    'snapshot1_name': snapshot1_entry['name'],
+                    'snapshot2_name': snapshot2_entry['name']
+                }]
+                self._update_filesystem_display()
+            
+        except Exception as e:
+            print(f"[FilesystemMonitor] Ошибка при сравнении снимков: {e}")
     
     def _clear_filesystem_history(self):
         """Очистка истории изменений"""
@@ -18036,175 +18765,96 @@ class AutomationGUI(object):
             'timestamp': datetime.datetime.now()
         }
         
-        # Проверяем, это первая проверка после создания baseline?
-        is_first_check = getattr(self, 'filesystem_baseline_just_created', False)
-        
+        # УБИРАЕМ проверку первой проверки - baseline должен создаваться полностью с первого раза
         # Создаем новый снимок, обновляя только измененные данные
         new_files_dict = {}
         new_directories_set = set()
         
-        if is_first_check:
-            # ПРИ ПЕРВОЙ ПРОВЕРКЕ: делаем ПОЛНУЮ синхронизацию с реальным состоянием
-            # Это позволяет "дополнить" baseline всеми файлами, которые не попали в него
-            # при создании (из-за ошибок доступа, прерывания сканирования и т.д.)
-            # НЕ проверяем изменения, чтобы избежать ложных "измененных" файлов
-            # из-за различий в mtime при создании baseline
+        # УБИРАЕМ логику первой проверки - baseline должен создаваться полностью с первого раза
+        # Если baseline создан правильно, первая проверка не нужна
+        # ОБЫЧНАЯ ПРОВЕРКА: проверяем изменения
+        # 1. Проверяем существующие файлы из last_snapshot через os.stat (быстро)
+        files_checked = 0
+        chunk_size = 500  # Проверяем по 500 файлов, затем делаем паузу
+        for file_path, old_info in last_snapshot.files.items():
+            try:
+                if os.path.exists(file_path):
+                    stat = os.stat(file_path)
+                    new_info = (stat.st_size, stat.st_mtime)
+                    new_files_dict[file_path] = new_info
+                    
+                    # Проверяем изменения
+                    if old_info != new_info:
+                        changes['modified_files'].append(file_path)
+                else:
+                    # Файл удален
+                    changes['deleted_files'].append(file_path)
+            except (OSError, IOError):
+                # Файл недоступен - считаем удаленным
+                changes['deleted_files'].append(file_path)
             
-            # Обновляем информацию о существующих файлах без сравнения
-            for file_path, old_info in last_snapshot.files.items():
-                try:
-                    if os.path.exists(file_path):
-                        stat = os.stat(file_path)
-                        new_info = (stat.st_size, stat.st_mtime, 0)
-                        new_files_dict[file_path] = new_info
-                        # НЕ добавляем в modified_files - это первая синхронизация!
-                    # НЕ добавляем в deleted_files при первой проверке - файл мог не попасть в baseline
-                except (OSError, IOError):
-                    # Файл недоступен - пропускаем (не считаем удаленным при первой проверке)
-                    pass
+            files_checked += 1
+            # Делаем паузу каждые chunk_size файлов для неблокирующей работы
+            if files_checked >= chunk_size:
+                time.sleep(0.005)  # 5ms пауза для освобождения GIL
+                files_checked = 0
+        
+        # 2. Проверяем существующие директории
+        for dir_path in last_snapshot.directories:
+            if os.path.exists(dir_path):
+                new_directories_set.add(dir_path)
+            else:
+                changes['deleted_directories'].append(dir_path)
+        
+        # 3. Ищем новые файлы РЕКУРСИВНО в отслеживаемых директориях
+        monitored_dirs = self._get_monitored_directories()
+        for root_dir in monitored_dirs:
+            if not os.path.exists(root_dir):
+                continue
             
-            # Обновляем директории
-            for dir_path in last_snapshot.directories:
-                if os.path.exists(dir_path):
-                    new_directories_set.add(dir_path)
-                # НЕ добавляем в deleted_directories при первой проверке
-            
-            # КРИТИЧНО: При первой проверке ищем ВСЕ файлы рекурсивно и добавляем их в снимок
-            # но НЕ добавляем в changes, чтобы они не попали в историю как "новые"
-            # Это позволяет "дополнить" baseline всеми файлами, которые не попали в него
-            monitored_dirs = self._get_monitored_directories()
-            for root_dir in monitored_dirs:
-                if not os.path.exists(root_dir):
-                    continue
-                
-                try:
-                    # РЕКУРСИВНАЯ проверка всех файлов для полной синхронизации
-                    files_synced = [0]  # Используем список для изменения в замыкании
-                    def _sync_all_files(current_dir, depth=0, max_depth=200):
-                        """Рекурсивная синхронизация всех файлов при первой проверке (до 200 уровней)"""
-                        if depth > max_depth:
-                            return
-                        
-                        try:
-                            for item in os.listdir(current_dir):
-                                item_path = os.path.join(current_dir, item)
-                                
-                                # Пропускаем, если уже есть в снимке
-                                if item_path in new_files_dict or item_path in new_directories_set:
-                                    # Если это директория, рекурсивно проверяем её содержимое
-                                    if os.path.isdir(item_path):
-                                        _sync_all_files(item_path, depth + 1, max_depth)
-                                    continue
-                                
-                                try:
-                                    if os.path.isfile(item_path):
-                                        # Файл не был в baseline - добавляем в снимок, но НЕ в changes
+            try:
+                # РЕКУРСИВНАЯ проверка новых файлов (увеличена глубина для глубоко вложенных директорий)
+                files_scanned_in_search = [0]  # Используем список для изменения в замыкании
+                def _scan_for_new_files(current_dir, depth=0, max_depth=200):
+                    """Рекурсивный поиск новых файлов (до 200 уровней для глубоко вложенных директорий)"""
+                    if depth > max_depth:
+                        return
+                    
+                    try:
+                        for item in os.listdir(current_dir):
+                            item_path = os.path.join(current_dir, item)
+                            
+                            # Пропускаем, если уже есть в снимке
+                            if item_path in new_files_dict or item_path in new_directories_set:
+                                continue
+                            
+                            try:
+                                if os.path.isfile(item_path):
+                                    # Новый файл
+                                    if item_path not in last_snapshot.files:
                                         stat = os.stat(item_path)
-                                        new_files_dict[item_path] = (stat.st_size, stat.st_mtime, 0)
-                                        # НЕ добавляем в changes['new_files'] - это синхронизация, не новое изменение!
-                                        files_synced[0] += 1
+                                        new_files_dict[item_path] = (stat.st_size, stat.st_mtime)
+                                        changes['new_files'].append(item_path)
+                                        files_scanned_in_search[0] += 1
                                         
                                         # Делаем паузу каждые 200 файлов для неблокирующей работы
-                                        if files_synced[0] % 200 == 0:
-                                            time.sleep(0.01)  # 10ms пауза для освобождения GIL
-                                    elif os.path.isdir(item_path):
-                                        # Директория не была в baseline - добавляем в снимок
+                                        if files_scanned_in_search[0] % 200 == 0:
+                                            time.sleep(0.005)  # 5ms пауза для освобождения GIL
+                                elif os.path.isdir(item_path):
+                                    # Новая директория
+                                    if item_path not in last_snapshot.directories:
                                         new_directories_set.add(item_path)
-                                        # НЕ добавляем в changes['new_directories'] - это синхронизация!
-                                        # Рекурсивно проверяем поддиректорию
-                                        _sync_all_files(item_path, depth + 1, max_depth)
-                                except (OSError, IOError):
-                                    continue  # Пропускаем недоступные элементы
-                        except (OSError, IOError):
-                            return  # Пропускаем недоступные директории
-                    
-                    _sync_all_files(root_dir)
-                except (OSError, IOError):
-                    continue  # Пропускаем недоступные директории
-        else:
-            # ОБЫЧНАЯ ПРОВЕРКА: проверяем изменения
-            # 1. Проверяем существующие файлы из last_snapshot через os.stat (быстро)
-            files_checked = 0
-            chunk_size = 500  # Проверяем по 500 файлов, затем делаем паузу
-            for file_path, old_info in last_snapshot.files.items():
-                try:
-                    if os.path.exists(file_path):
-                        stat = os.stat(file_path)
-                        new_info = (stat.st_size, stat.st_mtime, 0)  # Хеш не вычисляем
-                        new_files_dict[file_path] = new_info
-                        
-                        # Проверяем изменения
-                        if old_info != new_info:
-                            changes['modified_files'].append(file_path)
-                    else:
-                        # Файл удален
-                        changes['deleted_files'].append(file_path)
-                except (OSError, IOError):
-                    # Файл недоступен - считаем удаленным
-                    changes['deleted_files'].append(file_path)
+                                        changes['new_directories'].append(item_path)
+                                    # Рекурсивно проверяем поддиректорию
+                                    _scan_for_new_files(item_path, depth + 1, max_depth)
+                            except (OSError, IOError):
+                                continue  # Пропускаем недоступные элементы
+                    except (OSError, IOError):
+                        return  # Пропускаем недоступные директории
                 
-                files_checked += 1
-                # Делаем паузу каждые chunk_size файлов для неблокирующей работы
-                if files_checked >= chunk_size:
-                    time.sleep(0.005)  # 5ms пауза для освобождения GIL
-                    files_checked = 0
-            
-            # 2. Проверяем существующие директории
-            for dir_path in last_snapshot.directories:
-                if os.path.exists(dir_path):
-                    new_directories_set.add(dir_path)
-                else:
-                    changes['deleted_directories'].append(dir_path)
-            
-            # 3. Ищем новые файлы РЕКУРСИВНО в отслеживаемых директориях
-            monitored_dirs = self._get_monitored_directories()
-            for root_dir in monitored_dirs:
-                if not os.path.exists(root_dir):
-                    continue
-                
-                try:
-                    # РЕКУРСИВНАЯ проверка новых файлов (увеличена глубина для глубоко вложенных директорий)
-                    files_scanned_in_search = [0]  # Используем список для изменения в замыкании
-                    def _scan_for_new_files(current_dir, depth=0, max_depth=200):
-                        """Рекурсивный поиск новых файлов (до 200 уровней для глубоко вложенных директорий)"""
-                        if depth > max_depth:
-                            return
-                        
-                        try:
-                            for item in os.listdir(current_dir):
-                                item_path = os.path.join(current_dir, item)
-                                
-                                # Пропускаем, если уже есть в снимке
-                                if item_path in new_files_dict or item_path in new_directories_set:
-                                    continue
-                                
-                                try:
-                                    if os.path.isfile(item_path):
-                                        # Новый файл
-                                        if item_path not in last_snapshot.files:
-                                            stat = os.stat(item_path)
-                                            new_files_dict[item_path] = (stat.st_size, stat.st_mtime, 0)
-                                            changes['new_files'].append(item_path)
-                                            files_scanned_in_search[0] += 1
-                                            
-                                            # Делаем паузу каждые 200 файлов для неблокирующей работы
-                                            if files_scanned_in_search[0] % 200 == 0:
-                                                time.sleep(0.005)  # 5ms пауза для освобождения GIL
-                                    elif os.path.isdir(item_path):
-                                        # Новая директория
-                                        if item_path not in last_snapshot.directories:
-                                            new_directories_set.add(item_path)
-                                            changes['new_directories'].append(item_path)
-                                        # Рекурсивно проверяем поддиректорию
-                                        _scan_for_new_files(item_path, depth + 1, max_depth)
-                                except (OSError, IOError):
-                                    continue  # Пропускаем недоступные элементы
-                        except (OSError, IOError):
-                            return  # Пропускаем недоступные директории
-                    
-                    _scan_for_new_files(root_dir)
-                except (OSError, IOError):
-                    continue  # Пропускаем недоступные директории
+                _scan_for_new_files(root_dir)
+            except (OSError, IOError):
+                continue  # Пропускаем недоступные директории
         
         # Создаем обновленный снимок
         updated_snapshot = DirectorySnapshot.__new__(DirectorySnapshot)
@@ -18223,6 +18873,10 @@ class AutomationGUI(object):
     
     def _auto_refresh_filesystem_monitor(self):
         """Автоматическое обновление мониторинга с инкрементальной проверкой (быстро!)"""
+        # ВРЕМЕННО ОТКЛЮЧЕНО: автоматические проверки (включать после отладки создания снимков)
+        if not getattr(self, 'filesystem_auto_check_enabled', False):
+            return
+        
         if not hasattr(self, 'fs_canvas'):
             self.root.after(2000, self._auto_refresh_filesystem_monitor)
             return
@@ -18261,46 +18915,35 @@ class AutomationGUI(object):
                 self.filesystem_check_thread_running = True
                 
                 if self.filesystem_monitor and self.filesystem_monitor.last_snapshot:
+                    # УБИРАЕМ логику первой проверки - baseline должен создаваться полностью с первого раза
                     # Используем инкрементальную проверку (быстро! без полного сканирования)
                     result = self._incremental_check_changes(self.filesystem_monitor.last_snapshot)
                     
                     if result:
                         changes, updated_snapshot = result
                         
-                        # КРИТИЧНО: При первой проверке после создания baseline НЕ добавляем изменения в историю!
-                        # Это предотвращает появление "ложных" изменений от файлов, которые не попали в baseline
-                        # из-за ошибок доступа или других проблем при сканировании
-                        is_first_check = getattr(self, 'filesystem_baseline_just_created', False)
+                        files_after = len(updated_snapshot.files)
+                        new_files_count = len(changes.get('new_files', []))
+                        modified_files_count = len(changes.get('modified_files', []))
+                        deleted_files_count = len(changes.get('deleted_files', []))
+                        
+                        print(f"[FilesystemMonitor] [ПРОВЕРКА] Найдено изменений: новых={new_files_count:,}, измененных={modified_files_count:,}, удаленных={deleted_files_count:,}")
+                        print(f"[FilesystemMonitor] [ПРОВЕРКА] Файлов в обновленном снимке: {files_after:,}")
                         
                         # Обновляем последний снимок
                         self.filesystem_monitor.last_snapshot = updated_snapshot
                         
-                        # Сбрасываем флаг ПОСЛЕ обновления снимка, но ДО проверки изменений
-                        if is_first_check:
-                            self.filesystem_baseline_just_created = False
-                            # При первой проверке НЕ добавляем изменения в историю
-                            # Это позволяет "синхронизировать" снимок с реальным состоянием файловой системы
-                            # без создания ложных записей об изменениях
+                        # Если есть изменения, добавляем в историю
+                        if changes and (changes.get('new_files') or changes.get('modified_files') or 
+                                       changes.get('deleted_files') or changes.get('new_directories') or 
+                                       changes.get('deleted_directories')):
+                            changes['directory'] = '/'
+                            self.filesystem_changes_history.append(changes)
                             
-                            # КРИТИЧНО: Обновляем метку базового снимка с актуальным количеством файлов
-                            # после синхронизации (количество могло измениться)
+                            # Обновляем GUI только если вкладка открыта (в главном потоке!)
+                            # Используем after_idle для более плавного обновления без блокировки
                             if is_fs_tab:
-                                actual_file_count = len(updated_snapshot.files)
-                                self.root.after_idle(lambda: self.fs_baseline_label.config(
-                                    text=f"Базовый снимок: / ({actual_file_count:,} файлов)".replace(',', ' ') + " | В памяти", 
-                                    fg='green'))
-                        else:
-                            # Если есть изменения, добавляем в историю ТОЛЬКО если это не первая проверка
-                            if changes and (changes.get('new_files') or changes.get('modified_files') or 
-                                           changes.get('deleted_files') or changes.get('new_directories') or 
-                                           changes.get('deleted_directories')):
-                                changes['directory'] = '/'
-                                self.filesystem_changes_history.append(changes)
-                                
-                                # Обновляем GUI только если вкладка открыта (в главном потоке!)
-                                # Используем after_idle для более плавного обновления без блокировки
-                                if is_fs_tab:
-                                    self.root.after_idle(self._update_filesystem_display)
+                                self.root.after_idle(self._update_filesystem_display)
             except Exception as e:
                 print(f"[FilesystemMonitor] Ошибка обновления: {e}")
             finally:
@@ -18333,17 +18976,23 @@ class AutomationGUI(object):
         for widget in self.fs_accordion_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
             widget.destroy()
         
+        # Определяем тип представления
+        view_type = self.fs_view_var.get()
+        
+        # Для режима "structure" всегда показываем структуру снимка, независимо от истории изменений
+        if view_type == "structure":
+            self._display_structure()
+            self._update_filesystem_statistics()
+            self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+            return
+        
+        # Для остальных режимов нужна история изменений
         if not self.filesystem_changes_history:
             self._update_filesystem_statistics()
             self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
             return
         
-        # Определяем тип представления
-        view_type = self.fs_view_var.get()
-        
-        if view_type == "structure":
-            self._display_structure()
-        elif view_type == "all" or view_type == "time":
+        if view_type == "all" or view_type == "time":
             self._display_by_time(expanded_sections)
         elif view_type == "directories":
             self._display_by_directories(expanded_sections)
@@ -18784,17 +19433,27 @@ class AutomationGUI(object):
                     dir_label.pack(anchor='w')
     
     def _display_structure(self):
-        """Отображение структуры базового снимка"""
-        if not self.filesystem_baseline_snapshot:
+        """Отображение структуры выбранного снимка (или baseline, если ничего не выбрано) - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ"""
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis("[FS_STRUCTURE] Начало отображения структуры снимка")
+        
+        # Используем выбранный снимок, если он есть, иначе baseline
+        snapshot = self.filesystem_selected_snapshot if self.filesystem_selected_snapshot else self.filesystem_baseline_snapshot
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            snapshot_type = "выбранный" if self.filesystem_selected_snapshot else "baseline"
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Используется {snapshot_type} снимок")
+        
+        if not snapshot:
+            if hasattr(self, 'dual_logger') and self.dual_logger:
+                self.dual_logger.write_analysis("[FS_STRUCTURE] ОШИБКА: Снимок не найден")
             no_data_label = self.tk.Label(self.fs_accordion_frame, 
-                                          text="Подождите, идет обновление...", 
-                                          font=('Arial', 10), fg='gray')
+                                              text="Подождите, идет обновление...", 
+                                              font=('Arial', 10), fg='gray')
             no_data_label.pack(pady=20)
             return
         
         # Получаем данные из снимка
-        snapshot = self.filesystem_baseline_snapshot
-        # Проверяем, есть ли данные в снимке
         if not snapshot.files and not snapshot.directories:
             no_data_label = self.tk.Label(self.fs_accordion_frame, 
                                           text="Подождите, идет обновление...", 
@@ -18802,22 +19461,125 @@ class AutomationGUI(object):
             no_data_label.pack(pady=20)
             return
         
-        all_files = snapshot.files  # {full_path: (size, mtime, hash)}
-        all_directories = snapshot.directories  # {full_path, ...}
+        all_files = snapshot.files
+        all_directories = snapshot.directories
         
-        # КРИТИЧНО: Проверяем что данные не None (уже проверено выше, но для линтера)
         if all_files is None:
             all_files = {}
         if all_directories is None:
             all_directories = set()
         
+        # ВРЕМЕННАЯ ОТЛАДКА: проверяем наличие данных
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Данные снимка: файлов={len(all_files):,}, директорий={len(all_directories):,}")
+        
+        if len(all_files) == 0 and len(all_directories) == 0:
+            if hasattr(self, 'dual_logger') and self.dual_logger:
+                self.dual_logger.write_analysis("[FS_STRUCTURE] ОШИБКА: Снимок пуст")
+            no_data_label = self.tk.Label(self.fs_accordion_frame, 
+                                          text=f"Снимок пуст: файлов={len(all_files)}, директорий={len(all_directories)}", 
+                                          font=('Arial', 10), fg='red')
+            no_data_label.pack(pady=20)
+            return
+        
+        # ОПТИМИЗАЦИЯ: Предвычисляем индексы файлов и директорий по родительским директориям
+        # Это позволяет быстро находить файлы/папки для каждого узла без перебора всех 255k файлов
+        files_by_dir = {}  # {dir_path: [file_paths]}
+        dirs_by_parent = {}  # {parent_dir: [subdir_paths]}
+        sizes_by_dir = {}  # {dir_path: total_size}
+        
+        # Индексируем файлы по директориям и суммируем размеры
+        for file_path, file_info in all_files.items():
+            dir_path = os.path.dirname(file_path)
+            # Нормализуем путь директории (особый случай для корня)
+            if not dir_path or dir_path == '/':
+                dir_path = '/'
+            else:
+                dir_path = os.path.normpath(dir_path)
+            if dir_path not in files_by_dir:
+                files_by_dir[dir_path] = []
+            files_by_dir[dir_path].append(file_path)
+            
+            # Суммируем размеры (file_info = (size, mtime))
+            file_size = file_info[0] if isinstance(file_info, tuple) else 0
+            sizes_by_dir[dir_path] = sizes_by_dir.get(dir_path, 0) + file_size
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Индексация файлов завершена: {len(files_by_dir):,} директорий с файлами")
+        
+        # Индексируем директории по родительским
+        for dir_path in all_directories:
+            if dir_path == '/':
+                # Корень не имеет родителя
+                continue
+            parent_dir = os.path.dirname(dir_path)
+            # Нормализуем путь родителя (особый случай для корня)
+            if not parent_dir or parent_dir == '/':
+                parent_dir = '/'
+            else:
+                parent_dir = os.path.normpath(parent_dir)
+            if parent_dir not in dirs_by_parent:
+                dirs_by_parent[parent_dir] = []
+            dirs_by_parent[parent_dir].append(dir_path)
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Индексация директорий завершена: {len(dirs_by_parent):,} родительских директорий")
+        
+        # Предвычисляем статистику (количество файлов/папок/размер) для каждой директории
+        dir_stats = {}  # {dir_path: {'files': count, 'dirs': count, 'total_files': count, 'total_dirs': count, 'total_size': bytes}}
+        
+        def _calculate_stats(dir_path):
+            """Рекурсивно вычисляет статистику для директории"""
+            if dir_path in dir_stats:
+                return dir_stats[dir_path]
+            
+            direct_files = len(files_by_dir.get(dir_path, []))
+            direct_dirs = len(dirs_by_parent.get(dir_path, []))
+            direct_size = sizes_by_dir.get(dir_path, 0)
+            
+            total_files = direct_files
+            total_dirs = direct_dirs
+            total_size = direct_size
+            
+            # Рекурсивно суммируем статистику поддиректорий
+            for subdir in dirs_by_parent.get(dir_path, []):
+                subdir_stats = _calculate_stats(subdir)
+                total_files += subdir_stats['total_files']
+                total_dirs += subdir_stats['total_dirs']
+                total_size += subdir_stats['total_size']
+            
+            dir_stats[dir_path] = {
+                'files': direct_files,
+                'dirs': direct_dirs,
+                'size': direct_size,
+                'total_files': total_files,
+                'total_dirs': total_dirs,
+                'total_size': total_size
+            }
+            return dir_stats[dir_path]
+        
         # Получаем список отслеживаемых директорий
         monitored_dirs = self._get_monitored_directories()
         
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Отслеживаемые директории: {monitored_dirs}")
+        
+        # Вычисляем статистику для всех корневых директорий
+        for root_dir in monitored_dirs:
+            # Проверяем, есть ли файлы/папки для этой корневой директории
+            has_files = any(f.startswith(root_dir + os.sep) or f == root_dir for f in all_files.keys())
+            has_dirs = any(d.startswith(root_dir + os.sep) or d == root_dir for d in all_directories)
+            if has_files or has_dirs:
+                stats = _calculate_stats(root_dir)
+                if hasattr(self, 'dual_logger') and self.dual_logger:
+                    self.dual_logger.write_analysis(f"[FS_STRUCTURE] Статистика для {root_dir}: {stats['total_files']:,} файлов, {stats['total_dirs']:,} папок, {stats['total_size']:,} байт")
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Вычисление статистики завершено: {len(dir_stats):,} директорий")
+        
         # Строим дерево для каждой отслеживаемой директории
         for root_dir in monitored_dirs:
-            if not os.path.exists(root_dir):
-                continue
+            # Для снимка не проверяем существование на диске - используем данные из снимка
             
             # Находим все файлы и директории, принадлежащие этой корневой директории
             dir_files = {}
@@ -18832,21 +19594,35 @@ class AutomationGUI(object):
                     dir_dirs.add(dir_path)
             
             if not dir_files and not dir_dirs:
+                if hasattr(self, 'dual_logger') and self.dual_logger:
+                    self.dual_logger.write_analysis(f"[FS_STRUCTURE] Пропуск {root_dir}: нет файлов и директорий")
                 continue
             
-            # Создаем узел для корневой директории
-            self._create_structure_node(self.fs_accordion_frame, root_dir, dir_files, dir_dirs, root_dir, depth=0)
-    
+            if hasattr(self, 'dual_logger') and self.dual_logger:
+                self.dual_logger.write_analysis(f"[FS_STRUCTURE] Создание узла для {root_dir}: {len(dir_files):,} файлов, {len(dir_dirs):,} директорий")
+            
+            # Создаем узел для корневой директории с предвычисленной статистикой
+            self._create_structure_node_optimized(
+                self.fs_accordion_frame, root_dir, dir_files, dir_dirs, root_dir, 
+                files_by_dir, dirs_by_parent, dir_stats, depth=0
+            )
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger:
+            self.dual_logger.write_analysis("[FS_STRUCTURE] Отображение структуры завершено")
+
     def _create_structure_node(self, parent_frame, node_path, all_files, all_directories, root_dir, depth=0):
         """Создание узла дерева структуры с возможностью разворачивания"""
         # Находим файлы и поддиректории для этого узла
         node_files = []
         node_subdirs = set()
         
-        # Нормализуем пути
-        node_path_norm = os.path.normpath(node_path)
-        if node_path_norm.endswith(os.sep):
-            node_path_norm = node_path_norm[:-1]
+        # Нормализуем пути (особый случай для корня '/')
+        if node_path == '/':
+            node_path_norm = '/'
+        else:
+            node_path_norm = os.path.normpath(node_path)
+            if node_path_norm.endswith(os.sep) and node_path_norm != '/':
+                node_path_norm = node_path_norm[:-1]
         node_path_norm_with_sep = node_path_norm + os.sep
         
         for file_path in all_files.keys():
@@ -18892,9 +19668,35 @@ class AutomationGUI(object):
         else:
             node_name = os.path.basename(node_path)
         
-        # Подсчитываем количество файлов и поддиректорий
-        files_count = len(node_files)
-        subdirs_count = len(node_subdirs)
+        # Подсчитываем количество прямых файлов и поддиректорий
+        direct_files_count = len(node_files)
+        direct_subdirs_count = len(node_subdirs)
+        
+        # ОПТИМИЗАЦИЯ: Используем предвычисленную статистику вместо перебора всех файлов
+        # Если статистика не доступна (старый метод), вычисляем как раньше
+        if hasattr(self, '_current_dir_stats') and node_path_norm in self._current_dir_stats:
+            stats = self._current_dir_stats[node_path_norm]
+            files_count = stats['total_files']
+            subdirs_count = stats['total_dirs']
+            total_size = stats.get('total_size', 0)
+        else:
+            # Fallback: медленный подсчет (для совместимости)
+            total_files_count = 0
+            total_dirs_count = 0
+            node_path_norm_with_sep = node_path_norm + os.sep
+            for file_path in all_files.keys():
+                file_path_norm = os.path.normpath(file_path)
+                if file_path_norm.startswith(node_path_norm_with_sep) or (file_path_norm == node_path_norm and file_path_norm in all_files):
+                    if file_path_norm != node_path_norm:
+                        total_files_count += 1
+            for dir_path in all_directories:
+                dir_path_norm = os.path.normpath(dir_path)
+                if dir_path_norm.startswith(node_path_norm_with_sep) or dir_path_norm == node_path_norm:
+                    if dir_path_norm != node_path_norm:
+                        total_dirs_count += 1
+            files_count = total_files_count
+            subdirs_count = total_dirs_count
+            total_size = 0
         
         # Кнопка разворачивания
         toggle_var = self.tk.BooleanVar(value=False)
@@ -18902,7 +19704,7 @@ class AutomationGUI(object):
                                     command=lambda: self._toggle_structure_node(content_frame, toggle_btn, toggle_var))
         toggle_btn.pack(side=self.tk.LEFT, padx=2)
         
-        # Метка с именем и статистикой
+        # Метка с именем и статистикой (показываем общее количество)
         stats_text = f" ({files_count} файлов" + (f", {subdirs_count} папок" if subdirs_count > 0 else "") + ")"
         header_label = self.tk.Label(header_frame, 
                                      text=f"{node_name}{stats_text}",
@@ -18986,6 +19788,171 @@ class AutomationGUI(object):
         
         # Сохраняем функцию заполнения
         content_frame._populate = _populate_content
+    
+    def _create_structure_node_optimized(self, parent_frame, node_path, all_files, all_directories, root_dir, 
+                                         files_by_dir, dirs_by_parent, dir_stats, depth=0):
+        """Создание узла дерева структуры с возможностью разворачивания - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ"""
+        # Нормализуем пути (особый случай для корня '/')
+        if node_path == '/':
+            node_path_norm = '/'
+        else:
+            node_path_norm = os.path.normpath(node_path)
+            if node_path_norm.endswith(os.sep) and node_path_norm != '/':
+                node_path_norm = node_path_norm[:-1]
+        
+        # Получаем прямые файлы и поддиректории из индексов (БЫСТРО!)
+        node_files = files_by_dir.get(node_path_norm, [])
+        node_subdirs = dirs_by_parent.get(node_path_norm, [])
+        
+        if hasattr(self, 'dual_logger') and self.dual_logger and depth == 0:
+            self.dual_logger.write_analysis(f"[FS_STRUCTURE] Узел {node_path_norm}: {len(node_files)} файлов, {len(node_subdirs)} поддиректорий")
+        
+        # Если нет файлов и поддиректорий, не показываем узел
+        if not node_files and not node_subdirs:
+            if hasattr(self, 'dual_logger') and self.dual_logger and depth == 0:
+                self.dual_logger.write_analysis(f"[FS_STRUCTURE] Пропуск узла {node_path_norm}: пусто")
+            return
+        
+        # Получаем предвычисленную статистику
+        stats = dir_stats.get(node_path_norm, {'total_files': 0, 'total_dirs': 0, 'total_size': 0})
+        files_count = stats['total_files']
+        subdirs_count = stats['total_dirs']
+        total_size = stats['total_size']
+        
+        # Создаем фрейм для узла
+        node_frame = self.tk.Frame(parent_frame)
+        node_frame.pack(fill=self.tk.X, padx=(depth * 15, 5), pady=1, anchor='w')
+        
+        # Заголовок узла с кнопкой разворачивания
+        header_frame = self.tk.Frame(node_frame)
+        header_frame.pack(fill=self.tk.X, anchor='w')
+        
+        # Определяем имя узла
+        if depth == 0:
+            node_name = node_path
+        else:
+            node_name = os.path.basename(node_path)
+        
+        # Форматируем размер
+        def format_size(size_bytes):
+            """Форматирование размера в читаемый вид"""
+            for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                if size_bytes < 1024.0:
+                    return f"{size_bytes:.1f} {unit}"
+                size_bytes /= 1024.0
+            return f"{size_bytes:.1f} PB"
+        
+        size_text = f", {format_size(total_size)}" if total_size > 0 else ""
+        
+        # Контент узла (скрыт по умолчанию) - создаем ПЕРЕД кнопкой
+        content_frame = self.tk.Frame(node_frame)
+        content_frame._toggle_var = None  # Будет установлено ниже
+        content_frame._node_path = node_path_norm
+        content_frame._node_files = node_files
+        content_frame._node_subdirs = node_subdirs
+        content_frame._files_by_dir = files_by_dir
+        content_frame._dirs_by_parent = dirs_by_parent
+        content_frame._dir_stats = dir_stats
+        content_frame._depth = depth
+        content_frame._root_dir = root_dir
+        content_frame._all_files = all_files  # Сохраняем для использования в toggle
+        
+        # Кнопка разворачивания
+        toggle_var = self.tk.BooleanVar(value=False)
+        content_frame._toggle_var = toggle_var  # Устанавливаем после создания toggle_var
+        toggle_btn = self.tk.Button(header_frame, text=">", width=1,
+                                    command=lambda: self._toggle_structure_node_optimized(
+                                        content_frame, toggle_btn, toggle_var, node_path_norm, 
+                                        node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth
+                                    ))
+        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        # Метка с именем и статистикой
+        stats_text = f" ({files_count:,} файлов"
+        if subdirs_count > 0:
+            stats_text += f", {subdirs_count:,} папок"
+        stats_text += size_text + ")"
+        header_label = self.tk.Label(header_frame, 
+                                     text=f"{node_name}{stats_text}",
+                                     font=('Arial', 9, 'bold' if depth == 0 else 'normal'),
+                                     anchor='w')
+        header_label.pack(side=self.tk.LEFT, padx=2)
+    
+    def _toggle_structure_node_optimized(self, content_frame, toggle_btn, toggle_var, node_path_norm,
+                                         node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth):
+        """Переключение видимости узла дерева структуры - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ"""
+        if toggle_var.get():
+            # Сворачиваем
+            content_frame.pack_forget()
+            toggle_btn.config(text=">")
+            toggle_var.set(False)
+        else:
+            # Разворачиваем
+            # Заполняем содержимое при первом разворачивании
+            if not hasattr(content_frame, '_populated'):
+                # Очищаем старое содержимое
+                for widget in content_frame.winfo_children():
+                    widget.destroy()
+                
+                # Сначала показываем поддиректории (рекурсивно) - отсортированные
+                for subdir_path in sorted(node_subdirs):
+                    # Получаем файлы для поддиректории из индекса
+                    # Используем реальные данные файлов из all_files
+                    subdir_file_paths = files_by_dir.get(subdir_path, [])
+                    subdir_files = {f: content_frame._all_files.get(f, (0, 0)) for f in subdir_file_paths}
+                    subdir_dirs = set(dirs_by_parent.get(subdir_path, []))
+                    
+                    self._create_structure_node_optimized(
+                        content_frame, subdir_path, subdir_files, subdir_dirs, content_frame._root_dir,
+                        files_by_dir, dirs_by_parent, dir_stats, depth + 1
+                    )
+                
+                # Потом показываем файлы - отсортированные
+                sorted_files = sorted(node_files)
+                max_files_to_show = 50  # Показываем первые 50 файлов
+                
+                if len(sorted_files) <= max_files_to_show:
+                    # Показываем все файлы
+                    for file_path in sorted_files:
+                        file_name = os.path.basename(file_path)
+                        _, ext = os.path.splitext(file_name)
+                        ext_text = f" [{ext}]" if ext else ""
+                        
+                        file_label = self.tk.Label(content_frame, 
+                                                  text=f"  ├─ {file_name}{ext_text}",
+                                                  font=('Arial', 8),
+                                                  anchor='w')
+                        file_label.pack(anchor='w', padx=(10, 0))
+                else:
+                    # Показываем первые N файлов
+                    for file_path in sorted_files[:max_files_to_show]:
+                        file_name = os.path.basename(file_path)
+                        _, ext = os.path.splitext(file_name)
+                        ext_text = f" [{ext}]" if ext else ""
+                        
+                        file_label = self.tk.Label(content_frame, 
+                                                  text=f"  ├─ {file_name}{ext_text}",
+                                                  font=('Arial', 8),
+                                                  anchor='w')
+                        file_label.pack(anchor='w', padx=(10, 0))
+                    
+                    # Показываем сноску "и еще N файлов"
+                    remaining_count = len(sorted_files) - max_files_to_show
+                    more_files_frame = self.tk.Frame(content_frame)
+                    more_files_frame.pack(anchor='w', padx=(10, 0), pady=2)
+                    
+                    more_label = self.tk.Label(more_files_frame,
+                                               text=f"  └─ ... и еще {remaining_count:,} файлов",
+                                               font=('Arial', 8),
+                                               fg='gray',
+                                               anchor='w')
+                    more_label.pack(anchor='w')
+                
+                content_frame._populated = True
+            
+            content_frame.pack(fill=self.tk.X, padx=(10, 0), pady=1, anchor='w')
+            toggle_btn.config(text="v")
+            toggle_var.set(True)
     
     def _toggle_structure_node(self, content_frame, toggle_btn, toggle_var):
         """Переключение видимости узла дерева структуры"""
@@ -30160,7 +31127,7 @@ class DirectorySnapshot(object):
 # ============================================================================    
     """Класс для хранения снимка состояния директории"""
     
-    def __init__(self, directory_path, exclude_paths=None, max_depth=None, max_files=50000, calculate_hashes=False):
+    def __init__(self, directory_path, exclude_paths=None, max_depth=None, max_files=50000, calculate_hashes=False, progress_callback=None):
         """
         Инициализация снимка директории
         
@@ -30170,10 +31137,11 @@ class DirectorySnapshot(object):
             max_depth: Максимальная глубина вложенности (None = без ограничений)
             max_files: Максимальное количество файлов для сканирования
             calculate_hashes: Вычислять ли хеши файлов (по умолчанию False для производительности)
+            progress_callback: Функция для обновления прогресса (dir_path, files_count, current_dir) или None
         """
         self.directory_path = directory_path
         self.timestamp = datetime.datetime.now()
-        self.files = {}  # {relative_path: (size, mtime, hash)}
+        self.files = {}  # {relative_path: (size, mtime)}
         self.directories = set()  # {relative_path1, relative_path2, ...}
         
         # Метрики производительности
@@ -30188,19 +31156,34 @@ class DirectorySnapshot(object):
         self.max_depth = max_depth
         self.max_files = max_files
         self.calculate_hashes = calculate_hashes
+        self.progress_callback = progress_callback  # Callback для обновления прогресса
         
-        # Расширенный список путей для исключения
+        # Исключаемые пути (только виртуальные файловые системы и временные файлы)
+        # ВАЖНО: Для сравнения состояния системы до/после обновления сканируем ВСЕ реальные файлы
+        # Исключаем только:
+        # - Виртуальные файловые системы (proc, sys, dev) - не реальные файлы на диске
+        # - Временные файлы (tmp, run) - меняются между запусками и не отражают состояние системы
         self.exclude_paths = exclude_paths or [
-            '/proc', '/sys', '/dev', '/tmp', '/var/tmp',
-            '/run', '/var/run', '/lost+found',
-            '/boot', '/snap', '/var/cache', '/var/log',
-            '/var/lib', '/usr/share/doc', '/usr/share/man',
-            '/home', '/root/.cache', '/root/.local',
-            '/var/spool', '/var/mail', '/var/backups',
-            '/etc/cups'  # Исключаем директорию CUPS (системные файлы печати)
+            '/proc',      # Виртуальная файловая система процессов (не реальные файлы)
+            '/sys',       # Виртуальная файловая система ядра (не реальные файлы)
+            '/dev',       # Устройства (не реальные файлы на диске)
+            '/tmp',       # Временные файлы (меняются между запусками)
+            '/var/tmp',   # Временные файлы (меняются между запусками)
+            '/run',       # Временные файлы рантайма (меняются между запусками)
+            '/var/run',   # Временные файлы рантайма (меняются между запусками)
+            '/lost+found', # Восстановленные файлы после fsck (не часть нормальной системы)
         ]
         
+        # Логируем информацию о пользователе и правах доступа
+        import os
+        current_uid = os.geteuid()
+        current_user = os.environ.get('SUDO_USER') or os.environ.get('USER', 'unknown')
+        print(f"[DirectorySnapshot] Инициализация: путь={self.directory_path}, max_files={self.max_files}, max_depth={self.max_depth}")
+        print(f"[DirectorySnapshot] Пользователь: UID={current_uid}, USER={current_user}")
         self._scan_directory()
+        print(f"[DirectorySnapshot] Сканирование завершено: файлов={len(self.files):,}, files_scanned={self.files_scanned:,}, max_files={self.max_files}")
+        if self.files_scanned >= self.max_files:
+            print(f"[DirectorySnapshot] ВНИМАНИЕ: Достигнут лимит max_files={self.max_files}! Сканирование могло быть неполным!")
     
     def _should_exclude_path(self, path):
         """Проверяет, нужно ли исключить путь из сканирования"""
@@ -30209,8 +31192,256 @@ class DirectorySnapshot(object):
                 return True
         return False
     
+    def _scan_directory_scandir(self):
+        """Быстрое сканирование через os.scandir() (оптимизация для Linux)"""
+        if not os.path.exists(self.directory_path):
+            return
+        
+        self.scan_start_time = time.time()
+        print(f"[DirectorySnapshot] Начало сканирования _scan_directory_scandir: {self.directory_path}, max_files={self.max_files}")
+        
+        # Счетчик для неблокирующей работы (используем список для работы в рекурсии)
+        files_processed = [0]
+        chunk_size = 100  # Обрабатываем по 100 файлов, затем делаем паузу
+        
+        # Защита от циклических симлинков: отслеживаем уже посещенные пути
+        visited_paths = set()
+        
+        def scan_recursive(current_path, current_depth):
+            """Рекурсивное сканирование директории"""
+            # Получаем реальный путь корневой директории для сравнения
+            try:
+                root_real_path = os.path.realpath(self.directory_path)
+            except (OSError, IOError):
+                root_real_path = self.directory_path
+            
+            # Получаем реальный путь текущей директории (разрешаем симлинки для проверки циклов)
+            try:
+                real_path = os.path.realpath(current_path)
+            except (OSError, IOError):
+                real_path = current_path
+            
+            # Добавляем корневую директорию в посещенные при первом вызове (current_depth == 0)
+            # Для поддиректорий путь добавляется ПЕРЕД рекурсивным вызовом (стандартный подход)
+            if current_depth == 0:
+                visited_paths.add(real_path)
+            
+            # Проверяем ограничение по количеству файлов
+            if self.files_scanned >= self.max_files:
+                print(f"[DirectorySnapshot] ПРЕРЫВАНИЕ: Достигнут лимит max_files={self.max_files} на пути {current_path} (files_scanned={self.files_scanned})")
+                return
+            
+            # Исключаем пути
+            if self._should_exclude_path(current_path):
+                return
+            
+            # Проверяем ограничение по глубине
+            if self.max_depth is not None:
+                if current_depth > self.max_depth:
+                    return
+            
+            try:
+                with os.scandir(current_path) as entries:
+                    for entry in entries:
+                        # Проверяем ограничение по количеству файлов
+                        if self.files_scanned >= self.max_files:
+                            print(f"[DirectorySnapshot] ПРЕРЫВАНИЕ в цикле: Достигнут лимит max_files={self.max_files} на пути {current_path} (files_scanned={self.files_scanned})")
+                            return
+                        
+                        try:
+                            # Проверяем тип файла (без следования симлинкам)
+                            if entry.is_dir(follow_symlinks=False):
+                                # Директория
+                                rel_dir = os.path.relpath(entry.path, self.directory_path)
+                                
+                                # Детальное логирование для /usr/bin на верхнем уровне
+                                if self.directory_path == '/usr/bin' and current_depth == 0:
+                                    print(f"[DirectorySnapshot] [DEBUG] Найдена директория в /usr/bin: {entry.path} (rel_dir: {rel_dir})")
+                                
+                                # Проверяем, не исключена ли директория
+                                if self._should_exclude_path(entry.path):
+                                    # Логируем исключенные директории для отладки
+                                    if self.directory_path == '/usr/bin' or self.files_scanned < 10 or self.files_scanned % 5000 == 0:
+                                        print(f"[DirectorySnapshot] Пропуск исключенной директории: {entry.path}")
+                                    continue
+                                
+                                if rel_dir != '.':
+                                    self.directories.add(rel_dir)
+                                    self.directories_scanned += 1
+                                
+                                # Проверяем цикл ПЕРЕД рекурсивным вызовом (стандартный подход)
+                                try:
+                                    entry_real_path = os.path.realpath(entry.path)
+                                except (OSError, IOError):
+                                    entry_real_path = entry.path
+                                
+                                # Если поддиректория указывает на корень - не рекурсируем (это цикл)
+                                if entry_real_path == root_real_path:
+                                    if len(visited_paths) < 10:
+                                        print(f"[DirectorySnapshot] [ЦИКЛ] Пропуск рекурсии (указывает на корень): {entry.path} -> {entry_real_path}")
+                                    # Продолжаем обработку остальных записей
+                                    continue
+                                # Если уже посещена - не рекурсируем (это цикл)
+                                elif entry_real_path in visited_paths:
+                                    if len(visited_paths) < 10:
+                                        print(f"[DirectorySnapshot] [ЦИКЛ] Пропуск рекурсии (уже посещено): {entry.path} -> {entry_real_path}")
+                                    # Продолжаем обработку остальных записей
+                                    continue
+                                else:
+                                    # Добавляем в посещенные ПЕРЕД рекурсивным вызовом (стандартный подход)
+                                    visited_paths.add(entry_real_path)
+                                    # Рекурсивно сканируем поддиректорию
+                                    # Логируем начало рекурсивного сканирования для больших директорий
+                                    if self.directory_path in ['/usr/bin', '/opt'] and current_depth == 0:
+                                        print(f"[DirectorySnapshot] Рекурсивное сканирование поддиректории: {entry.path} (глубина: {current_depth + 1}, files_scanned={self.files_scanned})")
+                                    scan_recursive(entry.path, current_depth + 1)
+                            elif entry.is_file(follow_symlinks=False):
+                                # Файл (реальный файл, не симлинк)
+                                # ВАЖНО: entry.is_file(follow_symlinks=False) возвращает True только для реальных файлов,
+                                # не для симлинков на файлы. Это гарантирует, что мы сканируем все реальные файлы.
+                                rel_path = os.path.relpath(entry.path, self.directory_path)
+                                
+                                # Детальное логирование для /usr/bin на верхнем уровне (первые 10 файлов)
+                                if self.directory_path == '/usr/bin' and current_depth == 0 and self.files_scanned < 10:
+                                    print(f"[DirectorySnapshot] [DEBUG] Найден файл в /usr/bin: {entry.path} (rel_path: {rel_path})")
+                                
+                                # Исключаем файлы в исключенных путях
+                                if self._should_exclude_path(entry.path):
+                                    continue
+                                
+                                # Обрабатываем файл
+                                try:
+                                    stat = entry.stat()
+                                    
+                                    # Сохраняем размер и время модификации
+                                    self.files[rel_path] = (stat.st_size, stat.st_mtime)
+                                    self.files_scanned += 1
+                                    files_processed[0] += 1
+                                    
+                                    # Делаем паузу каждые chunk_size файлов для неблокирующей работы
+                                    if files_processed[0] >= chunk_size:
+                                        time.sleep(0.01)  # 10ms пауза
+                                        files_processed[0] = 0
+                                    
+                                    # Периодически выводим прогресс (каждые 1000 файлов)
+                                    if self.files_scanned % 1000 == 0:
+                                        # Вызываем callback для обновления UI
+                                        if self.progress_callback:
+                                            try:
+                                                self.progress_callback(self.directory_path, self.files_scanned, current_path)
+                                            except Exception:
+                                                pass  # Игнорируем ошибки callback
+                                except (OSError, IOError):
+                                    # Пропускаем файлы, к которым нет доступа
+                                    continue
+                            else:
+                                # Неизвестный тип записи (симлинк, сокет, FIFO и т.д.)
+                                # ВАЖНО: entry.is_file(follow_symlinks=False) и entry.is_dir(follow_symlinks=False)
+                                # возвращают False для симлинков, даже если они указывают на файлы/директории.
+                                # Поэтому мы обрабатываем симлинки здесь.
+                                try:
+                                    # Проверяем, не прервано ли сканирование
+                                    if self.files_scanned >= self.max_files:
+                                        break
+                                    
+                                    # Проверяем циклический симлинк ПЕРЕД вызовом os.path.isdir()
+                                    # чтобы избежать проблем с разрешением пути
+                                    try:
+                                        entry_real_path = os.path.realpath(entry.path)
+                                    except (OSError, IOError):
+                                        entry_real_path = entry.path
+                                    
+                                    # Если симлинк указывает на корень - пропускаем его (циклический)
+                                    if entry_real_path == root_real_path:
+                                        if self.directory_path == '/usr/bin' and current_depth == 0:
+                                            print(f"[DirectorySnapshot] [ЦИКЛ] Пропуск циклического симлинка (до isdir): {entry.path} -> {entry_real_path}, files_scanned={self.files_scanned}")
+                                        continue
+                                    
+                                    # Если уже посещена - пропускаем (избегаем дубликатов)
+                                    # ВАЖНО: Это означает, что если директория доступна по двум путям
+                                    # (прямому и через симлинк), мы сканируем её только один раз.
+                                    # Это правильно, так как файлы внутри уже были отсканированы.
+                                    if entry_real_path in visited_paths:
+                                        if len(visited_paths) < 10:
+                                            print(f"[DirectorySnapshot] [ЦИКЛ] Пропуск рекурсии (симлинк уже посещен): {entry.path} -> {entry_real_path}")
+                                        continue
+                                    
+                                    # Проверяем, является ли это директорией через симлинк
+                                    if os.path.isdir(entry.path):
+                                        # Симлинк указывает на директорию
+                                        rel_dir = os.path.relpath(entry.path, self.directory_path)
+                                        
+                                        # Детальное логирование для /usr/bin
+                                        if self.directory_path == '/usr/bin' and current_depth == 0:
+                                            print(f"[DirectorySnapshot] [DEBUG] Найдена директория через симлинк в /usr/bin: {entry.path} (rel_dir: {rel_dir})")
+                                        
+                                        if not self._should_exclude_path(entry.path):
+                                            if rel_dir != '.':
+                                                self.directories.add(rel_dir)
+                                                self.directories_scanned += 1
+                                            
+                                            # Проверяем цикл еще раз перед рекурсией
+                                            # (entry_real_path уже вычислен выше)
+                                            if entry_real_path == root_real_path:
+                                                continue
+                                            if entry_real_path in visited_paths:
+                                                continue
+                                            
+                                            # Добавляем в посещенные ПЕРЕД рекурсивным вызовом
+                                            visited_paths.add(entry_real_path)
+                                            # Рекурсивно сканируем поддиректорию через симлинк
+                                            # ВАЖНО: Файлы внутри этой директории будут отсканированы
+                                            # через entry.is_file(follow_symlinks=False) в рекурсивном вызове
+                                            if self.directory_path in ['/usr/bin', '/opt'] and current_depth == 0:
+                                                print(f"[DirectorySnapshot] Рекурсивное сканирование поддиректории (симлинк): {entry.path} (глубина: {current_depth + 1})")
+                                            scan_recursive(entry.path, current_depth + 1)
+                                    elif os.path.isfile(entry.path):
+                                        # Симлинк указывает на файл
+                                        # ВАЖНО: Реальный файл уже был отсканирован через entry.is_file()
+                                        # в директории, где он находится. Симлинк на файл - это просто
+                                        # альтернативный путь к тому же файлу, поэтому мы его пропускаем.
+                                        pass  # Пропускаем симлинки на файлы
+                                    else:
+                                        # Это другой тип (сокет, FIFO, устройство и т.д.) - пропускаем
+                                        pass
+                                except (OSError, IOError) as e:
+                                    # Пропускаем недоступные записи
+                                    # Логируем ошибки для отладки (только первые несколько и периодически)
+                                    if self.directory_path == '/usr/bin' and (self.files_scanned < 10 or self.files_scanned % 5000 == 0):
+                                        print(f"[DirectorySnapshot] Ошибка доступа к записи (симлинк) {entry.path if 'entry' in locals() else 'unknown'}: {e}")
+                                    pass
+                        except (OSError, IOError) as e:
+                            # Пропускаем записи, к которым нет доступа
+                            # Логируем ошибки для отладки (только первые несколько и периодически)
+                            if self.files_scanned < 10 or self.files_scanned % 5000 == 0:
+                                print(f"[DirectorySnapshot] Ошибка доступа к записи {entry.path if 'entry' in locals() else 'unknown'}: {e}")
+                            continue
+            except (OSError, IOError) as e:
+                # Пропускаем директории, к которым нет доступа
+                # Логируем ошибки для отладки
+                if current_depth == 0 or (self.files_scanned < 10 or self.files_scanned % 5000 == 0):
+                    print(f"[DirectorySnapshot] Ошибка доступа к директории {current_path}: {e}")
+                pass
+        
+        try:
+            scan_recursive(self.directory_path, 0)
+        except (OSError, IOError):
+            # Пропускаем директории, к которым нет доступа
+            pass
+        finally:
+            if self.scan_start_time:
+                self.scan_duration = time.time() - self.scan_start_time
+                # Вычисляем использование памяти (приблизительно)
+                self.memory_usage = sys.getsizeof(self.files) + sys.getsizeof(self.directories)
+    
     def _scan_directory(self):
         """Сканирование директории и создание снимка"""
+        # Используем os.scandir() если доступен (Python 3.5+, быстрее на Linux)
+        if hasattr(os, 'scandir'):
+            self._scan_directory_scandir()
+            return
+        
+        # Fallback на os.walk() для старых версий Python
         if not os.path.exists(self.directory_path):
             return
         
@@ -30263,14 +31494,8 @@ class DirectorySnapshot(object):
                     try:
                         stat = os.stat(file_path)
                         
-                        # Вычисляем хеш только если нужно
-                        file_hash = 0
-                        if self.calculate_hashes:
-                            hash_start = time.time()
-                            file_hash = self._quick_hash(file_path)
-                            self.hash_calculation_time += time.time() - hash_start
-                        
-                        self.files[rel_path] = (stat.st_size, stat.st_mtime, file_hash)
+                        # Сохраняем размер и время модификации (hash не используется)
+                        self.files[rel_path] = (stat.st_size, stat.st_mtime)
                         self.files_scanned += 1
                         files_processed += 1
                         
