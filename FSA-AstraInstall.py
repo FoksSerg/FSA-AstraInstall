@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.5.197 (2025.12.22)
+Версия: V3.6.198 (2025.12.22)
 Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.5.197 (2025.12.22)"
+APP_VERSION = "V3.6.198 (2025.12.22)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -17724,7 +17724,44 @@ class AutomationGUI(object):
             except (OSError, IOError):
                 pass  # Пропускаем недоступные директории
         
-        return monitored_dirs
+        # Фильтруем поддиректории: исключаем директории, которые являются поддиректориями других директорий
+        # Это предотвращает дублирование сканирования одних и тех же файлов
+        filtered_dirs = []
+        for dir_path in monitored_dirs:
+            # Нормализуем путь (убираем завершающий слэш, разрешаем симлинки)
+            try:
+                normalized_dir = os.path.realpath(os.path.normpath(dir_path))
+            except (OSError, IOError):
+                normalized_dir = os.path.normpath(dir_path)
+            
+            # Проверяем, не является ли эта директория поддиректорией другой директории в списке
+            is_subdirectory = False
+            for other_dir in monitored_dirs:
+                if dir_path == other_dir:
+                    continue  # Пропускаем саму себя
+                
+                try:
+                    normalized_other = os.path.realpath(os.path.normpath(other_dir))
+                except (OSError, IOError):
+                    normalized_other = os.path.normpath(other_dir)
+                
+                # Специальная обработка корня "/": все остальные пути являются его поддиректориями
+                if normalized_other == '/' or normalized_other == '':
+                    is_subdirectory = True
+                    print(f"[FilesystemMonitor] Исключаем поддиректорию: {dir_path} (уже включена в корень '/')")
+                    break
+                
+                # Проверяем, является ли dir_path поддиректорией other_dir
+                # Добавляем слэш для точного сравнения (чтобы /opt не считался поддиректорией /op)
+                if normalized_dir.startswith(normalized_other + os.sep) or normalized_dir == normalized_other:
+                    is_subdirectory = True
+                    print(f"[FilesystemMonitor] Исключаем поддиректорию: {dir_path} (уже включена в {other_dir})")
+                    break
+            
+            if not is_subdirectory:
+                filtered_dirs.append(dir_path)
+        
+        return filtered_dirs
     
     def _start_filesystem_monitoring(self):
         """Запуск мониторинга файловой системы"""
@@ -31190,6 +31227,44 @@ class DirectorySnapshot(object):
         for exclude_path in self.exclude_paths:
             if path.startswith(exclude_path):
                 return True
+        
+        # Универсальная проверка: исключаем симлинки, указывающие на пути вне сканируемой директории
+        # Это предотвращает дублирование файлов (например, виртуальный диск Z: в Wine префиксе)
+        try:
+            if os.path.islink(path):
+                link_target = os.readlink(path)
+                # Если симлинк указывает на абсолютный путь
+                if os.path.isabs(link_target):
+                    # Получаем реальный путь целевой директории
+                    try:
+                        real_target = os.path.realpath(link_target)
+                    except (OSError, IOError):
+                        real_target = link_target
+                    
+                    # Получаем реальный путь корневой директории сканирования
+                    try:
+                        root_real = os.path.realpath(self.directory_path)
+                    except (OSError, IOError):
+                        root_real = self.directory_path
+                    
+                    # Если целевой путь не находится внутри корневой директории - исключаем
+                    if not real_target.startswith(root_real):
+                        return True
+                # Если симлинк указывает на относительный путь, но разрешается вне корневой директории
+                else:
+                    # Разрешаем относительный путь относительно текущего местоположения симлинка
+                    resolved_path = os.path.normpath(os.path.join(os.path.dirname(path), link_target))
+                    try:
+                        real_resolved = os.path.realpath(resolved_path)
+                        root_real = os.path.realpath(self.directory_path)
+                        if not real_resolved.startswith(root_real):
+                            return True
+                    except (OSError, IOError):
+                        pass  # Если не удалось разрешить - пропускаем проверку
+        except (OSError, IOError):
+            # Если не удалось проверить симлинк - пропускаем проверку
+            pass
+        
         return False
     
     def _scan_directory_scandir(self):
