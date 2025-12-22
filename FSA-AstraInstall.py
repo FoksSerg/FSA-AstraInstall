@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.6.198 (2025.12.22)
+Версия: V3.6.199 (2025.12.22)
 Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.6.198 (2025.12.22)"
+APP_VERSION = "V3.6.199 (2025.12.22)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -17421,6 +17421,9 @@ class AutomationGUI(object):
         self.filesystem_performance_metrics = {}
         self.filesystem_filter = FilesystemFilter()
         self.filesystem_baseline_snapshot = None
+        
+        # Инициализация поддержки цветов (проверяется при создании root окна)
+        self._init_color_support()
         self.filesystem_scan_thread = None
         # УБИРАЕМ неиспользуемый флаг первой проверки - baseline должен создаваться полностью с первого раза
         # self.filesystem_baseline_just_created = False
@@ -17487,7 +17490,7 @@ class AutomationGUI(object):
         row3_control = self.tk.Frame(control_frame)
         row3_control.pack(fill=self.tk.X, pady=2)
         self.fs_baseline_label = self.tk.Label(row3_control, text="Базовый снимок не создан", 
-                                                   font=('Arial', 8), fg='gray')
+                                                   font=('Arial', 9, 'bold'), fg='black')
         self.fs_baseline_label.pack(side=self.tk.LEFT)
         
         # Разделитель
@@ -17497,36 +17500,6 @@ class AutomationGUI(object):
         self.fs_progress_label = self.tk.Label(row3_control, text="Прогресс: ожидание...", 
                                                font=('Arial', 9, 'bold'), fg='blue')
         self.fs_progress_label.pack(side=self.tk.LEFT, padx=(5, 0))
-        
-        # Вкладки представлений
-        view_tabs_frame = self.tk.Frame(self.filesystem_monitor_frame)
-        view_tabs_frame.pack(fill=self.tk.X, padx=10, pady=5)
-        
-        self.fs_view_var = self.tk.StringVar(value="structure")
-        self.fs_structure_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Структура снимка", 
-                                                          variable=self.fs_view_var, value="structure",
-                                                          command=self._switch_filesystem_view)
-        self.fs_structure_view_btn.pack(side=self.tk.LEFT, padx=2)
-        
-        self.fs_all_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Все изменения", 
-                                                    variable=self.fs_view_var, value="all",
-                                                    command=self._switch_filesystem_view)
-        self.fs_all_view_btn.pack(side=self.tk.LEFT, padx=2)
-        
-        self.fs_dirs_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По директориям", 
-                                                     variable=self.fs_view_var, value="directories",
-                                                     command=self._switch_filesystem_view)
-        self.fs_dirs_view_btn.pack(side=self.tk.LEFT, padx=2)
-        
-        self.fs_types_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По типам", 
-                                                      variable=self.fs_view_var, value="types",
-                                                      command=self._switch_filesystem_view)
-        self.fs_types_view_btn.pack(side=self.tk.LEFT, padx=2)
-        
-        self.fs_time_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По времени", 
-                                                      variable=self.fs_view_var, value="time",
-                                                      command=self._switch_filesystem_view)
-        self.fs_time_view_btn.pack(side=self.tk.LEFT, padx=2)
         
         # Основной контейнер с двумя колонками (PanedWindow для изменения ширины)
         main_container = self.tk.Frame(self.filesystem_monitor_frame)
@@ -17628,6 +17601,36 @@ class AutomationGUI(object):
         right_frame = self.tk.Frame(self.fs_main_paned)
         self.fs_main_paned.add(right_frame, weight=1)
         
+        # Вкладки представлений (закреплены над деревом)
+        view_tabs_frame = self.tk.Frame(right_frame)
+        view_tabs_frame.pack(fill=self.tk.X, padx=5, pady=5)
+        
+        self.fs_view_var = self.tk.StringVar(value="structure")
+        self.fs_structure_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Структура снимка", 
+                                                          variable=self.fs_view_var, value="structure",
+                                                          command=self._switch_filesystem_view)
+        self.fs_structure_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_all_view_btn = self.tk.Radiobutton(view_tabs_frame, text="Все изменения", 
+                                                    variable=self.fs_view_var, value="all",
+                                                    command=self._switch_filesystem_view)
+        self.fs_all_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_dirs_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По директориям", 
+                                                     variable=self.fs_view_var, value="directories",
+                                                     command=self._switch_filesystem_view)
+        self.fs_dirs_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_types_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По типам", 
+                                                      variable=self.fs_view_var, value="types",
+                                                      command=self._switch_filesystem_view)
+        self.fs_types_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
+        self.fs_time_view_btn = self.tk.Radiobutton(view_tabs_frame, text="По времени", 
+                                                      variable=self.fs_view_var, value="time",
+                                                      command=self._switch_filesystem_view)
+        self.fs_time_view_btn.pack(side=self.tk.LEFT, padx=2)
+        
         canvas_frame = self.tk.Frame(right_frame)
         canvas_frame.pack(fill=self.tk.BOTH, expand=True)
         
@@ -17640,7 +17643,7 @@ class AutomationGUI(object):
         self.fs_canvas.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
         
         # Фрейм для аккордеона
-        self.fs_accordion_frame = self.tk.Frame(self.fs_canvas)
+        self.fs_accordion_frame = self.tk.Frame(self.fs_canvas, bg='white')
         self.fs_canvas_window = self.fs_canvas.create_window(0, 0, anchor='nw', window=self.fs_accordion_frame)
         
         # Привязка прокрутки колесиком мыши
@@ -17666,7 +17669,42 @@ class AutomationGUI(object):
         def _configure_frame(event):
             self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
         self.fs_accordion_frame.bind('<Configure>', _configure_frame)
+
+    def _init_color_support(self):
+        """Инициализирует проверку поддержки цветов для дерева файловой системы"""
+        try:
+            depth = self.root.winfo_screendepth()
+            self._supports_colors = depth > 1
+            self._is_monochrome = depth == 1
+        except:
+            self._supports_colors = True  # По умолчанию предполагаем цвета
+            self._is_monochrome = False
     
+    def _get_tree_colors(self):
+        """Возвращает цвета для дерева с учетом поддержки дисплея"""
+        if not self._supports_colors:
+            # Монохромный режим: используем только жирность шрифта
+            return {
+                'folder_fg': 'black',
+                'file_fg': 'black',
+                'stats_fg': 'black',
+                'folder_font': ('Courier', 9, 'bold'),
+                'file_font': ('Courier', 8, 'normal'),
+                'button_fg': 'black',
+                'button_hover_bg': '#e0e0e0',
+            }
+        else:
+            # Цветной режим
+            return {
+                'folder_fg': '#000080',  # Тёмно-синий цвет для папок
+                'file_fg': '#666666',
+                'stats_fg': '#888888',
+                'folder_font': ('Courier', 9, 'normal'),
+                'file_font': ('Courier', 9, 'normal'),  # Одинаковый размер с папками
+                'button_fg': '#000080',  # Тёмно-синий цвет для символов разворачивания
+                'button_hover_bg': '#e0e0e0',
+            }
+
     def _get_monitored_directories(self):
         """Возвращает список директорий для мониторинга (все директории компонентов)"""
         # ВАЖНО: Для полного сканирования файловой системы сканируем корень "/"
@@ -19647,187 +19685,8 @@ class AutomationGUI(object):
         if hasattr(self, 'dual_logger') and self.dual_logger:
             self.dual_logger.write_analysis("[FS_STRUCTURE] Отображение структуры завершено")
 
-    def _create_structure_node(self, parent_frame, node_path, all_files, all_directories, root_dir, depth=0):
-        """Создание узла дерева структуры с возможностью разворачивания"""
-        # Находим файлы и поддиректории для этого узла
-        node_files = []
-        node_subdirs = set()
-        
-        # Нормализуем пути (особый случай для корня '/')
-        if node_path == '/':
-            node_path_norm = '/'
-        else:
-            node_path_norm = os.path.normpath(node_path)
-            if node_path_norm.endswith(os.sep) and node_path_norm != '/':
-                node_path_norm = node_path_norm[:-1]
-        node_path_norm_with_sep = node_path_norm + os.sep
-        
-        for file_path in all_files.keys():
-            file_path_norm = os.path.normpath(file_path)
-            if file_path_norm == node_path_norm:
-                # Файл в самой директории (не в поддиректории) - это сам файл директории
-                # Пропускаем, так как это директория, а не файл
-                continue
-            elif file_path_norm.startswith(node_path_norm_with_sep):
-                # Проверяем, что это прямой потомок (не вложенный глубже)
-                rel_path = os.path.relpath(file_path_norm, node_path_norm)
-                # Если нет разделителя пути, значит это файл прямо в этой директории
-                if os.sep not in rel_path and rel_path != '.':
-                    node_files.append(file_path)
-        
-        for dir_path in all_directories:
-            dir_path_norm = os.path.normpath(dir_path)
-            if dir_path_norm == node_path_norm:
-                # Это сама директория, пропускаем
-                continue
-            elif dir_path_norm.startswith(node_path_norm_with_sep):
-                # Проверяем, что это прямая поддиректория
-                rel_path = os.path.relpath(dir_path_norm, node_path_norm)
-                # Если нет разделителя пути, значит это прямая поддиректория
-                if os.sep not in rel_path and rel_path != '.':
-                    node_subdirs.add(dir_path)
-        
-        # Если нет файлов и поддиректорий, не показываем узел
-        if not node_files and not node_subdirs:
-            return
-        
-        # Создаем фрейм для узла
-        node_frame = self.tk.Frame(parent_frame)
-        node_frame.pack(fill=self.tk.X, padx=(depth * 15, 5), pady=1, anchor='w')
-        
-        # Заголовок узла с кнопкой разворачивания
-        header_frame = self.tk.Frame(node_frame)
-        header_frame.pack(fill=self.tk.X, anchor='w')
-        
-        # Определяем имя узла
-        if depth == 0:
-            node_name = node_path
-        else:
-            node_name = os.path.basename(node_path)
-        
-        # Подсчитываем количество прямых файлов и поддиректорий
-        direct_files_count = len(node_files)
-        direct_subdirs_count = len(node_subdirs)
-        
-        # ОПТИМИЗАЦИЯ: Используем предвычисленную статистику вместо перебора всех файлов
-        # Если статистика не доступна (старый метод), вычисляем как раньше
-        if hasattr(self, '_current_dir_stats') and node_path_norm in self._current_dir_stats:
-            stats = self._current_dir_stats[node_path_norm]
-            files_count = stats['total_files']
-            subdirs_count = stats['total_dirs']
-            total_size = stats.get('total_size', 0)
-        else:
-            # Fallback: медленный подсчет (для совместимости)
-            total_files_count = 0
-            total_dirs_count = 0
-            node_path_norm_with_sep = node_path_norm + os.sep
-            for file_path in all_files.keys():
-                file_path_norm = os.path.normpath(file_path)
-                if file_path_norm.startswith(node_path_norm_with_sep) or (file_path_norm == node_path_norm and file_path_norm in all_files):
-                    if file_path_norm != node_path_norm:
-                        total_files_count += 1
-            for dir_path in all_directories:
-                dir_path_norm = os.path.normpath(dir_path)
-                if dir_path_norm.startswith(node_path_norm_with_sep) or dir_path_norm == node_path_norm:
-                    if dir_path_norm != node_path_norm:
-                        total_dirs_count += 1
-            files_count = total_files_count
-            subdirs_count = total_dirs_count
-            total_size = 0
-        
-        # Кнопка разворачивания
-        toggle_var = self.tk.BooleanVar(value=False)
-        toggle_btn = self.tk.Button(header_frame, text=">", width=1,
-                                    command=lambda: self._toggle_structure_node(content_frame, toggle_btn, toggle_var))
-        toggle_btn.pack(side=self.tk.LEFT, padx=2)
-        
-        # Метка с именем и статистикой (показываем общее количество)
-        stats_text = f" ({files_count} файлов" + (f", {subdirs_count} папок" if subdirs_count > 0 else "") + ")"
-        header_label = self.tk.Label(header_frame, 
-                                     text=f"{node_name}{stats_text}",
-                                     font=('Arial', 9, 'bold' if depth == 0 else 'normal'),
-                                     anchor='w')
-        header_label.pack(side=self.tk.LEFT, padx=2)
-        
-        # Контент узла (скрыт по умолчанию)
-        content_frame = self.tk.Frame(node_frame)
-        content_frame._toggle_var = toggle_var
-        
-        # При разворачивании заполняем содержимое
-        def _populate_content():
-            # Очищаем старое содержимое
-            for widget in content_frame.winfo_children():  # type: ignore[reportGeneralTypeIssues]
-                widget.destroy()
-            
-            # Сначала показываем поддиректории (рекурсивно) - отсортированные по возрастанию
-            for subdir_path in sorted(node_subdirs):
-                self._create_structure_node(content_frame, subdir_path, all_files, all_directories, root_dir, depth + 1)
-            
-            # Потом показываем файлы - отсортированные по возрастанию
-            sorted_files = sorted(node_files)
-            max_files_to_show = 20  # Показываем первые 20 файлов
-            
-            if len(sorted_files) <= max_files_to_show:
-                # Показываем все файлы
-                for file_path in sorted_files:
-                    file_name = os.path.basename(file_path)
-                    # Получаем расширение
-                    _, ext = os.path.splitext(file_name)
-                    ext_text = f" [{ext}]" if ext else ""
-                    
-                    file_label = self.tk.Label(content_frame, 
-                                              text=f"  ├─ {file_name}{ext_text}",
-                                              font=('Arial', 8),
-                                              anchor='w')
-                    file_label.pack(anchor='w', padx=(10, 0))
-            else:
-                # Показываем первые N файлов
-                for file_path in sorted_files[:max_files_to_show]:
-                    file_name = os.path.basename(file_path)
-                    _, ext = os.path.splitext(file_name)
-                    ext_text = f" [{ext}]" if ext else ""
-                    
-                    file_label = self.tk.Label(content_frame, 
-                                              text=f"  ├─ {file_name}{ext_text}",
-                                              font=('Arial', 8),
-                                              anchor='w')
-                    file_label.pack(anchor='w', padx=(10, 0))
-                
-                # Показываем сноску "и еще N файлов"
-                remaining_count = len(sorted_files) - max_files_to_show
-                more_files_frame = self.tk.Frame(content_frame)
-                more_files_frame.pack(anchor='w', padx=(10, 0), pady=2)
-                
-                more_label = self.tk.Label(more_files_frame,
-                                           text=f"  └─ ... и еще {remaining_count} файлов (нажмите для просмотра)",
-                                           font=('Arial', 8),
-                                           fg='blue',
-                                           cursor='hand2',
-                                           anchor='w')
-                more_label.pack(anchor='w')
-                
-                def _expand_all_files(event):
-                    # Удаляем сноску
-                    more_files_frame.destroy()
-                    # Показываем все оставшиеся файлы
-                    for file_path in sorted_files[max_files_to_show:]:
-                        file_name = os.path.basename(file_path)
-                        _, ext = os.path.splitext(file_name)
-                        ext_text = f" [{ext}]" if ext else ""
-                        
-                        file_label = self.tk.Label(content_frame, 
-                                                  text=f"  ├─ {file_name}{ext_text}",
-                                                  font=('Arial', 8),
-                                                  anchor='w')
-                        file_label.pack(anchor='w', padx=(10, 0))
-                
-                more_label.bind('<Button-1>', _expand_all_files)
-        
-        # Сохраняем функцию заполнения
-        content_frame._populate = _populate_content
-    
     def _create_structure_node_optimized(self, parent_frame, node_path, all_files, all_directories, root_dir, 
-                                         files_by_dir, dirs_by_parent, dir_stats, depth=0):
+                                         files_by_dir, dirs_by_parent, dir_stats, depth=0, is_last=False):
         """Создание узла дерева структуры с возможностью разворачивания - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ"""
         # Нормализуем пути (особый случай для корня '/')
         if node_path == '/':
@@ -19857,12 +19716,13 @@ class AutomationGUI(object):
         total_size = stats['total_size']
         
         # Создаем фрейм для узла
-        node_frame = self.tk.Frame(parent_frame)
-        node_frame.pack(fill=self.tk.X, padx=(depth * 15, 5), pady=1, anchor='w')
+        node_frame = self.tk.Frame(parent_frame, bg='white')
+        # Убираем все отступы в начале - вертикальные линии должны начинаться с самого начала
+        node_frame.pack(fill=self.tk.X, padx=(0, 5), pady=0, anchor='w')
         
         # Заголовок узла с кнопкой разворачивания
-        header_frame = self.tk.Frame(node_frame)
-        header_frame.pack(fill=self.tk.X, anchor='w')
+        header_frame = self.tk.Frame(node_frame, bg='white')
+        header_frame.pack(fill=self.tk.X, anchor='w', padx=0, pady=0)
         
         # Определяем имя узла
         if depth == 0:
@@ -19882,7 +19742,7 @@ class AutomationGUI(object):
         size_text = f", {format_size(total_size)}" if total_size > 0 else ""
         
         # Контент узла (скрыт по умолчанию) - создаем ПЕРЕД кнопкой
-        content_frame = self.tk.Frame(node_frame)
+        content_frame = self.tk.Frame(node_frame, bg='white')
         content_frame._toggle_var = None  # Будет установлено ниже
         content_frame._node_path = node_path_norm
         content_frame._node_files = node_files
@@ -19894,26 +19754,60 @@ class AutomationGUI(object):
         content_frame._root_dir = root_dir
         content_frame._all_files = all_files  # Сохраняем для использования в toggle
         
-        # Кнопка разворачивания
+        # Сначала получаем цвета (нужно для всех элементов)
+        colors = self._get_tree_colors()
+        
+        # Создаем вертикальные линии (если есть)
+        tree_prefix = ""
+        if depth > 0:
+            # Правильная структура: вертикальная линия от корня, ветвление в месте элемента
+            # Вертикальные линии должны идти через всё дерево от родителя вниз
+            # Для промежуточных элементов: "│  " * depth + "├─ "
+            # Для последних элементов: "│  " * depth + "└─ "
+            if is_last:
+                tree_prefix = "│  " * depth + "└─ "
+            else:
+                tree_prefix = "│  " * depth + "├─ "
+        else:
+            tree_prefix = ""
+        
+        # Упаковываем вертикальные линии (если есть)
+        # Используем моноширинный шрифт для правильного выравнивания вертикальных линий
+        if tree_prefix:
+            tree_lines_label = self.tk.Label(header_frame, 
+                                            text=tree_prefix,
+                                            font=('Courier', 9),  # Моноширинный шрифт для вертикальных линий
+                                            fg=colors['folder_fg'],
+                                            bg='white',
+                                            anchor='w')
+            tree_lines_label.pack(side=self.tk.LEFT, padx=0, pady=0)
+        
+        # Кнопка разворачивания (после вертикальных линий, перед именем)
+        # Минимальный интервал между вертикальными линиями и символом разворачивания
         toggle_var = self.tk.BooleanVar(value=False)
         content_frame._toggle_var = toggle_var  # Устанавливаем после создания toggle_var
-        toggle_btn = self.tk.Button(header_frame, text=">", width=1,
-                                    command=lambda: self._toggle_structure_node_optimized(
-                                        content_frame, toggle_btn, toggle_var, node_path_norm, 
-                                        node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth
-                                    ))
-        toggle_btn.pack(side=self.tk.LEFT, padx=2)
+        toggle_btn = self.tk.Label(header_frame, text="▶", font=('Courier', 7),
+                                   fg=colors['button_fg'], bg='white', cursor='hand2', width=1)
+        toggle_btn.bind('<Button-1>', lambda e: self._toggle_structure_node_optimized(
+            content_frame, toggle_btn, toggle_var, node_path_norm, 
+            node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth
+        ))
+        toggle_btn.pack(side=self.tk.LEFT, padx=(0, 1), pady=0)  # Интервал только справа
         
-        # Метка с именем и статистикой
+        # Метка с именем и статистикой (после символа разворачивания)
+        # Минимальный интервал между символом разворачивания и именем
         stats_text = f" ({files_count:,} файлов"
         if subdirs_count > 0:
             stats_text += f", {subdirs_count:,} папок"
         stats_text += size_text + ")"
+        
         header_label = self.tk.Label(header_frame, 
                                      text=f"{node_name}{stats_text}",
-                                     font=('Arial', 9, 'bold' if depth == 0 else 'normal'),
+                                     font=colors['folder_font'],
+                                     fg=colors['folder_fg'],
+                                     bg='white',
                                      anchor='w')
-        header_label.pack(side=self.tk.LEFT, padx=2)
+        header_label.pack(side=self.tk.LEFT, padx=(0, 0), pady=0)  # Без отступов
     
     def _toggle_structure_node_optimized(self, content_frame, toggle_btn, toggle_var, node_path_norm,
                                          node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth):
@@ -19921,7 +19815,7 @@ class AutomationGUI(object):
         if toggle_var.get():
             # Сворачиваем
             content_frame.pack_forget()
-            toggle_btn.config(text=">")
+            toggle_btn.config(text="▶")
             toggle_var.set(False)
         else:
             # Разворачиваем
@@ -19932,80 +19826,88 @@ class AutomationGUI(object):
                     widget.destroy()
                 
                 # Сначала показываем поддиректории (рекурсивно) - отсортированные
-                for subdir_path in sorted(node_subdirs):
+                sorted_subdirs = sorted(node_subdirs)
+                for idx, subdir_path in enumerate(sorted_subdirs):
                     # Получаем файлы для поддиректории из индекса
                     # Используем реальные данные файлов из all_files
                     subdir_file_paths = files_by_dir.get(subdir_path, [])
                     subdir_files = {f: content_frame._all_files.get(f, (0, 0)) for f in subdir_file_paths}
                     subdir_dirs = set(dirs_by_parent.get(subdir_path, []))
                     
+                    # Определяем, является ли эта папка последней (последняя папка и нет файлов)
+                    is_last_subdir = (idx == len(sorted_subdirs) - 1) and (len(node_files) == 0)
+                    
                     self._create_structure_node_optimized(
                         content_frame, subdir_path, subdir_files, subdir_dirs, content_frame._root_dir,
-                        files_by_dir, dirs_by_parent, dir_stats, depth + 1
+                        files_by_dir, dirs_by_parent, dir_stats, depth + 1, is_last=is_last_subdir
                     )
                 
                 # Потом показываем файлы - отсортированные
                 sorted_files = sorted(node_files)
                 max_files_to_show = 50  # Показываем первые 50 файлов
                 
+                colors = self._get_tree_colors()
+                
                 if len(sorted_files) <= max_files_to_show:
                     # Показываем все файлы
-                    for file_path in sorted_files:
+                    for i, file_path in enumerate(sorted_files):
                         file_name = os.path.basename(file_path)
                         _, ext = os.path.splitext(file_name)
                         ext_text = f" [{ext}]" if ext else ""
                         
+                        # Правильная структура: вертикальная линия от корня, ветвление в месте файла
+                        # Последний файл использует └─ вместо ├─
+                        if i == len(sorted_files) - 1:
+                            file_prefix = "│  " * depth + "└─ "
+                        else:
+                            file_prefix = "│  " * depth + "├─ "
+                        
                         file_label = self.tk.Label(content_frame, 
-                                                  text=f"  ├─ {file_name}{ext_text}",
-                                                  font=('Arial', 8),
+                                                  text=f"{file_prefix}{file_name}{ext_text}",
+                                                  font=colors['file_font'],
+                                                  fg=colors['file_fg'],
+                                                  bg='white',
                                                   anchor='w')
-                        file_label.pack(anchor='w', padx=(10, 0))
+                        file_label.pack(anchor='w', padx=(0, 0))
                 else:
+                    # colors уже получен выше, используем его
+                    
                     # Показываем первые N файлов
-                    for file_path in sorted_files[:max_files_to_show]:
+                    for i, file_path in enumerate(sorted_files[:max_files_to_show]):
                         file_name = os.path.basename(file_path)
                         _, ext = os.path.splitext(file_name)
                         ext_text = f" [{ext}]" if ext else ""
                         
+                        # Все файлы в этом блоке промежуточные (не последние)
+                        file_prefix = "│  " * depth + "├─ "
+                        
                         file_label = self.tk.Label(content_frame, 
-                                                  text=f"  ├─ {file_name}{ext_text}",
-                                                  font=('Arial', 8),
+                                                  text=f"{file_prefix}{file_name}{ext_text}",
+                                                  font=colors['file_font'],
+                                                  fg=colors['file_fg'],
+                                                  bg='white',
                                                   anchor='w')
-                        file_label.pack(anchor='w', padx=(10, 0))
+                        file_label.pack(anchor='w', padx=(0, 0))
                     
                     # Показываем сноску "и еще N файлов"
                     remaining_count = len(sorted_files) - max_files_to_show
-                    more_files_frame = self.tk.Frame(content_frame)
-                    more_files_frame.pack(anchor='w', padx=(10, 0), pady=2)
+                    more_files_frame = self.tk.Frame(content_frame, bg='white')
+                    more_files_frame.pack(anchor='w', padx=(0, 0), pady=0)
                     
+                    more_prefix = "│  " * depth + "└─ "
                     more_label = self.tk.Label(more_files_frame,
-                                               text=f"  └─ ... и еще {remaining_count:,} файлов",
-                                               font=('Arial', 8),
-                                               fg='gray',
+                                               text=f"{more_prefix}... и еще {remaining_count:,} файлов",
+                                               font=colors['file_font'],
+                                               fg=colors['stats_fg'],
+                                               bg='white',
                                                anchor='w')
-                    more_label.pack(anchor='w')
+                    more_label.pack(anchor='w', padx=0, pady=0)
                 
                 content_frame._populated = True
             
-            content_frame.pack(fill=self.tk.X, padx=(10, 0), pady=1, anchor='w')
-            toggle_btn.config(text="v")
-            toggle_var.set(True)
-    
-    def _toggle_structure_node(self, content_frame, toggle_btn, toggle_var):
-        """Переключение видимости узла дерева структуры"""
-        if toggle_var.get():
-            # Сворачиваем
-            content_frame.pack_forget()
-            toggle_btn.config(text=">")
-            toggle_var.set(False)
-        else:
-            # Разворачиваем
-            # Заполняем содержимое при первом разворачивании
-            if not hasattr(content_frame, '_populated'):
-                content_frame._populate()
-                content_frame._populated = True
-            content_frame.pack(fill=self.tk.X, padx=(10, 0), pady=1, anchor='w')
-            toggle_btn.config(text="v")
+            # Убираем отступ - вертикальные линии должны начинаться с самого начала
+            content_frame.pack(fill=self.tk.X, padx=(0, 0), pady=0, anchor='w')
+            toggle_btn.config(text="▼")
             toggle_var.set(True)
     
     def _toggle_section(self, section_frame, toggle_btn, toggle_var):
