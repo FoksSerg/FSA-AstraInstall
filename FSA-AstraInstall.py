@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.6.201 (2025.12.23)
+Версия: V3.6.202 (2025.12.23)
 Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.6.201 (2025.12.23)"
+APP_VERSION = "V3.6.202 (2025.12.23)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -17513,11 +17513,39 @@ class AutomationGUI(object):
         # Кнопка создания снимка
         create_snapshot_btn = self.tk.Button(
             left_panel,
-            text="[Снимок] Создать снимок",
+            text="Создать снимок",
             command=self._create_manual_snapshot,
             width=25
         )
         create_snapshot_btn.pack(pady=10, padx=5)
+        
+        # Кнопка сохранения снимка
+        save_snapshot_btn = self.tk.Button(
+            left_panel,
+            text="Сохранить снимок",
+            command=self._save_snapshot_to_file,
+            width=25
+        )
+        save_snapshot_btn.pack(pady=5, padx=5)
+        
+        # Кнопка загрузки снимка
+        load_snapshot_btn = self.tk.Button(
+            left_panel,
+            text="Загрузить снимок",
+            command=self._load_snapshot_from_file,
+            width=25
+        )
+        load_snapshot_btn.pack(pady=5, padx=5)
+        
+        # Checkbox для автосохранения
+        self.fs_auto_save_var = self.tk.BooleanVar(value=False)
+        auto_save_checkbox = self.tk.Checkbutton(
+            left_panel,
+            text="Автосохранение",
+            variable=self.fs_auto_save_var,
+            font=('Arial', 9)
+        )
+        auto_save_checkbox.pack(pady=5, padx=5)
         
         # Разделитель
         separator = self.tk.Frame(left_panel, height=2, bg='#ccc')
@@ -17560,7 +17588,7 @@ class AutomationGUI(object):
             snapshots_frame,
             yscrollcommand=snapshots_scrollbar.set,
             font=('Arial', 8),
-            selectmode=self.tk.SINGLE
+            selectmode=self.tk.EXTENDED  # Мульти-выбор с Ctrl/Shift
         )
         self.fs_snapshots_listbox.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
         snapshots_scrollbar.config(command=self.fs_snapshots_listbox.yview)
@@ -18006,6 +18034,13 @@ class AutomationGUI(object):
                 snapshot.hash_calculation_time = 0.0
                 snapshot.memory_usage = 0
                 snapshot.scan_start_time = None
+                # Инициализируем недостающие атрибуты для сохранения в JSON
+                snapshot.max_depth = None
+                snapshot.max_files = 1000000
+                snapshot.calculate_hashes = False
+                snapshot.exclude_paths = [
+                    '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/run', '/var/run', '/lost+found'
+                ]
                 
                 total_elapsed = time.time() - start_time
                 print(f"[FilesystemMonitor] === BASELINE СОЗДАН ===")
@@ -18230,6 +18265,13 @@ class AutomationGUI(object):
                 snapshot.hash_calculation_time = 0.0
                 snapshot.memory_usage = 0
                 snapshot.scan_start_time = None
+                # Инициализируем недостающие атрибуты для сохранения в JSON
+                snapshot.max_depth = None
+                snapshot.max_files = 1000000
+                snapshot.calculate_hashes = False
+                snapshot.exclude_paths = [
+                    '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/run', '/var/run', '/lost+found'
+                ]
                 
                 # НЕ сохраняем на диск - работаем только в памяти
                 self.filesystem_baseline_snapshot = snapshot
@@ -18374,6 +18416,13 @@ class AutomationGUI(object):
                 snapshot.hash_calculation_time = 0.0
                 snapshot.memory_usage = 0
                 snapshot.scan_start_time = None
+                # Инициализируем недостающие атрибуты для сохранения в JSON
+                snapshot.max_depth = None
+                snapshot.max_files = 1000000
+                snapshot.calculate_hashes = False
+                snapshot.exclude_paths = [
+                    '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/run', '/var/run', '/lost+found'
+                ]
                 
                 # Устанавливаем базовый снимок в памяти
                 self.filesystem_baseline_snapshot = snapshot
@@ -18569,6 +18618,13 @@ class AutomationGUI(object):
                 snapshot.hash_calculation_time = 0.0
                 snapshot.memory_usage = 0
                 snapshot.scan_start_time = None
+                # Инициализируем недостающие атрибуты для сохранения в JSON
+                snapshot.max_depth = None
+                snapshot.max_files = 1000000
+                snapshot.calculate_hashes = False
+                snapshot.exclude_paths = [
+                    '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/run', '/var/run', '/lost+found'
+                ]
                 
                 total_elapsed = time.time() - start_time
                 print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] === СНИМОК СОЗДАН ===")
@@ -18599,6 +18655,10 @@ class AutomationGUI(object):
                 if hasattr(self, '_update_snapshots_list'):
                     self.root.after(0, self._update_snapshots_list)
                 
+                # Автоматическое сохранение, если включено
+                if hasattr(self, 'fs_auto_save_var') and self.fs_auto_save_var.get():
+                    self.root.after(0, lambda entry=snapshot_entry: self._auto_save_snapshot(entry))
+                
             except Exception as e:
                 print(f"[FilesystemMonitor] [РУЧНОЙ СНИМОК] [ОШИБКА] Ошибка при создании снимка: {e}")
                 import traceback
@@ -18609,6 +18669,525 @@ class AutomationGUI(object):
         # Запускаем создание снимка в фоновом потоке
         snapshot_thread = threading.Thread(target=_create_snapshot_in_background, daemon=True, name="ManualSnapshotThread")
         snapshot_thread.start()
+    
+    def _get_snapshots_directory(self):
+        """Возвращает путь к папке Snaps рядом с бинарником"""
+        try:
+            # Используем существующий метод для получения директории скрипта
+            base_dir = self._get_script_dir()
+            
+            # Создаем путь к папке Snaps
+            snaps_dir = os.path.join(base_dir, 'Snaps')
+            
+            # Создаем папку, если не существует
+            if not os.path.exists(snaps_dir):
+                os.makedirs(snaps_dir, exist_ok=True)
+            
+            # Устанавливаем права доступа для папки (используем существующую функцию)
+            fix_permissions(snaps_dir)
+            
+            return snaps_dir
+        except Exception as e:
+            print(f"[ERROR] Ошибка при получении пути к папке Snaps: {e}")
+            return None
+    
+    def _auto_save_snapshot(self, snapshot_entry):
+        """Автоматически сохраняет снимок в папку Snaps"""
+        try:
+            snapshot = snapshot_entry['snapshot']
+            
+            # Получаем папку Snaps
+            snaps_dir = self._get_snapshots_directory()
+            if not snaps_dir:
+                print(f"[WARNING] Не удалось определить папку для автосохранения снимка")
+                return
+            
+            # Формируем имя файла: YYYY-MM-DD HH-MM-SS название.json
+            timestamp = snapshot_entry['timestamp']
+            if isinstance(timestamp, datetime.datetime):
+                date_str = timestamp.strftime('%Y-%m-%d %H-%M-%S')
+            else:
+                date_str = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+            
+            # Очищаем название снимка от недопустимых символов для имени файла
+            safe_name = re.sub(r'[<>:"/\\|?*]', '_', snapshot_entry['name'])
+            safe_name = safe_name.replace(' ', '_')
+            
+            file_name = f"{date_str} {safe_name}.json"
+            file_path = os.path.join(snaps_dir, file_name)
+            
+            # Проверяем, не существует ли уже файл с таким именем
+            if os.path.exists(file_path):
+                print(f"[INFO] Снимок '{snapshot_entry['name']}' уже сохранен, пропускаем: {file_path}")
+                return
+            
+            # Формируем метаданные снимка
+            metadata = {
+                'snapshot_id': snapshot_entry['id'],
+                'snapshot_name': snapshot_entry['name'],
+                'timestamp': snapshot_entry['timestamp'].isoformat() if isinstance(snapshot_entry['timestamp'], datetime.datetime) else str(snapshot_entry['timestamp']),
+                'files_count': snapshot_entry['files_count'],
+                'is_baseline': snapshot_entry.get('is_baseline', False)
+            }
+            
+            # Сохраняем снимок с метаданными в один файл
+            if snapshot.save_to_json(file_path, metadata=metadata):
+                # Устанавливаем права доступа для файла (используем существующую функцию)
+                fix_permissions(file_path)
+                print(f"[INFO] Снимок '{snapshot_entry['name']}' автоматически сохранен в: {file_path}")
+        except Exception as e:
+            print(f"[ERROR] Ошибка при автосохранении снимка: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _save_snapshot_to_file(self):
+        """Сохраняет выбранные снимки в JSON файлы в папку Snaps (мульти-выбор)"""
+        try:
+            # Получаем выбранные снимки
+            selected_indices = self.fs_snapshots_listbox.curselection()
+            if not selected_indices:
+                self.tk.messagebox.showwarning(
+                    "Предупреждение",
+                    "Выберите снимки для сохранения из списка контрольных точек (Ctrl/Shift для множественного выбора)."
+                )
+                return
+            
+            # Получаем папку Snaps
+            snaps_dir = self._get_snapshots_directory()
+            if not snaps_dir:
+                self.tk.messagebox.showerror("Ошибка", "Не удалось определить папку для сохранения снимков.")
+                return
+            
+            saved_count = 0
+            skipped_count = 0
+            error_count = 0
+            
+            # Обрабатываем все выбранные снимки
+            selected_indices_list = list(selected_indices) if selected_indices else []
+            for selected_index in selected_indices_list:
+                if selected_index >= len(self.filesystem_snapshots):
+                    continue
+                
+                snapshot_entry = self.filesystem_snapshots[selected_index]
+                snapshot = snapshot_entry['snapshot']
+                
+                # Формируем имя файла: YYYY-MM-DD HH-MM-SS название.json
+                timestamp = snapshot_entry['timestamp']
+                if isinstance(timestamp, datetime.datetime):
+                    date_str = timestamp.strftime('%Y-%m-%d %H-%M-%S')
+                else:
+                    date_str = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+                
+                # Очищаем название снимка от недопустимых символов для имени файла
+                safe_name = re.sub(r'[<>:"/\\|?*]', '_', snapshot_entry['name'])
+                safe_name = safe_name.replace(' ', '_')
+                
+                file_name = f"{date_str} {safe_name}.json"
+                file_path = os.path.join(snaps_dir, file_name)
+                
+                # Проверяем, не существует ли уже файл с таким именем
+                if os.path.exists(file_path):
+                    skipped_count += 1
+                    continue
+                
+                # Формируем метаданные снимка
+                metadata = {
+                    'snapshot_id': snapshot_entry['id'],
+                    'snapshot_name': snapshot_entry['name'],
+                    'timestamp': snapshot_entry['timestamp'].isoformat() if isinstance(snapshot_entry['timestamp'], datetime.datetime) else str(snapshot_entry['timestamp']),
+                    'files_count': snapshot_entry['files_count'],
+                    'is_baseline': snapshot_entry.get('is_baseline', False)
+                }
+                
+                # Сохраняем снимок с метаданными в один файл
+                if snapshot.save_to_json(file_path, metadata=metadata):
+                    # Устанавливаем права доступа для файла (используем существующую функцию)
+                    fix_permissions(file_path)
+                    saved_count += 1
+                else:
+                    error_count += 1
+            
+            # Показываем результат
+            if saved_count > 0:
+                if skipped_count > 0 or error_count > 0:
+                    message = f"Сохранено снимков: {saved_count}"
+                    if skipped_count > 0:
+                        message += f"\nПропущено (уже существуют): {skipped_count}"
+                    if error_count > 0:
+                        message += f"\nОшибок: {error_count}"
+                    self.tk.messagebox.showinfo("Результат", message)
+                else:
+                    if saved_count == 1:
+                        self.tk.messagebox.showinfo("Успех", "Снимок успешно сохранен.")
+                    else:
+                        self.tk.messagebox.showinfo("Успех", f"Сохранено снимков: {saved_count}")
+            else:
+                if skipped_count > 0:
+                    self.tk.messagebox.showinfo("Информация", f"Все выбранные снимки уже сохранены ({skipped_count})")
+                elif error_count > 0:
+                    self.tk.messagebox.showerror("Ошибка", f"Не удалось сохранить снимки. Ошибок: {error_count}")
+        except Exception as e:
+            print(f"[ERROR] Ошибка при сохранении снимка: {e}")
+            import traceback
+            traceback.print_exc()
+            self.tk.messagebox.showerror("Ошибка", f"Ошибка при сохранении снимка: {e}")
+    
+    def _load_snapshot_from_file(self):
+        """Открывает окно для загрузки снимка из папки Snaps"""
+        try:
+            # Получаем папку Snaps
+            snaps_dir = self._get_snapshots_directory()
+            if not snaps_dir:
+                self.tk.messagebox.showerror("Ошибка", "Не удалось определить папку со снимками.")
+                return
+            
+            # Создаем окно для выбора снимка
+            load_window = self.tk.Toplevel(self.root)
+            load_window.title("Загрузить снимок из папки Snaps")
+            load_window.transient(self.root)
+            load_window.grab_set()
+            
+            # Загружаем сохраненную геометрию окна
+            settings = getattr(self, '_saved_settings', {})
+            geometry_key = 'load_snapshot_dialog_geometry'
+            saved_geometry = self._load_window_geometry(settings, geometry_key, default_size="900x600")
+            if saved_geometry:
+                load_window.geometry(saved_geometry)
+            else:
+                load_window.geometry("900x600")
+                # Центрируем окно
+                load_window.update_idletasks()
+                screen_width = load_window.winfo_screenwidth()
+                screen_height = load_window.winfo_screenheight()
+                x = (screen_width // 2) - 450
+                y = (screen_height // 2) - 300
+                load_window.geometry(f"900x600+{x}+{y}")
+            
+            # Сохраняем геометрию при закрытии окна
+            def on_load_window_close():
+                self._save_window_geometry(load_window, geometry_key)
+                load_window.destroy()
+            
+            load_window.protocol("WM_DELETE_WINDOW", on_load_window_close)
+            
+            # Заголовок
+            header_label = self.tk.Label(
+                load_window,
+                text="Выберите снимки для загрузки (Ctrl/Shift для множественного выбора):",
+                font=('Arial', 10, 'bold')
+            )
+            header_label.pack(pady=10)
+            
+            # Информация о папке
+            path_label = self.tk.Label(
+                load_window,
+                text=f"Папка: {snaps_dir}",
+                font=('Arial', 8),
+                fg='gray'
+            )
+            path_label.pack(pady=5)
+            
+            # Фрейм для списка и кнопок
+            content_frame = self.tk.Frame(load_window)
+            content_frame.pack(fill=self.tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Список снимков
+            list_frame = self.tk.Frame(content_frame)
+            list_frame.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+            
+            scrollbar = self.ttk.Scrollbar(list_frame)
+            scrollbar.pack(side=self.tk.RIGHT, fill=self.tk.Y)
+            
+            snapshots_listbox = self.tk.Listbox(
+                list_frame,
+                yscrollcommand=scrollbar.set,
+                font=('Courier', 11),  # Увеличенный размер шрифта для лучшей читаемости
+                selectmode=self.tk.EXTENDED  # Мульти-выбор с Ctrl/Shift
+            )
+            snapshots_listbox.pack(side=self.tk.LEFT, fill=self.tk.BOTH, expand=True)
+            scrollbar.config(command=snapshots_listbox.yview)
+            
+            # Кнопки справа
+            buttons_frame = self.tk.Frame(content_frame)
+            buttons_frame.pack(side=self.tk.RIGHT, fill=self.tk.Y, padx=(10, 0))
+            
+            # Хранилище для файлов снимков (чтобы не пересканировать при каждом действии)
+            snapshot_files_storage = []
+            
+            def refresh_list():
+                """Обновляет список снимков"""
+                snapshots_listbox.delete(0, self.tk.END)
+                snapshot_files_storage.clear()
+                
+                try:
+                    if os.path.exists(snaps_dir):
+                        for file_name in sorted(os.listdir(snaps_dir), reverse=True):
+                            if file_name.endswith('.json') and not file_name.endswith('_metadata.json'):
+                                file_path = os.path.join(snaps_dir, file_name)
+                                
+                                # Загружаем метаданные из основного JSON файла
+                                display_name = file_name.replace('.json', '')
+                                timestamp_str = ""
+                                files_count = 0
+                                
+                                try:
+                                    metadata = DirectorySnapshot.load_metadata_from_json(file_path)
+                                    if metadata:
+                                        display_name = metadata.get('snapshot_name', display_name)
+                                        timestamp = metadata.get('timestamp', '')
+                                        if timestamp:
+                                            try:
+                                                dt = datetime.datetime.fromisoformat(timestamp)
+                                                timestamp_str = dt.strftime('%Y.%m.%d %H:%M:%S')
+                                            except:
+                                                timestamp_str = timestamp
+                                        files_count = metadata.get('files_count', 0)
+                                    else:
+                                        # Если метаданных нет, пытаемся загрузить старый формат (_metadata.json)
+                                        metadata_path = file_path.replace('.json', '_metadata.json')
+                                        if os.path.exists(metadata_path):
+                                            import json
+                                            with open(metadata_path, 'r', encoding='utf-8') as f:
+                                                metadata = json.load(f)
+                                            display_name = metadata.get('snapshot_name', display_name)
+                                            timestamp = metadata.get('timestamp', '')
+                                            if timestamp:
+                                                try:
+                                                    dt = datetime.datetime.fromisoformat(timestamp)
+                                                    timestamp_str = dt.strftime('%Y.%m.%d %H:%M:%S')
+                                                except:
+                                                    timestamp_str = timestamp
+                                            files_count = metadata.get('files_count', 0)
+                                except:
+                                    pass
+                                
+                                # Форматируем строку для отображения
+                                if timestamp_str and files_count:
+                                    display_text = f"{display_name} | {timestamp_str} | {files_count:,} файлов"
+                                elif timestamp_str:
+                                    display_text = f"{display_name} | {timestamp_str}"
+                                else:
+                                    display_text = display_name
+                                
+                                snapshots_listbox.insert(self.tk.END, display_text)
+                                snapshot_files_storage.append(file_path)
+                except Exception as e:
+                    print(f"[ERROR] Ошибка при обновлении списка снимков: {e}")
+            
+            def load_selected():
+                """Загружает выбранные снимки (мульти-выбор)"""
+                selected_indices = snapshots_listbox.curselection()
+                if not selected_indices:
+                    self.tk.messagebox.showwarning("Предупреждение", "Выберите снимки для загрузки.")
+                    return
+                
+                loaded_count = 0
+                skipped_count = 0
+                
+                # Обрабатываем все выбранные снимки
+                selected_indices_list = list(selected_indices) if selected_indices else []
+                for selected_index in selected_indices_list:
+                    if selected_index >= len(snapshot_files_storage):
+                        continue
+                    
+                    file_path = snapshot_files_storage[selected_index]
+                    
+                    # Загружаем снимок
+                    snapshot = DirectorySnapshot.load_from_json(file_path)
+                    if not snapshot:
+                        continue
+                    
+                    # Загружаем метаданные из основного JSON файла
+                    snapshot_name = "Загруженный снимок"
+                    snapshot_id = self.filesystem_next_snapshot_id
+                    is_baseline = False
+                    
+                    try:
+                        metadata = DirectorySnapshot.load_metadata_from_json(file_path)
+                        if metadata:
+                            snapshot_name = metadata.get('snapshot_name', snapshot_name)
+                            snapshot_id = metadata.get('snapshot_id', snapshot_id)
+                            is_baseline = metadata.get('is_baseline', False)
+                        else:
+                            # Если метаданных нет, пытаемся загрузить старый формат (_metadata.json)
+                            metadata_path = file_path.replace('.json', '_metadata.json')
+                            if os.path.exists(metadata_path):
+                                import json
+                                with open(metadata_path, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                snapshot_name = metadata.get('snapshot_name', snapshot_name)
+                                snapshot_id = metadata.get('snapshot_id', snapshot_id)
+                                is_baseline = metadata.get('is_baseline', False)
+                            else:
+                                # Если метаданные не найдены, используем имя файла
+                                snapshot_name = os.path.basename(file_path).replace('.json', '')
+                                # Пытаемся извлечь название из имени файла (после даты и времени)
+                                parts = snapshot_name.split('_', 2)
+                                if len(parts) >= 3:
+                                    snapshot_name = parts[2]
+                    except:
+                        # Если метаданные не найдены, используем имя файла
+                        snapshot_name = os.path.basename(file_path).replace('.json', '')
+                        # Пытаемся извлечь название из имени файла (после даты и времени)
+                        parts = snapshot_name.split('_', 2)
+                        if len(parts) >= 3:
+                            snapshot_name = parts[2]
+                    
+                    # Проверяем, не существует ли уже снимок с таким же ID или именем
+                    already_exists = False
+                    for existing_entry in self.filesystem_snapshots:
+                        if existing_entry['id'] == snapshot_id or existing_entry['name'] == snapshot_name:
+                            already_exists = True
+                            skipped_count += 1
+                            break
+                    
+                    # Если снимок уже существует - пропускаем без сообщений
+                    if already_exists:
+                        continue
+                    
+                    # Создаем запись снимка
+                    snapshot_entry = {
+                        'id': snapshot_id,
+                        'name': snapshot_name,
+                        'timestamp': snapshot.timestamp,
+                        'snapshot': snapshot,
+                        'files_count': len(snapshot.files),
+                        'is_baseline': is_baseline
+                    }
+                    
+                    # Добавляем в список снимков
+                    self.filesystem_snapshots.append(snapshot_entry)
+                    self.filesystem_next_snapshot_id = max(self.filesystem_next_snapshot_id, snapshot_id + 1)
+                    loaded_count += 1
+                
+                # Обновляем UI
+                if loaded_count > 0:
+                    self._update_snapshots_list()
+                    
+                    # Выбираем последний загруженный снимок
+                    if self.filesystem_snapshots:
+                        index = len(self.filesystem_snapshots) - 1
+                        self.fs_snapshots_listbox.selection_clear(0, self.tk.END)
+                        self.fs_snapshots_listbox.selection_set(index)
+                        self.fs_snapshots_listbox.see(index)
+                        self._on_snapshot_selected(None)
+                
+                # Закрываем окно и показываем результат
+                load_window.destroy()
+                if loaded_count > 0:
+                    if skipped_count > 0:
+                        self.tk.messagebox.showinfo(
+                            "Успех",
+                            f"Загружено снимков: {loaded_count}\nПропущено (уже существуют): {skipped_count}"
+                        )
+                    else:
+                        self.tk.messagebox.showinfo("Успех", f"Загружено снимков: {loaded_count}")
+                else:
+                    if skipped_count > 0:
+                        self.tk.messagebox.showinfo("Информация", f"Все выбранные снимки уже загружены ({skipped_count})")
+            
+            def delete_selected():
+                """Удаляет выбранные снимки (мульти-выбор)"""
+                selected_indices = snapshots_listbox.curselection()
+                if not selected_indices:
+                    self.tk.messagebox.showwarning("Предупреждение", "Выберите снимки для удаления.")
+                    return
+                
+                # Подтверждение удаления
+                count = len(selected_indices)
+                if count == 1:
+                    message = "Вы уверены, что хотите удалить выбранный снимок?"
+                else:
+                    message = f"Вы уверены, что хотите удалить {count} выбранных снимков?"
+                
+                if not self.tk.messagebox.askyesno("Подтверждение удаления", message):
+                    return
+                
+                deleted_count = 0
+                error_count = 0
+                
+                # Удаляем файлы в обратном порядке, чтобы индексы не сдвигались
+                for selected_index in reversed(selected_indices):
+                    if selected_index >= len(snapshot_files_storage):
+                        continue
+                    
+                    file_path = snapshot_files_storage[selected_index]
+                    
+                    try:
+                        # Удаляем основной файл
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        
+                        # Удаляем старый файл метаданных (если есть)
+                        metadata_path = file_path.replace('.json', '_metadata.json')
+                        if os.path.exists(metadata_path):
+                            os.remove(metadata_path)
+                        
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"[ERROR] Ошибка при удалении снимка {file_path}: {e}")
+                        error_count += 1
+                
+                # Обновляем список
+                refresh_list()
+                
+                # Показываем результат
+                if error_count > 0:
+                    self.tk.messagebox.showwarning(
+                        "Результат",
+                        f"Удалено снимков: {deleted_count}\nОшибок: {error_count}"
+                    )
+                else:
+                    if deleted_count > 0:
+                        if deleted_count == 1:
+                            self.tk.messagebox.showinfo("Успех", "Снимок удален.")
+                        else:
+                            self.tk.messagebox.showinfo("Успех", f"Удалено снимков: {deleted_count}")
+            
+            # Кнопки
+            load_btn = self.tk.Button(
+                buttons_frame,
+                text="Загрузить",
+                command=load_selected,
+                width=15
+            )
+            load_btn.pack(pady=5)
+            
+            delete_btn = self.tk.Button(
+                buttons_frame,
+                text="Удалить",
+                command=delete_selected,
+                width=15
+            )
+            delete_btn.pack(pady=5)
+            
+            refresh_btn = self.tk.Button(
+                buttons_frame,
+                text="Обновить",
+                command=refresh_list,
+                width=15
+            )
+            refresh_btn.pack(pady=5)
+            
+            cancel_btn = self.tk.Button(
+                buttons_frame,
+                text="Отмена",
+                command=on_load_window_close,
+                width=15
+            )
+            cancel_btn.pack(pady=5)
+            
+            # Двойной клик для загрузки
+            snapshots_listbox.bind('<Double-Button-1>', lambda e: load_selected())
+            
+            # Загружаем список при открытии
+            refresh_list()
+            
+        except Exception as e:
+            print(f"[ERROR] Ошибка при открытии окна загрузки снимка: {e}")
+            import traceback
+            traceback.print_exc()
+            self.tk.messagebox.showerror("Ошибка", f"Ошибка при открытии окна загрузки: {e}")
     
     def _update_snapshots_list(self):
         """Обновление списка снимков в UI"""
@@ -18993,6 +19572,13 @@ class AutomationGUI(object):
         updated_snapshot.hash_calculation_time = 0.0
         updated_snapshot.memory_usage = 0
         updated_snapshot.scan_start_time = None
+        # Инициализируем недостающие атрибуты для сохранения в JSON (копируем из исходного снимка)
+        updated_snapshot.max_depth = getattr(last_snapshot, 'max_depth', None)
+        updated_snapshot.max_files = getattr(last_snapshot, 'max_files', 1000000)
+        updated_snapshot.calculate_hashes = getattr(last_snapshot, 'calculate_hashes', False)
+        updated_snapshot.exclude_paths = getattr(last_snapshot, 'exclude_paths', [
+            '/proc', '/sys', '/dev', '/tmp', '/var/tmp', '/run', '/var/run', '/lost+found'
+        ])
         
         return changes, updated_snapshot
     
@@ -19967,6 +20553,78 @@ class AutomationGUI(object):
             traceback.print_exc()
             
         return None
+    
+    def _get_top_visible_label(self):
+        """Находит label верхней видимой строки (для сворачивания)"""
+        try:
+            accordion_frame = getattr(self, 'fs_accordion_frame', None)
+            if not accordion_frame or not accordion_frame.winfo_exists():
+                return None
+
+            fs_canvas = getattr(self, 'fs_canvas', None)
+            if not fs_canvas or not fs_canvas.winfo_exists():
+                return None
+
+            canvas_height = fs_canvas.winfo_height()
+            if canvas_height <= 1:
+                return None
+
+            visible_top_canvas = fs_canvas.canvasy(0)
+            visible_bottom_canvas = visible_top_canvas + canvas_height
+
+            window_bbox = fs_canvas.bbox(self.fs_canvas_window)
+            if not window_bbox or len(window_bbox) < 4:
+                return None
+
+            window_top_canvas = window_bbox[1]
+
+            # Ищем все видимые виджеты рекурсивно
+            all_visible_widgets = []
+            self._find_visible_widgets_recursive(
+                parent=accordion_frame,
+                window_top_canvas=window_top_canvas,
+                visible_top_canvas=visible_top_canvas,
+                visible_bottom_canvas=visible_bottom_canvas,
+                results=all_visible_widgets,
+                current_offset=0
+            )
+
+            if all_visible_widgets:
+                # Сортируем по visible_top
+                all_visible_widgets.sort(key=lambda x: x[0])
+                top_widget = all_visible_widgets[0][1]
+                
+                # Ищем label в этом виджете или его родителях
+                # Структура: node_frame -> header_frame -> header_label
+                current = top_widget
+                for _ in range(5):  # Максимум 5 уровней вверх
+                    if current.winfo_class() == 'Label':
+                        # Проверяем, что это header_label (содержит имя узла, не вертикальные линии)
+                        try:
+                            text = current.cget("text")
+                            if text and ('▶' in text or '▼' in text or getattr(current, '_node_name', None) or getattr(current, '_file_name', None)):
+                                return current
+                        except:
+                            pass
+                    
+                    # Поднимаемся вверх
+                    try:
+                        parent = current.master
+                        if not parent:
+                            break
+                        current = parent
+                    except:
+                        break
+                
+                # Если не нашли label, возвращаем сам виджет
+                return top_widget
+
+        except Exception as e:
+            print(f"[ERROR] _get_top_visible_label: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        return None
 
     def _find_visible_widgets_recursive(self, parent, window_top_canvas, visible_top_canvas,
                                        visible_bottom_canvas, results, current_offset=0, max_depth=50, current_depth=0):
@@ -20182,80 +20840,237 @@ class AutomationGUI(object):
             print(f"[DEBUG] Ошибка: {e}")
         return None
     
-    def _on_tree_item_double_click(self, label, is_folder=True):
-        """Обработчик двойного клика на элементе дерева"""
+    def _collapse_single_node(self, content_frame, header_frame):
+        """Сворачивает один узел (content_frame и header_frame)"""
         try:
-            # Логирование координат кликнутого элемента
-            print(f"[DEBUG] ===== ДВОЙНОЙ КЛИК =====")
-            widget_y = label.winfo_y()
-            widget_height = label.winfo_height()
+            toggle_var = getattr(content_frame, '_toggle_var', None)
             
-            # Получаем текст кликнутого элемента
-            clicked_text = 'Неизвестно'
+            # Находим toggle_btn
+            toggle_btn = None
+            for widget in header_frame.winfo_children():
+                if widget.winfo_class() == 'Label':
+                    try:
+                        cursor = widget.cget("cursor")
+                        text = widget.cget("text")
+                        if cursor == 'hand2' or (text and ('▶' in text or '▼' in text)):
+                            toggle_btn = widget
+                            break
+                    except:
+                        pass
+            
+            # Проверяем, развернут ли узел
+            was_expanded = False
+            toggle_var_expanded = False
+            btn_expanded = False
+            children_expanded = False
+            
+            if toggle_var:
+                try:
+                    toggle_var_expanded = toggle_var.get()
+                    was_expanded = toggle_var_expanded
+                    print(f"[DEBUG] _collapse_single_node: toggle_var.get()={toggle_var_expanded}")
+                except:
+                    pass
+            
+            if toggle_btn:
+                try:
+                    btn_text = toggle_btn.cget("text")
+                    print(f"[DEBUG] _collapse_single_node: toggle_btn text={repr(btn_text)}")
+                    if '▼' in btn_text:
+                        btn_expanded = True
+                        was_expanded = True
+                        print(f"[DEBUG] _collapse_single_node: кнопка показывает ▼ - узел РАЗВЕРНУТ")
+                    elif '▶' in btn_text:
+                        print(f"[DEBUG] _collapse_single_node: кнопка показывает ▶ - узел СВЕРНУТ")
+                except Exception as e:
+                    print(f"[DEBUG] _collapse_single_node: ошибка при чтении кнопки: {e}")
+                    pass
+            
+            try:
+                children_count = len(content_frame.winfo_children())
+                print(f"[DEBUG] _collapse_single_node: children_count={children_count}")
+                if children_count > 0:
+                    children_expanded = True
+                    was_expanded = True
+                    print(f"[DEBUG] _collapse_single_node: есть дочерние элементы - узел РАЗВЕРНУТ")
+            except Exception as e:
+                print(f"[DEBUG] _collapse_single_node: ошибка при проверке детей: {e}")
+                pass
+            
+            print(f"[DEBUG] _collapse_single_node: was_expanded={was_expanded} (toggle_var={toggle_var_expanded}, btn={btn_expanded}, children={children_expanded})")
+            
+            if not was_expanded:
+                print(f"[DEBUG] _collapse_single_node: УЗЕЛ УЖЕ СВЕРНУТ - возвращаем False")
+                return False  # Узел уже свернут
+            
+            # Сворачиваем узел
+            print(f"[DEBUG] _collapse_single_node: СВОРАЧИВАЕМ узел...")
+            try:
+                content_frame.pack_forget()
+                print(f"[DEBUG] _collapse_single_node: pack_forget() выполнен")
+            except Exception as e:
+                print(f"[DEBUG] _collapse_single_node: ошибка pack_forget(): {e}")
+                try:
+                    content_frame.grid_remove()
+                    print(f"[DEBUG] _collapse_single_node: grid_remove() выполнен")
+                except Exception as e2:
+                    print(f"[DEBUG] _collapse_single_node: ошибка grid_remove(): {e2}")
+                    pass
+            
+            if toggle_var:
+                try:
+                    toggle_var.set(False)
+                    print(f"[DEBUG] _collapse_single_node: toggle_var.set(False) выполнен")
+                except Exception as e:
+                    print(f"[DEBUG] _collapse_single_node: ошибка toggle_var.set(): {e}")
+            
+            if toggle_btn:
+                try:
+                    current_text = toggle_btn.cget("text")
+                    if '▼' in current_text:
+                        toggle_btn.config(text="▶")
+                        print(f"[DEBUG] _collapse_single_node: кнопка обновлена ▼→▶")
+                except Exception as e:
+                    print(f"[DEBUG] _collapse_single_node: ошибка обновления кнопки: {e}")
+                    pass
+            
+            print(f"[DEBUG] _collapse_single_node: узел успешно свернут, возвращаем True")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Ошибка при сворачивании узла: {e}")
+            return False
+    
+    def _collapse_node_to_root(self, label):
+        """Сворачивает узел и всех его родителей до корня"""
+        try:
+            # Получаем название узла для логирования
+            node_name = 'Неизвестно'
             try:
                 if label.winfo_class() == 'Label':
-                    clicked_text = label.cget('text') or 'Неизвестно'
-            except Exception:
+                    full_text = label.cget('text') or ''
+                    # Извлекаем имя узла (убираем вертикальные линии и статистику)
+                    for char in ['▶', '▼']:
+                        if char in full_text:
+                            node_text = full_text[full_text.index(char)+1:].strip()
+                            if '(' in node_text:
+                                node_name = node_text[:node_text.index('(')].strip()
+                            else:
+                                node_name = node_text.strip()
+                            break
+                    if node_name == 'Неизвестно':
+                        # Пробуем получить из атрибутов
+                        node_name = getattr(label, '_node_name', getattr(label, '_file_name', 'Неизвестно'))
+            except:
                 pass
-            print(f"[DEBUG] Кликнутый элемент (текст): {repr(clicked_text[:100])}")
             
-            fs_canvas = getattr(self, 'fs_canvas', None)
-            if fs_canvas:
-                viewport_top_y = fs_canvas.canvasy(0)
-                window_coords = fs_canvas.coords(self.fs_canvas_window)
-                window_y = window_coords[1] if len(window_coords) > 1 else 0
-                widget_y_canvas = widget_y + window_y
-                
-                print(f"[DEBUG] Кликнутый элемент: Y={widget_y} (relative), Y={widget_y_canvas} (canvas)")
-                print(f"[DEBUG] viewport_top_y: {viewport_top_y}, разница: {widget_y_canvas - viewport_top_y}")
-                print(f"[DEBUG] height: {widget_height}")
-                
-                # Получаем текущую верхнюю видимую строку по алгоритму
-                print(f"[DEBUG] ===== ВЫЗОВ АЛГОРИТМА ОПРЕДЕЛЕНИЯ ВЕРХНЕЙ СТРОКИ =====")
-                algorithm_top_line = self._get_top_visible_line()
-                print(f"[DEBUG] Алгоритм определил верхнюю строку: {repr(algorithm_top_line[:100]) if algorithm_top_line else 'None'}")
-                print(f"[DEBUG] ===== СРАВНЕНИЕ =====")
-                print(f"[DEBUG] Кликнуто: {repr(clicked_text[:100])}")
-                print(f"[DEBUG] Алгоритм: {repr(algorithm_top_line[:100]) if algorithm_top_line else 'None'}")
-                print(f"[DEBUG] Совпадают: {clicked_text == algorithm_top_line}")
+            # Логируем в файл
+            if hasattr(self, 'dual_logger') and self.dual_logger:
+                self.dual_logger.write_analysis(f"[COLLAPSE] Двойной клик на узле: {node_name}")
             
-            if is_folder:
-                # Это папка
-                node_path = getattr(label, '_node_path', 'Неизвестно')
-                node_name = getattr(label, '_node_name', 'Неизвестно')
-                files_count = getattr(label, '_files_count', 0)
-                subdirs_count = getattr(label, '_subdirs_count', 0)
-                total_size = getattr(label, '_total_size', 0)
+            # Находим content_frame текущего узла
+            # Структура: label -> header_frame -> node_frame -> content_frame
+            current_content = None
+            current_header = None
+            
+            try:
+                # label -> master = header_frame
+                header_frame = label.master
+                if not header_frame or header_frame.winfo_class() not in ['Frame', 'TFrame']:
+                    print(f"[WARNING] Не удалось найти header_frame для узла: {node_name}")
+                    return
                 
-                # Форматируем размер
-                def format_size(size_bytes):
-                    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-                        if size_bytes < 1024.0:
-                            return f"{size_bytes:.1f} {unit}"
-                        size_bytes /= 1024.0
-                    return f"{size_bytes:.1f} PB"
+                # header_frame -> master = node_frame
+                node_frame = header_frame.master
+                if not node_frame or node_frame.winfo_class() not in ['Frame', 'TFrame']:
+                    print(f"[WARNING] Не удалось найти node_frame для узла: {node_name}")
+                    return
                 
-                size_text = format_size(total_size) if total_size > 0 else "0 B"
+                # Ищем content_frame в node_frame
+                for child in node_frame.winfo_children():
+                    if child.winfo_class() in ['Frame', 'TFrame'] and hasattr(child, '_toggle_var'):
+                        current_content = child
+                        current_header = header_frame
+                        break
                 
-                message = f"Папка: {node_name}\n"
-                message += f"Полный путь: {node_path}\n"
-                message += f"Файлов: {files_count:,}\n"
-                message += f"Папок: {subdirs_count:,}\n"
-                message += f"Размер: {size_text}"
+                if not current_content:
+                    print(f"[WARNING] Не удалось найти content_frame для узла: {node_name}")
+                    return
+            except Exception as e:
+                print(f"[ERROR] Ошибка при поиске узла: {e}")
+                return
+            
+            # Сворачиваем текущий узел и всех родителей до корня
+            while current_content and current_header:
+                # Сворачиваем текущий узел
+                self._collapse_single_node(current_content, current_header)
                 
-                self.tk.messagebox.showinfo("Информация о папке", message)
-            else:
-                # Это файл
-                file_path = getattr(label, '_file_path', 'Неизвестно')
-                file_name = getattr(label, '_file_name', 'Неизвестно')
-                
-                message = f"Файл: {file_name}\n"
-                message += f"Полный путь: {file_path}"
-                
-                self.tk.messagebox.showinfo("Информация о файле", message)
+                # Ищем родительский узел
+                try:
+                    # node_frame -> master = content_frame родителя (если есть)
+                    node_frame = current_header.master
+                    if not node_frame:
+                        break
+                    
+                    parent_content = node_frame.master
+                    if not parent_content:
+                        break
+                    
+                    # Проверяем, достигли ли мы accordion_frame (корня)
+                    accordion_frame = getattr(self, 'fs_accordion_frame', None)
+                    if parent_content == accordion_frame:
+                        break  # Достигли корня
+                    
+                    # Если parent_content - это content_frame родителя, ищем его header_frame
+                    if hasattr(parent_content, '_toggle_var'):
+                        # Это content_frame родителя, ищем его node_frame и header_frame
+                        parent_node_frame = parent_content.master
+                        if not parent_node_frame:
+                            break
+                        
+                        # Ищем header_frame в parent_node_frame
+                        parent_header = None
+                        for child in parent_node_frame.winfo_children():
+                            if child.winfo_class() in ['Frame', 'TFrame'] and not hasattr(child, '_toggle_var'):
+                                parent_header = child
+                                break
+                        
+                        if parent_header:
+                            current_content = parent_content
+                            current_header = parent_header
+                        else:
+                            break
+                    else:
+                        break
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка при поиске родителя: {e}")
+                    break
+            
+            # Обновляем canvas
+            try:
+                fs_canvas = getattr(self, 'fs_canvas', None)
+                if fs_canvas:
+                    fs_canvas.update_idletasks()
+                    canvas_window = getattr(self, 'fs_canvas_window', None)
+                    if canvas_window:
+                        bbox = fs_canvas.bbox(canvas_window)
+                        if bbox:
+                            fs_canvas.config(scrollregion=bbox)
+                    fs_canvas.update()
+            except:
+                pass
                 
         except Exception as e:
-            print(f"[DEBUG] Ошибка при обработке двойного клика: {e}")
+            print(f"[ERROR] Ошибка при сворачивании до корня: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _on_tree_item_double_click(self, label, is_folder=True):
+        """Обработчик двойного клика на элементе дерева - сворачивает узел до корня"""
+        try:
+            # Сворачиваем узел и всех родителей до корня
+            self._collapse_node_to_root(label)
+        except Exception as e:
+            print(f"[ERROR] Ошибка при обработке двойного клика: {e}")
             import traceback
             traceback.print_exc()
     
@@ -20273,19 +21088,231 @@ class AutomationGUI(object):
     def _collapse_branch_at_line(self, line_index):
         """Сворачивает ветку, соответствующую указанной вертикальной линии"""
         try:
+            print(f"[DEBUG] _collapse_branch_at_line: начало, line_index={line_index}")
+            
+            # Находим label верхней видимой строки (как при двойном клике)
+            top_label = self._get_top_visible_label()
+            if not top_label:
+                print(f"[DEBUG] _collapse_branch_at_line: top_label не найден")
+                return
+            
+            print(f"[DEBUG] _collapse_branch_at_line: top_label найден, класс={top_label.winfo_class()}")
+            
+            # Определяем текущую глубину узла по количеству вертикальных линий в строке
             top_line = self._get_top_visible_line()
             if not top_line:
+                print(f"[DEBUG] _collapse_branch_at_line: top_line не найдена")
                 return
             
-            # Определяем уровень вложенности по количеству вертикальных линий до указанной позиции
             line_positions = self._get_vertical_line_positions(top_line)
+            # Количество ВСЕХ вертикальных линий (│, ├, └) = глубина текущего узла
+            # Если в строке "│  │  ├─ node", то:
+            # - Всего вертикальных символов = 3 (2×│ + 1×├)
+            # - Глубина узла = 3 (считаем ВСЕ вертикальные линии)
+            current_depth = len(line_positions)
+            
+            # Проверяем, что line_index не выходит за пределы массива
             if line_index >= len(line_positions):
+                print(f"[WARNING] _collapse_branch_at_line: line_index {line_index} >= len(line_positions) {len(line_positions)}")
                 return
             
-            target_depth = line_index + 1  # depth начинается с 0 для корня
+            # line_index - это индекс вертикальной линии в массиве line_positions
+            # line_index=0 → первая линия → глубина 0 (корень)
+            # line_index=1 → вторая линия → глубина 1
+            # line_index=2 → третья линия → глубина 2
+            # Текущий узел находится на глубине current_depth (после всех вертикальных линий)
+            # Целевая глубина = line_index
+            target_depth = line_index
             
-            # Находим и сворачиваем все узлы на этом уровне в верхней видимой области
-            self._collapse_nodes_at_depth(target_depth)
+            print(f"[DEBUG] _collapse_branch_at_line: top_line={repr(top_line[:80])}")
+            print(f"[DEBUG] _collapse_branch_at_line: line_positions={line_positions}, len={len(line_positions)}")
+            print(f"[DEBUG] _collapse_branch_at_line: current_depth={current_depth}, target_depth={target_depth}, line_index={line_index}")
+            
+            # Находим content_frame и header_frame текущего узла (как в _collapse_node_to_root)
+            try:
+                # label -> header_frame
+                header_frame = top_label.master
+                if not header_frame or header_frame.winfo_class() not in ['Frame', 'TFrame']:
+                    print(f"[WARNING] Не удалось найти header_frame")
+                    return
+                
+                # header_frame -> node_frame
+                node_frame = header_frame.master
+                if not node_frame or node_frame.winfo_class() not in ['Frame', 'TFrame']:
+                    print(f"[WARNING] Не удалось найти node_frame")
+                    return
+                
+                # Ищем content_frame в node_frame
+                current_content = None
+                current_header = header_frame
+                for child in node_frame.winfo_children():
+                    if child.winfo_class() in ['Frame', 'TFrame'] and hasattr(child, '_toggle_var'):
+                        current_content = child
+                        break
+                
+                if not current_content:
+                    print(f"[WARNING] Не удалось найти content_frame")
+                    return
+                
+            except Exception as e:
+                print(f"[ERROR] Ошибка при поиске узла: {e}")
+                return
+            
+            # Поднимаемся на нужное количество уровней вверх
+            # Если current_depth=3, target_depth=2, то нужно подняться на 1 уровень
+            # Если current_depth=3, target_depth=0, то нужно подняться на 3 уровня
+            levels_to_go_up = current_depth - target_depth
+            
+            print(f"[DEBUG] _collapse_branch_at_line: поднимаемся на {levels_to_go_up} уровней вверх (current_depth={current_depth} → target_depth={target_depth})")
+            
+            # Поднимаемся по дереву виджетов на нужное количество уровней
+            for level in range(levels_to_go_up):
+                try:
+                    print(f"[DEBUG] _collapse_branch_at_line: подъем уровень {level+1}/{levels_to_go_up}")
+                    
+                    # node_frame -> content_frame (родителя)
+                    node_frame = current_header.master
+                    if not node_frame:
+                        print(f"[DEBUG] _collapse_branch_at_line: node_frame не найден на уровне {level+1}")
+                        break
+                    
+                    parent_content = node_frame.master
+                    if not parent_content:
+                        print(f"[DEBUG] _collapse_branch_at_line: parent_content не найден на уровне {level+1}")
+                        break
+                    
+                    # Проверяем, достигли ли мы accordion_frame (корня)
+                    accordion_frame = getattr(self, 'fs_accordion_frame', None)
+                    if parent_content == accordion_frame:
+                        print(f"[DEBUG] _collapse_branch_at_line: достигли корня на уровне {level+1}")
+                        break  # Достигли корня
+                    
+                    # Если parent_content - это content_frame родителя, ищем его header_frame
+                    if hasattr(parent_content, '_toggle_var'):
+                        # Это content_frame родителя, ищем его node_frame и header_frame
+                        parent_node_frame = parent_content.master
+                        if not parent_node_frame:
+                            print(f"[DEBUG] _collapse_branch_at_line: parent_node_frame не найден на уровне {level+1}")
+                            break
+                        
+                        # Ищем header_frame в parent_node_frame
+                        parent_header = None
+                        for child in parent_node_frame.winfo_children():
+                            if child.winfo_class() in ['Frame', 'TFrame'] and not hasattr(child, '_toggle_var'):
+                                parent_header = child
+                                break
+                        
+                        if parent_header:
+                            current_content = parent_content
+                            current_header = parent_header
+                            print(f"[DEBUG] _collapse_branch_at_line: успешно поднялись на уровень {level+1}")
+                        else:
+                            print(f"[DEBUG] _collapse_branch_at_line: parent_header не найден на уровне {level+1}")
+                            break
+                    else:
+                        print(f"[DEBUG] _collapse_branch_at_line: parent_content не имеет _toggle_var на уровне {level+1}")
+                        break
+                except Exception as e:
+                    print(f"[DEBUG] _collapse_branch_at_line: ошибка при подъеме на уровне {level+1}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    break
+            
+            print(f"[DEBUG] _collapse_branch_at_line: достигнут целевой узел, сворачиваем только этот узел (не родителей)")
+            
+            # Получаем имя узла для отладки
+            node_name = "Неизвестно"
+            try:
+                for child in current_header.winfo_children():
+                    if child.winfo_class() == 'Label':
+                        try:
+                            text = child.cget("text")
+                            if text and ('▶' in text or '▼' in text or getattr(child, '_node_name', None)):
+                                # Это toggle_btn или header_label
+                                if '▶' in text or '▼' in text:
+                                    continue  # Пропускаем toggle_btn
+                                # Это header_label - извлекаем имя
+                                if '(' in text:
+                                    node_name = text[:text.index('(')].strip()
+                                else:
+                                    node_name = text.strip()
+                                break
+                        except:
+                            pass
+            except:
+                pass
+            
+            print(f"[DEBUG] _collapse_branch_at_line: сворачиваем узел '{node_name}' на глубине {target_depth} (было current_depth={current_depth})")
+            
+            # Сворачиваем только целевой узел (не родителей, как при двойном клике)
+            if current_content and current_header:
+                self._collapse_single_node(current_content, current_header)
+                
+                # Перемещаем фокус на родителя (прокручиваем к нему)
+                try:
+                    # Находим header_label родителя для прокрутки
+                    parent_header_label = None
+                    for child in current_header.winfo_children():
+                        if child.winfo_class() == 'Label':
+                            try:
+                                text = child.cget("text")
+                                # Ищем header_label (не toggle_btn и не tree_lines_label)
+                                if text and not ('▶' in text or '▼' in text) and not ('│' in text or '├' in text or '└' in text):
+                                    parent_header_label = child
+                                    break
+                            except:
+                                pass
+                    
+                    if parent_header_label:
+                        # Прокручиваем canvas к родителю
+                        fs_canvas = getattr(self, 'fs_canvas', None)
+                        if fs_canvas:
+                            try:
+                                # Получаем координаты header_frame относительно canvas
+                                header_frame = parent_header_label.master
+                                if header_frame:
+                                    # Получаем координаты виджета в canvas через canvasy
+                                    # canvasy преобразует координату Y экрана в координату canvas
+                                    widget_y_screen = header_frame.winfo_y()
+                                    widget_y_canvas = fs_canvas.canvasy(widget_y_screen)
+                                    
+                                    # Получаем текущую видимую область
+                                    visible_top = fs_canvas.canvasy(0)
+                                    visible_bottom = visible_top + fs_canvas.winfo_height()
+                                    
+                                    # Если виджет не виден или не вверху, прокручиваем к нему
+                                    if widget_y_canvas < visible_top or widget_y_canvas > visible_bottom:
+                                        # Вычисляем позицию для прокрутки
+                                        scroll_region = fs_canvas.cget("scrollregion")
+                                        if scroll_region:
+                                            # scrollregion в формате "x1 y1 x2 y2"
+                                            coords = scroll_region.split()
+                                            if len(coords) >= 4:
+                                                total_height = float(coords[3]) - float(coords[1])
+                                                canvas_height = fs_canvas.winfo_height()
+                                                if total_height > canvas_height:
+                                                    # Нормализуем позицию (0.0 - верх, 1.0 - низ)
+                                                    scroll_fraction = max(0.0, min(1.0, widget_y_canvas / total_height))
+                                                    fs_canvas.yview_moveto(scroll_fraction)
+                                                    fs_canvas.update_idletasks()
+                            except Exception as e:
+                                print(f"[DEBUG] _collapse_branch_at_line: ошибка при перемещении фокуса: {e}")
+                except Exception as e:
+                    print(f"[DEBUG] _collapse_branch_at_line: ошибка при поиске родителя для фокуса: {e}")
+            
+            # Обновляем canvas
+            try:
+                fs_canvas = getattr(self, 'fs_canvas', None)
+                if fs_canvas:
+                    fs_canvas.update_idletasks()
+                    canvas_window = getattr(self, 'fs_canvas_window', None)
+                    if canvas_window:
+                        bbox = fs_canvas.bbox(canvas_window)
+                        if bbox:
+                            fs_canvas.config(scrollregion=bbox)
+                    fs_canvas.update()
+            except:
+                pass
             
             # Обновляем панель
             if not hasattr(self, '_collapse_panel_update_id'):
@@ -20293,21 +21320,215 @@ class AutomationGUI(object):
             if self._collapse_panel_update_id:
                 self.root.after_cancel(self._collapse_panel_update_id)
             self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
+            
+            print(f"[DEBUG] _collapse_branch_at_line: завершено успешно")
 
         except Exception as e:
-            print(f"[DEBUG] Ошибка при сворачивании ветки: {e}")
+            print(f"[ERROR] Ошибка при сворачивании ветки: {e}")
+            import traceback
+            traceback.print_exc()
     
-    def _collapse_nodes_at_depth(self, target_depth):
-        """Сворачивает все узлы на указанном уровне вложенности"""
+    def _extract_node_text_from_line(self, line_text, line_index):
+        """Извлекает имя узла из строки до указанной вертикальной линии"""
         try:
-            accordion_frame = getattr(self, 'fs_accordion_frame', None)
-            if not accordion_frame:
-                return
-            # Панель теперь не в accordion_frame, поэтому не нужно её пропускать
-            for widget in accordion_frame.winfo_children():
-                self._collapse_node_recursive(widget, target_depth, current_depth=0)
+            print(f"[DEBUG] _extract_node_text_from_line: начало, line_index={line_index}, line_text={repr(line_text[:100])}")
+            line_positions = self._get_vertical_line_positions(line_text)
+            print(f"[DEBUG] _extract_node_text_from_line: line_positions={line_positions}")
+            if line_index >= len(line_positions):
+                print(f"[DEBUG] _extract_node_text_from_line: line_index {line_index} >= len {len(line_positions)}")
+                return None
+            
+            # Позиция выбранной вертикальной линии
+            target_pos = line_positions[line_index]
+            print(f"[DEBUG] _extract_node_text_from_line: target_pos={target_pos}")
+            
+            # Извлекаем текст после вертикальных линий и символов разворачивания
+            # Формат: "│ │ ├─ ▶имя_узла (статистика)"
+            text_after_pos = line_text[target_pos:]
+            print(f"[DEBUG] _extract_node_text_from_line: text_after_pos={repr(text_after_pos[:50])}")
+            
+            # Ищем символ разворачивания (▶ или ▼)
+            expand_pos = -1
+            for i, char in enumerate(text_after_pos):
+                if char in ['▶', '▼']:
+                    expand_pos = i + 1
+                    break
+            
+            if expand_pos == -1:
+                print(f"[DEBUG] _extract_node_text_from_line: символ разворачивания не найден, ищем первый непробельный")
+                # Если нет символа разворачивания, ищем первый непробельный символ после вертикальных линий
+                for i, char in enumerate(text_after_pos):
+                    if char not in ['│', '├', '└', '─', ' ']:
+                        expand_pos = i
+                        break
+            
+            if expand_pos == -1:
+                print(f"[DEBUG] _extract_node_text_from_line: expand_pos не найден, возвращаем None")
+                return None
+            
+            print(f"[DEBUG] _extract_node_text_from_line: expand_pos={expand_pos}")
+            
+            # Извлекаем имя узла (до скобки со статистикой)
+            node_text = text_after_pos[expand_pos:].strip()
+            print(f"[DEBUG] _extract_node_text_from_line: node_text до обработки={repr(node_text[:50])}")
+            
+            # Убираем статистику в скобках
+            if '(' in node_text:
+                node_text = node_text[:node_text.index('(')].strip()
+            
+            result = node_text if node_text else None
+            print(f"[DEBUG] _extract_node_text_from_line: результат={repr(result)}")
+            return result
         except Exception as e:
-            print(f"[DEBUG] Ошибка при сворачивании узлов: {e}")
+            print(f"[ERROR] Ошибка при извлечении имени узла: {e}")
+            return None
+    
+    def _collapse_node_recursive(self, widget, target_depth, current_depth=0, target_node_name=None):
+        """Рекурсивно сворачивает узел на указанной глубине с указанным именем"""
+        try:
+            if not widget.winfo_exists():
+                return False
+            
+            widget_class = widget.winfo_class()
+            
+            # Проверяем, является ли это node_frame (содержит header_frame и content_frame)
+            if widget_class in ['Frame', 'TFrame']:
+                children = widget.winfo_children()
+                
+                # Ищем header_frame и content_frame
+                header_frame = None
+                content_frame = None
+                
+                for child in children:
+                    if not child.winfo_exists():
+                        continue
+                    child_class = child.winfo_class()
+                    if child_class in ['Frame', 'TFrame']:
+                        if hasattr(child, '_toggle_var'):
+                            content_frame = child
+                        else:
+                            # Это header_frame
+                            header_frame = child
+                
+                # Если нашли узел на нужной глубине
+                if header_frame and content_frame and hasattr(content_frame, '_depth'):
+                    node_depth = content_frame._depth
+                    print(f"[DEBUG] _collapse_node_recursive: найден узел, node_depth={node_depth}, target_depth={target_depth}, current_depth={current_depth}")
+                    
+                    if node_depth == target_depth:
+                        print(f"[DEBUG] _collapse_node_recursive: глубина совпадает! Извлекаем имя узла...")
+                        # Извлекаем имя узла из header_frame
+                        # Собираем весь текст из всех Label'ов в header_frame
+                        full_header_text = ""
+                        for label in header_frame.winfo_children():
+                            if label.winfo_class() == 'Label':
+                                try:
+                                    label_text = label.cget("text")
+                                    if label_text:
+                                        full_header_text += label_text
+                                except Exception as e:
+                                    print(f"[DEBUG] _collapse_node_recursive: ошибка при чтении label: {e}")
+                                    pass
+                        
+                        print(f"[DEBUG] _collapse_node_recursive: full_header_text={repr(full_header_text[:100])}")
+                        
+                        # Извлекаем имя узла из полного текста
+                        node_name = None
+                        if full_header_text:
+                            # Ищем символ разворачивания (▶ или ▼)
+                            for char in ['▶', '▼']:
+                                if char in full_header_text:
+                                    # Извлекаем текст после символа разворачивания
+                                    node_text = full_header_text[full_header_text.index(char)+1:].strip()
+                                    # Убираем статистику в скобках
+                                    if '(' in node_text:
+                                        node_name = node_text[:node_text.index('(')].strip()
+                                    else:
+                                        node_name = node_text.strip()
+                                    break
+                        
+                        print(f"[DEBUG] _collapse_node_recursive: node_name={repr(node_name)}, target_node_name={repr(target_node_name)}")
+                        
+                        # Если имя совпадает или не указано (сворачиваем все на этой глубине)
+                        name_matches = target_node_name is None or (node_name and target_node_name in node_name)
+                        print(f"[DEBUG] _collapse_node_recursive: name_matches={name_matches}")
+                        
+                        if name_matches:
+                            # Нашли нужный узел - сворачиваем его используя ту же логику, что и при двойном клике
+                            print(f"[DEBUG] _collapse_node_recursive: НАЙДЕН узел для сворачивания! node_name={repr(node_name)}")
+                            
+                            # Используем ту же функцию, что и при двойном клике
+                            collapsed = self._collapse_single_node(content_frame, header_frame)
+                            
+                            if collapsed:
+                                # Обновляем canvas для отображения изменений
+                                try:
+                                    fs_canvas = getattr(self, 'fs_canvas', None)
+                                    if fs_canvas:
+                                        fs_canvas.update_idletasks()
+                                        canvas_window = getattr(self, 'fs_canvas_window', None)
+                                        if canvas_window:
+                                            bbox = fs_canvas.bbox(canvas_window)
+                                            if bbox:
+                                                fs_canvas.config(scrollregion=bbox)
+                                        fs_canvas.update()
+                                except Exception as e:
+                                    print(f"[ERROR] Ошибка при обновлении canvas: {e}")
+                                
+                                print(f"[DEBUG] _collapse_node_recursive: узел успешно свернут!")
+                                return True
+                            else:
+                                print(f"[DEBUG] _collapse_node_recursive: узел уже был свернут")
+                                return False
+                    else:
+                        print(f"[DEBUG] _collapse_node_recursive: глубина не совпадает (node_depth={node_depth} != target_depth={target_depth})")
+                else:
+                    if not header_frame:
+                        print(f"[DEBUG] _collapse_node_recursive: header_frame не найден")
+                    if not content_frame:
+                        print(f"[DEBUG] _collapse_node_recursive: content_frame не найден")
+                    if content_frame and not hasattr(content_frame, '_depth'):
+                        print(f"[DEBUG] _collapse_node_recursive: content_frame не имеет _depth")
+                
+                # Рекурсивно ищем в детях
+                print(f"[DEBUG] _collapse_node_recursive: рекурсивный поиск в {len(children)} детях, current_depth={current_depth}")
+                for child in children:
+                    if not child.winfo_exists():
+                        continue
+                    child_class = child.winfo_class()
+                    if child_class in ['Frame', 'TFrame']:
+                        # Если это content_frame, проверяем его детей (они на depth+1)
+                        if hasattr(child, '_toggle_var'):
+                            # Это content_frame - проверяем его детей
+                            print(f"[DEBUG] _collapse_node_recursive: рекурсия в content_frame, current_depth+1={current_depth+1}")
+                            if self._collapse_node_recursive(child, target_depth, current_depth + 1, target_node_name):
+                                return True
+                        else:
+                            # Это другой frame - проверяем на той же глубине
+                            print(f"[DEBUG] _collapse_node_recursive: рекурсия в другом frame, current_depth={current_depth}")
+                            if self._collapse_node_recursive(child, target_depth, current_depth, target_node_name):
+                                return True
+                
+                # Рекурсивно ищем в детях
+                for child in children:
+                    if not child.winfo_exists():
+                        continue
+                    child_class = child.winfo_class()
+                    if child_class in ['Frame', 'TFrame']:
+                        # Если это content_frame, проверяем его детей (они на depth+1)
+                        if hasattr(child, '_toggle_var'):
+                            # Это content_frame - проверяем его детей
+                            if self._collapse_node_recursive(child, target_depth, current_depth + 1, target_node_name):
+                                return True
+                        else:
+                            # Это другой frame - проверяем на той же глубине
+                            if self._collapse_node_recursive(child, target_depth, current_depth, target_node_name):
+                                return True
+            
+            return False
+        except Exception as e:
+            print(f"[ERROR] Ошибка при рекурсивном сворачивании: {e}")
+            return False
     
     def _create_structure_node_optimized(self, parent_frame, node_path, all_files, all_directories, root_dir, 
                                          files_by_dir, dirs_by_parent, dir_stats, depth=0, is_last=False):
@@ -32196,6 +33417,111 @@ class DirectorySnapshot(object):
             return snapshot
         except Exception as e:
             print(f"[DirectorySnapshot] Ошибка загрузки снимка: {e}")
+            return None
+    
+    def to_dict(self):
+        """Преобразует снимок в словарь для JSON сериализации"""
+        return {
+            'directory_path': self.directory_path,
+            'timestamp': self.timestamp.isoformat() if isinstance(self.timestamp, datetime.datetime) else str(self.timestamp),
+            'files': self.files,
+            'directories': list(self.directories),  # Преобразуем set в list для JSON
+            'performance_metrics': {
+                'scan_duration': self.scan_duration,
+                'files_scanned': self.files_scanned,
+                'directories_scanned': self.directories_scanned,
+                'hash_calculation_time': self.hash_calculation_time,
+                'memory_usage': self.memory_usage
+            },
+            'scan_settings': {
+                'max_depth': self.max_depth,
+                'max_files': self.max_files,
+                'calculate_hashes': self.calculate_hashes,
+                'exclude_paths': self.exclude_paths
+            }
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        """Создает снимок из словаря (десериализация из JSON)"""
+        snapshot = cls.__new__(cls)
+        snapshot.directory_path = data['directory_path']
+        
+        # Восстанавливаем timestamp
+        if isinstance(data['timestamp'], str):
+            try:
+                snapshot.timestamp = datetime.datetime.fromisoformat(data['timestamp'])
+            except:
+                snapshot.timestamp = datetime.datetime.now()
+        else:
+            snapshot.timestamp = data['timestamp']
+        
+        snapshot.files = data['files']
+        snapshot.directories = set(data['directories'])  # Преобразуем list обратно в set
+        
+        # Восстанавливаем метрики
+        metrics = data.get('performance_metrics', {})
+        snapshot.scan_start_time = None
+        snapshot.scan_duration = metrics.get('scan_duration', 0.0)
+        snapshot.files_scanned = metrics.get('files_scanned', 0)
+        snapshot.directories_scanned = metrics.get('directories_scanned', 0)
+        snapshot.hash_calculation_time = metrics.get('hash_calculation_time', 0.0)
+        snapshot.memory_usage = metrics.get('memory_usage', 0)
+        
+        # Восстанавливаем настройки сканирования
+        settings = data.get('scan_settings', {})
+        snapshot.max_depth = settings.get('max_depth', None)
+        snapshot.max_files = settings.get('max_files', 50000)
+        snapshot.calculate_hashes = settings.get('calculate_hashes', False)
+        snapshot.exclude_paths = settings.get('exclude_paths', [])
+        snapshot.progress_callback = None
+        
+        return snapshot
+    
+    def save_to_json(self, file_path, metadata=None):
+        """Сохраняет снимок в JSON файл с опциональными метаданными"""
+        try:
+            import json
+            data = self.to_dict()
+            # Добавляем метаданные в структуру, если они переданы
+            if metadata:
+                data['metadata'] = metadata
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"[DirectorySnapshot] Ошибка сохранения снимка в JSON: {e}")
+            return False
+    
+    @classmethod
+    def load_from_json(cls, file_path):
+        """Загружает снимок из JSON файла"""
+        try:
+            import json
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            return cls.from_dict(data)
+        except Exception as e:
+            print(f"[DirectorySnapshot] Ошибка загрузки снимка из JSON: {e}")
+            return None
+    
+    @staticmethod
+    def load_metadata_from_json(file_path):
+        """Загружает только метаданные из JSON файла (для быстрого отображения списка)"""
+        try:
+            import json
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            return data.get('metadata', None)
+        except Exception:
             return None
     
     def is_valid(self, max_age_hours=1):
