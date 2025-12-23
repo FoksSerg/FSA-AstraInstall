@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.6.202 (2025.12.23)
+# Версия проекта: V3.6.203 (2025.12.23)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -30,8 +30,10 @@
 1. **При изменении функциональности проекта** → обновляем версию проекта в ключевых файлах (FSA-AstraInstall.py, README.md, Version.txt, DocInstruction/WINE_INSTALL_GUIDE.md)
 2. **При изменении конкретного файла** → обновляем дату релиза И версию проекта ТОЛЬКО в этом файле
 3. **При изменении правил ASSISTANT_RULES.md или COMMIT_RULES.md** → обновляем версию проекта в ключевых файлах
-4. **Ключевые файлы** (всегда обновляются при коммите): FSA-AstraInstall.py, README.md, Version.txt, DocInstruction/WINE_INSTALL_GUIDE.md
+4. **Ключевые файлы** (всегда обновляются при коммите): README.md, Version.txt, DocInstruction/WINE_INSTALL_GUIDE.md
+   - **Примечание:** FSA-AstraInstall.py обновляется локально (версия и дата), анализируется для описания коммита, но НЕ коммитится в Git (только бинарники FSA-AstraInstall-1-7 и FSA-AstraInstall-1-8)
 5. **Бинарные файлы** (FSA-AstraInstall-1-7, FSA-AstraInstall-1-8) пересобираются автоматически перед коммитом
+   - **Примечание:** Бинарные файлы НЕ анализируются для описания коммита (исключены из анализа изменений)
 4. **MAJOR версия** (VMAJOR.X.X) - кардинальные изменения архитектуры
 5. **MINOR версия** (X.MINOR.X) - новые функции, улучшения
 6. **PATCH версия** (X.X.PATCH) - номер коммита (сохраненных изменений)
@@ -112,7 +114,8 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - **КРИТИЧНО:** Сохранить переменные в `.commit_vars.sh` через функцию `save_vars_to_file()` сразу после определения (в шагах 3, 5, 6)
 
 4. **Проверка реальных изменений (внутренняя):** 
-   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
+   - **КРИТИЧНО:** Исключить бинарные файлы из проверки: `CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')`
+   - Для каждого файла из `CHANGED_FILES_FOR_ANALYSIS` (использовать `echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date" → сохранить в временный файл (НЕ выводить в stdout)
    - Проверить, что есть реальные изменения кода (не только версии/даты)
    - Если нет реальных изменений - остановиться с ошибкой "Нет реальных изменений кода, только версии/даты"
@@ -141,10 +144,12 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Вывести: "Новая версия: $NEW_VERSION (текущая: $CURRENT_VERSION)"
 7. **Сбор подробной информации об изменениях:** 
    - Сохранить данные во временный файл `.commit_analysis_data.txt` (НЕ выводить в stdout)
-   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
+   - **КРИТИЧНО:** Исключить бинарные файлы из анализа: `CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')`
+   - Для каждого файла из `CHANGED_FILES_FOR_ANALYSIS` (использовать `echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - Выполнить `git diff --stat HEAD "$file"` → сохранить статистику в файл
      - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
    - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
+     - **КРИТИЧНО:** Исключить бинарные файлы из анализа новых файлов: пропустить файлы, совпадающие с `^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$`
      - Выполнить `wc -l "$file"` → сохранить статистику (количество строк) в файл
      - Выполнить `head -100 "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
      - Пометить как новый файл в данных анализа
@@ -275,12 +280,14 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Если все версии обновлены - продолжить
 
 17. **Добавление файлов в индекс:** 
-   - Для каждого файла из `CHANGED_FILES` (использовать `echo "$CHANGED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
+   - **КРИТИЧНО:** Исключить FSA-AstraInstall.py из списка файлов для коммита (файл обновляется локально, но не публикуется в Git)
+   - Отфильтровать CHANGED_FILES, исключив FSA-AstraInstall.py: `CHANGED_FILES_FOR_COMMIT=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v "^FSA-AstraInstall\.py$" | tr '\n' ' ')`
+   - Для каждого файла из `CHANGED_FILES_FOR_COMMIT` (использовать `echo "$CHANGED_FILES_FOR_COMMIT" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - Для каждой директории из `NEW_DIRS` (использовать `echo "$NEW_DIRS" | tr ' ' '\n' | while read dir`): выполнить `git add "$dir"` (рекурсивно добавит все файлы)
    - Для каждого файла из `DELETED_FILES` (использовать `echo "$DELETED_FILES" | tr ' ' '\n' | while read file`): выполнить `git add "$file"`
    - **КРИТИЧНО: Использовать `git ls-files` вместо `find`** для поиска измененных файлов с версиями
-   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"`
+   - Для каждого файла `*.py`, `*.sh`, `*.md` из отслеживаемых git (через `git ls-files | grep -E '\.(py|sh|md)$'`), если он был изменен версией/датой: выполнить `git add "$file"` (НО исключить FSA-AstraInstall.py)
    - **КРИТИЧНО: Добавить Version.txt/version.txt в индекс явно** (всегда обновлен APP_VERSION в шаге 14)
    - **КРИТИЧНО: Добавить пересобранные бинарные файлы FSA-AstraInstall-1-7 и FSA-AstraInstall-1-8 в индекс** (пересобраны в шаге 15)
    - ЗАПРЕЩЕНО использовать `git add .`
@@ -548,9 +555,11 @@ echo "✓ Переменные шага 3 сохранены в .commit_vars.sh"
 
 # ШАГ 4: Проверяем реальные изменения через git diff (НЕ про версии, а про код)
 # ВАЖНО: Это внутренняя проверка, пользователь НЕ видит вывод
+# КРИТИЧНО: Исключаем бинарные файлы из проверки (они не анализируются)
+CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')
 REAL_CHANGES_TEMP=$(mktemp)
 HAS_REAL_CHANGES=0
-echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
+echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
@@ -635,7 +644,11 @@ echo "=== Сбор данных для анализа... ==="
 [ -z "$TODAY" ] && TODAY=$(date +%Y.%m.%d) && save_vars_to_file
 ANALYSIS_DATA_FILE=".commit_analysis_data.txt"
 rm -f "$ANALYSIS_DATA_FILE"
-echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
+
+# КРИТИЧНО: Исключаем бинарные файлы из анализа (они не имеют смысла для анализа изменений)
+CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')
+
+echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     echo "=== Файл: $file ===" >> "$ANALYSIS_DATA_FILE"
     STAT_TEMP=$(mktemp)
@@ -656,9 +669,13 @@ echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
 
 done
 
-# Обрабатываем новые файлы
+# Обрабатываем новые файлы (исключаем бинарники)
 echo "$NEW_FILES" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
+    # КРИТИЧНО: Пропускаем бинарные файлы
+    if [[ "$file" =~ ^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$ ]]; then
+        continue
+    fi
     [ ! -f "$file" ] && continue
     echo "=== Файл: $file (новый) ===" >> "$ANALYSIS_DATA_FILE"
     # Статистика для нового файла (количество строк)
@@ -1047,8 +1064,12 @@ PROJECT_DIR="/Volumes/FSA-PRJ/Project/FSA-AstraInstall"
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && cd "$PROJECT_DIR" || true
 [ "$(basename $(pwd))" != "FSA-AstraInstall" ] && stop_on_error "Не удалось перейти в директорию проекта" || true
 
+# КРИТИЧНО: Исключаем FSA-AstraInstall.py из списка файлов для коммита
+# Файл обновляется локально (версия и дата), анализируется, но не публикуется в Git
+CHANGED_FILES_FOR_COMMIT=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v "^FSA-AstraInstall\.py$" | tr '\n' ' ')
+
 ADD_ERROR_FILE=$(mktemp)
-echo "$CHANGED_FILES" | tr ' ' '\n' | while read file; do
+echo "$CHANGED_FILES_FOR_COMMIT" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     git add "$file" 2>/dev/null && echo "✓ Добавлен: $file" || (echo "✗ ОШИБКА: Не удалось добавить $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
@@ -1071,7 +1092,8 @@ echo "$DELETED_FILES" | tr ' ' '\n' | while read file; do
     git add "$file" 2>/dev/null && echo "✓ Добавлен удаленный: $file" || (echo "✗ ОШИБКА: Не удалось добавить удаленный файл $file в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")
 done
 # КРИТИЧНО: Используем git ls-files вместо find для поиска измененных файлов с версиями
-git ls-files | grep -E '\.(py|sh|md)$' | while read f; do
+# ИСКЛЮЧАЕМ FSA-AstraInstall.py из коммита
+git ls-files | grep -E '\.(py|sh|md)$' | grep -v "^FSA-AstraInstall\.py$" | while read f; do
     [ -f "$f" ] && \
     ! git diff --quiet HEAD -- "$f" 2>/dev/null && \
         (git add "$f" 2>/dev/null && echo "✓ Добавлен измененный: $f" || (echo "✗ ОШИБКА: Не удалось добавить измененный файл $f в индекс" && echo "ERROR" >> "$ADD_ERROR_FILE")) || true
