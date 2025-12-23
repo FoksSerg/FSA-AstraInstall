@@ -4,13 +4,13 @@ from __future__ import print_function
 
 """
 FSA-AstraInstall - Единый исполняемый файл
-Версия: V3.6.200 (2025.12.22)
+Версия: V3.6.201 (2025.12.23)
 Дата сборки: 2025.12.21
 Компания: ООО "НПА Вира-Реалтайм"
 """
 
 # Версия и название приложения
-APP_VERSION = "V3.6.200 (2025.12.22)"
+APP_VERSION = "V3.6.201 (2025.12.23)"
 APP_NAME = "FSA-AstraInstall"
 
 # ============================================================================
@@ -315,7 +315,6 @@ class DualStreamLogger:
     def _file_writer_worker(self):
         """Рабочий поток для асинхронной записи в файлы"""
         thread_name = threading.current_thread().name
-        print(f"Поток {thread_name} начал выполнение (_file_writer_worker)", level='DEBUG')
         buffer_raw = []
         buffer_analysis = []
         last_flush_time = time.time()
@@ -535,9 +534,7 @@ class DualStreamLogger:
                 daemon=True,
                 name="DualStreamLogger-FileWriter"
             )
-            print(f"Создание потока DualStreamLogger-FileWriter (PID потока будет назначен при запуске)", level='DEBUG')
             self._file_writer_thread.start()
-            print(f"Поток DualStreamLogger-FileWriter запущен (имя: {self._file_writer_thread.name})", level='DEBUG')
             
             return True
         
@@ -945,8 +942,6 @@ def _init_logging_early():
         if not os.path.exists(log_file):
             with open(log_file, 'w', encoding='utf-8') as f:
                 # КРИТИЧНО: Сразу записываем сообщение, чтобы убедиться, что файл создан и в него можно писать
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                f.write(f"[{timestamp}] [INFO] Лог-файл создан: {log_file}\n")
                 f.flush()
                 os.fsync(f.fileno())
             file_created = True
@@ -2676,7 +2671,8 @@ class ComponentHandler(ABC):
             elif level == "WARNING":
                 self.dual_logger.write_analysis(f"[WARNING] {message}")
             elif level == "DEBUG":
-                self.dual_logger.write_analysis(f"[DEBUG] {message}")
+                # DEBUG сообщения не записываются в лог
+                pass
             else:
                 self.dual_logger.write_analysis(f"[INFO] {message}")
         
@@ -14115,16 +14111,13 @@ class AutomationGUI(object):
                 except Exception:
                     pass
                 raise RuntimeError(error_msg)
-            print(f"[DEBUG] DISPLAY={display}, создаем tk.Tk()...", gui_log=True)
         else:
-            print(f"[DEBUG] macOS: пропускаем проверку DISPLAY (tkinter использует Cocoa), создаем tk.Tk()...", gui_log=True)
             display = None  # На macOS DISPLAY не используется
         
         # Создаем главное окно с обработкой ошибок
         try:
             self.root = tk.Tk()
             self.root.title(f"{APP_NAME} {APP_VERSION}")
-            print("[DEBUG] [OK] tk.Tk() создан успешно", gui_log=True)
         except Exception as e:
             error_msg = f"Не удалось создать главное окно Tkinter: {e}\n"
             if not is_macos:
@@ -14287,9 +14280,7 @@ class AutomationGUI(object):
         
         # Создаем интерфейс
         try:
-            print("[DEBUG] Создание виджетов GUI...", gui_log=True)
             self.create_widgets()
-            print("[DEBUG] [OK] Виджеты созданы успешно")
             
             # Регистрируем кнопки для реактивного управления состоянием
             self._register_reactive_buttons()
@@ -14453,8 +14444,6 @@ class AutomationGUI(object):
         self.component_handlers['apt_packages'] = AptPackageHandler(**common_params)
         self.component_handlers['wine_application'] = WineApplicationHandler(**common_params)
         self.component_handlers['wine_config'] = WineConfigHandler(**common_params)
-        
-        print("Handlers зарегистрированы: %s" % ', '.join(self.component_handlers.keys()))
         
         # Создаем ComponentInstaller с зарегистрированными handlers
         self.component_installer = ComponentInstaller(
@@ -14849,7 +14838,6 @@ class AutomationGUI(object):
             
             if not running_processes:
                 # Нет процессов - просто закрываем
-                print("[INFO] Нет запущенных процессов установки - закрываем GUI")
                 self.root.destroy()
                 return
             
@@ -15204,8 +15192,6 @@ class AutomationGUI(object):
             return
         self._closing_in_progress = True
         
-        print("[INFO] GUI закрывается", gui_log=True)
-        
         # Останавливаем системный мониторинг
         if hasattr(self, 'system_monitor') and self.system_monitor:
             try:
@@ -15490,8 +15476,6 @@ class AutomationGUI(object):
     
     def _save_column_widths_to_settings(self, settings):
         """Сохраняет ширину колонок таблиц в настройки"""
-        if hasattr(self, 'dual_logger') and self.dual_logger:
-            self.dual_logger.write_analysis(f"[DEBUG] _save_column_widths_to_settings вызван")
         try:
             # Обновляем виджеты перед получением ширины колонок
             self.root.update_idletasks()
@@ -15572,8 +15556,6 @@ class AutomationGUI(object):
             table_name: Имя таблицы для загрузки ('packages', 'wine', 'processes' или 'repos'). 
                        Если None, загружает для всех доступных таблиц.
         """
-        if hasattr(self, 'dual_logger') and self.dual_logger:
-            self.dual_logger.write_analysis(f"[DEBUG] _load_column_widths_from_settings вызван, table_name = {table_name}")
         try:
             # Загружаем ширину колонок таблицы пакетов
             if (table_name is None or table_name == 'packages') and \
@@ -17631,6 +17613,18 @@ class AutomationGUI(object):
                                                       command=self._switch_filesystem_view)
         self.fs_time_view_btn.pack(side=self.tk.LEFT, padx=2)
         
+        # Панель с кнопками сворачивания (закреплена над canvas, не прокручивается)
+        self.fs_collapse_panel_frame = self.tk.Frame(right_frame, bg='#e0e0e0', relief=self.tk.RIDGE, bd=2)
+        self.fs_collapse_panel_frame.pack(fill=self.tk.X, padx=5, pady=2)
+        
+        # Добавляем тестовую метку, чтобы панель была видна
+        test_label = self.tk.Label(self.fs_collapse_panel_frame, 
+                                   text="[ПАНЕЛЬ СВОРАЧИВАНИЯ - ЗАКРЕПЛЕНА]", 
+                                   font=('Courier', 9, 'bold'), 
+                                   fg='red', 
+                                   bg='#e0e0e0')
+        test_label.pack(side=self.tk.LEFT, padx=5, pady=2)
+        
         canvas_frame = self.tk.Frame(right_frame)
         canvas_frame.pack(fill=self.tk.BOTH, expand=True)
         
@@ -17646,19 +17640,72 @@ class AutomationGUI(object):
         self.fs_accordion_frame = self.tk.Frame(self.fs_canvas, bg='white')
         self.fs_canvas_window = self.fs_canvas.create_window(0, 0, anchor='nw', window=self.fs_accordion_frame)
         
-        # Привязка прокрутки колесиком мыши
+        # Привязка прокрутки колесиком мыши (ИСПРАВЛЕНО для Linux)
         def _on_mousewheel(event):
-            # Поддержка Windows и macOS
-            if hasattr(event, 'delta'):
-                self.fs_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            # Поддержка Linux (Button-4 и Button-5)
-            elif event.num == 4:
-                self.fs_canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                self.fs_canvas.yview_scroll(1, "units")
-        self.fs_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.fs_canvas.bind_all("<Button-4>", _on_mousewheel)  # Linux
-        self.fs_canvas.bind_all("<Button-5>", _on_mousewheel)  # Linux
+            """Обработка прокрутки колесиком мыши с проверкой области курсора"""
+            # Проверяем, что курсор находится над canvas или его содержимым
+            try:
+                # Получаем виджет под курсором через встроенный метод
+                widget_under_cursor = self.root.winfo_containing(
+                    self.root.winfo_pointerx(), 
+                    self.root.winfo_pointery()
+                )
+                
+                # Проверяем, что виджет под курсором является canvas или его дочерним элементом
+                if widget_under_cursor:
+                    # Проверяем, является ли виджет canvas или его дочерним элементом
+                    current = widget_under_cursor
+                    is_canvas_child = False
+                    for _ in range(10):  # Максимум 10 уровней вверх
+                        if current == self.fs_canvas or current == self.fs_accordion_frame:
+                            is_canvas_child = True
+                            break
+                        if hasattr(current, 'master') and current.master:
+                            current = current.master
+                        else:
+                            break
+                    
+                    if not is_canvas_child:
+                        return  # Событие не над canvas - игнорируем
+                
+                # Дополнительная проверка через координаты
+                x = self.fs_canvas.winfo_pointerx() - self.fs_canvas.winfo_rootx()
+                y = self.fs_canvas.winfo_pointery() - self.fs_canvas.winfo_rooty()
+                
+                # Проверяем, что координаты находятся в пределах canvas
+                if 0 <= x <= self.fs_canvas.winfo_width() and 0 <= y <= self.fs_canvas.winfo_height():
+                    # Поддержка Linux (Button-4 и Button-5)
+                    if event.num == 4:
+                        self.fs_canvas.yview_scroll(-1, "units")
+                    elif event.num == 5:
+                        self.fs_canvas.yview_scroll(1, "units")
+                    # Поддержка Windows/macOS (на случай, если используется)
+                    elif hasattr(event, 'delta'):
+                        self.fs_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                    
+                    # Обновляем панель с кнопками после прокрутки (с debouncing)
+                    if not hasattr(self, '_collapse_panel_update_id'):
+                        self._collapse_panel_update_id = None
+                    if self._collapse_panel_update_id:
+                        self.root.after_cancel(self._collapse_panel_update_id)
+                    self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
+                    
+                    return "break"  # Предотвращаем дальнейшую обработку события
+            except Exception:
+                pass  # Игнорируем ошибки при проверке координат
+        
+        # На Linux Button-4/Button-5 работают только с bind_all
+        self.fs_canvas.bind_all("<Button-4>", _on_mousewheel)  # Linux - прокрутка вверх
+        self.fs_canvas.bind_all("<Button-5>", _on_mousewheel)  # Linux - прокрутка вниз
+        self.fs_canvas.bind_all("<MouseWheel>", _on_mousewheel)  # На случай, если MouseWheel тоже работает
+        
+        # Функция для перепривязки (на Linux не нужна, но оставляем для совместимости)
+        def _bind_mousewheel_to_widgets():
+            """Перепривязка прокрутки (на Linux используется bind_all, эта функция для совместимости)"""
+            pass  # На Linux bind_all работает глобально, перепривязка не нужна
+        
+        # Сохраняем функцию для последующего использования
+        self._bind_mousewheel_to_widgets = _bind_mousewheel_to_widgets
         
         # Обновление размера canvas при изменении размера окна
         def _configure_canvas(event):
@@ -17669,7 +17716,7 @@ class AutomationGUI(object):
         def _configure_frame(event):
             self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
         self.fs_accordion_frame.bind('<Configure>', _configure_frame)
-
+        
     def _init_color_support(self):
         """Инициализирует проверку поддержки цветов для дерева файловой системы"""
         try:
@@ -18717,6 +18764,9 @@ class AutomationGUI(object):
             widget.destroy()
         self._update_filesystem_statistics()
         self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+        # Перепривязываем прокрутку к новым элементам
+        if hasattr(self, '_bind_mousewheel_to_widgets'):
+            self._bind_mousewheel_to_widgets()
     
     def _start_filesystem_time_update_timer(self):
         """Запуск таймера для обновления счетчика времени (независимо от проверки файлов)"""
@@ -19059,12 +19109,18 @@ class AutomationGUI(object):
             self._display_structure()
             self._update_filesystem_statistics()
             self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+            # Перепривязываем прокрутку к новым элементам
+            if hasattr(self, '_bind_mousewheel_to_widgets'):
+                self._bind_mousewheel_to_widgets()
             return
         
         # Для остальных режимов нужна история изменений
         if not self.filesystem_changes_history:
             self._update_filesystem_statistics()
             self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+            # Перепривязываем прокрутку к новым элементам
+            if hasattr(self, '_bind_mousewheel_to_widgets'):
+                self._bind_mousewheel_to_widgets()
             return
         
         if view_type == "all" or view_type == "time":
@@ -19076,6 +19132,9 @@ class AutomationGUI(object):
         
         self._update_filesystem_statistics()
         self.fs_canvas.configure(scrollregion=self.fs_canvas.bbox("all"))
+        # Перепривязываем прокрутку к новым элементам
+        if hasattr(self, '_bind_mousewheel_to_widgets'):
+            self._bind_mousewheel_to_widgets()
     
     def _display_by_time(self, expanded_sections=None):
         """Отображение изменений по времени"""
@@ -19652,6 +19711,9 @@ class AutomationGUI(object):
         if hasattr(self, 'dual_logger') and self.dual_logger:
             self.dual_logger.write_analysis(f"[FS_STRUCTURE] Вычисление статистики завершено: {len(dir_stats):,} директорий")
         
+        # Создаем панель с кнопками сворачивания (встроена в дерево как первая строка)
+        self._create_collapse_buttons_panel()
+        
         # Строим дерево для каждой отслеживаемой директории
         for root_dir in monitored_dirs:
             # Для снимка не проверяем существование на диске - используем данные из снимка
@@ -19684,7 +19746,569 @@ class AutomationGUI(object):
         
         if hasattr(self, 'dual_logger') and self.dual_logger:
             self.dual_logger.write_analysis("[FS_STRUCTURE] Отображение структуры завершено")
+        
+        # Обновляем панель с кнопками после создания дерева
+        if not hasattr(self, '_collapse_panel_update_id'):
+            self._collapse_panel_update_id = None
+        if self._collapse_panel_update_id:
+            self.root.after_cancel(self._collapse_panel_update_id)
+        self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
 
+    def _create_collapse_buttons_panel(self):
+        """Создает панель с кнопками сворачивания веток (закреплена над canvas)"""
+        # Панель уже создана при инициализации UI в right_frame
+        # Просто обновляем её содержимое
+        if not hasattr(self, 'fs_collapse_panel_frame'):
+            return
+        
+        # Очищаем содержимое панели (кроме тестовой метки, если есть)
+        panel_frame = getattr(self, 'fs_collapse_panel_frame', None)
+        if panel_frame:
+            for widget in panel_frame.winfo_children():
+                # Безопасно получаем текст только для виджетов, которые его поддерживают
+                widget_text = ''
+                try:
+                    widget_class = widget.winfo_class()
+                    if widget_class == 'Label':
+                        widget_text = widget.cget('text') or ''
+                except Exception:
+                    pass
+                
+                if '[ПАНЕЛЬ СВОРАЧИВАНИЯ - ЗАКРЕПЛЕНА]' not in str(widget_text):
+                    widget.destroy()
+        
+        # Обновляем содержимое панели
+        self._update_collapse_buttons_panel()
+        
+        # Инициализируем переменные для debouncing
+        if not hasattr(self, '_collapse_panel_update_id'):
+            self._collapse_panel_update_id = None
+        
+        # Привязываем обновление панели к прокрутке canvas с debouncing
+        def on_scroll(event=None):
+            # Отменяем предыдущую задачу, если она еще не выполнена
+            if self._collapse_panel_update_id:
+                self.root.after_cancel(self._collapse_panel_update_id)
+            # Создаем новую задачу с задержкой 100ms для debouncing
+            self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
+        
+        # Привязываем к событиям прокрутки
+        # 1. При изменении yview (прокрутка через scrollbar или программно)
+        def on_yview_changed(*args):
+            # Отменяем предыдущую задачу, если она еще не выполнена
+            if self._collapse_panel_update_id:
+                self.root.after_cancel(self._collapse_panel_update_id)
+            # Создаем новую задачу с задержкой 100ms для debouncing
+            self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
+        
+        # Сохраняем оригинальный yscrollcommand
+        original_yscrollcommand = self.fs_canvas.cget('yscrollcommand')
+        
+        # Получаем реальную функцию из scrollbar, если yscrollcommand - строка
+        if isinstance(original_yscrollcommand, str):
+            # Если это строка вида "scrollbar.set", получаем функцию из scrollbar
+            if hasattr(self, 'fs_scrollbar') and self.fs_scrollbar:
+                original_yscrollcommand_func = self.fs_scrollbar.set
+            else:
+                original_yscrollcommand_func = None
+        else:
+            original_yscrollcommand_func = original_yscrollcommand
+        
+        # Создаем обертку для yscrollcommand
+        def yscrollcommand_wrapper(*args):
+            # Вызываем оригинальный yscrollcommand
+            if original_yscrollcommand_func:
+                original_yscrollcommand_func(*args)
+            # Обновляем панель
+            on_yview_changed()
+        
+        # Устанавливаем новый yscrollcommand
+        self.fs_canvas.configure(yscrollcommand=yscrollcommand_wrapper)
+        
+        # 2. При изменении размера canvas
+        self.fs_canvas.bind('<Configure>', lambda e: on_scroll())
+    
+    def _update_collapse_buttons_panel(self):
+        """Обновляет панель с кнопками сворачивания на основе верхней видимой строки"""
+        # ЗАЩИТА ОТ ЗАЦИКЛИВАНИЙ: Проверяем, не выполняется ли уже обновление
+        if hasattr(self, '_updating_collapse_panel') and self._updating_collapse_panel:
+            print("[WARNING] _update_collapse_buttons_panel уже выполняется - ПРОПУСКАЕМ вызов для предотвращения зацикливания!")
+            return
+        
+        if not hasattr(self, 'fs_collapse_panel_frame'):
+            return
+        
+        # Устанавливаем флаг выполнения
+        self._updating_collapse_panel = True
+        
+        try:
+            # Очищаем панель
+            panel_frame = getattr(self, 'fs_collapse_panel_frame', None)
+            if panel_frame:
+                for widget in panel_frame.winfo_children():
+                    widget.destroy()
+            else:
+                return
+            
+            # Получаем верхнюю видимую строку дерева
+            top_visible_line = self._get_top_visible_line()
+            
+            if not top_visible_line:
+                return
+            
+            # Подсчитываем вертикальные линии в верхней видимой строке
+            vertical_lines_count = top_visible_line.count('│')
+            
+            if vertical_lines_count == 0:
+                # Нет вертикальных линий - просто показываем текст
+                text_label = self.tk.Label(panel_frame, 
+                                          text=top_visible_line, 
+                                          font=('Courier', 8), 
+                                          fg='blue', 
+                                          bg='#e0e0e0',
+                                          anchor='w')
+                text_label.pack(side=self.tk.LEFT, padx=(5, 0), pady=2)
+                return
+            
+            # Получаем позиции вертикальных линий в тексте
+            line_positions = self._get_vertical_line_positions(top_visible_line)
+            
+            # Создаем Frame для текста и кнопок (чтобы точно позиционировать кнопки над вертикальными линиями)
+            content_frame = self.tk.Frame(panel_frame, bg='#e0e0e0')
+            content_frame.pack(side=self.tk.LEFT, padx=0, pady=2)
+            
+            # Добавляем текст верхней строки в content_frame
+            text_label = self.tk.Label(content_frame, 
+                                      text=top_visible_line, 
+                                      font=('Courier', 8), 
+                                      fg='blue', 
+                                      bg='#e0e0e0',
+                                      anchor='w')
+            text_label.pack(side=self.tk.LEFT, padx=0, pady=0)
+            
+            # Создаем кнопки и размещаем их НАД вертикальными линиями
+            # Используем place для точного позиционирования относительно текста
+            colors = self._get_tree_colors()
+            
+            for i, pos in enumerate(line_positions):
+                # Создаем Label как кнопку
+                btn = self.tk.Label(content_frame, 
+                                   text="▲", 
+                                   font=('Courier', 9),
+                                   fg=colors['button_fg'],
+                                   bg='#e0e0e0',
+                                   cursor='hand2')
+                
+                # Привязываем обработчик клика
+                btn.bind('<Button-1>', lambda e, line_index=i: self._collapse_branch_at_line(line_index))
+                
+                # Размещаем кнопку НАД вертикальной линией
+                # Позиция вертикальной линии в тексте top_visible_line = pos (в символах)
+                # Позиция кнопки = pos * 6 пикселей (ширина символа Courier 8)
+                btn_x = pos * 6  # Позиция вертикальной линии в тексте
+                btn.place(x=btn_x, y=-2)  # y=-2 чтобы кнопка была немного выше текста
+        except Exception as e:
+            print(f"[ERROR] Ошибка при обновлении панели сворачивания: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Снимаем флаг выполнения
+            if hasattr(self, '_updating_collapse_panel'):
+                self._updating_collapse_panel = False
+    
+    def _get_top_visible_line(self):
+        """Определяет верхнюю видимую строку используя координаты Canvas"""
+        try:
+            accordion_frame = getattr(self, 'fs_accordion_frame', None)
+            if not accordion_frame or not accordion_frame.winfo_exists():
+                return None
+
+            fs_canvas = getattr(self, 'fs_canvas', None)
+            if not fs_canvas or not fs_canvas.winfo_exists():
+                return None
+
+            canvas_height = fs_canvas.winfo_height()
+            if canvas_height <= 1:
+                return None
+
+            visible_top_canvas = fs_canvas.canvasy(0)
+            visible_bottom_canvas = visible_top_canvas + canvas_height
+
+            window_bbox = fs_canvas.bbox(self.fs_canvas_window)
+            if not window_bbox or len(window_bbox) < 4:
+                return None
+
+            window_top_canvas = window_bbox[1]
+
+            # Ищем все видимые виджеты рекурсивно
+            all_visible_widgets = []
+            self._find_visible_widgets_recursive(
+                parent=accordion_frame,
+                window_top_canvas=window_top_canvas,
+                visible_top_canvas=visible_top_canvas,
+                visible_bottom_canvas=visible_bottom_canvas,
+                results=all_visible_widgets,
+                current_offset=0
+            )
+
+            if all_visible_widgets:
+                # Сортируем по visible_top (верхняя видимая часть виджета)
+                # Это гарантирует выбор виджета, который действительно ближе всего к верху экрана
+                all_visible_widgets.sort(key=lambda x: x[0])
+                
+                top_widget = all_visible_widgets[0][1]
+                result = self._get_widget_text_recursive(top_widget)
+                if result and result.strip():
+                    return result.strip()
+
+        except Exception as e:
+            print(f"[ERROR] _get_top_visible_line: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        return None
+
+    def _find_visible_widgets_recursive(self, parent, window_top_canvas, visible_top_canvas,
+                                       visible_bottom_canvas, results, current_offset=0, max_depth=50, current_depth=0):
+        """Рекурсивно находит все видимые виджеты в дереве с правильным вычислением координат"""
+        # ЗАЩИТА ОТ ЗАЦИКЛИВАНИЙ: Ограничение глубины рекурсии
+        if current_depth >= max_depth:
+            print(f"[WARNING] Достигнута максимальная глубина рекурсии: {max_depth} (parent={parent.winfo_class()}, "
+                  f"results={len(results)}) - ПРЕРЫВАЕМ рекурсию для предотвращения зависания!")
+            return
+        
+        # ЗАЩИТА ОТ ЗАЦИКЛИВАНИЙ: Ограничение количества результатов
+        if len(results) >= 100:  # Максимум 100 видимых элементов
+            print(f"[WARNING] Достигнуто максимальное количество результатов: 100 (depth={current_depth}, "
+                  f"parent={parent.winfo_class()}) - ПРЕРЫВАЕМ поиск для предотвращения зависания!")
+            return
+        
+        if not parent.winfo_exists():
+            return
+        
+        for child in parent.winfo_children():
+            if not child.winfo_exists():
+                continue
+                
+            child_class = child.winfo_class()
+            child_y = child.winfo_y()
+            child_height = child.winfo_height()
+            
+            if child_height <= 0:
+                continue
+            
+            # Правильное вычисление координат с учетом накопленного offset
+            child_top_canvas = window_top_canvas + current_offset + child_y
+            child_bottom_canvas = child_top_canvas + child_height
+            
+            # ВАЖНО: Проверяем, что элемент действительно виден (в пределах видимой области)
+            # Если child_top_canvas < visible_top_canvas, элемент находится ВЫШЕ видимой области
+            # Если child_bottom_canvas > visible_bottom_canvas, элемент находится НИЖЕ видимой области
+            is_actually_visible = (child_bottom_canvas > visible_top_canvas and 
+                                   child_top_canvas < visible_bottom_canvas)
+            
+            if not is_actually_visible:
+                continue  # Пропускаем элементы, которые не в видимой области
+            
+            # Если это Frame узла дерева, сначала проверяем развернутость
+            content_frame = None
+            is_expanded = False
+            if child_class in ['Frame', 'TFrame']:
+                # Ищем content_frame (Frame с _toggle_var)
+                for subchild in child.winfo_children():
+                    if (subchild.winfo_class() in ['Frame', 'TFrame'] and 
+                        hasattr(subchild, '_toggle_var')):
+                        content_frame = subchild
+                        toggle_var = subchild._toggle_var
+                        if toggle_var and toggle_var.get():
+                            is_expanded = True
+                        break
+            
+            # Если узел развернут, сначала проверяем дочерние элементы
+            has_visible_children = False
+            if content_frame and is_expanded:
+                # Сохраняем текущее количество результатов
+                results_before = len(results)
+                # ВАЖНО: content_frame упакован внутри node_frame после header_frame
+                # Поэтому его winfo_y() относительно node_frame НЕ равен 0!
+                # Нужно учитывать позицию content_frame внутри node_frame
+                content_frame_y = content_frame.winfo_y()  # Позиция content_frame относительно node_frame
+                nested_offset = current_offset + child_y + content_frame_y
+                
+                self._find_visible_widgets_recursive(
+                    parent=content_frame,
+                    window_top_canvas=window_top_canvas,
+                    visible_top_canvas=visible_top_canvas,
+                    visible_bottom_canvas=visible_bottom_canvas,
+                    results=results,
+                    current_offset=nested_offset,
+                    max_depth=max_depth,
+                    current_depth=current_depth + 1
+                )
+                # Проверяем, были ли найдены видимые дочерние элементы
+                has_visible_children = len(results) > results_before
+            
+            # Пропускаем служебные Frame'ы (more_files_frame и т.д.)
+            # more_files_frame обычно содержит только один Label с текстом "и еще N файлов"
+            is_service_frame = False
+            if child_class in ['Frame', 'TFrame']:
+                # Проверяем, является ли это more_files_frame
+                # (Frame без _toggle_var, содержащий только один Label с текстом "и еще")
+                if not hasattr(child, '_toggle_var'):
+                    children_list = list(child.winfo_children())
+                    if len(children_list) == 1 and children_list[0].winfo_class() == 'Label':
+                        label_text = children_list[0].cget("text")
+                        if label_text and "и еще" in label_text:
+                            is_service_frame = True
+            
+            # Проверяем видимость самого узла
+            # Добавляем node_frame только если он видим И (свернут ИЛИ не имеет видимых дочерних элементов)
+            # И НЕ является служебным Frame'ом
+            # ВАЖНО: Проверка is_actually_visible уже выполнена выше, здесь просто проверяем остальные условия
+            if not is_service_frame:
+                visible_top = max(child_top_canvas, visible_top_canvas)
+                visible_bottom = min(child_bottom_canvas, visible_bottom_canvas)
+                visible_height = max(0, visible_bottom - visible_top)
+                
+                # Двойная проверка: абсолютный порог И процент видимости
+                visibility_ratio = visible_height / child_height if child_height > 0 else 0
+                
+                # Для элементов в верхней части видимой области (близко к visible_top_canvas)
+                # используем более мягкие критерии, так как они могут быть частично скрыты сверху
+                is_near_top = child_top_canvas <= visible_top_canvas + 50  # В пределах 50px от верха
+                
+                # Базовые критерии видимости
+                meets_height_threshold = visible_height >= 5 if is_near_top else visible_height >= 10
+                meets_ratio_threshold = visibility_ratio >= 0.1 if is_near_top else visibility_ratio >= 0.2
+                
+                if meets_height_threshold and meets_ratio_threshold:
+                    # ВАЖНО: Добавляем ВСЕ видимые элементы (и узлы, и дочерние элементы)
+                    # Сортировка по Y-координате гарантирует выбор самого верхнего элемента
+                    # Если узел развернут и имеет видимые дочерние элементы, оба будут в results,
+                    # но сортировка выберет тот, который выше (меньше Y)
+                    widget_text = self._get_widget_text_recursive(child)
+                    widget_text_preview = widget_text[:50] if widget_text else "НЕТ ТЕКСТА"
+                    # Для сортировки используем координату относительно видимой области
+                    # Это гарантирует, что элементы выше видимой области не будут выбраны
+                    sort_y = max(child_top_canvas, visible_top_canvas)
+                    results.append((sort_y, child))
+
+    def _get_widget_text_recursive(self, widget, max_depth=3):
+        """Рекурсивно извлекает текст из виджета, собирая все Label'ы"""
+        if not widget.winfo_exists() or max_depth <= 0:
+            return None
+            
+        widget_class = widget.winfo_class()
+        
+        # Для Frame ищем header_frame и собираем весь текст из всех Label'ов
+        if widget_class in ['Frame', 'TFrame']:
+            try:
+                children = widget.winfo_children()
+                
+                # Ищем header_frame (первый Frame, который НЕ является content_frame)
+                # content_frame имеет атрибут _toggle_var, header_frame - нет
+                for child in children:
+                    if not child.winfo_exists():
+                        continue
+                    
+                    child_class = child.winfo_class()
+                    if child_class in ['Frame', 'TFrame']:
+                        # Пропускаем content_frame (имеет _toggle_var)
+                        if hasattr(child, '_toggle_var'):
+                            continue
+                        
+                        # Это header_frame - собираем текст из всех Label'ов
+                        header_children = child.winfo_children()
+                        full_text = ""
+                        
+                        # Собираем текст из всех Label'ов в header_frame
+                        for header_child in header_children:
+                            if header_child.winfo_class() == 'Label':
+                                label_text = header_child.cget("text")
+                                if label_text:
+                                    full_text += label_text
+                        
+                        if full_text:
+                            return full_text.strip()
+                
+                # Если не нашли header_frame, рекурсивно ищем в детях
+                for child in children:
+                    if not child.winfo_exists():
+                        continue
+                    child_class = child.winfo_class()
+                    if child_class in ['Frame', 'TFrame', 'Labelframe', 'TLabelframe']:
+                        deep_text = self._get_widget_text_recursive(child, max_depth-1)
+                        if deep_text:
+                            return deep_text
+            except Exception:
+                pass
+        
+        # Для Label возвращаем текст напрямую
+        elif widget_class == 'Label':
+            try:
+                text = widget.cget("text")
+                if text and text.strip():
+                    return text.strip()
+            except:
+                pass
+            
+        return None
+    
+    def _get_widget_text(self, widget):
+        """Извлекает текстовое представление виджета дерева"""
+        try:
+            print(f"[DEBUG] _get_widget_text: виджет {type(widget)}")
+            # Структура: node_frame -> header_frame (первый Frame) -> tree_lines_label + toggle_btn + header_label
+            for child in widget.winfo_children():
+                if isinstance(child, self.tk.Frame):
+                    # Собираем текст из всех Label в header_frame
+                    full_text = ""
+                    has_tree_symbols = False
+                    
+                    for subchild in child.winfo_children():
+                        if isinstance(subchild, self.tk.Label):
+                            label_text = subchild.cget('text')
+                            if label_text:
+                                full_text += label_text
+                                # Проверяем наличие символов дерева
+                                if '│' in label_text or '├' in label_text or '└' in label_text or '▼' in label_text or '▶' in label_text:
+                                    has_tree_symbols = True
+                    
+                    print(f"[DEBUG] Собранный текст: {repr(full_text[:50])}")
+                    # Возвращаем текст только если нашли символы дерева (это header_frame)
+                    if has_tree_symbols and full_text:
+                        return full_text
+        except Exception as e:
+            print(f"[DEBUG] Ошибка: {e}")
+        return None
+    
+    def _on_tree_item_double_click(self, label, is_folder=True):
+        """Обработчик двойного клика на элементе дерева"""
+        try:
+            # Логирование координат кликнутого элемента
+            print(f"[DEBUG] ===== ДВОЙНОЙ КЛИК =====")
+            widget_y = label.winfo_y()
+            widget_height = label.winfo_height()
+            
+            # Получаем текст кликнутого элемента
+            clicked_text = 'Неизвестно'
+            try:
+                if label.winfo_class() == 'Label':
+                    clicked_text = label.cget('text') or 'Неизвестно'
+            except Exception:
+                pass
+            print(f"[DEBUG] Кликнутый элемент (текст): {repr(clicked_text[:100])}")
+            
+            fs_canvas = getattr(self, 'fs_canvas', None)
+            if fs_canvas:
+                viewport_top_y = fs_canvas.canvasy(0)
+                window_coords = fs_canvas.coords(self.fs_canvas_window)
+                window_y = window_coords[1] if len(window_coords) > 1 else 0
+                widget_y_canvas = widget_y + window_y
+                
+                print(f"[DEBUG] Кликнутый элемент: Y={widget_y} (relative), Y={widget_y_canvas} (canvas)")
+                print(f"[DEBUG] viewport_top_y: {viewport_top_y}, разница: {widget_y_canvas - viewport_top_y}")
+                print(f"[DEBUG] height: {widget_height}")
+                
+                # Получаем текущую верхнюю видимую строку по алгоритму
+                print(f"[DEBUG] ===== ВЫЗОВ АЛГОРИТМА ОПРЕДЕЛЕНИЯ ВЕРХНЕЙ СТРОКИ =====")
+                algorithm_top_line = self._get_top_visible_line()
+                print(f"[DEBUG] Алгоритм определил верхнюю строку: {repr(algorithm_top_line[:100]) if algorithm_top_line else 'None'}")
+                print(f"[DEBUG] ===== СРАВНЕНИЕ =====")
+                print(f"[DEBUG] Кликнуто: {repr(clicked_text[:100])}")
+                print(f"[DEBUG] Алгоритм: {repr(algorithm_top_line[:100]) if algorithm_top_line else 'None'}")
+                print(f"[DEBUG] Совпадают: {clicked_text == algorithm_top_line}")
+            
+            if is_folder:
+                # Это папка
+                node_path = getattr(label, '_node_path', 'Неизвестно')
+                node_name = getattr(label, '_node_name', 'Неизвестно')
+                files_count = getattr(label, '_files_count', 0)
+                subdirs_count = getattr(label, '_subdirs_count', 0)
+                total_size = getattr(label, '_total_size', 0)
+                
+                # Форматируем размер
+                def format_size(size_bytes):
+                    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+                        if size_bytes < 1024.0:
+                            return f"{size_bytes:.1f} {unit}"
+                        size_bytes /= 1024.0
+                    return f"{size_bytes:.1f} PB"
+                
+                size_text = format_size(total_size) if total_size > 0 else "0 B"
+                
+                message = f"Папка: {node_name}\n"
+                message += f"Полный путь: {node_path}\n"
+                message += f"Файлов: {files_count:,}\n"
+                message += f"Папок: {subdirs_count:,}\n"
+                message += f"Размер: {size_text}"
+                
+                self.tk.messagebox.showinfo("Информация о папке", message)
+            else:
+                # Это файл
+                file_path = getattr(label, '_file_path', 'Неизвестно')
+                file_name = getattr(label, '_file_name', 'Неизвестно')
+                
+                message = f"Файл: {file_name}\n"
+                message += f"Полный путь: {file_path}"
+                
+                self.tk.messagebox.showinfo("Информация о файле", message)
+                
+        except Exception as e:
+            print(f"[DEBUG] Ошибка при обработке двойного клика: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _get_vertical_line_positions(self, line_text):
+        """Определяет позиции всех вертикалей в строке (│, ├, └) для создания кнопок сворачивания"""
+        positions = []
+        current_pos = 0
+        for char in line_text:
+            # Учитываем все вертикали: вертикальные линии и символы ветвления
+            if char == '│' or char == '├' or char == '└':
+                positions.append(current_pos)
+            current_pos += 1
+        return positions
+    
+    def _collapse_branch_at_line(self, line_index):
+        """Сворачивает ветку, соответствующую указанной вертикальной линии"""
+        try:
+            top_line = self._get_top_visible_line()
+            if not top_line:
+                return
+            
+            # Определяем уровень вложенности по количеству вертикальных линий до указанной позиции
+            line_positions = self._get_vertical_line_positions(top_line)
+            if line_index >= len(line_positions):
+                return
+            
+            target_depth = line_index + 1  # depth начинается с 0 для корня
+            
+            # Находим и сворачиваем все узлы на этом уровне в верхней видимой области
+            self._collapse_nodes_at_depth(target_depth)
+            
+            # Обновляем панель
+            if not hasattr(self, '_collapse_panel_update_id'):
+                self._collapse_panel_update_id = None
+            if self._collapse_panel_update_id:
+                self.root.after_cancel(self._collapse_panel_update_id)
+            self._collapse_panel_update_id = self.root.after(100, self._update_collapse_buttons_panel)
+
+        except Exception as e:
+            print(f"[DEBUG] Ошибка при сворачивании ветки: {e}")
+    
+    def _collapse_nodes_at_depth(self, target_depth):
+        """Сворачивает все узлы на указанном уровне вложенности"""
+        try:
+            accordion_frame = getattr(self, 'fs_accordion_frame', None)
+            if not accordion_frame:
+                return
+            # Панель теперь не в accordion_frame, поэтому не нужно её пропускать
+            for widget in accordion_frame.winfo_children():
+                self._collapse_node_recursive(widget, target_depth, current_depth=0)
+        except Exception as e:
+            print(f"[DEBUG] Ошибка при сворачивании узлов: {e}")
+    
     def _create_structure_node_optimized(self, parent_frame, node_path, all_files, all_directories, root_dir, 
                                          files_by_dir, dirs_by_parent, dir_stats, depth=0, is_last=False):
         """Создание узла дерева структуры с возможностью разворачивания - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ"""
@@ -19808,6 +20432,16 @@ class AutomationGUI(object):
                                      bg='white',
                                      anchor='w')
         header_label.pack(side=self.tk.LEFT, padx=(0, 0), pady=0)  # Без отступов
+        
+        # Сохраняем информацию о папке для обработки двойного клика
+        header_label._node_path = node_path_norm
+        header_label._node_name = node_name
+        header_label._files_count = files_count
+        header_label._subdirs_count = subdirs_count
+        header_label._total_size = total_size
+        
+        # Привязываем обработчик двойного клика
+        header_label.bind('<Double-Button-1>', lambda e, label=header_label: self._on_tree_item_double_click(label, is_folder=True))
     
     def _toggle_structure_node_optimized(self, content_frame, toggle_btn, toggle_var, node_path_norm,
                                          node_files, node_subdirs, files_by_dir, dirs_by_parent, dir_stats, depth):
@@ -19869,6 +20503,13 @@ class AutomationGUI(object):
                                                   bg='white',
                                                   anchor='w')
                         file_label.pack(anchor='w', padx=(0, 0))
+                        
+                        # Сохраняем путь к файлу для обработки двойного клика
+                        file_label._file_path = file_path
+                        file_label._file_name = file_name
+                        
+                        # Привязываем обработчик двойного клика
+                        file_label.bind('<Double-Button-1>', lambda e, label=file_label: self._on_tree_item_double_click(label, is_folder=False))
                 else:
                     # colors уже получен выше, используем его
                     
@@ -19888,6 +20529,13 @@ class AutomationGUI(object):
                                                   bg='white',
                                                   anchor='w')
                         file_label.pack(anchor='w', padx=(0, 0))
+                        
+                        # Сохраняем путь к файлу для обработки двойного клика
+                        file_label._file_path = file_path
+                        file_label._file_name = file_name
+                        
+                        # Привязываем обработчик двойного клика
+                        file_label.bind('<Double-Button-1>', lambda e, label=file_label: self._on_tree_item_double_click(label, is_folder=False))
                     
                     # Показываем сноску "и еще N файлов"
                     remaining_count = len(sorted_files) - max_files_to_show
@@ -26040,12 +26688,8 @@ class AutomationGUI(object):
     def start_terminal_monitoring(self):
         """Запуск мониторинга системного вывода"""
         try:
-            # Добавляем информацию в лог
-            print("[INFO] Мониторинг системного вывода запущен", gui_log=True)
-            
             # Добавляем сообщение в терминал
             self.terminal_text.config(state=self.tk.NORMAL)
-            self.terminal_text.insert(self.tk.END, "[INFO] Мониторинг системного вывода запущен\n")
             if self.terminal_autoscroll_enabled.get():  # Проверка автоперемотки
                 self.terminal_text.see(self.tk.END)
                 self.root.update_idletasks()  # Принудительное обновление для гарантии прокрутки
@@ -26857,13 +27501,11 @@ class AutomationGUI(object):
             self.update_status("Запуск автоматизации...")
             print("=" * 60, gui_log=True)
             print(APP_NAME, gui_log=True)
-            print("Автоматизация установки Astra.IDE", gui_log=True)
-            print("=" * 60, gui_log=True)
-            
             if self.dry_run.get():
                 print("Режим: ТЕСТИРОВАНИЕ (dry-run)", gui_log=True)
             else:
-                print("Режим: РЕАЛЬНАЯ УСТАНОВКА", gui_log=True)
+                print("Режим: УСТАНОВКА", gui_log=True)
+            print("=" * 60, gui_log=True)
             
             print("", gui_log=True)
             
@@ -27264,9 +27906,6 @@ class AutomationGUI(object):
                 return
             self._run_finally_executed = True
             
-            # Логирование завершения после выхода из mainloop
-            print("[INFO] GUI mainloop завершен", gui_log=True)
-            
             # Останавливаем системный мониторинг
             if hasattr(self, 'system_monitor') and self.system_monitor:
                 try:
@@ -27295,7 +27934,6 @@ class AutomationGUI(object):
             # Останавливаем DualStreamLogger ПОСЛЕДНИМ, чтобы все логи успели записаться
             if '_global_dual_logger' in globals() and globals()['_global_dual_logger']:
                 try:
-                    print("[DUAL_STREAM] Остановка файлового логирования...", gui_log=True)
                     # Ждём, пока очередь опустеет (все сообщения уже в очереди)
                     max_wait = 2.0
                     start_wait = time.time()
@@ -27305,8 +27943,6 @@ class AutomationGUI(object):
                         time.sleep(0.1)
                     # Даем время на запись сообщения об остановке
                     time.sleep(0.1)
-                    # Записываем сообщение об успешной остановке ПЕРЕД остановкой
-                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен", gui_log=True)
                     # Еще раз ждём, пока очередь опустеет с финальным сообщением
                     max_wait = 2.0
                     start_wait = time.time()
@@ -27524,7 +28160,6 @@ class UniversalProgressManager:
         
         # Защита от повторной инициализации таймера
         if self.cpu_net_timer_id is None:
-            print("[UNIVERSAL_PROGRESS] UniversalProgressManager инициализирован")
             # Запускаем автономный таймер для CPU и сети
             self._start_cpu_net_timer()
     
@@ -30795,16 +31430,11 @@ def run_system_updater(temp_dir, dry_run=False):
 
 def run_gui_monitor(temp_dir, dry_run=False):
     """Запуск GUI мониторинга через класс AutomationGUI"""
-    # ОТЛАДКА: Отслеживаем вызовы run_gui_monitor
-    caller_info = ''.join(traceback.format_stack()[-3:-1]) if len(traceback.format_stack()) > 2 else "unknown"
-    print(f"[DEBUG_RUN_GUI] Вызов run_gui_monitor() из: {caller_info[:200]}", level='DEBUG', gui_log=False)
-    
     # Защита от повторного вызова
     if hasattr(run_gui_monitor, '_running'):
         return False
     
     run_gui_monitor._running = True
-    print("\n[GUI] Запуск GUI мониторинга...")
     
     # КРИТИЧНО: Принудительная синхронизация ВСЕХ логов ПЕРЕД созданием GUI
     # чтобы гарантированно увидеть все сообщения в логах, даже если GUI упадёт
@@ -30840,9 +31470,6 @@ def run_gui_monitor(temp_dir, dry_run=False):
         # 5. Записываем сообщение НАПРЯМУЮ в файл перед созданием GUI
         try:
             if _global_dual_logger._analysis_file:
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                message = f"[{timestamp}] [INFO] Все сообщения до создания GUI записаны. Приступаем к созданию AutomationGUI...\n"
-                _global_dual_logger._analysis_file.write(message)
                 _global_dual_logger._analysis_file.flush()
                 os.fsync(_global_dual_logger._analysis_file.fileno())
         except Exception:
@@ -30850,7 +31477,6 @@ def run_gui_monitor(temp_dir, dry_run=False):
     
     try:
         # Создаем экземпляр класса AutomationGUI напрямую
-        print("   [OK] Создаем экземпляр AutomationGUI...", gui_log=True)
         try:
             gui = AutomationGUI(console_mode=False)
             print("[OK] AutomationGUI создан успешно", gui_log=True)
@@ -32338,7 +32964,6 @@ class SelfUpdater:
         credentials_file = expand_user_path("~/.smbcredentials")
         
         if os.path.exists(credentials_file) and os.path.isfile(credentials_file):
-            self.log(f"Найден файл учетных данных: {credentials_file}", "DEBUG")
             return credentials_file
         
         return None
@@ -32450,7 +33075,6 @@ class SelfUpdater:
                     # Пользователь не совпадает - обновляем файл
                     self._ensure_credentials_file()
             # Используем файл с учетными данными: -A путь_к_файлу
-            self.log(f"Используется файл с учетными данными: {credentials_file}", "DEBUG")
             return ['-A', credentials_file]
         elif self.smb_user and self.smb_password:
             # Файла нет, но есть учетные данные - создаем и используем
@@ -32854,7 +33478,6 @@ class SelfUpdater:
                     size_match = re.search(r'\b(\d{4,})\b', result.stdout)
                     if size_match:
                         size = int(size_match.group(1))
-                        self.log(f"Найден размер файла: {size} байт", "DEBUG")
                         return size
                     
                     # Альтернативный способ - ищем любое число (как в старом скрипте)
@@ -32863,7 +33486,6 @@ class SelfUpdater:
                         size = int(size_match.group(1))
                         # Проверяем, что размер разумный (больше 1MB для бинарника)
                         if size > 1000000:
-                            self.log(f"Найден размер файла (альтернативный способ): {size} байт", "DEBUG")
                             return size
                     
                     self.log(f"Не удалось найти размер в выводе ls", "WARNING")
@@ -32908,7 +33530,6 @@ class SelfUpdater:
                     for line in result.stdout.split('\n'):
                         if line.lower().startswith('content-length:'):
                             size = int(line.split(':', 1)[1].strip())
-                            self.log(f"Найден размер файла на Git: {size} байт", "DEBUG")
                             return size
                 else:
                     # Логируем ошибку
@@ -33564,10 +34185,6 @@ def main():
     # КРИТИЧНО: Немедленно обрабатываем очередь для записи в лог файл!
     logger.process_queue()
     
-    # Диагностическая информация
-    print(f"[INFO] {APP_NAME} версия: {APP_VERSION}", gui_log=True)
-    print(f"[INFO] Python версия: {sys.version}", gui_log=True)
-    
     # Обрабатываем аргументы командной строки
     console_mode = False
     
@@ -33586,7 +34203,6 @@ def main():
         # По умолчанию запускаем GUI, если не указан --console
         if not console_mode:
             # Запускаем GUI
-            print("[GUI] Запускаем интерфейс...")
             try:
                 gui_success = run_gui_monitor(None)
                 if gui_success:
@@ -33601,7 +34217,6 @@ def main():
         print("[INFO] Запускаем консольный режим", gui_log=True)
         print("=" * 60)
         print(APP_NAME)
-        print("Автоматизация установки Astra.IDE")
         print("=" * 60)
         
         temp_dir = None
@@ -33679,8 +34294,6 @@ def main():
                     component_handlers['apt_packages'] = AptPackageHandler(**common_params)
                     component_handlers['wine_application'] = WineApplicationHandler(**common_params)
                     component_handlers['wine_config'] = WineConfigHandler(**common_params)
-                    
-                    print("[INFO] Handlers зарегистрированы: %s" % ', '.join(component_handlers.keys()))
                     
                     # Создаем ComponentInstaller
                     component_installer = ComponentInstaller(
@@ -33784,9 +34397,7 @@ def main():
             # НОВОЕ: Останавливаем DualStreamLogger перед завершением
             if _global_dual_logger:
                 try:
-                    print("[DUAL_STREAM] Остановка файлового логирования...")
                     _global_dual_logger.stop_file_logging(flush=True)
-                    print("[DUAL_STREAM] OK: DualStreamLogger остановлен")
                 except Exception as e:
                     print(f"[DUAL_STREAM] WARNING: Ошибка остановки: {e}")
             
@@ -33826,10 +34437,6 @@ def _load_tcl_tk_libraries():
     
     # КРИТИЧНО: PyInstaller не запускает код до полной распаковки
     # Но на всякий случай проверяем существование директории
-    print(f"[DEBUG] _load_tcl_tk_libraries: base_path = {base_path}")
-    print(f"[DEBUG] _load_tcl_tk_libraries: PID = {os.getpid()}, UID = {os.geteuid()}")
-    print(f"[DEBUG] _load_tcl_tk_libraries: os.path.exists(base_path) = {os.path.exists(base_path)}")
-    
     if not os.path.exists(base_path):
         print(f"[ERROR] КРИТИЧНО: sys._MEIPASS указывает на несуществующую директорию: {base_path}")
         print(f"[ERROR] PID процесса: {os.getpid()}, UID: {os.geteuid()}")
@@ -33851,7 +34458,6 @@ def _load_tcl_tk_libraries():
                         print(f"[ERROR] Содержимое последней директории ({len(latest_items)} элементов): {latest_items[:10]}")
                         # Пробуем использовать эту директорию
                         base_path = latest_path
-                        print(f"[DEBUG] Пробуем использовать альтернативную директорию: {base_path}")
                     else:
                         return
                 else:
@@ -33868,7 +34474,6 @@ def _load_tcl_tk_libraries():
         # КРИТИЧНО: Проверяем, что можем прочитать директорию
         try:
             test_items = os.listdir(base_path)
-            print(f"[DEBUG] _load_tcl_tk_libraries: Успешно прочитана директория, элементов: {len(test_items)}")
         except Exception as e:
             print(f"[ERROR] Не удалось прочитать директорию {base_path}: {e}")
             return
@@ -33907,60 +34512,28 @@ def _load_tcl_tk_libraries():
         if libtcl_path and os.path.exists(libtcl_path):
             try:
                 ctypes.CDLL(libtcl_path, mode=rtld_global)
-                print(f"[DEBUG] [OK] Загружена библиотека Tcl: {os.path.basename(libtcl_path)}")
             except Exception as e:
                 print(f"[WARNING] Не удалось загрузить {libtcl_path}: {e}")
         
         # КРИТИЧНО: НЕ загружаем Tk явно - он уже загружен runtime hook'ом pyi_rth_libblt.py
         # Явная загрузка Tk через ctypes.CDLL вызывает segfault, так как runtime hook
         # уже загрузил его с RTLD_GLOBAL при предзагрузке libBLT
-        if libtk_path and os.path.exists(libtk_path):
-            print(f"[DEBUG] [INFO] Библиотека Tk найдена: {os.path.basename(libtk_path)} (загружена runtime hook'ом)")
-        
-        # КРИТИЧНО: НЕ загружаем BLT явно - он уже загружен runtime hook'ом pyi_rth_libblt.py
-        # Runtime hook загружает BLT с RTLD_GLOBAL при предзагрузке
-        # Повторная загрузка через ctypes.CDLL может вызывать segfault
-        if libblt_path and os.path.exists(libblt_path):
-            print(f"[DEBUG] [INFO] Библиотека BLT найдена: {os.path.basename(libblt_path)} (загружена runtime hook'ом)")
-        
-        print(f"[DEBUG] Загрузка библиотек завершена. Переходим к установке TCL_LIBRARY и TK_LIBRARY...")
-        
         # 3. Найти и установить TCL_LIBRARY и TK_LIBRARY
         tcl_data_path = os.path.join(base_path, '_tcl_data')
         tk_data_path = os.path.join(base_path, '_tk_data')
         
-        # КРИТИЧНО: Проверяем существование директорий и выводим явные сообщения
-        if not os.path.exists(tcl_data_path):
-            print(f"[DEBUG] [ERROR] КРИТИЧНО: Директория _tcl_data НЕ СУЩЕСТВУЕТ: {tcl_data_path}")
-            print(f"[DEBUG] [ERROR] PyInstaller не включил скрипты Tcl в бинарник!")
-        else:
-            print(f"[DEBUG] [OK] Директория _tcl_data найдена: {tcl_data_path}")
-            tcl_library_found = False
+        # КРИТИЧНО: Проверяем существование директорий
+        if os.path.exists(tcl_data_path):
             for root, dirs, files in os.walk(tcl_data_path):
                 if 'init.tcl' in files:
                     os.environ['TCL_LIBRARY'] = root
-                    print(f"[DEBUG] [OK] TCL_LIBRARY установлен: {root}")
-                    tcl_library_found = True
                     break
-            
-            if not tcl_library_found:
-                print(f"[DEBUG] [ERROR] init.tcl НЕ найден в _tcl_data (директория существует, но файла нет)!")
         
-        if not os.path.exists(tk_data_path):
-            print(f"[DEBUG] [ERROR] КРИТИЧНО: Директория _tk_data НЕ СУЩЕСТВУЕТ: {tk_data_path}")
-            print(f"[DEBUG] [ERROR] PyInstaller не включил скрипты Tk в бинарник!")
-        else:
-            print(f"[DEBUG] [OK] Директория _tk_data найдена: {tk_data_path}")
-            tk_library_found = False
+        if os.path.exists(tk_data_path):
             for root, dirs, files in os.walk(tk_data_path):
                 if 'tk.tcl' in files:
                     os.environ['TK_LIBRARY'] = root
-                    print(f"[DEBUG] [OK] TK_LIBRARY установлен: {root}")
-                    tk_library_found = True
                     break
-            
-            if not tk_library_found:
-                print(f"[DEBUG] [ERROR] tk.tcl НЕ найден в _tk_data (директория существует, но файла нет)!")
         
         # 4. Установить LD_LIBRARY_PATH для поиска .so файлов
         if 'LD_LIBRARY_PATH' in os.environ:
@@ -33969,8 +34542,6 @@ def _load_tcl_tk_libraries():
                 os.environ['LD_LIBRARY_PATH'] = f"{base_path}:{os.environ['LD_LIBRARY_PATH']}"
         else:
             os.environ['LD_LIBRARY_PATH'] = base_path
-        
-        print(f"[DEBUG] [OK] LD_LIBRARY_PATH установлен: {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
         
     except Exception as e:
         print(f"[WARNING] Ошибка загрузки библиотек Tcl/Tk: {e}")
@@ -34111,7 +34682,6 @@ if __name__ == '__main__':
         print(f"[DEBUG] Linux: процесс пользователя (UID={os.geteuid()}) - НЕ будет писать логи")
     
     _init_logging_early()
-    print("[DEBUG] Логирование инициализировано")
     
     # КРИТИЧНО: Устанавливаем переменные окружения для Tcl/Tk ДО импорта tkinter
     # ТОЛЬКО для бинарника PyInstaller
@@ -34119,48 +34689,11 @@ if __name__ == '__main__':
         try:
             base_path = sys._MEIPASS
             
-            # КРИТИЧНО: Отладочный вывод для понимания проблемы
-            print(f"[DEBUG] ========================================")
-            print(f"[DEBUG] Диагностика sys._MEIPASS:")
-            print(f"[DEBUG]   sys._MEIPASS = {base_path}")
-            print(f"[DEBUG]   PID текущего процесса: {os.getpid()}")
-            print(f"[DEBUG]   UID текущего процесса: {os.geteuid()}")
-            print(f"[DEBUG]   Директория существует: {os.path.exists(base_path)}")
-            
             # Проверяем, что это действительно директория PyInstaller
             if os.path.exists(base_path):
-                try:
-                    items = os.listdir(base_path)
-                    print(f"[DEBUG]   Содержимое директории ({len(items)} элементов)")
-                    print(f"[DEBUG]   Первые 10 элементов: {items[:10]}")
-                    # Проверяем наличие критичных директорий
-                    has_tcl_data = os.path.exists(os.path.join(base_path, '_tcl_data'))
-                    has_tk_data = os.path.exists(os.path.join(base_path, '_tk_data'))
-                    print(f"[DEBUG]   _tcl_data существует: {has_tcl_data}")
-                    print(f"[DEBUG]   _tk_data существует: {has_tk_data}")
-                except Exception as e:
-                    print(f"[DEBUG]   Ошибка чтения содержимого: {e}")
-            else:
-                print(f"[DEBUG]   КРИТИЧНО: Директория НЕ существует!")
-                # Проверяем, есть ли другие директории _MEI* в /tmp
-                try:
-                    tmp_dir = '/tmp'
-                    if os.path.exists(tmp_dir):
-                        mei_dirs = [d for d in os.listdir(tmp_dir) if d.startswith('_MEI') and os.path.isdir(os.path.join(tmp_dir, d))]
-                        print(f"[DEBUG]   Найдено директорий _MEI* в /tmp: {len(mei_dirs)}")
-                        if mei_dirs:
-                            print(f"[DEBUG]   Директории: {mei_dirs}")
-                            # Проверяем последнюю директорию (возможно, это новая)
-                            latest_dir = sorted(mei_dirs)[-1]
-                            latest_path = os.path.join(tmp_dir, latest_dir)
-                            print(f"[DEBUG]   Последняя директория: {latest_path}")
-                            if os.path.exists(latest_path):
-                                latest_items = os.listdir(latest_path)
-                                print(f"[DEBUG]   Содержимое последней директории ({len(latest_items)} элементов): {latest_items[:10]}")
-                except Exception as e:
-                    print(f"[DEBUG]   Ошибка поиска директорий _MEI*: {e}")
-            
-            print(f"[DEBUG] ========================================")
+                # Проверяем наличие критичных директорий
+                has_tcl_data = os.path.exists(os.path.join(base_path, '_tcl_data'))
+                has_tk_data = os.path.exists(os.path.join(base_path, '_tk_data'))
             
             # КРИТИЧНО: PyInstaller не запускает код до полной распаковки
             # Но на всякий случай проверяем существование директории
@@ -34182,34 +34715,19 @@ if __name__ == '__main__':
                 if os.path.isfile(item_path) and (item.endswith('.so') or '.so.' in item):
                     if item.startswith('libtcl'):
                         found_tcl_so.append(item_path)
-                        print(f"[DEBUG] [OK] Найдена библиотека Tcl: {item}")
                     elif item.startswith('libtk'):
                         found_tk_so.append(item_path)
-                        print(f"[DEBUG] [OK] Найдена библиотека Tk: {item}")
                     elif item.startswith('libBLT'):
                         found_blt_so.append(item_path)
-                        print(f"[DEBUG] [OK] Найдена библиотека BLT: {item}")
                     elif item.startswith('libX'):
                         found_x11_so.append(item_path)
             
-            if not found_tcl_so:
-                print(f"[DEBUG] ВНИМАНИЕ: Библиотеки libtcl*.so не найдены в бинарнике!")
-            if not found_tk_so:
-                print(f"[DEBUG] ВНИМАНИЕ: Библиотеки libtk*.so не найдены в бинарнике!")
-            if not found_blt_so:
-                print(f"[DEBUG] ВНИМАНИЕ: Библиотека libBLT*.so не найдена в бинарнике!")
-            else:
-                print(f"[DEBUG] [OK] Найдено {len(found_x11_so)} X11 библиотек, {len(found_blt_so)} BLT библиотек")
-            
             # КРИТИЧНО: Проверяем наличие всех файлов Tcl/Tk (скрипты .tcl)
-            print(f"[DEBUG] Проверка файлов Tcl/Tk:")
-            
             # Сначала проверяем _unified_tcl_tk (создается runtime hook)
             unified_tcl_tk_dir = os.path.join(base_path, '_unified_tcl_tk')
             tcl_tk_files = []
             
             if os.path.exists(unified_tcl_tk_dir):
-                print(f"[DEBUG] [OK] Найдена объединенная директория: _unified_tcl_tk")
                 try:
                     for root, dirs, files in os.walk(unified_tcl_tk_dir):
                         for file in files:
@@ -34217,99 +34735,34 @@ if __name__ == '__main__':
                             rel_path = os.path.relpath(file_path, unified_tcl_tk_dir)
                             file_size = os.path.getsize(file_path)
                             tcl_tk_files.append((rel_path, file_size))
-                    
-                    # Сортируем по пути
-                    tcl_tk_files.sort(key=lambda x: x[0])
-                    
-                    # Выводим список файлов
-                    print(f"[DEBUG] Содержимое _unified_tcl_tk ({len(tcl_tk_files)} файлов):")
-                    for rel_path, file_size in tcl_tk_files:
-                        print(f"[DEBUG]   FILE: {rel_path} ({file_size} bytes)")
-                    
-                    # Проверяем критически важные файлы
-                    has_init_tcl = any('init.tcl' in path for path, _ in tcl_tk_files)
-                    has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
-                    
-                    if has_init_tcl:
-                        print(f"[DEBUG] [OK] init.tcl найден")
-                    else:
-                        print(f"[DEBUG] [FAIL] init.tcl НЕ найден!")
-                    
-                    if has_tk_tcl:
-                        print(f"[DEBUG] [OK] tk.tcl найден")
-                    else:
-                        print(f"[DEBUG] [FAIL] tk.tcl НЕ найден!")
-                        
                 except Exception as e:
-                    print(f"[DEBUG] Ошибка чтения _unified_tcl_tk: {e}")
+                    pass
             else:
                 # Если _unified_tcl_tk не существует, проверяем _tcl_data и _tk_data
-                print(f"[DEBUG] _unified_tcl_tk не найдена, проверяем _tcl_data и _tk_data")
-                
                 tcl_data_path = os.path.join(base_path, '_tcl_data')
                 tk_data_path = os.path.join(base_path, '_tk_data')
                 
                 if os.path.exists(tcl_data_path):
-                    print(f"[DEBUG] [OK] Найдена директория: _tcl_data")
                     try:
-                        tcl_count = 0
                         for root, dirs, files in os.walk(tcl_data_path):
                             for file in files:
                                 file_path = os.path.join(root, file)
                                 rel_path = os.path.relpath(file_path, tcl_data_path)
                                 file_size = os.path.getsize(file_path)
                                 tcl_tk_files.append((f"_tcl_data/{rel_path}", file_size))
-                                tcl_count += 1
-                        print(f"[DEBUG]   Файлов в _tcl_data: {tcl_count}")
                     except Exception as e:
-                        print(f"[DEBUG] Ошибка чтения _tcl_data: {e}")
-                else:
-                    print(f"[DEBUG] [FAIL] _tcl_data не найдена!")
+                        pass
                 
                 if os.path.exists(tk_data_path):
-                    print(f"[DEBUG] [OK] Найдена директория: _tk_data")
                     try:
-                        tk_count = 0
                         for root, dirs, files in os.walk(tk_data_path):
                             for file in files:
                                 file_path = os.path.join(root, file)
                                 rel_path = os.path.relpath(file_path, tk_data_path)
                                 file_size = os.path.getsize(file_path)
                                 tcl_tk_files.append((f"_tk_data/{rel_path}", file_size))
-                                tk_count += 1
-                        print(f"[DEBUG]   Файлов в _tk_data: {tk_count}")
                     except Exception as e:
-                        print(f"[DEBUG] Ошибка чтения _tk_data: {e}")
-                else:
-                    print(f"[DEBUG] [FAIL] _tk_data не найдена!")
-                
-                # Выводим список всех файлов
-                if tcl_tk_files:
-                    tcl_tk_files.sort(key=lambda x: x[0])
-                    print(f"[DEBUG] Всего файлов Tcl/Tk: {len(tcl_tk_files)}")
-                    print(f"[DEBUG] Список файлов Tcl/Tk:")
-                    for rel_path, file_size in tcl_tk_files:
-                        print(f"[DEBUG]   FILE: {rel_path} ({file_size} bytes)")
-                    
-                    # Проверяем критически важные файлы
-                    has_init_tcl = any('init.tcl' in path for path, _ in tcl_tk_files)
-                    has_tk_tcl = any('tk.tcl' in path for path, _ in tcl_tk_files)
-                    
-                    if has_init_tcl:
-                        print(f"[DEBUG] [OK] init.tcl найден")
-                    else:
-                        print(f"[DEBUG] [FAIL] init.tcl НЕ найден!")
-                    
-                    if has_tk_tcl:
-                        print(f"[DEBUG] [OK] tk.tcl найден")
-                    else:
-                        print(f"[DEBUG] [FAIL] tk.tcl НЕ найден!")
-                else:
-                    print(f"[DEBUG] [FAIL] Файлы Tcl/Tk не найдены!")
-            
-            # Выводим установленные переменные окружения
-            print(f"[DEBUG] TCL_LIBRARY = {os.environ.get('TCL_LIBRARY', 'не установлен')}")
-            print(f"[DEBUG] TK_LIBRARY = {os.environ.get('TK_LIBRARY', 'не установлен')}")
+                        pass
             
             # КРИТИЧНО: Добавляем путь к .so библиотекам в LD_LIBRARY_PATH
             # Избегаем дублирования пути
@@ -34319,35 +34772,20 @@ if __name__ == '__main__':
                     os.environ['LD_LIBRARY_PATH'] = f"{base_path}:{os.environ['LD_LIBRARY_PATH']}"
             else:
                 os.environ['LD_LIBRARY_PATH'] = base_path
-            print(f"[DEBUG] LD_LIBRARY_PATH = {os.environ.get('LD_LIBRARY_PATH', 'не установлен')}")
-            
-            # КРИТИЧНО: Предзагрузка libBLT выполняется в runtime hook pyi_rth_libblt.py
-            # Runtime hook выполняется ДО импорта tkinter и использует dlopen с RTLD_GLOBAL
-            # для предзагрузки зависимостей (libtcl8.6.so, libtk8.6.so) и самой libBLT
-            if found_blt_so:
-                blt_path = found_blt_so[0]
-                blt_name = os.path.basename(blt_path)
-                print(f"[DEBUG] libBLT найдена: {blt_name} (предзагрузка выполняется в runtime hook)")
                 
         except (AttributeError, OSError) as e:
             # Игнорируем ошибки при установке переменных окружения
-            # Но выводим для отладки
-            print(f"[DEBUG] Ошибка установки переменных окружения Tcl/Tk: {e}")
-            traceback.print_exc()
             pass
     
     # КРИТИЧНО: Явная загрузка библиотек Tcl/Tk ПЕРЕД импортом tkinter
     # Это гарантирует, что все библиотеки загружены и доступны до импорта tkinter
     if getattr(sys, 'frozen', False):
-        print("[DEBUG] Явная загрузка библиотек Tcl/Tk перед импортом tkinter...")
         _load_tcl_tk_libraries()
     
     # КРИТИЧНО: Импорт tkinter ВНУТРИ блока if __name__ == '__main__'
     # Это гарантирует, что tkinter импортируется только один раз - в процессе sudo
     try:
-        print("[DEBUG] Попытка импорта tkinter...")
         import tkinter  # NOQA: PyInstaller needs this
-        print(f"[DEBUG] [OK] tkinter импортирован: {tkinter.__file__ if hasattr(tkinter, '__file__') else 'встроенный'}")
         import tkinter as _tk  # NOQA: PyInstaller needs this
         from tkinter import ttk as _ttk, messagebox as _messagebox, scrolledtext as _scrolledtext  # NOQA: PyInstaller needs this
         import tkinter.messagebox  # NOQA: PyInstaller needs this
@@ -34363,21 +34801,18 @@ if __name__ == '__main__':
         # Проверяем доступность _tkinter C-модуля
         try:
             import _tkinter
-            print(f"[DEBUG] [OK] _tkinter C-модуль найден: {_tkinter.__file__ if hasattr(_tkinter, '__file__') else 'встроенный'}")
-        except ImportError as e:
-            print(f"[DEBUG] [FAIL] _tkinter C-модуль НЕ найден: {e}")
+        except ImportError:
+            pass
         
         # Проверяем версии Tcl/Tk
         try:
             tcl_version = tkinter.TclVersion
             tk_version = tkinter.TkVersion
-            print(f"[DEBUG] [OK] Tcl/Tk версии: Tcl {tcl_version}, Tk {tk_version}")
         except Exception as e:
-            print(f"[WARNING] [FAIL] Не удалось получить версии Tcl/Tk: {e}")
+            print(f"[WARNING] Не удалось получить версии Tcl/Tk: {e}")
         
         # Устанавливаем глобальные переменные
         TKINTER_AVAILABLE = True
-        print("[DEBUG] [OK] tkinter полностью доступен")
     except ImportError as e:
         # Сохраняем детали ошибки для отладки
         TKINTER_IMPORT_ERROR = str(e)
@@ -34392,11 +34827,8 @@ if __name__ == '__main__':
         print("[ERROR] Критическая ошибка: tkinter недоступен, завершаем работу")
         sys.exit(1)
     
-    print("[DEBUG] tkinter успешно импортирован, продолжаем...")
-    
     # Парсим аргументы
     console_mode = '--console' in sys.argv
-    print(f"[DEBUG] Режим работы: {'консольный' if console_mode else 'GUI'}")
     
     # ═══════════════════════════════════════════════════════════════════════
     # РЕЖИМ 1: Консольный режим (--console)
