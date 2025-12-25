@@ -1,5 +1,5 @@
 # ПРАВИЛА СОЗДАНИЯ СНИМКОВ (КОММИТОВ)
-# Версия проекта: V3.6.203 (2025.12.23)
+# Версия проекта: V3.6.204 (2025.12.25)
 # Компания: ООО "НПА Вира-Реалтайм"
 
 ## 📋 СВЯЗЬ С ОСНОВНЫМИ ПРАВИЛАМИ:
@@ -107,6 +107,11 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 
 3. **Определение измененных файлов:** 
    - Выполнить `git diff --name-only HEAD` → сохранить в `CHANGED_FILES`
+   - **КРИТИЧНО:** Для `FSA-AstraInstall.py` проверить изменения через локальную историю (файл не коммитится в Git):
+     - Найти последнюю директорию в `History/`: `LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)`
+     - Если `LAST_HISTORY_DIR` существует и содержит `FSA-AstraInstall.py`:
+       - Выполнить `diff -q "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py"` → если файлы различаются (exit code != 0), добавить `FSA-AstraInstall.py` в `CHANGED_FILES`
+     - Если `LAST_HISTORY_DIR` не существует (первый снимок) → добавить `FSA-AstraInstall.py` в `CHANGED_FILES`
    - Выполнить `git status --short | grep "^??"` → извлечь новые файлы и директории
    - Разделить на `NEW_FILES` (файлы) и `NEW_DIRS` (директории) - проверкой `[ -f "$path" ]` и `[ -d "$path" ]`
    - Выполнить `git diff --name-only --diff-filter=D HEAD` → сохранить в `DELETED_FILES`
@@ -116,7 +121,11 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
 4. **Проверка реальных изменений (внутренняя):** 
    - **КРИТИЧНО:** Исключить бинарные файлы из проверки: `CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')`
    - Для каждого файла из `CHANGED_FILES_FOR_ANALYSIS` (использовать `echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file` для правильного разделения строки):
-     - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date" → сохранить в временный файл (НЕ выводить в stdout)
+     - **КРИТИЧНО:** Если файл = `FSA-AstraInstall.py`:
+       - Найти последнюю директорию в `History/`: `LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)`
+       - Если `LAST_HISTORY_DIR` существует: выполнить `diff "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py"` → отфильтровать строки с "Версия|Version|дата|Date" → сохранить в временный файл
+       - Если `LAST_HISTORY_DIR` не существует: пометить файл как новый (все изменения реальные)
+     - Иначе (для остальных файлов): выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date" → сохранить в временный файл (НЕ выводить в stdout)
    - Проверить, что есть реальные изменения кода (не только версии/даты)
    - Если нет реальных изменений - остановиться с ошибкой "Нет реальных изменений кода, только версии/даты"
    - Пользователь НЕ видит этот вывод
@@ -146,8 +155,15 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
    - Сохранить данные во временный файл `.commit_analysis_data.txt` (НЕ выводить в stdout)
    - **КРИТИЧНО:** Исключить бинарные файлы из анализа: `CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')`
    - Для каждого файла из `CHANGED_FILES_FOR_ANALYSIS` (использовать `echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file` для правильного разделения строки):
-     - Выполнить `git diff --stat HEAD "$file"` → сохранить статистику в файл
-     - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
+     - **КРИТИЧНО:** Если файл = `FSA-AstraInstall.py`:
+       - Найти последнюю директорию в `History/`: `LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)`
+       - Если `LAST_HISTORY_DIR` существует:
+         - Выполнить `diff --stat "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py"` → сохранить статистику в файл
+         - Выполнить `diff "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
+       - Если `LAST_HISTORY_DIR` не существует: пометить как новый файл
+     - Иначе (для остальных файлов):
+       - Выполнить `git diff --stat HEAD "$file"` → сохранить статистику в файл
+       - Выполнить `git diff HEAD "$file"` → отфильтровать строки с "Версия|Version|дата|Date"` → сохранить первые 100 строк в файл
    - Для каждого файла из `NEW_FILES` (использовать `echo "$NEW_FILES" | tr ' ' '\n' | while read file` для правильного разделения строки):
      - **КРИТИЧНО:** Исключить бинарные файлы из анализа новых файлов: пропустить файлы, совпадающие с `^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$`
      - Выполнить `wc -l "$file"` → сохранить статистику (количество строк) в файл
@@ -343,6 +359,10 @@ V2.3.76 (2025.11.20) - текущая версия проекта (76 комми
      - Краткое сообщение коммита: `git log -1 --format="%s"`
      - Изменённые файлы: `git diff --name-only HEAD~1 HEAD`
      - Статистика изменений: `git diff --stat HEAD~1 HEAD`
+     - **КРИТИЧНО:** Для `FSA-AstraInstall.py` показать сравнение с последней историей:
+       - Найти предыдущую директорию в `History/` (вторую по дате): `PREV_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | sed -n '2p')`
+       - Если `PREV_HISTORY_DIR` существует: выполнить `diff --stat "$PREV_HISTORY_DIR/FSA-AstraInstall.py" "History/$COMMIT_DATE/FSA-AstraInstall.py"` → вывести результат
+       - Если `PREV_HISTORY_DIR` не существует: вывести "FSA-AstraInstall.py: первый снимок"
      - Указать путь к директории истории: `History/$COMMIT_DATE/`
    - Использовать ТОЛЬКО простой `echo`, без сложных конструкций
 
@@ -516,6 +536,28 @@ fi
 # ШАГ 3: Определяем измененные файлы (включая новые и удаленные)
 echo "=== ШАГ 3: Измененные файлы ==="
 CHANGED_FILES=$(git diff --name-only HEAD)
+# КРИТИЧНО: Для FSA-AstraInstall.py проверить изменения через локальную историю
+LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)
+if [ ! -z "$LAST_HISTORY_DIR" ] && [ -f "$LAST_HISTORY_DIR/FSA-AstraInstall.py" ]; then
+    # Проверяем, изменился ли файл по сравнению с последней историей
+    if ! diff -q "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py" >/dev/null 2>&1; then
+        # Файлы различаются - добавляем в CHANGED_FILES
+        if echo "$CHANGED_FILES" | grep -q "^FSA-AstraInstall\.py$"; then
+            # Уже есть в списке
+            :
+        else
+            CHANGED_FILES="$CHANGED_FILES FSA-AstraInstall.py"
+        fi
+    fi
+elif [ -z "$LAST_HISTORY_DIR" ]; then
+    # Первый снимок - добавляем FSA-AstraInstall.py
+    if echo "$CHANGED_FILES" | grep -q "^FSA-AstraInstall\.py$"; then
+        # Уже есть в списке
+        :
+    else
+        CHANGED_FILES="$CHANGED_FILES FSA-AstraInstall.py"
+    fi
+fi
 GIT_STATUS_OUTPUT=$(git status --short)
 GIT_STATUS_FILTERED=$(mktemp)
 echo "$GIT_STATUS_OUTPUT" | grep "^??" > "$GIT_STATUS_FILTERED" 2>/dev/null || true
@@ -559,14 +601,28 @@ echo "✓ Переменные шага 3 сохранены в .commit_vars.sh"
 CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')
 REAL_CHANGES_TEMP=$(mktemp)
 HAS_REAL_CHANGES=0
+LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)
 echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
     DIFF_TEMP3=$(mktemp)
-    git diff HEAD "$file" > "$DIFF_TEMP" 2>/dev/null
-    grep -E "^\+|^\-" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
-    grep -v -E "^\+\+\+|^\-\-\-" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
+    # КРИТИЧНО: Для FSA-AstraInstall.py используем сравнение с локальной историей
+    if [ "$file" = "FSA-AstraInstall.py" ]; then
+        if [ ! -z "$LAST_HISTORY_DIR" ] && [ -f "$LAST_HISTORY_DIR/FSA-AstraInstall.py" ]; then
+            diff "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py" > "$DIFF_TEMP" 2>/dev/null || true
+        else
+            # Первый снимок - все изменения реальные
+            echo "1" >> "$REAL_CHANGES_TEMP"
+            rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
+            continue
+        fi
+    else
+        # Для остальных файлов используем git diff
+        git diff HEAD "$file" > "$DIFF_TEMP" 2>/dev/null
+    fi
+    grep -E "^\+|^\-|^<|^>" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
+    grep -v -E "^\+\+\+|^\-\-\-|^===|^---" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
     grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "$DIFF_TEMP3" 2>/dev/null || true
     [ -s "$DIFF_TEMP3" ] && echo "1" >> "$REAL_CHANGES_TEMP" || true
     rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
@@ -648,20 +704,49 @@ rm -f "$ANALYSIS_DATA_FILE"
 # КРИТИЧНО: Исключаем бинарные файлы из анализа (они не имеют смысла для анализа изменений)
 CHANGED_FILES_FOR_ANALYSIS=$(echo "$CHANGED_FILES" | tr ' ' '\n' | grep -v -E "^(FSA-AstraInstall-1-7|FSA-AstraInstall-1-8)$" | tr '\n' ' ')
 
+# КРИТИЧНО: Находим последнюю директорию истории для сравнения FSA-AstraInstall.py
+LAST_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | head -1)
+
 echo "$CHANGED_FILES_FOR_ANALYSIS" | tr ' ' '\n' | while read file; do
     [ ! -z "$file" ] || continue
     echo "=== Файл: $file ===" >> "$ANALYSIS_DATA_FILE"
     STAT_TEMP=$(mktemp)
-    git diff --stat HEAD "$file" > "$STAT_TEMP" 2>/dev/null || true
+    # КРИТИЧНО: Для FSA-AstraInstall.py используем сравнение с локальной историей
+    if [ "$file" = "FSA-AstraInstall.py" ]; then
+        if [ ! -z "$LAST_HISTORY_DIR" ] && [ -f "$LAST_HISTORY_DIR/FSA-AstraInstall.py" ]; then
+            diff --stat "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py" > "$STAT_TEMP" 2>/dev/null || true
+        else
+            echo "Статистика: новый файл (первый снимок)" >> "$ANALYSIS_DATA_FILE"
+            rm -f "$STAT_TEMP"
+            # Для нового файла показываем первые 100 строк
+            DIFF_TEMP=$(mktemp)
+            head -100 "FSA-AstraInstall.py" > "$DIFF_TEMP" 2>/dev/null || true
+            grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "${DIFF_TEMP}2" 2>/dev/null || true
+            [ -s "${DIFF_TEMP}2" ] && echo "Содержимое (первые 100 строк):" >> "$ANALYSIS_DATA_FILE" && head -100 "${DIFF_TEMP}2" >> "$ANALYSIS_DATA_FILE" || true
+            rm -f "$DIFF_TEMP" "${DIFF_TEMP}2"
+            echo "" >> "$ANALYSIS_DATA_FILE"
+            continue
+        fi
+    else
+        # Для остальных файлов используем git diff
+        git diff --stat HEAD "$file" > "$STAT_TEMP" 2>/dev/null || true
+    fi
     STAT_LINE=$(tail -1 "$STAT_TEMP" 2>/dev/null || echo "")
     [ ! -z "$STAT_LINE" ] && echo "Статистика: $STAT_LINE" >> "$ANALYSIS_DATA_FILE" || true
     rm -f "$STAT_TEMP"
     DIFF_TEMP=$(mktemp)
     DIFF_TEMP2=$(mktemp)
     DIFF_TEMP3=$(mktemp)
-    git diff HEAD "$file" > "$DIFF_TEMP" 2>/dev/null
-    grep -E "^\+|^\-" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
-    grep -v -E "^\+\+\+|^\-\-\-" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
+    # КРИТИЧНО: Для FSA-AstraInstall.py используем diff с историей
+    if [ "$file" = "FSA-AstraInstall.py" ]; then
+        diff "$LAST_HISTORY_DIR/FSA-AstraInstall.py" "FSA-AstraInstall.py" > "$DIFF_TEMP" 2>/dev/null || true
+        grep -E "^\+|^\-|^<|^>" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
+        grep -v -E "^===|^---" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
+    else
+        git diff HEAD "$file" > "$DIFF_TEMP" 2>/dev/null
+        grep -E "^\+|^\-" "$DIFF_TEMP" > "$DIFF_TEMP2" 2>/dev/null || true
+        grep -v -E "^\+\+\+|^\-\-\-" "$DIFF_TEMP2" > "$DIFF_TEMP" 2>/dev/null || true
+    fi
     grep -v -E "Версия|Version|дата|Date" "$DIFF_TEMP" > "$DIFF_TEMP3" 2>/dev/null || true
     [ -s "$DIFF_TEMP3" ] && echo "Изменения:" >> "$ANALYSIS_DATA_FILE" && head -100 "$DIFF_TEMP3" >> "$ANALYSIS_DATA_FILE" || true
     rm -f "$DIFF_TEMP" "$DIFF_TEMP2" "$DIFF_TEMP3"
@@ -1230,6 +1315,15 @@ git diff --name-only HEAD~1 HEAD
 echo ""
 echo "Статистика изменений:"
 git diff --stat HEAD~1 HEAD
+echo ""
+# КРИТИЧНО: Для FSA-AstraInstall.py показываем сравнение с последней историей
+PREV_HISTORY_DIR=$(ls -td History/*/ 2>/dev/null | sed -n '2p')
+if [ ! -z "$PREV_HISTORY_DIR" ] && [ -f "$PREV_HISTORY_DIR/FSA-AstraInstall.py" ] && [ -f "History/$COMMIT_DATE/FSA-AstraInstall.py" ]; then
+    echo "Статистика изменений FSA-AstraInstall.py (сравнение с предыдущей историей):"
+    diff --stat "$PREV_HISTORY_DIR/FSA-AstraInstall.py" "History/$COMMIT_DATE/FSA-AstraInstall.py" || true
+elif [ -z "$PREV_HISTORY_DIR" ]; then
+    echo "FSA-AstraInstall.py: первый снимок"
+fi
 echo ""
 echo "Локальная история создана:"
 echo "History/$COMMIT_DATE/"
