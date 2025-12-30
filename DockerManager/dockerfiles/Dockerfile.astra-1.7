@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y \
     wmctrl \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем PyInstaller и psutil
-RUN pip3 install pyinstaller psutil
+# Устанавливаем PyInstaller, psutil и зависимости для remote_source
+RUN pip3 install pyinstaller psutil gdown requests
 
 # Проверяем что tkinter работает
 RUN python3 -c "import tkinter; print('tkinter OK')"

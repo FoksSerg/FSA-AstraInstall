@@ -15,9 +15,9 @@ RUN apt-get update && apt-get install -y \
     wmctrl \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем PyInstaller и psutil
+# Устанавливаем PyInstaller, psutil и зависимости для remote_source
 # В Debian Bookworm (Python 3.11) требуется флаг --break-system-packages из-за PEP 668
-RUN pip3 install --break-system-packages pyinstaller psutil
+RUN pip3 install --break-system-packages pyinstaller psutil gdown requests
 
 # Проверяем что tkinter работает
 RUN python3 -c "import tkinter; print('tkinter OK')"
