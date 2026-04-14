@@ -1,9 +1,16 @@
 # FSA-AstraInstall
 
-**Версия:** V4.8.384 (2026-04-14 21:25)  
+**Версия:** V4.8.385 (2026-04-14 23:20)  
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant  
 **Сайт:** [https://rlt.ru/](https://rlt.ru/)
+
+---
+
+## Скачать
+
+**[Скачать установщик `FSA-AstraInstall-Bundle` (последняя версия)](../../releases/latest)**  
+На странице релиза в разделе **Assets** скачайте файл `FSA-AstraInstall-Bundle`.
 
 ---
 
@@ -11,7 +18,7 @@
 
 **FSA-AstraInstall** — профессиональная система автоматизации для управления Linux-системами с **графическим интерфейсом** и **консольным режимом**. Комплексное решение для автоматического обновления операционных систем, установки и управления компонентами Wine, настройки репозиториев и мониторинга процессов.
 
-**Экосистема FSA:** этот репозиторий — разработка Linux-установщика; удалённая сборка бинарников выполняется через отдельный проект **FSA-DockerManager-Razrab**. Краткая схема репозиториев и ролей: **`MEMORANDUM.md`** в корне.
+**Экосистема FSA:** этот репозиторий — разработка Linux-установщика; удалённая сборка бинарников выполняется через отдельный проект **FSA-DockerManager-Razrab**.
 
 ### 🎯 Ключевые возможности
 
@@ -90,7 +97,6 @@ FSA-AstraInstall-Razrab/           # Репозиторий разработки
 │       └── handler.py            # Обработка интерактивных запросов
 │
 ├── RunScript/                     # Скрипты сборки, публикации, обновления на SMB (GUI сборщика здесь нет)
-│   ├── build.py                  # Тот же сценарий, что корневой build.py (запуск из любой директории)
 │   ├── build_stamp.py            # Проставление времени сборки в Version.txt
 │   ├── publish_build.py          # Публикация сборки
 │   ├── publish_release.py        # Публикация релиза
@@ -99,12 +105,11 @@ FSA-AstraInstall-Razrab/           # Репозиторий разработки
 │   └── fix-permissions.sh        # Права на дерево файлов в текущем каталоге
 │
 ├── Version.txt                    # Версия и время сборки (APP_VERSION, BUILD_TIME)
-├── build.json                     # Конфиг PyInstaller и вариантов сборки (full / auto / light)
-├── FSA-AstraInstall-1-7          # 📦 Пример имени бинарника (full, astra-1.7); фактические имена — из build.json
-├── FSA-AstraInstall-1-8          # 📦 Пример (full, astra-1.8); также возможны суффиксы Auto / Min для других вариантов
-├── MEMORANDUM.md                  # Связь с FSA-DockerManager-Razrab, FSA-AstraWin-Razrab и публичными репо
+├── build.json                     # Конфиг PyInstaller и вариантов сборки (full / auto / light / bundle)
+├── RunSelect/                     # 6 ELF (full/auto/min × astra-1.7/1.8) — используются для обновлений
+├── PacketDeps/                    # Встроенные архивы/зависимости для сборки (в т.ч. bundle_payload.tar.gz)
 ├── README.md                      # 📄 Документация проекта
-└── HELPME.md                      # 📖 Руководство пользователя
+└── Code/                          # 📁 Исходный код приложения
 ```
 
 ### 📊 Статистика проекта
@@ -321,25 +326,23 @@ FSA-AstraInstall-Razrab/           # Репозиторий разработки
 
 ### Варианты сборки и запуск (готовые бинарники)
 
-Проект поставляется в виде автономных ELF-файлов (PyInstaller). Существует **3 варианта сборки** (см. `build.json`):
+Проект поставляется в виде автономных ELF-файлов (PyInstaller). Для обновлений существуют варианты `full` / `auto` (`Auto`) / `min` (`Min`) (см. `build.json`).
 
-- **full** — полный функционал интерфейса.
-- **auto (суффикс `Auto`)** — облегчённый вариант для автономных/упрощённых сценариев (часть вкладок и мониторинговых функций исключена).
-- **min (суффикс `Min`)** — минимальный вариант, максимально компактный по возможностям (часть вкладок и мониторинговых функций исключена).
-
-Для каждой поддерживаемой Astra-платформы собирается свой бинарник:
+Для каждой поддерживаемой Astra-платформы собирается свой бинарник (они используются для самообновления и лежат в `RunSelect/`):
 
 - Astra 1.7: `FSA-AstraInstall-1-7`, `FSA-AstraInstall-Auto-1-7`, `FSA-AstraInstall-Min-1-7`
 - Astra 1.8: `FSA-AstraInstall-1-8`, `FSA-AstraInstall-Auto-1-8`, `FSA-AstraInstall-Min-1-8`
 
-**Запуск для пользователя:**
+**Пользователю вручную запускать эти файлы не нужно** — для установки/первого запуска используется один файл `FSA-AstraInstall-Bundle`.
+
+**Запуск для пользователя (рекомендуется):**
 
 ```bash
-chmod +x ./FSA-AstraInstall-1-7
-./FSA-AstraInstall-1-7
+chmod +x ./FSA-AstraInstall-Bundle
+./FSA-AstraInstall-Bundle
 ```
 
-Вариант `Auto`/`Min` запускается аналогично (просто другой файл).
+`FSA-AstraInstall-Bundle` сам определяет версию Astra и распаковывает/запускает подходящий вариант.
 
 **Важно про переносимость:** бинарник можно **копировать в любое место**. На старте приложение само определяет “каноническое” имя сборки и, при необходимости, приводит размещение к рабочей схеме установки (чтобы все каталоги данных/архивов/обновлений были в ожидаемых местах).
 
@@ -347,10 +350,7 @@ chmod +x ./FSA-AstraInstall-1-7
 
 ```bash
 # Простой запуск (автоматически запросит sudo при необходимости)
-./FSA-AstraInstall-1-7
-
-# Или для Astra 1.8
-./FSA-AstraInstall-1-8
+./FSA-AstraInstall-Bundle
 
 # Для разработки из исходников
 python3 Code/Run/FSA-AstraInstall.py
@@ -360,7 +360,7 @@ python3 Code/Run/FSA-AstraInstall.py
 
 ```bash
 # Полная автоматизация: репозитории + обновление + установка компонентов
-sudo ./FSA-AstraInstall-1-7 --console
+sudo ./FSA-AstraInstall-Bundle --console
 
 # Что происходит:
 # 1. Проверка и настройка репозиториев
@@ -399,7 +399,7 @@ sudo ./FSA-AstraInstall-1-7 --console
 - ✅ Python-код приложения и зависимости по `build.json`
 - ✅ Все зависимости
 - ✅ Tkinter библиотеки
-- ✅ Документацию (README.md, HELPME.md)
+- ✅ Документацию (README.md, README.pdf)
 - ✅ Конфигурационные файлы
 
 **Формат:** ELF 64-bit LSB executable (типичный размер порядка десятков МБ; точное значение зависит от варианта сборки)
@@ -428,62 +428,11 @@ sudo ./FSA-AstraInstall-1-7 --console
 ### Файлы документации
 
 - **README.md** — Документация проекта (этот файл)
-- **HELPME.md** — Руководство пользователя
-- **MEMORANDUM.md** — Репозитории FSA, роли и сборка (связь с DockerManager)
 - **CHRONOLOGY.md** — История разработки
-- **DocInstruction/** — Техническая документация
-  - `ALGORITHM_BEHAVIOR.md` — Алгоритмы поведения
-  - `STARTUP_ALGORITHM.md` — Алгоритм запуска
-  - `WINE_INSTALL_GUIDE.md` — Руководство по Wine
-  - `TABLE_CREATION_GUIDE.md` — Создание таблиц
-  - `PYRIGHTCONFIG_DOC.md` — Настройка Pyright
 
 ### Доступ к документации
 
 **В GUI:** Вкладка "О системе" → Кнопки "О Программе" / "Справка"
-
----
-
-## 🛠️ Разработка
-
-### Запуск из исходников
-
-```bash
-# Клонирование репозитория разработки
-git clone <url-FSA-AstraInstall-Razrab>
-cd FSA-AstraInstall-Razrab
-
-# Запуск GUI (на машине разработчика; на целевой Astra — см. готовые бинарники)
-python3 Code/Run/FSA-AstraInstall.py
-
-# Запуск консольного режима
-sudo python3 Code/Run/FSA-AstraInstall.py --console
-```
-
-### Сборка бинарников
-
-Сборка выполняется **удалённо** (Docker на сервере) через проект **FSA-DockerManager-Razrab**.
-
-1. Клонировать рядом (или в общий workspace) репозиторий **FSA-DockerManager-Razrab**.
-2. В `build.py` и `RunScript/build.py` задан путь к этому клону (по умолчанию путь внутри общего workspace на Mac); при другой раскладке каталогов **исправьте переменную `docker_manager_path`** в этих скриптах.
-3. Из **корня FSA-AstraInstall-Razrab**:
-
-```bash
-python3 build.py
-# или
-python3 RunScript/build.py
-```
-
-Скрипт проходит по вариантам и платформам из **`build.json`** (например astra-1.7 / astra-1.8 и full / auto / light). Готовые ELF-файлы появляются в корне репозитория с именами согласно конфигу (например `FSA-AstraInstall-1-7`, `FSA-AstraInstall-Auto-1-7` и т.д.).
-
-**GUI менеджера сборок** (DockerManager) находится только в репозитории **FSA-DockerManager-Razrab**. Из корня того клона (см. его `README.md`):
-
-```bash
-cd /path/to/FSA-DockerManager-Razrab
-python3 run.py --gui
-```
-
-Альтернативно: точка входа **`Code/Run/FSA-DockerManager.py`** в том же репозитории — детали в документации DockerManager. В **FSA-AstraInstall-Razrab** отдельного запуска GUI сборщика нет (вложенная папка `DockerManager/` и скрипт `RunScript/docker_run_gui.py` не используются и в репозитории отсутствуют).
 
 ---
 

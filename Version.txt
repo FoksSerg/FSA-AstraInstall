@@ -2,7 +2,7 @@ FSA-AstraInstall
 MAJOR=4
 MINOR=8
 PATCH=AUTO
-APP_VERSION=V4.8.384
-BUILD_TIME=2026-04-14 21:25
+APP_VERSION=V4.8.385
+BUILD_TIME=2026-04-14 23:20
 Developer: @FoksSegr
 Company: ООО "НПА Вира-Реалтайм"
