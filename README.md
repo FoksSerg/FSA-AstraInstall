@@ -1,6 +1,6 @@
 # FSA-AstraInstall
 
-**Версия:** V5.0.385 (2026-04-15 01:12)  
+**Версия:** V5.0.385 (2026-04-15 01:20)  
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant  
 **Сайт:** [https://rlt.ru/](https://rlt.ru/)
@@ -9,8 +9,7 @@
 
 ## Скачать
 
-- **Установщик `FSA-AstraInstall-Bundle` (полная установка)**: [⬇️](../../releases/latest)  
-  На странице релиза в разделе **Assets** скачайте файл `FSA-AstraInstall-Bundle`.
+- **Установщик `FSA-AstraInstall-Bundle` (полная установка)**: [⬇️](../../releases/latest/download/FSA-AstraInstall-Bundle)
 
 ### Скачать отдельные бинарники (RunSelect)
 
