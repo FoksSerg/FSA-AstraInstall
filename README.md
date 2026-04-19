@@ -1,6 +1,6 @@
 # FSA-AstraInstall
 
-**Версия:** V5.1.389 (2026-04-18 19:49)  
+**Версия:** V5.1.389 (2026-04-19 23:11)  
 **Компания:** ООО "НПА Вира-Реалтайм"  
 **Разработчик:** @FoksSegr & AI Assistant  
 **Сайт:** [https://rlt.ru/](https://rlt.ru/)
@@ -9,19 +9,19 @@
 
 ## Скачать
 
-- **Установщик `FSA-AstraInstall-Bundle` (полная установка)**: [⬇️](../../releases/latest/download/FSA-AstraInstall-Bundle)
+- [Скачать: **установщик `FSA-AstraInstall-Bundle`** (полная установка) ⬇️](../../releases/latest/download/FSA-AstraInstall-Bundle)
 
 ### Скачать отдельные бинарники (RunSelect)
 
 - **Astra Linux 1.8**
-  - **Полная версия (full)** — весь интерфейс и функционал: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-1-8)
-  - **Автоматическая (Auto)** — упрощённые/автосценарии: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Auto-1-8)
-  - **Сокращённая (Min)** — минимальный набор функций: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Min-1-8)
+  - [Скачать: **Полная версия (full)** — весь интерфейс и функционал ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-1-8)
+  - [Скачать: **Автоматическая (Auto)** — упрощённые/автосценарии ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Auto-1-8)
+  - [Скачать: **Сокращённая (Min)** — минимальный набор функций ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Min-1-8)
 
 - **Astra Linux 1.7**
-  - **Полная версия (full)** — весь интерфейс и функционал: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-1-7)
-  - **Автоматическая (Auto)** — упрощённые/автосценарии: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Auto-1-7)
-  - **Сокращённая (Min)** — минимальный набор функций: [⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Min-1-7)
+  - [Скачать: **Полная версия (full)** — весь интерфейс и функционал ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-1-7)
+  - [Скачать: **Автоматическая (Auto)** — упрощённые/автосценарии ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Auto-1-7)
+  - [Скачать: **Сокращённая (Min)** — минимальный набор функций ⬇️](https://raw.githubusercontent.com/FoksSerg/FSA-AstraInstall/master/RunSelect/FSA-AstraInstall-Min-1-7)
 
 ---
 
