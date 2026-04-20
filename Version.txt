@@ -3,6 +3,6 @@ MAJOR=5
 MINOR=1
 PATCH=AUTO
 APP_VERSION=V5.1.390
-BUILD_TIME=2026-04-20 00:56
+BUILD_TIME=2026-04-20 11:00
 Developer: @FoksSegr
 Company: ООО "НПА Вира-Реалтайм"
